@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -41,7 +42,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import androidx.tv.foundation.PivotOffsets
-import androidx.tv.foundation.focusGroup
 import androidx.tv.foundation.lazy.list.TvLazyColumn
 import androidx.tv.foundation.lazy.list.TvLazyRow
 import androidx.tv.foundation.lazy.list.items
@@ -251,7 +251,7 @@ fun NfSidebar(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(vertical = 48.dp)
-                    .focusGroup()   // androidx.tv.foundation.focusGroup
+                    .focusProperties {}   // replaces removed focusGroup()
             ) {
                 Text(
                     "LUMINA", color = NfRed, fontSize = 22.sp,
@@ -342,7 +342,7 @@ fun NfTopNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusGroup()   // androidx.tv.foundation.focusGroup
+            .focusProperties {}   // replaces removed focusGroup()
             .background(Brush.verticalGradient(
                 0f   to NfBlack.copy(alpha = 0.92f),
                 0.7f to NfBlack.copy(alpha = 0.5f),
