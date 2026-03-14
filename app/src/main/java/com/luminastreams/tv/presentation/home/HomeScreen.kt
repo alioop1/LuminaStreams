@@ -21,7 +21,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusGroup
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
@@ -42,6 +41,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import androidx.tv.foundation.PivotOffsets
+import androidx.tv.foundation.focusGroup
 import androidx.tv.foundation.lazy.list.TvLazyColumn
 import androidx.tv.foundation.lazy.list.TvLazyRow
 import androidx.tv.foundation.lazy.list.items
@@ -92,16 +92,16 @@ private val IconTv: ImageVector
         }
     }.build()
 
-// ── NavItem + sidebar item — both private ─────────────────────────────
+// ── NavItem + sidebar — both private ────────────────────────────────
 private data class NavItem(val id: String, val label: String, val icon: ImageVector)
 
 private val navItems = listOf(
-    NavItem("home",      "בית",      Icons.Default.Home),
-    NavItem("movies",   "סרטים",   IconFilm),
-    NavItem("series",   "סדרות",    IconTv),
-    NavItem("search",   "חיפוש",    Icons.Default.Search),
-    NavItem("favorites","מועדפים", Icons.Default.Favorite),
-    NavItem("settings", "הגדרות",  Icons.Default.Settings)
+    NavItem("home",       "בית",      Icons.Default.Home),
+    NavItem("movies",    "סרטים",   IconFilm),
+    NavItem("series",    "סדרות",    IconTv),
+    NavItem("search",    "חיפוש",    Icons.Default.Search),
+    NavItem("favorites", "מועדפים", Icons.Default.Favorite),
+    NavItem("settings",  "הגדרות",  Icons.Default.Settings)
 )
 
 // ── Root screen ──────────────────────────────────────────────────────
@@ -251,10 +251,10 @@ fun NfSidebar(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(vertical = 48.dp)
-                    .focusGroup()   // androidx.compose.ui.focus.focusGroup
+                    .focusGroup()   // androidx.tv.foundation.focusGroup
             ) {
                 Text(
-                    "לומינה", color = NfRed, fontSize = 22.sp,
+                    "LUMINA", color = NfRed, fontSize = 22.sp,
                     fontWeight = FontWeight.Black, letterSpacing = 6.sp,
                     modifier = Modifier.padding(start = 28.dp, bottom = 32.dp)
                 )
@@ -342,7 +342,7 @@ fun NfTopNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusGroup()   // androidx.compose.ui.focus.focusGroup
+            .focusGroup()   // androidx.tv.foundation.focusGroup
             .background(Brush.verticalGradient(
                 0f   to NfBlack.copy(alpha = 0.92f),
                 0.7f to NfBlack.copy(alpha = 0.5f),
@@ -533,10 +533,7 @@ fun NfPosterCard(
         Box(
             modifier = Modifier
                 .aspectRatio(2f / 3f)
-                .graphicsLayer {   // androidx.compose.ui.graphics.graphicsLayer
-                    scaleX = cardScale
-                    scaleY = cardScale
-                }
+                .graphicsLayer { scaleX = cardScale; scaleY = cardScale }
         ) {
             Surface(
                 onClick  = onClick,
@@ -566,11 +563,9 @@ fun NfPosterCard(
                 )
             }
             if (isFocused) {
-                Box(
-                    Modifier.matchParentSize().background(
-                        Brush.verticalGradient(listOf(Color.Transparent, NfBlack.copy(alpha = 0.55f)))
-                    )
-                )
+                Box(Modifier.matchParentSize().background(
+                    Brush.verticalGradient(listOf(Color.Transparent, NfBlack.copy(alpha = 0.55f)))
+                ))
             }
         }
         AnimatedVisibility(
