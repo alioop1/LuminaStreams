@@ -58,15 +58,13 @@ private val GLASS = Color(0x1AFFFFFF)
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ROOT — HomeScreen
-//
-// Layout (z-order, bottom → top):
-//  0  CinematicBg   — fullscreen backdrop + vignettes
-//  3  HeroInfo      — top-left, 55% width, 68% height
-//  4  RowsOverlay   — bottom 48%, lazy rows
-// 10  TopBar+Tabs   — always on top of content
-// 19  Sidebar dim   — dark overlay
-// 20  Sidebar panel — slide-in from left
+// Layout (z-order):
+//  0  CinematicBg    — fullscreen backdrop
+//  3  HeroSection    — FULL screen backdrop area, text anchored BOTTOM-LEFT
+// 10  TopBar + Tabs  — transparent top strip
+// 11  RowsPanel      — scrollable rows pinned to bottom, slides up on scroll
+// 19  SidebarDim
+// 20  Sidebar panel
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeScreen(
@@ -77,7 +75,6 @@ fun HomeScreen(
 ) {
     val navFR  = remember { FocusRequester() }
     val tab0FR = remember { FocusRequester() }
-
     var hero        by remember { mutableStateOf<Movie?>(null) }
     var sidebarOpen by remember { mutableStateOf(false) }
 
@@ -98,11 +95,9 @@ fun HomeScreen(
             "🏆 דירוג עליון" to state.tvTopRated
         )
     }
-
     val rowFRs    = remember(rows.size) { List(rows.size) { FocusRequester() } }
     val rowCard0s = remember(rows.size) { List(rows.size) { FocusRequester() } }
 
-    // boot focus + seed hero after load
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) {
             hero = rows.firstNotNullOfOrNull { it.second.firstOrNull() }
@@ -111,35 +106,35 @@ fun HomeScreen(
         }
     }
 
-    // ───────────────────────────────────────────────────────────────────────────
-    // IMPORTANT: Sidebar uses fillMaxSize + zIndex — must be OUTSIDE
-    // the main content Box so it can truly cover everything
-    // ───────────────────────────────────────────────────────────────────────────
     Box(Modifier.fillMaxSize()) {
-
         when {
             state.isLoading     -> { HomeLoading(); return@Box }
             state.error != null -> { HomeError(state.error) { viewModel.selectTab(state.selectedTab) }; return@Box }
         }
 
-        // z=0 — fullscreen backdrop
+        // ── z=0: fullscreen cinematic backdrop
         CinematicBg(hero)
 
-        // z=3 — hero info (left side, big on 4K)
-        // fillMaxWidth(0.52f) → ~1990px on 3840 = half screen
-        // padding top=130dp → sits below the topbar+tabs (~120dp)
-        HeroInfo(
-            movie    = hero,
-            onPlay   = { hero?.id?.let(onMovieClick) },
+        // ── z=3: Hero info anchored BOTTOM-LEFT, occupies left 48% width
+        // Height = 65% of screen. Text sits at the bottom of that zone.
+        // This matches the Netflix screenshot: title near bottom of hero area.
+        Box(
             modifier = Modifier
                 .align(Alignment.TopStart)
-                .fillMaxHeight(0.68f)
-                .fillMaxWidth(0.52f)
-                .padding(start = 72.dp, top = 130.dp, end = 24.dp)
-                .zIndex(3f)
-        )
+                .fillMaxWidth(0.48f)
+                .fillMaxHeight(0.65f)
+                .zIndex(3f),
+            contentAlignment = Alignment.BottomStart
+        ) {
+            HeroInfo(
+                movie    = hero,
+                onPlay   = { hero?.id?.let(onMovieClick) },
+                modifier = Modifier.padding(start = 60.dp, bottom = 24.dp, end = 16.dp)
+            )
+        }
 
-        // z=4 — content rows (bottom 48% of screen)
+        // ── z=11: rows panel — positioned at bottom 38% of screen
+        // Slightly overlapping the hero bottom edge, just like Netflix
         RowsOverlay(
             rows        = rows,
             rowFRs      = rowFRs,
@@ -150,11 +145,11 @@ fun HomeScreen(
             modifier    = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .fillMaxHeight(0.48f)
-                .zIndex(4f)
+                .fillMaxHeight(0.40f)
+                .zIndex(11f)
         )
 
-        // z=10 — TopNavBar + tabs (transparent, always visible)
+        // ── z=10: TopNavBar + Tabs — transparent strip at top
         Column(
             Modifier
                 .fillMaxWidth()
@@ -180,9 +175,7 @@ fun HomeScreen(
             )
         }
 
-        // z=19+20 — sidebar dim + panel
-        // AnimatedVisibility with fillMaxSize works correctly inside a Box
-        // because Box stacks children — NOT inside a Column
+        // ── z=19+20: sidebar
         SidebarDimOverlay(sidebarOpen)
         NfSidebar(
             open          = sidebarOpen,
@@ -196,7 +189,8 @@ fun HomeScreen(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CinematicBg
+// CinematicBg — full bleed backdrop with Netflix-style vignettes
+// Strong bottom-left gradient so the title text is always readable
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun CinematicBg(movie: Movie?) {
@@ -217,129 +211,177 @@ private fun CinematicBg(movie: Movie?) {
                 modifier = Modifier.fillMaxSize()
             )
         }
-        // Vignettes: bottom (for rows), left (for hero text), top (for bar)
         Box(Modifier.fillMaxSize().drawWithContent {
             drawContent()
-            // bottom — strong dark for rows legibility
+            // strong bottom-to-top gradient (rows + hero text area)
             drawRect(Brush.verticalGradient(
                 0.0f  to Color.Transparent,
-                0.42f to BG.copy(0.50f),
-                0.68f to BG.copy(0.88f),
+                0.38f to BG.copy(0.30f),
+                0.60f to BG.copy(0.75f),
+                0.80f to BG.copy(0.95f),
                 1.0f  to BG
             ))
-            // left — gradient for hero text
+            // left vignette — strong for hero text legibility
             drawRect(Brush.horizontalGradient(
-                0.0f  to BG.copy(0.82f),
-                0.50f to BG.copy(0.15f),
+                0.0f  to BG.copy(0.88f),
+                0.45f to BG.copy(0.30f),
+                0.75f to BG.copy(0.05f),
                 1.0f  to Color.Transparent
             ))
-            // top — subtle shade for nav
+            // top vignette for nav bar
             drawRect(Brush.verticalGradient(
-                0.0f  to BG.copy(0.80f),
-                0.16f to Color.Transparent
+                0.0f  to BG.copy(0.75f),
+                0.14f to Color.Transparent
             ))
         })
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HeroInfo — 4K optimised
-// Title: 72sp (~200px on 4K), fills left half of screen
+// HeroInfo — Netflix layout:
+// Year | ★ rating | 4K badge  (small metadata row)
+// BIG TITLE
+// Overview (3 lines)
+// [Play] [Details] [+]
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroInfo(movie: Movie?, onPlay: () -> Unit, modifier: Modifier = Modifier) {
     AnimatedContent(
         targetState    = movie,
         transitionSpec = {
-            (fadeIn(tween(500)) + slideInVertically(tween(550, easing = FastOutSlowInEasing)) { 60 }) togetherWith
-            (fadeOut(tween(300)) + slideOutVertically(tween(320)) { -30 })
+            (fadeIn(tween(500)) + slideInVertically(tween(550, easing = FastOutSlowInEasing)) { 50 }) togetherWith
+            (fadeOut(tween(280)) + slideOutVertically(tween(300)) { -30 })
         },
-        label = "hero_info"
+        label = "hero"
     ) { m ->
         if (m == null) { Box(modifier); return@AnimatedContent }
+
         Column(
             modifier = modifier,
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
             horizontalAlignment = Alignment.Start
         ) {
-            // ── BIG title — 72sp on 4K = cinematic
+            // ── metadata: year | rating | 4K
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (m.year > 0) {
+                    Text(
+                        m.year.toString(),
+                        color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium
+                    )
+                }
+                if (m.rating > 0f) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.Star, null, Modifier.size(14.dp), tint = GOLD)
+                        Text("%.1f".format(m.rating), color = GOLD, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Box(
+                    Modifier
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(WHITE.copy(0.15f))
+                        .padding(horizontal = 7.dp, vertical = 3.dp)
+                ) {
+                    Text("4K", color = WHITE, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // ── TITLE — large, bold, multi-line
             Text(
                 m.title,
                 color      = WHITE,
-                fontSize   = 72.sp,
+                fontSize   = 52.sp,
                 fontWeight = FontWeight.Black,
-                lineHeight = 80.sp,
+                lineHeight = 58.sp,
                 maxLines   = 3,
                 overflow   = TextOverflow.Ellipsis
             )
 
-            // ── badge row
+            // ── overview
+            Text(
+                m.overview,
+                color      = DIM,
+                fontSize   = 14.sp,
+                lineHeight = 22.sp,
+                maxLines   = 3,
+                overflow   = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(6.dp))
+
+            // ── action row: [Play]  [Details]  [+]
             Row(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // match %
-                Box(
-                    Modifier.clip(RoundedCornerShape(4.dp)).background(GREEN)
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+                // Play — primary filled red
+                Surface(
+                    onClick = onPlay,
+                    colors  = ClickableSurfaceDefaults.colors(
+                        containerColor        = RED,
+                        contentColor          = WHITE,
+                        focusedContainerColor = RED2,
+                        focusedContentColor   = WHITE
+                    ),
+                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp), RoundedCornerShape(6.dp)),
+                    scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                    glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.70f), 28.dp)),
+                    modifier = Modifier.height(48.dp)
                 ) {
-                    Text("97% Match", color = BG, fontSize = 15.sp, fontWeight = FontWeight.Black)
-                }
-                // star + rating
-                if (m.rating > 0f) {
                     Row(
+                        Modifier.padding(horizontal = 28.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Icon(Icons.Default.Star, null, Modifier.size(17.dp), tint = GOLD)
-                        Text("%.1f".format(m.rating), color = GOLD, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                        Icon(Icons.Default.PlayArrow, null, Modifier.size(22.dp))
+                        Text("נגן", fontSize = 16.sp, fontWeight = FontWeight.Black)
                     }
                 }
-                // 4K badge
-                Box(
-                    Modifier.clip(RoundedCornerShape(4.dp)).background(GLASS)
-                        .padding(horizontal = 10.dp, vertical = 5.dp)
+
+                // Details — ghost button
+                Surface(
+                    onClick = { /* TODO details screen */ },
+                    colors  = ClickableSurfaceDefaults.colors(
+                        containerColor        = WHITE.copy(0.14f),
+                        contentColor          = WHITE,
+                        focusedContainerColor = WHITE.copy(0.26f),
+                        focusedContentColor   = WHITE
+                    ),
+                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp), RoundedCornerShape(6.dp)),
+                    scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                    modifier = Modifier.height(48.dp)
                 ) {
-                    Text("4K HDR", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Row(
+                        Modifier.padding(horizontal = 20.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(Icons.Default.Info, null, Modifier.size(20.dp))
+                        Text("פרטים", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                    }
                 }
-            }
 
-            // ── overview — bigger text for TV
-            Text(
-                m.overview,
-                color      = DIM,
-                fontSize   = 17.sp,
-                lineHeight = 27.sp,
-                maxLines   = 3,
-                overflow   = TextOverflow.Ellipsis
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            // ── play button — tall pill
-            Surface(
-                onClick  = onPlay,
-                colors   = ClickableSurfaceDefaults.colors(
-                    containerColor        = WHITE,
-                    contentColor          = BG,
-                    focusedContainerColor = RED,
-                    focusedContentColor   = WHITE
-                ),
-                shape    = ClickableSurfaceDefaults.shape(
-                    shape        = RoundedCornerShape(50.dp),
-                    focusedShape = RoundedCornerShape(50.dp)
-                ),
-                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.65f), 32.dp)),
-                modifier = Modifier.height(62.dp).wrapContentWidth()
-            ) {
-                Row(
-                    Modifier.padding(horizontal = 44.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                // + (add to list) — icon only
+                Surface(
+                    onClick = { /* TODO wishlist */ },
+                    colors  = ClickableSurfaceDefaults.colors(
+                        containerColor        = WHITE.copy(0.14f),
+                        contentColor          = WHITE,
+                        focusedContainerColor = WHITE.copy(0.26f),
+                        focusedContentColor   = WHITE
+                    ),
+                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp), RoundedCornerShape(6.dp)),
+                    scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                    modifier = Modifier.size(48.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, null, Modifier.size(28.dp))
-                    Text("נגן", fontSize = 20.sp, fontWeight = FontWeight.Black)
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Icon(Icons.Default.Add, null, Modifier.size(22.dp))
+                    }
                 }
             }
         }
@@ -361,8 +403,8 @@ private fun RowsOverlay(
 ) {
     Box(modifier) {
         LazyColumn(
-            contentPadding = PaddingValues(top = 20.dp, bottom = 48.dp),
-            verticalArrangement = Arrangement.spacedBy(28.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 48.dp),
+            verticalArrangement = Arrangement.spacedBy(24.dp),
             modifier = Modifier.fillMaxSize()
         ) {
             items(rows.size) { i ->
@@ -379,17 +421,16 @@ private fun RowsOverlay(
                 )
             }
         }
-        // feather top edge
+        // feather top
         Box(
-            Modifier.fillMaxWidth().height(36.dp).align(Alignment.TopCenter)
+            Modifier.fillMaxWidth().height(32.dp).align(Alignment.TopCenter)
                 .background(Brush.verticalGradient(listOf(BG.copy(0.0f), Color.Transparent)))
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// NfContentRow
-// Cards: scale via graphicsLayer (NO layout impact) + spacing 16dp
+// NfContentRow + NfCard
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfContentRow(
@@ -404,21 +445,16 @@ fun NfContentRow(
 ) {
     if (movies.isEmpty()) return
     Column(Modifier.fillMaxWidth()) {
-        // row title
         Row(
-            Modifier.padding(start = 60.dp, bottom = 10.dp),
+            Modifier.padding(start = 56.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(Modifier.width(3.dp).height(20.dp).clip(RoundedCornerShape(2.dp)).background(RED))
-            Spacer(Modifier.width(10.dp))
-            Text(title, color = WHITE, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = WHITE, fontSize = 15.sp, fontWeight = FontWeight.Bold)
         }
-        // cards row
-        // vertical padding = half of scale overshoot so focused card doesn’t clip
         LazyRow(
             state = rememberLazyListState(),
-            contentPadding = PaddingValues(horizontal = 60.dp, vertical = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(horizontal = 56.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(rowFR)
@@ -438,11 +474,6 @@ fun NfContentRow(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NfCard
-// KEY FIX: scale is applied via graphicsLayer (visual only, no layout shift)
-// focusedScale on Surface is set to 1f so TV framework doesn’t also push cards
-// ═══════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfCard(
     movie: Movie,
@@ -454,47 +485,29 @@ fun NfCard(
 ) {
     val ctx = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-
-    // graphicsLayer scale = visual only, neighbours don’t move
     val scaleAnim by animateFloatAsState(
-        targetValue = if (focused) 1.10f else 1.0f,
-        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
-        label = "card_scale"
+        if (focused) 1.12f else 1f,
+        spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
+        label = "cs"
     )
-
     Box(
         Modifier
-            .width(130.dp)
-            .height(195.dp)
+            .width(110.dp).height(165.dp)
             .graphicsLayer { scaleX = scaleAnim; scaleY = scaleAnim }
             .zIndex(if (focused) 8f else 0f)
     ) {
         Surface(
             onClick = onClick,
-            colors  = ClickableSurfaceDefaults.colors(
-                containerColor        = CARD,
-                focusedContainerColor = CARD
-            ),
-            shape   = ClickableSurfaceDefaults.shape(
-                shape        = RoundedCornerShape(10.dp),
-                focusedShape = RoundedCornerShape(10.dp)
-            ),
-            // focusedScale = 1f because we handle scale in graphicsLayer above
+            colors  = ClickableSurfaceDefaults.colors(containerColor = CARD, focusedContainerColor = CARD),
+            shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp), RoundedCornerShape(6.dp)),
             scale   = ClickableSurfaceDefaults.scale(focusedScale = 1f),
             border  = ClickableSurfaceDefaults.border(
                 border        = Border.None,
-                // thin white outline — does NOT push neighbours
-                focusedBorder = Border(BorderStroke(2.5.dp, WHITE), 10.dp)
+                focusedBorder = Border(BorderStroke(2.dp, WHITE), 6.dp)
             ),
-            glow    = ClickableSurfaceDefaults.glow(
-                focusedGlow = Glow(GOLD.copy(0.50f), 22.dp)
-            ),
-            modifier = modifier
-                .fillMaxSize()
-                .onFocusChanged { fs ->
-                    focused = fs.isFocused
-                    if (fs.isFocused) onFocused()
-                }
+            glow    = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WHITE.copy(0.35f), 18.dp)),
+            modifier = modifier.fillMaxSize()
+                .onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
                 .onPreviewKeyEvent { kev ->
                     if (kev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when {
@@ -507,9 +520,7 @@ fun NfCard(
             Box(Modifier.fillMaxSize()) {
                 AsyncImage(
                     model = ImageRequest.Builder(ctx)
-                        .data(movie.posterUrl)
-                        .size(260, 390)
-                        .scale(Scale.FILL)
+                        .data(movie.posterUrl).size(220, 330).scale(Scale.FILL)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .crossfade(200).build(),
@@ -517,38 +528,33 @@ fun NfCard(
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
                 )
-                // bottom gradient
+                Box(Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(listOf(Color.Transparent, BG.copy(0.80f)))
+                ))
+                // quality badge (4K HDR / 1080p) — top right
                 Box(
-                    Modifier.fillMaxSize().background(
-                        Brush.verticalGradient(listOf(Color.Transparent, BG.copy(0.85f)))
+                    Modifier.align(Alignment.TopEnd).padding(4.dp)
+                        .clip(RoundedCornerShape(3.dp))
+                        .background(Color(0xCC000000))
+                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                ) {
+                    Text(
+                        if (movie.rating >= 8f) "4K HDR" else if (movie.rating >= 6f) "4K" else "1080p",
+                        color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Bold
                     )
-                )
-                // rating chip
-                if (movie.rating > 0f)
-                    Box(
-                        Modifier
-                            .align(Alignment.TopEnd).padding(6.dp)
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(BG.copy(0.72f))
-                            .padding(horizontal = 5.dp, vertical = 3.dp)
-                    ) {
-                        Text(
-                            "%.1f".format(movie.rating),
-                            color = GOLD, fontSize = 10.sp, fontWeight = FontWeight.Bold
-                        )
-                    }
-                // title reveal on focus
+                }
+                // title on focus
                 AnimatedVisibility(
                     visible  = focused,
-                    enter    = fadeIn(tween(140)) + slideInVertically(tween(160)) { it / 2 },
-                    exit     = fadeOut(tween(100)),
+                    enter    = fadeIn(tween(120)) + slideInVertically(tween(140)) { it / 2 },
+                    exit     = fadeOut(tween(90)),
                     modifier = Modifier.align(Alignment.BottomStart)
                 ) {
                     Text(
                         movie.title, color = WHITE,
-                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                        fontSize = 9.sp, fontWeight = FontWeight.SemiBold,
                         maxLines = 2, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.padding(7.dp)
+                        modifier = Modifier.padding(5.dp)
                     )
                 }
             }
@@ -567,18 +573,18 @@ private fun CinematicTabs(
     val tabs   = listOf("סרטים", "סדרות")
     val tabFRs = remember { List(tabs.size) { FocusRequester() } }
     Row(
-        Modifier.fillMaxWidth().padding(start = 72.dp, bottom = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(40.dp),
+        Modifier.fillMaxWidth().padding(start = 60.dp, bottom = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(36.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         tabs.forEachIndexed { i, tab ->
             CinTab(
-                label    = tab, selected = selectedTab == tab,
-                fr       = if (i == 0) tab0FR else tabFRs[i],
-                leftFR   = if (i > 0) (if (i - 1 == 0) tab0FR else tabFRs[i - 1]) else null,
-                rightFR  = if (i < tabs.size - 1) tabFRs[i + 1] else null,
-                onUp     = onUpPress, onDown = onDownPress,
-                onClick  = { onTabSelected(tab) }
+                label   = tab, selected = selectedTab == tab,
+                fr      = if (i == 0) tab0FR else tabFRs[i],
+                leftFR  = if (i > 0) (if (i - 1 == 0) tab0FR else tabFRs[i - 1]) else null,
+                rightFR = if (i < tabs.size - 1) tabFRs[i + 1] else null,
+                onUp = onUpPress, onDown = onDownPress,
+                onClick = { onTabSelected(tab) }
             )
         }
     }
@@ -592,15 +598,12 @@ private fun CinTab(
 ) {
     var focused by remember { mutableStateOf(false) }
     val color by animateColorAsState(if (selected || focused) WHITE else DIM, tween(140))
-    val lineW by animateDpAsState(if (selected) 24.dp else 0.dp, spring(Spring.DampingRatioMediumBouncy))
+    val lineW by animateDpAsState(if (selected) 22.dp else 0.dp, spring(Spring.DampingRatioMediumBouncy))
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick = onClick,
-            colors  = ClickableSurfaceDefaults.colors(
-                containerColor = Color.Transparent,
-                focusedContainerColor = Color.Transparent
-            ),
-            scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+            colors  = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+            scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
             modifier = Modifier
                 .focusRequester(fr)
                 .focusProperties { if (leftFR != null) left = leftFR; if (rightFR != null) right = rightFR }
@@ -610,14 +613,14 @@ private fun CinTab(
                     when (kev.key) {
                         Key.DirectionUp   -> { onUp();   true }
                         Key.DirectionDown -> { onDown(); true }
-                        else              -> false
+                        else -> false
                     }
                 }
         ) {
             Text(
-                label, color = color, fontSize = 18.sp,
+                label, color = color, fontSize = 16.sp,
                 fontWeight = if (selected || focused) FontWeight.Bold else FontWeight.Normal,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp)
+                modifier = Modifier.padding(horizontal = 6.dp, vertical = 8.dp)
             )
         }
         Box(Modifier.height(3.dp).width(lineW).clip(RoundedCornerShape(2.dp)).background(RED))
@@ -625,7 +628,7 @@ private fun CinTab(
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Sidebar dim overlay (separate composable so it doesn’t block focus)
+// Sidebar
 // ═══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun SidebarDimOverlay(open: Boolean) {
@@ -639,9 +642,6 @@ private fun SidebarDimOverlay(open: Boolean) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NfSidebar — panel only (no dim here)
-// ═══════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfSidebar(
     open: Boolean, activeTab: String,
@@ -649,7 +649,6 @@ fun NfSidebar(
     onSeriesClick: () -> Unit, onSearchClick: () -> Unit
 ) {
     val firstFR = remember { FocusRequester() }
-
     AnimatedVisibility(
         visible  = open,
         enter    = slideInHorizontally(tween(240, easing = FastOutSlowInEasing)) { -it },
@@ -657,65 +656,38 @@ fun NfSidebar(
         modifier = Modifier.fillMaxHeight().zIndex(20f)
     ) {
         LaunchedEffect(Unit) { delay(80); firstFR.safe() }
-
         Box(
-            Modifier
-                .fillMaxHeight()
-                .width(270.dp)
-                .background(Brush.horizontalGradient(
-                    listOf(Color(0xFF060606), Color(0xFF0F0F0F))
-                ))
+            Modifier.fillMaxHeight().width(270.dp)
+                .background(Brush.horizontalGradient(listOf(Color(0xFF060606), Color(0xFF0F0F0F))))
         ) {
-            // red right edge accent
             Box(
-                Modifier
-                    .align(Alignment.CenterEnd)
-                    .fillMaxHeight()
-                    .width(2.dp)
-                    .background(Brush.verticalGradient(
-                        listOf(Color.Transparent, RED.copy(0.60f), Color.Transparent)
-                    ))
+                Modifier.align(Alignment.CenterEnd).fillMaxHeight().width(2.dp)
+                    .background(Brush.verticalGradient(listOf(Color.Transparent, RED.copy(0.60f), Color.Transparent)))
             )
-
             Column(Modifier.fillMaxSize().padding(vertical = 50.dp)) {
-                // logo
                 Text(
-                    "LUMINA",
-                    color = RED, fontSize = 21.sp,
+                    "LUMINA", color = RED, fontSize = 21.sp,
                     fontWeight = FontWeight.Black, letterSpacing = 7.sp,
                     modifier = Modifier.padding(start = 28.dp, bottom = 40.dp)
                 )
-
-                data class SI(
-                    val label: String,
-                    val icon: androidx.compose.ui.graphics.vector.ImageVector,
-                    val active: Boolean,
-                    val act: () -> Unit
-                )
+                data class SI(val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val active: Boolean, val act: () -> Unit)
                 val items = listOf(
-                    SI("בית",    Icons.Default.Home,    false,               onClose),
-                    SI("סרטים", Icons.Default.Movie,   activeTab=="סרטים",  onMoviesClick),
-                    SI("סדרות",  Icons.Default.LiveTv,  activeTab=="סדרות",  onSeriesClick),
-                    SI("חיפוש",  Icons.Default.Search,  false,               onSearchClick)
+                    SI("בית",    Icons.Default.Home,   false,              onClose),
+                    SI("סרטים", Icons.Default.Movie,  activeTab=="סרטים", onMoviesClick),
+                    SI("סדרות",  Icons.Default.LiveTv, activeTab=="סדרות", onSeriesClick),
+                    SI("חיפוש",  Icons.Default.Search, false,              onSearchClick)
                 )
                 val localFRs = remember(items.size) { List(items.size) { FocusRequester() } }
                 items.forEachIndexed { i, item ->
                     SidebarRow(
-                        label   = item.label,
-                        icon    = item.icon,
-                        active  = item.active,
-                        fr      = if (i == 0) firstFR else localFRs[i],
-                        onRight = onClose,
-                        onClick = item.act
+                        label = item.label, icon = item.icon, active = item.active,
+                        fr = if (i == 0) firstFR else localFRs[i],
+                        onRight = onClose, onClick = item.act
                     )
                 }
-
                 Spacer(Modifier.weight(1f))
-                Text(
-                    "▶  ימין לתוכן",
-                    color = WHITE.copy(0.20f), fontSize = 11.sp,
-                    modifier = Modifier.padding(start = 28.dp)
-                )
+                Text("ימין לתוכן ▶", color = WHITE.copy(0.20f), fontSize = 11.sp,
+                    modifier = Modifier.padding(start = 28.dp))
             }
         }
     }
@@ -723,29 +695,19 @@ fun NfSidebar(
 
 @Composable
 private fun SidebarRow(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    active: Boolean,
-    fr: FocusRequester,
-    onRight: () -> Unit,
-    onClick: () -> Unit
+    label: String, icon: androidx.compose.ui.graphics.vector.ImageVector,
+    active: Boolean, fr: FocusRequester, onRight: () -> Unit, onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg by animateColorAsState(
-        when { active -> RED.copy(0.16f); focused -> WHITE.copy(0.08f); else -> Color.Transparent },
-        tween(130)
-    )
+        when { active -> RED.copy(0.16f); focused -> WHITE.copy(0.08f); else -> Color.Transparent }, tween(130))
     val tc by animateColorAsState(if (active || focused) WHITE else DIM, tween(130))
-
     Surface(
         onClick = onClick,
         colors  = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
         scale   = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 3.dp)
-            .clip(RoundedCornerShape(10.dp))
-            .focusRequester(fr)
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp)
+            .clip(RoundedCornerShape(10.dp)).focusRequester(fr)
             .onFocusChanged { focused = it.isFocused }
             .onPreviewKeyEvent { kev ->
                 if (kev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
@@ -761,16 +723,9 @@ private fun SidebarRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            Box(
-                Modifier.width(3.dp).height(22.dp)
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(if (active) RED else Color.Transparent)
-            )
+            Box(Modifier.width(3.dp).height(22.dp).clip(RoundedCornerShape(2.dp)).background(if (active) RED else Color.Transparent))
             Icon(icon, null, tint = if (active) RED else tc, modifier = Modifier.size(22.dp))
-            Text(
-                label, color = tc, fontSize = 17.sp,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
-            )
+            Text(label, color = tc, fontSize = 17.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
         }
     }
 }
@@ -781,33 +736,31 @@ private fun SidebarRow(
 @Composable
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label = "sk")
-    val p by inf.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
-        "sp"
-    )
+    val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart), "sp")
     val shimmer = Brush.linearGradient(
         listOf(Color(0xFF161616), Color(0xFF2B2B2B), Color(0xFF161616)),
-        start = Offset(p * 1800f - 900f, 0f),
-        end   = Offset(p * 1800f, 400f)
+        start = Offset(p * 1800f - 900f, 0f), end = Offset(p * 1800f, 400f)
     )
     Box(Modifier.fillMaxSize().background(BG)) {
-        Column(
-            Modifier.fillMaxSize().padding(top = 140.dp, start = 60.dp, end = 60.dp),
-            verticalArrangement = Arrangement.spacedBy(28.dp)
-        ) {
-            Box(Modifier.fillMaxWidth(0.40f).height(32.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
-            Box(Modifier.fillMaxWidth(0.24f).height(18.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-            Box(Modifier.fillMaxWidth(0.48f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-            Spacer(Modifier.height(14.dp))
-            repeat(3) {
-                Box(Modifier.fillMaxWidth(0.10f).height(16.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
+        Column(Modifier.fillMaxSize().padding(top = 140.dp, start = 56.dp, end = 56.dp), verticalArrangement = Arrangement.spacedBy(24.dp)) {
+            Box(Modifier.fillMaxWidth(0.38f).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Box(Modifier.fillMaxWidth(0.44f).height(36.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
+            Box(Modifier.fillMaxWidth(0.50f).height(13.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Box(Modifier.fillMaxWidth(0.50f).height(13.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Box(Modifier.fillMaxWidth(0.50f).height(13.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.width(90.dp).height(40.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
+                Box(Modifier.width(90.dp).height(40.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
+                Box(Modifier.size(40.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
+            }
+            Spacer(Modifier.weight(1f))
+            repeat(2) {
+                Box(Modifier.fillMaxWidth(0.10f).height(14.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
                 Spacer(Modifier.height(6.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                    repeat(7) {
-                        Box(Modifier.width(130.dp).height(195.dp).clip(RoundedCornerShape(10.dp)).background(shimmer))
-                    }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    repeat(8) { Box(Modifier.width(110.dp).height(165.dp).clip(RoundedCornerShape(6.dp)).background(shimmer)) }
                 }
+                Spacer(Modifier.height(20.dp))
             }
         }
     }
@@ -816,10 +769,7 @@ fun HomeLoading() {
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("⚠️", fontSize = 48.sp)
             Text(message, color = DIM, fontSize = 17.sp)
             Surface(
@@ -841,7 +791,6 @@ fun HomeError(message: String, onRetry: () -> Unit) {
 @Composable fun NfLoadingSkeleton() = HomeLoading()
 @Composable fun NfErrorScreen(message: String, onRetry: () -> Unit) = HomeError(message, onRetry)
 
-// Legacy overload for DiscoveryScreen
 @Composable
 fun NfSidebar(
     open: Boolean, activeId: String,
