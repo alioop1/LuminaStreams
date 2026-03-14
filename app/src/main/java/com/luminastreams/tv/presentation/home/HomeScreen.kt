@@ -51,6 +51,49 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.ui.components.TopNavBar
 import kotlinx.coroutines.delay
 
+// ── HomeState ────────────────────────────────────────────────────────────────
+@androidx.compose.runtime.Immutable
+data class HomeState(
+    val isLoading: Boolean = true,
+    val error: String? = null,
+    val isNetworkAvailable: Boolean = true,
+
+    val focusedItem: Movie? = null,
+    val focusedRowTitle: String = "Trending Movies",
+    val isFocusedVertical: Boolean = true,
+
+    val selectedTab: String = "סרטים",
+    val isSidebarFocused: Boolean = false,
+
+    val isDiscoveryMode: Boolean = false,
+    val isFilterComplete: Boolean = false,
+    val discoveryResults: List<Movie> = emptyList(),
+    val selectedGenreId: String? = null,
+    val selectedGenreName: String = "הכל",
+    val selectedYear: String? = null,
+    val selectedYearName: String = "הכל",
+
+    val movieTrending: List<Movie> = emptyList(),
+    val moviePremieres: List<Movie> = emptyList(),
+    val movieTopRated: List<Movie> = emptyList(),
+    val movieAction: List<Movie> = emptyList(),
+    val movieComedy: List<Movie> = emptyList(),
+    val movieDrama: List<Movie> = emptyList(),
+    val movieScifi: List<Movie> = emptyList(),
+    val movieAnimation: List<Movie> = emptyList(),
+    val movieHorror: List<Movie> = emptyList(),
+
+    val tvTrending: List<Movie> = emptyList(),
+    val tvPremieres: List<Movie> = emptyList(),
+    val tvTopRated: List<Movie> = emptyList(),
+    val tvDrama: List<Movie> = emptyList(),
+    val tvComedy: List<Movie> = emptyList(),
+    val tvCrime: List<Movie> = emptyList(),
+    val tvScifi: List<Movie> = emptyList(),
+    val tvDocumentary: List<Movie> = emptyList()
+)
+
+// ── Colors ───────────────────────────────────────────────────────────────────
 private val NfRed       = Color(0xFFE50914)
 private val NfDarkRed   = Color(0xFFB20710)
 private val NfBlack     = Color(0xFF000000)
@@ -115,16 +158,16 @@ private fun buildRows(state: HomeState): List<Pair<String, List<Movie>>> = build
         if (state.tvComedy.isNotEmpty())        add("😂 Comedy"             to state.tvComedy)
         if (state.tvCrime.isNotEmpty())         add("🔪 Crime & Thriller"   to state.tvCrime)
         if (state.tvScifi.isNotEmpty())         add("🚀 Sci-Fi & Fantasy"   to state.tvScifi)
-        if (state.tvDocumentary.isNotEmpty())   add("📽 Documentary"         to state.tvDocumentary)
+        if (state.tvDocumentary.isNotEmpty())   add("💽 Documentary"         to state.tvDocumentary)
         if (state.tvTopRated.isNotEmpty())      add("⭐ Top Rated"           to state.tvTopRated)
     }
     if (state.discoveryResults.isNotEmpty())
         add("🎯 ${state.selectedGenreName}" to state.discoveryResults)
 }
 
-// Safe focus helper — never throws
 private fun FocusRequester.safeRequest() { try { requestFocus() } catch (_: Exception) {} }
 
+// ── HomeScreen ───────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(
     state: HomeState,
@@ -142,10 +185,8 @@ fun HomeScreen(
 
     var sidebarOpen   by remember { mutableStateOf(false) }
     var activeNavId   by remember { mutableStateOf("home") }
-    // FIX: reset firstRowReady on every tab change so we never jump to a stale row
     var firstRowReady by remember { mutableStateOf(false) }
 
-    // FIX: reset firstRowReady when tab changes, send focus back to navBar
     LaunchedEffect(state.selectedTab) {
         firstRowReady = false
         delay(80)
@@ -157,7 +198,6 @@ fun HomeScreen(
     }
     var heroIdx by remember(state.selectedTab) { mutableIntStateOf(0) }
 
-    // FIX: hero auto-cycle pauses when sidebar is open
     LaunchedEffect(heroPool, sidebarOpen) {
         if (heroPool.size > 1) {
             while (true) {
@@ -170,7 +210,6 @@ fun HomeScreen(
         }
     }
 
-    // Initial focus after load
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) { delay(150); navBarFR.safeRequest() }
     }
@@ -196,8 +235,6 @@ fun HomeScreen(
                     ?: heroPool.firstOrNull()
                     ?: state.movieTrending.firstOrNull()
 
-                // FIX: userScrollEnabled=false — LazyColumn scrolls only via programmatic focus,
-                // prevents accidental D-pad scroll fighting with focus traversal
                 LazyColumn(
                     modifier          = Modifier.fillMaxSize(),
                     contentPadding    = PaddingValues(bottom = 80.dp),
@@ -217,16 +254,11 @@ fun HomeScreen(
 
                     allRows.forEachIndexed { idx, (rowTitle, movies) ->
                         item(key = rowTitle) {
-                            // Mark firstRow ready once composed
-                            if (idx == 0) LaunchedEffect(rowTitle) {
-                                firstRowReady = true
-                            }
+                            if (idx == 0) LaunchedEffect(rowTitle) { firstRowReady = true }
                             NfContentRow(
                                 title       = rowTitle,
                                 movies      = movies,
                                 rowModifier = if (idx == 0) Modifier.focusRequester(firstRowFR) else Modifier,
-                                // FIX: ALL rows handle UP — row 0 goes to hero, rest go to hero too
-                                // (LazyColumn will scroll up naturally via focus)
                                 onUpFromRow = { playBtnFR.safeRequest() },
                                 onLeftEdge  = { openSidebar() },
                                 onFocus     = { movie -> viewModel.updateFocusedItem(movie, rowTitle, true) },
@@ -259,8 +291,8 @@ fun HomeScreen(
             onFocusLanded  = { sidebarCooldown = false },
             onClose        = { closeSidebar() },
             onNavSelect    = { id ->
-                activeNavId   = id
-                sidebarOpen   = false
+                activeNavId     = id
+                sidebarOpen     = false
                 sidebarCooldown = false
                 when (id) {
                     "movies" -> viewModel.selectTab("סרטים")
@@ -268,15 +300,13 @@ fun HomeScreen(
                     "search" -> navController.navigate("search")
                     else     -> {}
                 }
-                // FIX: always go to navBar after sidebar select —
-                // LaunchedEffect(state.selectedTab) will fire and handle the rest
                 navBarFR.safeRequest()
             }
         )
     }
 }
 
-// ── TopNav wrapper
+// ── TopNav wrapper ─────────────────────────────────────────────────────────
 @Composable
 private fun NfTopNavWrapper(
     state: HomeState,
@@ -333,8 +363,6 @@ private fun NfTopNavWrapper(
     }
 }
 
-private fun FocusRequester.safeRequest() { try { requestFocus() } catch (_: Exception) {} }
-
 @Composable
 private fun NfNavTab(
     label: String,
@@ -381,7 +409,7 @@ private fun NfNavTab(
     }
 }
 
-// ── Sidebar
+// ── Sidebar ───────────────────────────────────────────────────────────────────
 @Composable
 fun NfSidebar(
     open: Boolean,
@@ -412,9 +440,7 @@ fun NfSidebar(
         Box(
             modifier = Modifier
                 .fillMaxHeight().width(300.dp)
-                .background(Brush.horizontalGradient(
-                    listOf(NfSidebarBg, NfSidebarBg.copy(alpha = 0.97f))
-                ))
+                .background(Brush.horizontalGradient(listOf(NfSidebarBg, NfSidebarBg.copy(alpha = 0.97f))))
         ) {
             Column(modifier = Modifier.fillMaxSize().padding(vertical = 52.dp)) {
                 Text(
@@ -492,7 +518,7 @@ private fun NfSidebarItem(
                 }
         ) {
             Row(
-                verticalAlignment    = Alignment.CenterVertically,
+                verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Icon(
@@ -509,7 +535,7 @@ private fun NfSidebarItem(
     }
 }
 
-// ── Hero Banner
+// ── Hero Banner ────────────────────────────────────────────────────────────
 @Composable
 fun NfHeroBanner(
     movie: Movie?,
@@ -614,7 +640,6 @@ fun NfHeroBanner(
     }
 }
 
-// ── HeroButton
 @Composable
 private fun NfHeroButton(
     label: String,
@@ -665,7 +690,7 @@ private fun NfHeroButton(
     }
 }
 
-// ── ContentRow
+// ── ContentRow ───────────────────────────────────────────────────────────────
 @Composable
 fun NfContentRow(
     title: String,
@@ -688,7 +713,6 @@ fun NfContentRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             modifier              = Modifier.focusRestorer()
         ) {
-            // FIX: itemsIndexed instead of items+indexOf — O(1) index, no O(n) scan per card
             itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
                 NfPosterCard(
                     movie      = movie,
@@ -704,10 +728,7 @@ fun NfContentRow(
     }
 }
 
-// ── PosterCard
-// • Border + glow only for focus — no scale, no jitter
-// • Sidebar only when truly at left edge (index 0 + no scroll)
-// • UP always calls onUpFromRow (not null anymore)
+// ── PosterCard ────────────────────────────────────────────────────────────────
 @Composable
 fun NfPosterCard(
     movie: Movie,
@@ -755,12 +776,8 @@ fun NfPosterCard(
                     .onPreviewKeyEvent { kev ->
                         when {
                             kev.type != KeyEventType.KeyDown -> false
-                            kev.key == Key.DirectionUp && onUpPress != null -> {
-                                onUpPress(); true
-                            }
-                            kev.key == Key.DirectionLeft && onLeftEdge != null && isAtLeftEdge -> {
-                                onLeftEdge(); true
-                            }
+                            kev.key == Key.DirectionUp && onUpPress != null -> { onUpPress(); true }
+                            kev.key == Key.DirectionLeft && onLeftEdge != null && isAtLeftEdge -> { onLeftEdge(); true }
                             else -> false
                         }
                     }
@@ -797,7 +814,7 @@ fun NfPosterCard(
     }
 }
 
-// ── LoadingSkeleton
+// ── LoadingSkeleton ───────────────────────────────────────────────────────────
 @Composable
 fun NfLoadingSkeleton() {
     val inf   = rememberInfiniteTransition(label = "shimmer")
@@ -832,7 +849,7 @@ fun NfLoadingSkeleton() {
     }
 }
 
-// ── ErrorScreen
+// ── ErrorScreen ─────────────────────────────────────────────────────────────
 @Composable
 fun NfErrorScreen(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(NfBlack), contentAlignment = Alignment.Center) {
