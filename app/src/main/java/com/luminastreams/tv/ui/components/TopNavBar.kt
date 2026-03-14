@@ -52,6 +52,13 @@ val NetflixRed = Color(0xFFE50914)
 val GlassWhite = Color(0x22FFFFFF)
 val PureWhite  = Color(0xFFFFFFFF)
 
+/**
+ * TopNavBar — clean DPAD order:
+ *   LEFT edge (Mic) → onLeftEdge (sidebar) — only from the Mic button, nowhere else
+ *   RIGHT edge (Profile) → focus stays (cancel)
+ *   DOWN from any icon → onDownPress (tabs / first row)
+ *   Focus order: Mic → Search → Bell → Profile  (natural LTR)
+ */
 @Composable
 fun TopNavBar(
     rdStatus: Boolean = true,
@@ -68,6 +75,12 @@ fun TopNavBar(
         val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
         while (true) { currentTime = fmt.format(Date()); delay(60_000) }
     }
+
+    // FocusRequesters for explicit left→right order
+    val micFR    = remember { FocusRequester() }
+    val bellFR   = remember { FocusRequester() }
+    val profileFR = remember { FocusRequester() }
+    // searchFR is passed in from outside (navBarFR)
 
     val downHandler: (KeyEvent) -> Boolean = { kev ->
         if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) { onDownPress(); true }
@@ -92,6 +105,7 @@ fun TopNavBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
+        // Left side: logo + RD badge
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("LUMINA", color = NetflixRed, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
             Box(
@@ -99,14 +113,14 @@ fun TopNavBar(
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text  = if (rdStatus) "RD+" else "RD Disconnected",
-                    color = if (rdStatus) Color(0xFF4CAF50) else Color.Gray,
+                    text     = if (rdStatus) "RD+" else "RD Disconnected",
+                    color    = if (rdStatus) Color(0xFF4CAF50) else Color.Gray,
                     fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
             }
         }
 
-        // focusProperties{} replaces deprecated focusGroup()
+        // Right side: clock + icon buttons with explicit DPAD order
         Row(
             modifier              = Modifier.focusProperties {},
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -115,26 +129,48 @@ fun TopNavBar(
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
 
+            // MIC — leftmost focusable icon
+            // LEFT key → onLeftEdge (sidebar), RIGHT key → natural focus to Search
+            // DOWN → onDownPress. LEFT is consumed so it doesn’t propagate further.
             IconButton(
                 onClick  = onVoiceSearchClick,
                 colors   = iconColors,
-                modifier = Modifier.onPreviewKeyEvent { kev ->
-                    if (kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown) { onLeftEdge(); true }
-                    else downHandler(kev)
-                }
+                modifier = Modifier
+                    .focusRequester(micFR)
+                    .focusProperties {
+                        right = searchFR
+                        left  = FocusRequester.Cancel  // no element to the left; don't escape
+                    }
+                    .onPreviewKeyEvent { kev ->
+                        when {
+                            kev.type != KeyEventType.KeyDown -> false
+                            // LEFT on the leftmost icon → open sidebar, consume event
+                            kev.key == Key.DirectionLeft     -> { onLeftEdge(); true }
+                            kev.key == Key.DirectionDown     -> { onDownPress(); true }
+                            else                             -> false
+                        }
+                    }
             ) { Icon(CustomMicIcon, "Voice", modifier = Modifier.size(20.dp)) }
 
+            // SEARCH
             IconButton(
                 onClick  = onSearchClick,
                 colors   = iconColors,
-                modifier = Modifier.focusRequester(searchFR).onPreviewKeyEvent(downHandler)
+                modifier = Modifier
+                    .focusRequester(searchFR)
+                    .focusProperties { left = micFR; right = bellFR }
+                    .onPreviewKeyEvent(downHandler)
             ) { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(20.dp)) }
 
+            // BELL
             Box {
                 IconButton(
                     onClick  = {},
                     colors   = iconColors,
-                    modifier = Modifier.onPreviewKeyEvent(downHandler)
+                    modifier = Modifier
+                        .focusRequester(bellFR)
+                        .focusProperties { left = searchFR; right = profileFR }
+                        .onPreviewKeyEvent(downHandler)
                 ) { Icon(Icons.Default.Notifications, "Notif", modifier = Modifier.size(20.dp)) }
                 if (hasNotifications) {
                     Box(Modifier.size(8.dp).clip(CircleShape).background(NetflixRed)
@@ -142,6 +178,7 @@ fun TopNavBar(
                 }
             }
 
+            // PROFILE — rightmost; RIGHT → cancel (nothing further right)
             IconButton(
                 onClick  = onProfileClick,
                 colors   = IconButtonDefaults.colors(
@@ -150,7 +187,10 @@ fun TopNavBar(
                     focusedContainerColor = PureWhite,
                     focusedContentColor   = OledBlack
                 ),
-                modifier = Modifier.onPreviewKeyEvent(downHandler)
+                modifier = Modifier
+                    .focusRequester(profileFR)
+                    .focusProperties { left = bellFR; right = FocusRequester.Cancel }
+                    .onPreviewKeyEvent(downHandler)
             ) { Icon(Icons.Default.Person, "Profile", modifier = Modifier.size(20.dp)) }
         }
     }
