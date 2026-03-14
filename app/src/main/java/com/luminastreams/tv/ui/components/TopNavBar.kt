@@ -1,3 +1,4 @@
+@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 package com.luminastreams.tv.ui.components
 
 import androidx.compose.foundation.background
@@ -76,11 +77,9 @@ fun TopNavBar(
         while (true) { currentTime = fmt.format(Date()); delay(60_000) }
     }
 
-    // FocusRequesters for explicit left→right order
-    val micFR    = remember { FocusRequester() }
-    val bellFR   = remember { FocusRequester() }
+    val micFR     = remember { FocusRequester() }
+    val bellFR    = remember { FocusRequester() }
     val profileFR = remember { FocusRequester() }
-    // searchFR is passed in from outside (navBarFR)
 
     val downHandler: (KeyEvent) -> Boolean = { kev ->
         if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) { onDownPress(); true }
@@ -105,7 +104,6 @@ fun TopNavBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
-        // Left side: logo + RD badge
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("LUMINA", color = NetflixRed, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
             Box(
@@ -120,7 +118,6 @@ fun TopNavBar(
             }
         }
 
-        // Right side: clock + icon buttons with explicit DPAD order
         Row(
             modifier              = Modifier.focusProperties {},
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -129,9 +126,7 @@ fun TopNavBar(
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
 
-            // MIC — leftmost focusable icon
-            // LEFT key → onLeftEdge (sidebar), RIGHT key → natural focus to Search
-            // DOWN → onDownPress. LEFT is consumed so it doesn’t propagate further.
+            // MIC — LEFT → sidebar, RIGHT → Search, DOWN → rows
             IconButton(
                 onClick  = onVoiceSearchClick,
                 colors   = iconColors,
@@ -139,12 +134,11 @@ fun TopNavBar(
                     .focusRequester(micFR)
                     .focusProperties {
                         right = searchFR
-                        left  = FocusRequester.Cancel  // no element to the left; don't escape
+                        left  = FocusRequester.Cancel
                     }
                     .onPreviewKeyEvent { kev ->
                         when {
                             kev.type != KeyEventType.KeyDown -> false
-                            // LEFT on the leftmost icon → open sidebar, consume event
                             kev.key == Key.DirectionLeft     -> { onLeftEdge(); true }
                             kev.key == Key.DirectionDown     -> { onDownPress(); true }
                             else                             -> false
@@ -178,7 +172,7 @@ fun TopNavBar(
                 }
             }
 
-            // PROFILE — rightmost; RIGHT → cancel (nothing further right)
+            // PROFILE — RIGHT → cancel
             IconButton(
                 onClick  = onProfileClick,
                 colors   = IconButtonDefaults.colors(
