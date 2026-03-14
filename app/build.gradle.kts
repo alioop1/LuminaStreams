@@ -35,6 +35,9 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
 
+    // Material Icons Extended — ALL icons (Tv, LiveTv, VideoLibrary, etc.)
+    implementation("androidx.compose.material:material-icons-extended")
+
     // Retrofit & Network (TMDB API)
     implementation("com.squareup.okhttp3:logging-interceptor:4.11.0")
 
@@ -76,5 +79,4 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-
 }
