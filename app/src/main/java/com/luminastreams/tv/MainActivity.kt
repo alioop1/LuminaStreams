@@ -45,15 +45,19 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
+import com.luminastreams.tv.presentation.details.DetailsScreen
+import com.luminastreams.tv.presentation.details.DetailsViewModel
 import com.luminastreams.tv.presentation.home.HomeScreen
 import com.luminastreams.tv.presentation.home.HomeViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
@@ -95,14 +99,12 @@ fun LuminaAppShell() {
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
-            // --- תוכן (100% רוחב) ---
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .focusRequester(contentFocusRequester)
                     .focusGroup()
             ) {
-                // באמפר שקוף לפתיחת סיידבר בצד שמאל
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -116,14 +118,17 @@ fun LuminaAppShell() {
                         }
                 )
 
-                AppNavHostContainer(navController = navController, homeViewModel = homeViewModel)
+                AppNavHostContainer(
+                    navController  = navController,
+                    homeViewModel  = homeViewModel,
+                    repository     = repository
+                )
             }
 
-            // --- סיידבר צף (Overlay) ---
             ReactSidebarOverlay(
-                isOpen = isSidebarOpen,
-                navController = navController,
-                viewModel = homeViewModel,
+                isOpen                = isSidebarOpen,
+                navController         = navController,
+                viewModel             = homeViewModel,
                 sidebarFocusRequester = sidebarFocusRequester,
                 onClose = {
                     isSidebarOpen = false
@@ -193,12 +198,14 @@ fun SidebarActionIcon(icon: ImageVector, modifier: Modifier = Modifier, onClick:
     var isFocused by remember { mutableStateOf(false) }
     Surface(
         onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFFE50914)),
-        shape = ClickableSurfaceDefaults.shape(CircleShape),
+        colors  = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFFE50914)),
+        shape   = ClickableSurfaceDefaults.shape(CircleShape),
         modifier = modifier.size(56.dp).onFocusChanged { isFocused = it.isFocused }
             .border(2.dp, if (isFocused) Color.White else Color.Transparent, CircleShape)
     ) {
-        Box(contentAlignment = Alignment.Center) { Icon(icon, null, tint = Color.White, modifier = Modifier.size(26.dp)) }
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = Color.White, modifier = Modifier.size(26.dp))
+        }
     }
 }
 
@@ -206,25 +213,86 @@ fun SidebarActionIcon(icon: ImageVector, modifier: Modifier = Modifier, onClick:
 fun SidebarMenuLabel(title: String, active: Boolean, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     Surface(
-        onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent),
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent),
         modifier = Modifier.fillMaxWidth().height(60.dp).onFocusChanged { isFocused = it.isFocused }
     ) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(horizontal = 10.dp)) {
-            Box(modifier = Modifier.height(30.dp).width(4.dp).background(if (active || isFocused) Color(0xFFE50914) else Color.Transparent).clip(RoundedCornerShape(2.dp)))
+            Box(
+                modifier = Modifier.height(30.dp).width(4.dp)
+                    .background(if (active || isFocused) Color(0xFFE50914) else Color.Transparent)
+                    .clip(RoundedCornerShape(2.dp))
+            )
             Spacer(modifier = Modifier.width(20.dp))
-            Text(text = title, color = if (isFocused || active) Color.White else Color.Gray, fontSize = 26.sp, fontWeight = if (active) FontWeight.Bold else FontWeight.Normal)
+            Text(
+                text       = title,
+                color      = if (isFocused || active) Color.White else Color.Gray,
+                fontSize   = 26.sp,
+                fontWeight = if (active) FontWeight.Bold else FontWeight.Normal
+            )
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────
+// NavHost — כל ה-routes של האפליקציה
+// ─────────────────────────────────────────────────────────────────
 @Composable
-fun AppNavHostContainer(navController: NavHostController, homeViewModel: HomeViewModel) {
+fun AppNavHostContainer(
+    navController : NavHostController,
+    homeViewModel : HomeViewModel,
+    repository    : MediaRepositoryImpl
+) {
     NavHost(navController = navController, startDestination = "home") {
+
+        // ── Home ────────────────────────────────────────────────────────────
         composable("home") {
-            HomeScreen(state = homeViewModel.state.collectAsState().value, viewModel = homeViewModel, navController = navController, onMovieClick = { id -> navController.navigate("details/$id") })
+            HomeScreen(
+                state        = homeViewModel.state.collectAsState().value,
+                viewModel    = homeViewModel,
+                navController = navController,
+                onMovieClick = { id -> navController.navigate("details/$id") }
+            )
         }
-        composable("search") { Box(Modifier.fillMaxSize().background(Color.Black)) }
-        composable("settings") { Box(Modifier.fillMaxSize().background(Color.Black)) }
+
+        // ── Details ────────────────────────────────────────────────────────
+        // Route: "details/{fullId}"  e.g. details/movie_1651775  or  details/tv_1396
+        composable(
+            route     = "details/{fullId}",
+            arguments = listOf(navArgument("fullId") { type = NavType.StringType })
+        ) { backStackEntry ->
+            val fullId = backStackEntry.arguments?.getString("fullId") ?: return@composable
+
+            val detailsViewModel: DetailsViewModel = viewModel(
+                key     = "details_$fullId",
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                        DetailsViewModel(repository) as T
+                }
+            )
+
+            LaunchedEffect(fullId) {
+                detailsViewModel.onEvent(
+                    com.luminastreams.tv.presentation.details.DetailsEvent.LoadInitialData(fullId)
+                )
+            }
+
+            DetailsScreen(
+                state         = detailsViewModel.state.collectAsState().value,
+                onEvent       = detailsViewModel::onEvent,
+                navController = navController
+            )
+        }
+
+        // ── Search ─────────────────────────────────────────────────────────
+        composable("search") {
+            Box(Modifier.fillMaxSize().background(Color.Black))
+        }
+
+        // ── Settings ───────────────────────────────────────────────────────
+        composable("settings") {
+            Box(Modifier.fillMaxSize().background(Color.Black))
+        }
     }
 }
