@@ -58,11 +58,6 @@ private val GL  = Color(0x22FFFFFF)
 private val MGN = Color(0xFF46D369)
 private val DG  = Color(0xFF141414)
 
-private val TileShape       = RoundedCornerShape(10.dp)
-private val TileSurfShape   = ClickableSurfaceDefaults.shape(shape = TileShape, focusedShape = TileShape)
-private val PlayBtnShape    = ClickableSurfaceDefaults.shape(shape = CircleShape,             focusedShape = CircleShape)
-private val ErrorBtnShape   = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(6.dp), focusedShape = RoundedCornerShape(6.dp))
-
 private val IconFilm: ImageVector
     get() = ImageVector.Builder("Film", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -284,8 +279,6 @@ private fun LivingMosaicGrid(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LiveTile — poster tile content extracted to avoid @Composable-in-lambda issue
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun TileContent(movie: Movie, isFocused: Boolean) {
     val context = LocalContext.current
@@ -335,6 +328,11 @@ private fun LiveTile(
     var isFocused by remember { mutableStateOf(false) }
     val scaleAnim by animateFloatAsState(if (isFocused) 1.08f else 1f, tween(220, easing = FastOutSlowInEasing))
     val alphaAnim by animateFloatAsState(if (isFocused) 1f else tileAlpha, tween(300))
+    // ClickableSurfaceDefaults.shape() is @Composable — must be called here inside @Composable
+    val tileShape = ClickableSurfaceDefaults.shape(
+        shape        = RoundedCornerShape(10.dp),
+        focusedShape = RoundedCornerShape(10.dp)
+    )
 
     Box(
         modifier = Modifier
@@ -348,11 +346,10 @@ private fun LiveTile(
                 containerColor        = DG,
                 focusedContainerColor = DG
             ),
-            shape  = TileSurfShape,
+            shape  = tileShape,
             scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(
                 border        = Border.None,
-                // Border(stroke, cornerRadius: Dp) — not a Shape
                 focusedBorder = Border(BorderStroke(3.dp, WH), 10.dp)
             ),
             glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WH.copy(0.5f), 18.dp)),
@@ -369,7 +366,6 @@ private fun LiveTile(
                     }
                 }
         ) {
-            // Content is a separate @Composable to allow AnimatedVisibility inside
             TileContent(movie = movie, isFocused = isFocused)
         }
     }
@@ -380,6 +376,8 @@ private fun LiveTile(
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroInfoPanel(movie: Movie, onPlayClick: () -> Unit) {
+    val playShape = ClickableSurfaceDefaults.shape(shape = CircleShape, focusedShape = CircleShape)
+
     Box(
         modifier = Modifier
             .width(520.dp).fillMaxHeight()
@@ -453,7 +451,7 @@ private fun HeroInfoPanel(movie: Movie, onPlayClick: () -> Unit) {
                     focusedContainerColor = RD,
                     focusedContentColor   = WH
                 ),
-                shape    = PlayBtnShape,
+                shape    = playShape,
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                 glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RD.copy(0.6f), 20.dp)),
                 modifier = Modifier.wrapContentWidth().height(52.dp)
@@ -738,6 +736,10 @@ fun NfLoadingSkeleton() {
 
 @Composable
 fun NfErrorScreen(message: String, onRetry: () -> Unit) {
+    val errShape = ClickableSurfaceDefaults.shape(
+        shape        = RoundedCornerShape(6.dp),
+        focusedShape = RoundedCornerShape(6.dp)
+    )
     Box(Modifier.fillMaxSize().background(BK), Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text("⚠", fontSize = 48.sp)
@@ -750,7 +752,7 @@ fun NfErrorScreen(message: String, onRetry: () -> Unit) {
                     containerColor        = RD,
                     focusedContainerColor = DRD
                 ),
-                shape    = ErrorBtnShape,
+                shape    = errShape,
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                 modifier = Modifier.height(48.dp).width(160.dp)
             ) {
