@@ -149,13 +149,25 @@ private fun GenreSelectionGrid(mediaType: String, activeGenres: List<Pair<String
 @Composable
 private fun GenreCard(name: String, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
+    val cardShape = ClickableSurfaceDefaults.shape(
+        shape        = RoundedCornerShape(16.dp),
+        focusedShape = RoundedCornerShape(16.dp)
+    )
     Surface(
         onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), focusedContainerColor = Color(0xFF222222)),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-        modifier = Modifier.height(140.dp).onFocusChanged { isFocused = it.isFocused }
-            .border(width = if (isFocused) 3.dp else 1.dp, color = if (isFocused) Color.White else Color(0x33FFFFFF), shape = RoundedCornerShape(16.dp))
+        colors  = ClickableSurfaceDefaults.colors(
+            containerColor        = Color(0x1AFFFFFF),
+            focusedContainerColor = Color(0xFF222222)
+        ),
+        shape   = cardShape,
+        scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        modifier = Modifier.height(140.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .border(
+                width  = if (isFocused) 3.dp else 1.dp,
+                color  = if (isFocused) Color.White else Color(0x33FFFFFF),
+                shape  = RoundedCornerShape(16.dp)
+            )
             .clip(RoundedCornerShape(16.dp))
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
@@ -171,7 +183,7 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
 private fun DiscoveryResultsView(state: HomeState, viewModel: HomeViewModel, onMovieClick: (String) -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(top = 100.dp)) {
         NfContentRow(
-            title = "תוצאות עבור: ${state.selectedGenreName}",
+            title  = "תוצאות עבור: ${state.selectedGenreName}",
             movies = state.discoveryResults,
             onFocus = { movie: Movie -> viewModel.updateFocusedItem(movie, state.selectedGenreName, true) },
             onClick = onMovieClick

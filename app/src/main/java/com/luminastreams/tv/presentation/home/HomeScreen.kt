@@ -11,9 +11,11 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -328,7 +330,6 @@ private fun LiveTile(
     var isFocused by remember { mutableStateOf(false) }
     val scaleAnim by animateFloatAsState(if (isFocused) 1.08f else 1f, tween(220, easing = FastOutSlowInEasing))
     val alphaAnim by animateFloatAsState(if (isFocused) 1f else tileAlpha, tween(300))
-    // ClickableSurfaceDefaults.shape() is @Composable — must be called here inside @Composable
     val tileShape = ClickableSurfaceDefaults.shape(
         shape        = RoundedCornerShape(10.dp),
         focusedShape = RoundedCornerShape(10.dp)
@@ -367,6 +368,129 @@ private fun LiveTile(
                 }
         ) {
             TileContent(movie = movie, isFocused = isFocused)
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// NfContentRow — horizontal scrolling row used by DiscoveryScreen and others
+// ══════════════════════════════════════════════════════════════════════════════
+@Composable
+fun NfContentRow(
+    title: String,
+    movies: List<Movie>,
+    onFocus: (Movie) -> Unit = {},
+    onClick: (String) -> Unit
+) {
+    if (movies.isEmpty()) return
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 32.dp)
+    ) {
+        // Row title
+        Text(
+            text       = title,
+            color      = WH,
+            fontSize   = 22.sp,
+            fontWeight = FontWeight.Bold,
+            modifier   = Modifier.padding(start = 48.dp, bottom = 12.dp)
+        )
+
+        LazyRow(
+            contentPadding        = PaddingValues(horizontal = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            modifier              = Modifier.fillMaxWidth().focusRestorer()
+        ) {
+            items(movies, key = { it.id }) { movie ->
+                NfContentCard(
+                    movie   = movie,
+                    onFocus = { onFocus(movie) },
+                    onClick = { onClick(movie.id) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NfContentCard(
+    movie: Movie,
+    onFocus: () -> Unit,
+    onClick: () -> Unit
+) {
+    val context   = LocalContext.current
+    var isFocused by remember { mutableStateOf(false) }
+    val cardShape = ClickableSurfaceDefaults.shape(
+        shape        = RoundedCornerShape(8.dp),
+        focusedShape = RoundedCornerShape(8.dp)
+    )
+    val scaleAnim by animateFloatAsState(
+        if (isFocused) 1.08f else 1f,
+        tween(200, easing = FastOutSlowInEasing)
+    )
+
+    Box(
+        modifier = Modifier
+            .width(140.dp)
+            .height(210.dp)
+            .graphicsLayer { scaleX = scaleAnim; scaleY = scaleAnim }
+            .zIndex(if (isFocused) 5f else 0f)
+    ) {
+        Surface(
+            onClick  = onClick,
+            colors   = ClickableSurfaceDefaults.colors(
+                containerColor        = DG,
+                focusedContainerColor = DG
+            ),
+            shape  = cardShape,
+            scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+            border = ClickableSurfaceDefaults.border(
+                border        = Border.None,
+                focusedBorder = Border(BorderStroke(2.dp, WH), 8.dp)
+            ),
+            glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WH.copy(0.4f), 12.dp)),
+            modifier = Modifier
+                .fillMaxSize()
+                .onFocusChanged { fs -> isFocused = fs.isFocused; if (fs.isFocused) onFocus() }
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(movie.posterUrl)
+                        .size(280, 420)
+                        .scale(coil.size.Scale.FILL)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .crossfade(200).build(),
+                    contentDescription = movie.title,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier.fillMaxSize()
+                )
+                // bottom gradient + title on focus
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.85f)))
+                    )
+                )
+                AnimatedVisibility(
+                    visible  = isFocused,
+                    enter    = fadeIn(tween(160)) + slideInVertically(tween(200)) { it / 2 },
+                    exit     = fadeOut(tween(120)),
+                    modifier = Modifier.align(Alignment.BottomStart)
+                ) {
+                    Text(
+                        movie.title,
+                        color      = WH,
+                        fontSize   = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines   = 2,
+                        overflow   = TextOverflow.Ellipsis,
+                        modifier   = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                    )
+                }
+            }
         }
     }
 }
