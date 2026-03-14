@@ -5,12 +5,13 @@
 )
 package com.luminastreams.tv
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
@@ -30,12 +31,12 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
@@ -56,6 +57,8 @@ import androidx.tv.material3.Icon
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
+import com.luminastreams.tv.domain.usecase.GetMediaDetailsUseCase
+import com.luminastreams.tv.presentation.details.DetailsEvent
 import com.luminastreams.tv.presentation.details.DetailsScreen
 import com.luminastreams.tv.presentation.details.DetailsViewModel
 import com.luminastreams.tv.presentation.home.HomeScreen
@@ -81,9 +84,6 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun LuminaAppShell() {
     val navController = rememberNavController()
-    val navBackStackEntry by navController.currentBackStackEntryAsState()
-    val currentRoute = navBackStackEntry?.destination?.route ?: "home"
-
     val repository = remember { MediaRepositoryImpl() }
     val homeViewModel: HomeViewModel = viewModel(
         factory = object : ViewModelProvider.Factory {
@@ -105,6 +105,7 @@ fun LuminaAppShell() {
                     .focusRequester(contentFocusRequester)
                     .focusGroup()
             ) {
+                // Edge trigger to open sidebar
                 Box(
                     modifier = Modifier
                         .fillMaxHeight()
@@ -119,9 +120,9 @@ fun LuminaAppShell() {
                 )
 
                 AppNavHostContainer(
-                    navController  = navController,
-                    homeViewModel  = homeViewModel,
-                    repository     = repository
+                    navController = navController,
+                    homeViewModel = homeViewModel,
+                    repository    = repository
                 )
             }
 
@@ -179,14 +180,12 @@ fun ReactSidebarOverlay(
                     SidebarActionIcon(Icons.Default.Settings) { navController.navigate("settings") }
                     SidebarActionIcon(Icons.AutoMirrored.Filled.ExitToApp) { /* Exit */ }
                 }
-
                 Column(verticalArrangement = Arrangement.spacedBy(15.dp)) {
                     val tabs = listOf("Movies", "TV Shows", "Anime", "Live Sports", "Favourites")
                     tabs.forEach { title ->
                         SidebarMenuLabel(title, state.selectedTab == title) { viewModel.selectTab(title) }
                     }
                 }
-
                 Text(text = timeStr, color = Color.White, fontSize = 38.sp, fontWeight = FontWeight.Bold)
             }
         }
@@ -197,9 +196,9 @@ fun ReactSidebarOverlay(
 fun SidebarActionIcon(icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     Surface(
-        onClick = onClick,
-        colors  = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFFE50914)),
-        shape   = ClickableSurfaceDefaults.shape(CircleShape),
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A1A), focusedContainerColor = Color(0xFFE50914)),
+        shape    = ClickableSurfaceDefaults.shape(CircleShape),
         modifier = modifier.size(56.dp).onFocusChanged { isFocused = it.isFocused }
             .border(2.dp, if (isFocused) Color.White else Color.Transparent, CircleShape)
     ) {
@@ -234,63 +233,78 @@ fun SidebarMenuLabel(title: String, active: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// NavHost — כל ה-routes של האפליקציה
-// ─────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// NavHost
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun AppNavHostContainer(
     navController : NavHostController,
     homeViewModel : HomeViewModel,
     repository    : MediaRepositoryImpl
 ) {
+    val context = LocalContext.current
+
     NavHost(navController = navController, startDestination = "home") {
 
-        // ── Home ────────────────────────────────────────────────────────────
+        // ── Home ─────────────────────────────────────────────────────────────
         composable("home") {
             HomeScreen(
-                state        = homeViewModel.state.collectAsState().value,
-                viewModel    = homeViewModel,
+                state         = homeViewModel.state.collectAsState().value,
+                viewModel     = homeViewModel,
                 navController = navController,
-                onMovieClick = { id -> navController.navigate("details/$id") }
+                onMovieClick  = { id -> navController.navigate("details/$id") }
             )
         }
 
-        // ── Details ────────────────────────────────────────────────────────
-        // Route: "details/{fullId}"  e.g. details/movie_1651775  or  details/tv_1396
+        // ── Details ──────────────────────────────────────────────────────────
+        // Route: "details/{fullId}"  e.g. details/movie_1651775 | details/tv_1396
         composable(
             route     = "details/{fullId}",
             arguments = listOf(navArgument("fullId") { type = NavType.StringType })
         ) { backStackEntry ->
             val fullId = backStackEntry.arguments?.getString("fullId") ?: return@composable
 
+            // Build DetailsViewModel with the exact constructor it expects:
+            // DetailsViewModel(getMediaDetailsUseCase: GetMediaDetailsUseCase, context: Context)
             val detailsViewModel: DetailsViewModel = viewModel(
                 key     = "details_$fullId",
                 factory = object : ViewModelProvider.Factory {
                     @Suppress("UNCHECKED_CAST")
                     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        DetailsViewModel(repository) as T
+                        DetailsViewModel(
+                            getMediaDetailsUseCase = GetMediaDetailsUseCase(repository),
+                            context                = context
+                        ) as T
                 }
             )
 
             LaunchedEffect(fullId) {
-                detailsViewModel.onEvent(
-                    com.luminastreams.tv.presentation.details.DetailsEvent.LoadInitialData(fullId)
-                )
+                detailsViewModel.onEvent(DetailsEvent.LoadInitialData(fullId))
             }
 
             DetailsScreen(
-                state         = detailsViewModel.state.collectAsState().value,
-                onEvent       = detailsViewModel::onEvent,
-                navController = navController
+                state       = detailsViewModel.state.collectAsState().value,
+                onEvent     = detailsViewModel::onEvent,
+                // Play a direct URL — launch via Android Intent to an external player
+                onPlayDirectUrl = { url ->
+                    try {
+                        context.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                        )
+                    } catch (_: Exception) {}
+                },
+                onNavigateBack        = { navController.popBackStack() },
+                onRecommendationClick = { id -> navController.navigate("details/$id") }
             )
         }
 
-        // ── Search ─────────────────────────────────────────────────────────
+        // ── Search ───────────────────────────────────────────────────────────
         composable("search") {
             Box(Modifier.fillMaxSize().background(Color.Black))
         }
 
-        // ── Settings ───────────────────────────────────────────────────────
+        // ── Settings ─────────────────────────────────────────────────────────
         composable("settings") {
             Box(Modifier.fillMaxSize().background(Color.Black))
         }
