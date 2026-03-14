@@ -54,11 +54,8 @@ val GlassWhite = Color(0x22FFFFFF)
 val PureWhite  = Color(0xFFFFFFFF)
 
 /**
- * TopNavBar — clean DPAD order:
- *   LEFT edge (Mic) → onLeftEdge (sidebar) — only from the Mic button, nowhere else
- *   RIGHT edge (Profile) → focus stays (cancel)
- *   DOWN from any icon → onDownPress (tabs / first row)
- *   Focus order: Mic → Search → Bell → Profile  (natural LTR)
+ * TopNavBar — accepts optional Modifier so HomeScreen can position+zIndex it directly.
+ * No CinematicTabs here; tabs were removed. Navigation is via sidebar only.
  */
 @Composable
 fun TopNavBar(
@@ -69,7 +66,8 @@ fun TopNavBar(
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit,
     onDownPress: () -> Unit = {},
-    onLeftEdge: () -> Unit = {}
+    onLeftEdge: () -> Unit = {},
+    modifier: Modifier = Modifier   // נוסף — מאפשר ל-HomeScreen לשלוט ב-zIndex
 ) {
     var currentTime by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -94,7 +92,7 @@ fun TopNavBar(
     )
 
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .height(80.dp)
             .background(Brush.verticalGradient(
@@ -126,16 +124,12 @@ fun TopNavBar(
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
 
-            // MIC — LEFT → sidebar, RIGHT → Search, DOWN → rows
             IconButton(
                 onClick  = onVoiceSearchClick,
                 colors   = iconColors,
                 modifier = Modifier
                     .focusRequester(micFR)
-                    .focusProperties {
-                        right = searchFR
-                        left  = FocusRequester.Cancel
-                    }
+                    .focusProperties { right = searchFR; left = FocusRequester.Cancel }
                     .onPreviewKeyEvent { kev ->
                         when {
                             kev.type != KeyEventType.KeyDown -> false
@@ -146,7 +140,6 @@ fun TopNavBar(
                     }
             ) { Icon(CustomMicIcon, "Voice", modifier = Modifier.size(20.dp)) }
 
-            // SEARCH
             IconButton(
                 onClick  = onSearchClick,
                 colors   = iconColors,
@@ -156,7 +149,6 @@ fun TopNavBar(
                     .onPreviewKeyEvent(downHandler)
             ) { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(20.dp)) }
 
-            // BELL
             Box {
                 IconButton(
                     onClick  = {},
@@ -172,7 +164,6 @@ fun TopNavBar(
                 }
             }
 
-            // PROFILE — RIGHT → cancel
             IconButton(
                 onClick  = onProfileClick,
                 colors   = IconButtonDefaults.colors(
