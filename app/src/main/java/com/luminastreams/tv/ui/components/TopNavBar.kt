@@ -12,7 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.*
+import androidx.compose.ui.focus.*              // includes focusGroup()
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -49,13 +49,6 @@ val NetflixRed = Color(0xFFE50914)
 val GlassWhite = Color(0x22FFFFFF)
 val PureWhite  = Color(0xFFFFFFFF)
 
-/**
- * TopNavBar — fully D-pad aware.
- *
- * @param searchFR      FocusRequester placed on the Search icon button
- * @param onDownPress   called when D-pad Down is pressed on any icon
- * @param onLeftEdge    called when D-pad Left is pressed on the leftmost icon
- */
 @Composable
 fun TopNavBar(
     rdStatus: Boolean = true,
@@ -73,11 +66,9 @@ fun TopNavBar(
         while (true) { currentTime = fmt.format(Date()); delay(60_000) }
     }
 
-    // Shared key handler: Down = jump to content, captures for every button
     val downHandler: (KeyEvent) -> Boolean = { kev ->
-        if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) {
-            onDownPress(); true
-        } else false
+        if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) { onDownPress(); true }
+        else false
     }
 
     val iconColors = IconButtonDefaults.colors(
@@ -91,61 +82,53 @@ fun TopNavBar(
         modifier = Modifier
             .fillMaxWidth()
             .height(80.dp)
-            .background(
-                Brush.verticalGradient(
-                    listOf(OledBlack.copy(alpha = 0.95f), OledBlack.copy(alpha = 0.5f), Color.Transparent)
-                )
-            )
+            .background(Brush.verticalGradient(
+                listOf(OledBlack.copy(alpha = 0.95f), OledBlack.copy(alpha = 0.5f), Color.Transparent)
+            ))
             .padding(horizontal = 64.dp, vertical = 16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment     = Alignment.CenterVertically
     ) {
-        // ─ Logo + RD status ──────────────────────────────
+        // Logo
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text(
-                "LUMINA", color = NetflixRed,
-                fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp
-            )
+            Text("LUMINA", color = NetflixRed, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
             Box(
                 modifier = Modifier.clip(RoundedCornerShape(50)).background(GlassWhite)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
             ) {
                 Text(
-                    text = if (rdStatus) "RD+" else "RD Disconnected",
+                    text  = if (rdStatus) "RD+" else "RD Disconnected",
                     color = if (rdStatus) Color(0xFF4CAF50) else Color.Gray,
                     fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp
                 )
             }
         }
 
-        // ─ Action icons + clock ───────────────────────────
+        // Action icons
+        // focusGroup() is from androidx.compose.ui.focus.* — already imported above
         Row(
+            modifier              = Modifier.focusGroup(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.focusGroup()           // treat all icons as one focus group
+            verticalAlignment     = Alignment.CenterVertically
         ) {
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
 
-            // Voice — leftmost; D-pad Left here → open sidebar
+            // Voice — leftmost: D-pad Left opens sidebar
             IconButton(
-                onClick = onVoiceSearchClick,
-                colors  = iconColors,
-                modifier = Modifier
-                    .onPreviewKeyEvent { kev ->
-                        if (kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown) {
-                            onLeftEdge(); true
-                        } else downHandler(kev)
-                    }
+                onClick  = onVoiceSearchClick,
+                colors   = iconColors,
+                modifier = Modifier.onPreviewKeyEvent { kev ->
+                    if (kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown) { onLeftEdge(); true }
+                    else downHandler(kev)
+                }
             ) { Icon(CustomMicIcon, "Voice", modifier = Modifier.size(20.dp)) }
 
-            // Search — gets initial focus via searchFR
+            // Search — initial focus target
             IconButton(
                 onClick  = onSearchClick,
                 colors   = iconColors,
-                modifier = Modifier
-                    .focusRequester(searchFR)
-                    .onPreviewKeyEvent(downHandler)
+                modifier = Modifier.focusRequester(searchFR).onPreviewKeyEvent(downHandler)
             ) { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(20.dp)) }
 
             // Notifications
@@ -156,11 +139,8 @@ fun TopNavBar(
                     modifier = Modifier.onPreviewKeyEvent(downHandler)
                 ) { Icon(Icons.Default.Notifications, "Notif", modifier = Modifier.size(20.dp)) }
                 if (hasNotifications) {
-                    Box(
-                        modifier = Modifier.size(8.dp).clip(CircleShape)
-                            .background(NetflixRed).align(Alignment.TopEnd)
-                            .offset(x = (-6).dp, y = 6.dp)
-                    )
+                    Box(Modifier.size(8.dp).clip(CircleShape).background(NetflixRed)
+                        .align(Alignment.TopEnd).offset(x = (-6).dp, y = 6.dp))
                 }
             }
 
