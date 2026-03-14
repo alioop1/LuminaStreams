@@ -51,9 +51,10 @@ import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.presentation.home.HomeState
 import com.luminastreams.tv.presentation.home.HomeViewModel
-import com.luminastreams.tv.presentation.home.NetflixContentRow
+import com.luminastreams.tv.presentation.home.NfContentRow
 
 @Composable
 fun DiscoveryScreen(
@@ -203,10 +204,10 @@ private fun DiscoveryResultsView(
     onMovieClick: (String) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize().padding(top = 100.dp)) {
-        NetflixContentRow(
+        NfContentRow(
             title = "תוצאות עבור: ${state.selectedGenreName}",
             movies = state.discoveryResults,
-            onFocus = { movie -> viewModel.updateFocusedItem(movie, state.selectedGenreName, true) },
+            onFocus = { movie: Movie -> viewModel.updateFocusedItem(movie, state.selectedGenreName, true) },
             onClick = onMovieClick
         )
     }

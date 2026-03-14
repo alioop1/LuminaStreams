@@ -10,6 +10,10 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
@@ -41,11 +45,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
-import androidx.tv.foundation.PivotOffsets
-import androidx.tv.foundation.lazy.list.TvLazyColumn
-import androidx.tv.foundation.lazy.list.TvLazyRow
-import androidx.tv.foundation.lazy.list.items
-import androidx.tv.foundation.lazy.list.rememberTvLazyListState
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
@@ -135,7 +134,7 @@ fun HomeScreen(
             else -> {
                 val displayItem = state.focusedItem ?: state.movieTrending.firstOrNull()
 
-                TvLazyColumn(
+                LazyColumn(
                     modifier       = Modifier.fillMaxSize().focusRestorer { firstRowFR },
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
@@ -251,7 +250,7 @@ fun NfSidebar(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(vertical = 48.dp)
-                    .focusProperties {}   // replaces removed focusGroup()
+                    .focusProperties {}
             ) {
                 Text(
                     "LUMINA", color = NfRed, fontSize = 22.sp,
@@ -342,7 +341,7 @@ fun NfTopNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusProperties {}   // replaces removed focusGroup()
+            .focusProperties {}
             .background(Brush.verticalGradient(
                 0f   to NfBlack.copy(alpha = 0.92f),
                 0.7f to NfBlack.copy(alpha = 0.5f),
@@ -485,18 +484,17 @@ fun NfContentRow(
     movies: List<Movie>,
     rowModifier: Modifier = Modifier,
     onUpFromFirstCard: (() -> Unit)? = null,
-    onLeftEdge: () -> Unit,
+    onLeftEdge: (() -> Unit)? = null,
     onFocus: (Movie) -> Unit,
     onClick: (String) -> Unit
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp).then(rowModifier)) {
         Text(title, color = NfWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp))
-        TvLazyRow(
-            state                 = rememberTvLazyListState(),
+        LazyRow(
+            state                 = rememberLazyListState(),
             contentPadding        = PaddingValues(horizontal = 64.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            pivotOffsets          = PivotOffsets(parentFraction = 0.07f),
             modifier              = Modifier.focusRestorer()
         ) {
             items(movies, key = { it.id }) { movie ->
@@ -517,7 +515,7 @@ fun NfContentRow(
 fun NfPosterCard(
     movie: Movie,
     onUpPress: (() -> Unit)?,
-    onLeftEdgePress: () -> Unit,
+    onLeftEdgePress: (() -> Unit)?,
     onFocus: () -> Unit,
     onClick: () -> Unit
 ) {
@@ -547,7 +545,7 @@ fun NfPosterCard(
                     .onPreviewKeyEvent { kev ->
                         when {
                             onUpPress != null && kev.key == Key.DirectionUp && kev.type == KeyEventType.KeyDown -> { onUpPress(); true }
-                            kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown -> { onLeftEdgePress(); false }
+                            onLeftEdgePress != null && kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown -> { onLeftEdgePress(); false }
                             else -> false
                         }
                     }
