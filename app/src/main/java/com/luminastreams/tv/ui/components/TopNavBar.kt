@@ -12,7 +12,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.*              // includes focusGroup()
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -89,7 +92,6 @@ fun TopNavBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
-        // Logo
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("LUMINA", color = NetflixRed, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
             Box(
@@ -104,8 +106,7 @@ fun TopNavBar(
             }
         }
 
-        // Action icons
-        // focusGroup() is from androidx.compose.ui.focus.* — already imported above
+        // focusGroup — explicit import: androidx.compose.ui.focus.focusGroup
         Row(
             modifier              = Modifier.focusGroup(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -114,7 +115,6 @@ fun TopNavBar(
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
 
-            // Voice — leftmost: D-pad Left opens sidebar
             IconButton(
                 onClick  = onVoiceSearchClick,
                 colors   = iconColors,
@@ -124,14 +124,12 @@ fun TopNavBar(
                 }
             ) { Icon(CustomMicIcon, "Voice", modifier = Modifier.size(20.dp)) }
 
-            // Search — initial focus target
             IconButton(
                 onClick  = onSearchClick,
                 colors   = iconColors,
                 modifier = Modifier.focusRequester(searchFR).onPreviewKeyEvent(downHandler)
             ) { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(20.dp)) }
 
-            // Notifications
             Box {
                 IconButton(
                     onClick  = {},
@@ -144,7 +142,6 @@ fun TopNavBar(
                 }
             }
 
-            // Profile
             IconButton(
                 onClick  = onProfileClick,
                 colors   = IconButtonDefaults.colors(

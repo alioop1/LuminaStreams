@@ -20,11 +20,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusRestorer
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
@@ -61,7 +66,7 @@ private val NfWhite     = Color(0xFFFFFFFF)
 private val GlassWhite  = Color(0x33FFFFFF)
 private val MatchGreen  = Color(0xFF46D369)
 
-// ── Custom sidebar icons (no extended-icons dep needed) ───────────
+// ── Custom sidebar icons ──────────────────────────────────────────
 private val IconFilm: ImageVector
     get() = ImageVector.Builder("Film", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -87,7 +92,7 @@ private val IconTv: ImageVector
         }
     }.build()
 
-// ── NavItem — private to file, NfSidebarItem also private ────────
+// ── NavItem + sidebar item — both private ─────────────────────────────
 private data class NavItem(val id: String, val label: String, val icon: ImageVector)
 
 private val navItems = listOf(
@@ -99,7 +104,7 @@ private val navItems = listOf(
     NavItem("settings", "הגדרות",  Icons.Default.Settings)
 )
 
-// ── Root screen ───────────────────────────────────────────────────
+// ── Root screen ──────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(
     state: HomeState,
@@ -183,10 +188,7 @@ fun HomeScreen(
                     }
                 }
 
-                // Floating TopNav
-                Box(
-                    modifier = Modifier.fillMaxWidth().zIndex(10f).align(Alignment.TopCenter)
-                ) {
+                Box(modifier = Modifier.fillMaxWidth().zIndex(10f).align(Alignment.TopCenter)) {
                     NfTopNav(
                         state          = state,
                         searchFR       = searchFR,
@@ -199,7 +201,6 @@ fun HomeScreen(
                     )
                 }
 
-                // Sidebar
                 NfSidebar(
                     expanded       = sidebarExpanded,
                     activeId       = activeNavId,
@@ -250,10 +251,10 @@ fun NfSidebar(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(vertical = 48.dp)
-                    .focusGroup()
+                    .focusGroup()   // androidx.compose.ui.focus.focusGroup
             ) {
                 Text(
-                    "LUMINA", color = NfRed, fontSize = 22.sp,
+                    "לומינה", color = NfRed, fontSize = 22.sp,
                     fontWeight = FontWeight.Black, letterSpacing = 6.sp,
                     modifier = Modifier.padding(start = 28.dp, bottom = 32.dp)
                 )
@@ -277,7 +278,6 @@ fun NfSidebar(
     }
 }
 
-// NfSidebarItem is private — fixes "public function exposes private type" error
 @Composable
 private fun NfSidebarItem(
     item: NavItem,
@@ -342,11 +342,11 @@ fun NfTopNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .focusGroup()
+            .focusGroup()   // androidx.compose.ui.focus.focusGroup
             .background(Brush.verticalGradient(
-                0f to NfBlack.copy(alpha = 0.92f),
+                0f   to NfBlack.copy(alpha = 0.92f),
                 0.7f to NfBlack.copy(alpha = 0.5f),
-                1f to Color.Transparent
+                1f   to Color.Transparent
             ))
     ) {
         TopNavBar(
@@ -360,7 +360,7 @@ fun NfTopNav(
             onLeftEdge         = { onSidebarOpen(); sidebarFirstFR.requestFocus() }
         )
         Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 64.dp, bottom = 12.dp),
+            modifier              = Modifier.fillMaxWidth().padding(start = 64.dp, bottom = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(32.dp),
             verticalAlignment     = Alignment.CenterVertically
         ) {
@@ -398,7 +398,6 @@ fun NfNavTab(label: String, isSelected: Boolean, onDownPress: () -> Unit, onClic
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
         }
-        // Simple if — avoids ColumnScope.AnimatedVisibility context error
         if (isSelected) {
             Box(Modifier.width(20.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(NfWhite))
         }
@@ -531,24 +530,26 @@ fun NfPosterCard(
     )
 
     Column(modifier = Modifier.width(140.dp).padding(vertical = 12.dp)) {
-        // Scale via graphicsLayer (lambda form) — outside Surface so TV focus engine is unaffected
         Box(
             modifier = Modifier
                 .aspectRatio(2f / 3f)
-                .graphicsLayer { scaleX = cardScale; scaleY = cardScale }
+                .graphicsLayer {   // androidx.compose.ui.graphics.graphicsLayer
+                    scaleX = cardScale
+                    scaleY = cardScale
+                }
         ) {
             Surface(
                 onClick  = onClick,
                 colors   = ClickableSurfaceDefaults.colors(containerColor = NfDarkGray, focusedContainerColor = NfDarkGray),
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-                border   = ClickableSurfaceDefaults.border(),   // no border
+                border   = ClickableSurfaceDefaults.border(),
                 modifier = Modifier
                     .fillMaxSize()
                     .onFocusChanged { fs -> isFocused = fs.isFocused; if (fs.isFocused) onFocus() }
                     .onPreviewKeyEvent { kev ->
                         when {
-                            onUpPress != null && kev.key == Key.DirectionUp   && kev.type == KeyEventType.KeyDown -> { onUpPress(); true }
+                            onUpPress != null && kev.key == Key.DirectionUp && kev.type == KeyEventType.KeyDown -> { onUpPress(); true }
                             kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown -> { onLeftEdgePress(); false }
                             else -> false
                         }
@@ -564,7 +565,6 @@ fun NfPosterCard(
                     modifier = Modifier.fillMaxSize()
                 )
             }
-            // Focus overlay drawn OUTSIDE Surface but INSIDE Box — valid BoxScope, no ColumnScope issue
             if (isFocused) {
                 Box(
                     Modifier.matchParentSize().background(
@@ -573,8 +573,6 @@ fun NfPosterCard(
                 )
             }
         }
-
-        // Title fades in below card — valid ColumnScope here
         AnimatedVisibility(
             visible = isFocused,
             enter   = fadeIn(tween(140)) + slideInVertically { it / 3 },
