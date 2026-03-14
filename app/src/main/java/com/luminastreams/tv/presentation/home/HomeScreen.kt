@@ -5,6 +5,7 @@
 )
 package com.luminastreams.tv.presentation.home
 
+import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
@@ -24,6 +25,11 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -44,7 +50,7 @@ import com.luminastreams.tv.ui.components.TopNavBar
 // ── Colour tokens ───────────────────────────────────────────
 private val NetflixRed       = Color(0xFFE50914)
 private val NetflixDarkRed   = Color(0xFFB20710)
-private val NfBlack          = Color(0xFF000000)   // true OLED black
+private val NfBlack          = Color(0xFF000000)
 private val NfDarkGray       = Color(0xFF141414)
 private val NfLightGray      = Color(0xFFB3B3B3)
 private val NfWhite          = Color(0xFFFFFFFF)
@@ -61,10 +67,8 @@ fun HomeScreen(
 ) {
     val config = LocalConfiguration.current
     val heroHeight = (config.screenHeightDp * 0.82f).dp
-
-    // Focus requesters for D-pad nav between nav bar and content
-    val navBarFocusRequester    = remember { FocusRequester() }
-    val firstRowFocusRequester  = remember { FocusRequester() }
+    val navBarFocusRequester   = remember { FocusRequester() }
+    val firstRowFocusRequester = remember { FocusRequester() }
 
     Box(modifier = Modifier.fillMaxSize().background(NfBlack)) {
         when {
@@ -118,8 +122,6 @@ fun HomeScreen(
                             NetflixContentRow(
                                 title = rowTitle,
                                 movies = movies,
-                                // First content row gets the focus requester so D-pad Down
-                                // from TopNav lands here correctly
                                 rowModifier = if (index == 0)
                                     Modifier.focusRequester(firstRowFocusRequester)
                                 else
@@ -131,7 +133,6 @@ fun HomeScreen(
                     }
                 }
 
-                // Floating TopNav — always on top
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -182,7 +183,6 @@ fun NetflixTopNav(
             onSearchClick = onSearchClick,
             onProfileClick = onProfileClick
         )
-        // Tab row — D-pad Down moves to firstRowFocusRequester
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -211,10 +211,7 @@ fun NetflixNavTab(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val labelColor by animateColorAsState(
-        targetValue = when {
-            isSelected || isFocused -> NfWhite
-            else -> NfLightGray
-        },
+        targetValue = if (isSelected || isFocused) NfWhite else NfLightGray,
         animationSpec = tween(150)
     )
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -227,11 +224,10 @@ fun NetflixNavTab(
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
             modifier = Modifier
                 .onFocusChanged { isFocused = it.isFocused }
-                // D-pad Down from tab → jump to first content row
                 .onPreviewKeyEvent { keyEvent ->
-                    if (keyEvent.nativeKeyEvent.keyCode ==
-                        android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
-                        keyEvent.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+                    // D-pad Down → jump to first content row
+                    if (keyEvent.key == Key.DirectionDown &&
+                        keyEvent.type == KeyEventType.KeyDown
                     ) {
                         onDownPress()
                         true
@@ -268,7 +264,6 @@ fun NetflixHeroBanner(
 ) {
     val context = LocalContext.current
     Box(modifier = Modifier.fillMaxWidth().height(heroHeight)) {
-
         AnimatedContent(
             targetState = movie?.backdropUrl ?: movie?.posterUrl,
             transitionSpec = { fadeIn(tween(600)) togetherWith fadeOut(tween(400)) },
@@ -277,7 +272,6 @@ fun NetflixHeroBanner(
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(imageUrl)
-                    // Cap resolution to save VRAM on 2GB devices
                     .size(1280, 720)
                     .scale(Scale.FILL)
                     .memoryCachePolicy(CachePolicy.ENABLED)
@@ -289,25 +283,20 @@ fun NetflixHeroBanner(
                 modifier = Modifier.fillMaxSize()
             )
         }
-
-        // Bottom fade — ends at pure OLED black
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.verticalGradient(
                 0f to Color.Transparent, 0.4f to Color.Transparent,
                 0.75f to NfBlack.copy(alpha = 0.6f), 1f to NfBlack
             )
         ))
-        // Left fade
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.horizontalGradient(
                 0f to NfBlack.copy(alpha = 0.85f), 0.55f to NfBlack.copy(alpha = 0.2f), 1f to Color.Transparent
             )
         ))
-        // Top fade
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.verticalGradient(0f to NfBlack.copy(alpha = 0.5f), 0.18f to Color.Transparent)
         ))
-
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -409,7 +398,6 @@ fun NetflixContentRow(
     onFocus: (Movie) -> Unit,
     onClick: (String) -> Unit
 ) {
-    val listState = rememberLazyListState()
     Column(modifier = Modifier.padding(vertical = 4.dp).then(rowModifier)) {
         Text(
             text = title,
@@ -419,11 +407,9 @@ fun NetflixContentRow(
             modifier = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp)
         )
         LazyRow(
-            state = listState,
+            state = rememberLazyListState(),
             contentPadding = PaddingValues(horizontal = 64.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
-            // focusRestorer keeps D-pad Left/Right inside the row and
-            // restores last focused card when returning to this row
             modifier = Modifier.focusRestorer()
         ) {
             items(movies, key = { it.id }) { movie ->
@@ -441,30 +427,21 @@ fun NetflixContentRow(
 fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
     val context = LocalContext.current
-
     val cardScale by animateFloatAsState(
         targetValue = if (isFocused) 1.15f else 1.0f,
-        // Spring that doesn't overshoot too far — safe for TV edge cards
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
         label = "card_scale"
     )
-
     Column(
         modifier = Modifier
             .width(130.dp)
-            // External scale so the TV focus engine isn't confused
             .scale(cardScale)
-            // Vertical padding gives room for scale pop without clipping
             .padding(vertical = 20.dp)
     ) {
         Surface(
             onClick = onClick,
-            colors = ClickableSurfaceDefaults.colors(
-                containerColor = NfDarkGray,
-                focusedContainerColor = NfDarkGray
-            ),
+            colors = ClickableSurfaceDefaults.colors(containerColor = NfDarkGray, focusedContainerColor = NfDarkGray),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-            // focusedScale = 1.0f because we handle scale ourselves above
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(
                 focusedBorder = Border(BorderStroke(2.5.dp, NfWhite), shape = RoundedCornerShape(6.dp))
@@ -476,7 +453,6 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
                     if (it.isFocused) onFocus()
                 }
         ) {
-            // Memory-safe image: capped at 320x480 (poster is never shown bigger)
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(movie.posterUrl)
@@ -491,7 +467,6 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
                 modifier = Modifier.fillMaxSize()
             )
         }
-
         AnimatedVisibility(
             visible = isFocused,
             enter = fadeIn(tween(150)) + slideInVertically { it / 2 },
@@ -515,26 +490,19 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
 fun NetflixLoadingSkeleton() {
     val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
     val shimmerAlpha by infiniteTransition.animateFloat(
-        initialValue = 0.3f,
-        targetValue  = 0.7f,
+        initialValue = 0.3f, targetValue = 0.7f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "shimmer_alpha"
     )
     val shimmerColor = NfDarkGray.copy(alpha = shimmerAlpha)
-
     Column(modifier = Modifier.fillMaxSize().background(NfBlack)) {
         Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f).background(shimmerColor))
         Spacer(Modifier.height(24.dp))
         repeat(2) {
             Box(modifier = Modifier.padding(start = 64.dp).width(180.dp).height(20.dp).clip(RoundedCornerShape(4.dp)).background(shimmerColor))
             Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.padding(horizontal = 64.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                repeat(6) {
-                    Box(modifier = Modifier.width(130.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(shimmerColor))
-                }
+            Row(modifier = Modifier.padding(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(6) { Box(modifier = Modifier.width(130.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(shimmerColor)) }
             }
             Spacer(Modifier.height(24.dp))
         }
