@@ -2,7 +2,7 @@ package com.luminastreams.tv.domain.model
 
 import androidx.compose.runtime.Immutable
 
-// ── Movie ──────────────────────────────────────────────────────────────────
+// ── Movie ──────────────────────────────────────────────────────────────────────
 @Immutable
 data class Movie(
     val id: String,
@@ -11,6 +11,7 @@ data class Movie(
     val posterUrl: String,
     val overview: String,
     val rating: Float,
+    val year: Int = 0,
     val genre: String = "פעולה",
     val mediaType: String = "movie",
     val genreIds: List<Int> = emptyList(),
@@ -19,7 +20,7 @@ data class Movie(
     val progress: Float? = null
 )
 
-// ── SearchResult ───────────────────────────────────────────────────────────
+// ── SearchResult ──────────────────────────────────────────────────────────────────
 enum class MediaType(val label: String, val hebrewPlural: String) {
     MOVIE("סרט", "סרטים"),
     TV_SHOW("סדרה", "סדרות"),
@@ -41,7 +42,7 @@ data class SearchResult(
     val dominantColor: String? = null
 )
 
-// ── StreamSource ───────────────────────────────────────────────────────────
+// ── StreamSource ──────────────────────────────────────────────────────────────────
 data class StreamSource(
     val id: String,
     val groupName: String,
@@ -58,7 +59,7 @@ data class StreamSource(
     val infoHash: String? = null
 )
 
-// ── Subtitle ───────────────────────────────────────────────────────────────
+// ── Subtitle ───────────────────────────────────────────────────────────────────────
 @Immutable
 data class Subtitle(
     val language: String,
