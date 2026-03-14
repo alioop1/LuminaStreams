@@ -7,9 +7,9 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -17,21 +17,16 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
@@ -52,10 +47,8 @@ private val NetflixRed       = Color(0xFFE50914)
 private val NetflixDarkRed   = Color(0xFFB20710)
 private val NfBlack          = Color(0xFF000000)
 private val NfDarkGray       = Color(0xFF141414)
-private val NfGray           = Color(0xFF808080)
 private val NfLightGray      = Color(0xFFB3B3B3)
 private val NfWhite          = Color(0xFFFFFFFF)
-private val GlassDark        = Color(0x66000000)
 private val GlassWhite       = Color(0x33FFFFFF)
 private val GlassWhiteBorder = Color(0x55FFFFFF)
 
@@ -73,7 +66,6 @@ fun HomeScreen(
     val heroHeight = (config.screenHeightDp * 0.82f).dp
 
     Box(modifier = Modifier.fillMaxSize().background(NfBlack)) {
-
         when {
             state.isLoading -> NetflixLoadingSkeleton()
             state.error != null -> NetflixErrorScreen(state.error) { viewModel.selectTab(state.selectedTab) }
@@ -84,7 +76,6 @@ fun HomeScreen(
                     modifier = Modifier.fillMaxSize().focusRestorer(),
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    // ── Hero ──────────────────────────────────────────
                     item {
                         NetflixHeroBanner(
                             movie = displayItem,
@@ -94,7 +85,6 @@ fun HomeScreen(
                         )
                     }
 
-                    // ── Content Rows ──────────────────────────────────
                     val allRows = buildList {
                         if (state.selectedTab == "סרטים") {
                             if (state.movieTrending.isNotEmpty())   add("🔥 Trending Now"      to state.movieTrending)
@@ -131,7 +121,6 @@ fun HomeScreen(
                     }
                 }
 
-                // ── Floating Top Nav (over hero) ──────────────────────
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -151,7 +140,7 @@ fun HomeScreen(
 }
 
 // ─────────────────────────────────────────────
-//  Netflix Top Navigation Bar
+//  Netflix Top Nav
 // ─────────────────────────────────────────────
 @Composable
 fun NetflixTopNav(
@@ -161,7 +150,6 @@ fun NetflixTopNav(
     onProfileClick: () -> Unit
 ) {
     val tabs = listOf("סרטים", "סדרות")
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -172,9 +160,7 @@ fun NetflixTopNav(
                     1f to Color.Transparent
                 )
             )
-            .padding(top = 0.dp)
     ) {
-        // Top bar row
         TopNavBar(
             rdStatus = true,
             hasNotifications = false,
@@ -182,8 +168,6 @@ fun NetflixTopNav(
             onSearchClick = onSearchClick,
             onProfileClick = onProfileClick
         )
-
-        // Netflix-style tab row
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -213,7 +197,6 @@ fun NetflixNavTab(label: String, isSelected: Boolean, onClick: () -> Unit) {
         },
         animationSpec = tween(150)
     )
-
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick = onClick,
@@ -232,7 +215,6 @@ fun NetflixNavTab(label: String, isSelected: Boolean, onClick: () -> Unit) {
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
             )
         }
-        // Active underline
         AnimatedVisibility(visible = isSelected) {
             Box(
                 modifier = Modifier
@@ -255,15 +237,12 @@ fun NetflixHeroBanner(
     onPlayClick: () -> Unit,
     onMoreInfoClick: () -> Unit
 ) {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(heroHeight)
-    ) {
-        // ── Full-bleed background image ────────────────────────────
+    Box(modifier = Modifier.fillMaxWidth().height(heroHeight)) {
+
         AnimatedContent(
             targetState = movie?.backdropUrl ?: movie?.posterUrl,
-            transitionSpec = { fadeIn(tween(600)) togetherWith fadeOut(tween(400)) }
+            transitionSpec = { fadeIn(tween(600)) togetherWith fadeOut(tween(400)) },
+            label = "hero_bg"
         ) { imageUrl ->
             AsyncImage(
                 model = imageUrl,
@@ -273,46 +252,30 @@ fun NetflixHeroBanner(
             )
         }
 
-        // ── Gradient overlays exactly like Netflix ─────────────────
-        // Bottom fade to black
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f   to Color.Transparent,
-                    0.4f to Color.Transparent,
-                    0.75f to NfBlack.copy(alpha = 0.6f),
-                    1f   to NfBlack
-                )
+        // Bottom fade
+        Box(modifier = Modifier.fillMaxSize().background(
+            Brush.verticalGradient(
+                0f to Color.Transparent, 0.4f to Color.Transparent,
+                0.75f to NfBlack.copy(alpha = 0.6f), 1f to NfBlack
             )
-        )
-        // Left-side fade for text legibility
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.horizontalGradient(
-                    0f   to NfBlack.copy(alpha = 0.85f),
-                    0.55f to NfBlack.copy(alpha = 0.2f),
-                    1f   to Color.Transparent
-                )
+        ))
+        // Left fade
+        Box(modifier = Modifier.fillMaxSize().background(
+            Brush.horizontalGradient(
+                0f to NfBlack.copy(alpha = 0.85f), 0.55f to NfBlack.copy(alpha = 0.2f), 1f to Color.Transparent
             )
-        )
-        // Top fade for nav bar
-        Box(
-            modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    0f   to NfBlack.copy(alpha = 0.5f),
-                    0.18f to Color.Transparent
-                )
-            )
-        )
+        ))
+        // Top fade
+        Box(modifier = Modifier.fillMaxSize().background(
+            Brush.verticalGradient(0f to NfBlack.copy(alpha = 0.5f), 0.18f to Color.Transparent)
+        ))
 
-        // ── Hero Content ───────────────────────────────────────────
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 64.dp, bottom = 60.dp)
                 .fillMaxWidth(0.55f)
         ) {
-            // Title
             Text(
                 text = movie?.title ?: "",
                 color = NfWhite,
@@ -325,12 +288,10 @@ fun NetflixHeroBanner(
 
             Spacer(Modifier.height(16.dp))
 
-            // Meta row: Year · Rating · Maturity
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // Match score pill (like Netflix's green %)
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(4.dp))
@@ -339,32 +300,23 @@ fun NetflixHeroBanner(
                 ) {
                     Text("97% Match", color = NfBlack, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                Text(
-                    text = movie?.releaseDate?.take(4) ?: "2024",
-                    color = NfLightGray,
-                    fontSize = 15.sp
-                )
-                // HD badge
+                // Rating instead of releaseDate (not available in Movie model)
+                val ratingText = movie?.rating?.let { if (it > 0f) "%.1f ★".format(it) else null } ?: "HD"
+                Text(text = ratingText, color = NfLightGray, fontSize = 15.sp)
                 Box(
                     modifier = Modifier
                         .border(1.dp, NfLightGray, RoundedCornerShape(3.dp))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text("HD", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
-                // Maturity
+                ) { Text("HD", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
                 Box(
                     modifier = Modifier
                         .border(1.dp, NfLightGray, RoundedCornerShape(3.dp))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text("16+", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
+                ) { Text("16+", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Overview
             Text(
                 text = movie?.overview ?: "",
                 color = NfLightGray,
@@ -376,21 +328,9 @@ fun NetflixHeroBanner(
 
             Spacer(Modifier.height(32.dp))
 
-            // ── CTA Buttons ────────────────────────────────────────
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                NetflixHeroButton(
-                    label = "▶  Play",
-                    isPrimary = true,
-                    onClick = onPlayClick
-                )
-                NetflixHeroButton(
-                    label = "ℹ  More Info",
-                    isPrimary = false,
-                    onClick = onMoreInfoClick
-                )
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                NetflixHeroButton(label = "▶  Play", isPrimary = true, onClick = onPlayClick)
+                NetflixHeroButton(label = "ℹ  More Info", isPrimary = false, onClick = onMoreInfoClick)
             }
         }
     }
@@ -399,29 +339,22 @@ fun NetflixHeroBanner(
 @Composable
 fun NetflixHeroButton(label: String, isPrimary: Boolean, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
-
     val bgColor by animateColorAsState(
         targetValue = when {
-            isPrimary && isFocused  -> NfWhite.copy(alpha = 0.85f)
-            isPrimary               -> NfWhite
-            isFocused               -> GlassWhite.copy(alpha = 0.5f)
-            else                    -> GlassWhite
-        },
-        animationSpec = tween(120)
+            isPrimary && isFocused -> NfWhite.copy(alpha = 0.85f)
+            isPrimary              -> NfWhite
+            isFocused              -> GlassWhite.copy(alpha = 0.5f)
+            else                   -> GlassWhite
+        }, animationSpec = tween(120)
     )
     val textColor by animateColorAsState(
-        targetValue = when {
-            isPrimary               -> NfBlack
-            isFocused               -> NfWhite
-            else                    -> NfWhite
-        },
+        targetValue = if (isPrimary) NfBlack else NfWhite,
         animationSpec = tween(120)
     )
-
     Surface(
         onClick = onClick,
         colors = ClickableSurfaceDefaults.colors(
-            containerColor       = bgColor,
+            containerColor = bgColor,
             focusedContainerColor = bgColor
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
@@ -440,18 +373,13 @@ fun NetflixHeroButton(label: String, isPrimary: Boolean, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = label,
-                color = textColor,
-                fontSize = 17.sp,
-                fontWeight = FontWeight.SemiBold
-            )
+            Text(text = label, color = textColor, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
 
 // ─────────────────────────────────────────────
-//  Netflix Content Row (Poster Cards)
+//  Netflix Content Row
 // ─────────────────────────────────────────────
 @Composable
 fun NetflixContentRow(
@@ -461,8 +389,6 @@ fun NetflixContentRow(
     onClick: (String) -> Unit
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp)) {
-
-        // Row title
         Text(
             text = title,
             color = NfWhite,
@@ -470,7 +396,6 @@ fun NetflixContentRow(
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp)
         )
-
         LazyRow(
             contentPadding = PaddingValues(horizontal = 64.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -489,21 +414,16 @@ fun NetflixContentRow(
 @Composable
 fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
-
     val cardScale by animateFloatAsState(
         targetValue = if (isFocused) 1.18f else 1.0f,
         animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium)
-    )
-    val elevation by animateDpAsState(
-        targetValue = if (isFocused) 24.dp else 0.dp,
-        animationSpec = tween(200)
     )
 
     Column(
         modifier = Modifier
             .width(130.dp)
             .scale(cardScale)
-            .padding(vertical = 20.dp) // room for scale pop
+            .padding(vertical = 20.dp)
     ) {
         Surface(
             onClick = onClick,
@@ -512,7 +432,7 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
                 focusedContainerColor = NfDarkGray
             ),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // manual scale above
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(
                 focusedBorder = Border(BorderStroke(2.5.dp, NfWhite), shape = RoundedCornerShape(6.dp))
             ),
@@ -531,7 +451,6 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
             )
         }
 
-        // Title under card (visible only when focused)
         AnimatedVisibility(
             visible = isFocused,
             enter = fadeIn(tween(150)) + slideInVertically { it / 2 },
@@ -555,20 +474,18 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
 // ─────────────────────────────────────────────
 @Composable
 fun NetflixLoadingSkeleton() {
-    val shimmerAlpha by rememberInfiniteTransition().animateFloat(
+    val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerAlpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
         targetValue = 0.7f,
-        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse)
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "shimmer_alpha"
     )
     val shimmerColor = NfDarkGray.copy(alpha = shimmerAlpha)
 
     Column(modifier = Modifier.fillMaxSize().background(NfBlack)) {
-        // Hero skeleton
         Box(modifier = Modifier.fillMaxWidth().fillMaxHeight(0.82f).background(shimmerColor))
-
         Spacer(Modifier.height(24.dp))
-
-        // Row skeletons
         repeat(2) {
             Box(modifier = Modifier.padding(start = 64.dp).width(180.dp).height(20.dp).clip(RoundedCornerShape(4.dp)).background(shimmerColor))
             Spacer(Modifier.height(12.dp))

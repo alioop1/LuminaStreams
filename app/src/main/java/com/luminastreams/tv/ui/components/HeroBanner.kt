@@ -7,6 +7,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.drawable.toBitmap
 import androidx.palette.graphics.Palette
+import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
@@ -35,15 +37,15 @@ import com.luminastreams.tv.ui.theme.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.compose.ui.focus.onFocusChanged
 
 /**
- * Netflix-accurate Hero Banner component.
- * • Full-bleed backdrop image
- * • 3-layer gradient scrim (bottom, left, top)
- * • Palette color extracted for ambient glow tint
- * • Meta row: match %, year, HD badge, age rating
- * • Quality + genre chips
- * • Play / More Info CTA buttons
+ * Netflix-accurate Hero Banner.
+ * - Full-bleed backdrop with 4-layer gradient scrim
+ * - Palette ambient glow tint (animated)
+ * - Meta row: match %, rating, HD badge, age rating
+ * - Quality + genre chips
+ * - Play / More Info CTA buttons
  */
 @Composable
 fun HeroBanner(
@@ -58,12 +60,9 @@ fun HeroBanner(
     val coroutineScope = rememberCoroutineScope()
     val ambientColor by animateColorAsState(targetValue = dominantColor, animationSpec = tween(1000), label = "ambient")
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(heroHeight)
-    ) {
-        // ── Animated backdrop ───────────────────────────────────────
+    Box(modifier = modifier.fillMaxWidth().height(heroHeight)) {
+
+        // Animated backdrop
         AnimatedContent(
             targetState = focusedMovie?.backdropUrl ?: focusedMovie?.posterUrl,
             transitionSpec = { fadeIn(tween(700)) togetherWith fadeOut(tween(500)) },
@@ -91,62 +90,44 @@ fun HeroBanner(
             )
         }
 
-        // ── Ambient glow tint from palette ─────────────────────────────
+        // Ambient glow from palette
+        Box(modifier = Modifier.fillMaxSize().background(
+            Brush.verticalGradient(0f to Color.Transparent, 1f to ambientColor.copy(alpha = 0.35f))
+        ))
+        // Bottom-to-black
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.verticalGradient(
-                0f to Color.Transparent,
-                1f to ambientColor.copy(alpha = 0.35f)
+                0f to Color.Transparent, 0.45f to Color.Transparent,
+                0.78f to OledBlack.copy(alpha = 0.7f), 1f to OledBlack
             )
         ))
-
-        // ── Bottom-to-black gradient ─────────────────────────────────
-        Box(modifier = Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                0f   to Color.Transparent,
-                0.45f to Color.Transparent,
-                0.78f to OledBlack.copy(alpha = 0.7f),
-                1f   to OledBlack
-            )
-        ))
-
-        // ── Left-side gradient for text legibility ──────────────────────
+        // Left-side
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.horizontalGradient(
-                0f    to OledBlack.copy(alpha = 0.88f),
-                0.5f  to OledBlack.copy(alpha = 0.25f),
-                1f    to Color.Transparent
+                0f to OledBlack.copy(alpha = 0.88f), 0.5f to OledBlack.copy(alpha = 0.25f), 1f to Color.Transparent
             )
         ))
-
-        // ── Top gradient (nav area readability) ────────────────────────
+        // Top
         Box(modifier = Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                0f    to OledBlack.copy(alpha = 0.55f),
-                0.2f  to Color.Transparent
-            )
+            Brush.verticalGradient(0f to OledBlack.copy(alpha = 0.55f), 0.2f to Color.Transparent)
         ))
 
-        // ── Hero content ────────────────────────────────────────────
+        // Hero content
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 64.dp, bottom = 56.dp)
                 .fillMaxWidth(0.52f)
         ) {
-            // Quality + genre chips
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+            // Genre chips
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 if (focusedMovie?.is4K == true) NetflixQualityBadge("4K HDR")
-                focusedMovie?.rating?.let { if (it > 0) NetflixQualityBadge("IMDb $it") }
-                NetflixGenreChip("Action")
-                NetflixGenreChip("Sci-Fi")
+                focusedMovie?.rating?.let { r -> if (r > 0f) NetflixQualityBadge("IMDb $r") }
+                NetflixGenreChip(focusedMovie?.genre ?: "Action")
             }
 
             Spacer(Modifier.height(14.dp))
 
-            // Title
             Text(
                 text = focusedMovie?.title ?: "",
                 color = TextPrimary,
@@ -160,46 +141,32 @@ fun HeroBanner(
             Spacer(Modifier.height(16.dp))
 
             // Meta row
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(
-                    modifier = Modifier.clip(RoundedCornerShape(4.dp))
-                        .background(MatchGreen).padding(horizontal = 8.dp, vertical = 3.dp)
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(MatchGreen).padding(horizontal = 8.dp, vertical = 3.dp)
                 ) { Text("97% Match", color = OledBlack, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
-
-                Text(
-                    text = focusedMovie?.releaseDate?.take(4) ?: "2024",
-                    color = TextSecondary, fontSize = 15.sp
-                )
+                val ratingStr = focusedMovie?.rating?.let { if (it > 0f) "%.1f".format(it) + " ★" else null } ?: ""
+                if (ratingStr.isNotEmpty()) Text(text = ratingStr, color = TextSecondary, fontSize = 15.sp)
                 NetflixMetaBadge("HD")
                 NetflixMetaBadge("16+")
             }
 
             Spacer(Modifier.height(16.dp))
 
-            // Overview
             Text(
                 text = focusedMovie?.overview ?: "",
                 color = TextSecondary,
                 fontSize = 16.sp,
                 lineHeight = 24.sp,
                 maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth()
+                overflow = TextOverflow.Ellipsis
             )
 
             Spacer(Modifier.height(28.dp))
 
-            // CTA Buttons
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                NetflixHeroCtaButton(label = "▶  Play", isPrimary = true) {
-                    focusedMovie?.id?.let(onPlayClick)
-                }
-                NetflixHeroCtaButton(label = "ℹ  More Info", isPrimary = false) {
-                    focusedMovie?.id?.let(onMoreInfoClick)
-                }
+                NetflixHeroCtaButton(label = "▶  Play", isPrimary = true) { focusedMovie?.id?.let(onPlayClick) }
+                NetflixHeroCtaButton(label = "ℹ  More Info", isPrimary = false) { focusedMovie?.id?.let(onMoreInfoClick) }
             }
         }
     }
@@ -210,7 +177,7 @@ fun HeroBanner(
 // ─────────────────────────────────────────────
 @Composable
 fun NetflixHeroCtaButton(label: String, isPrimary: Boolean, onClick: () -> Unit) {
-    var isFocused by remember { androidx.compose.runtime.mutableStateOf(false) }
+    var isFocused by remember { mutableStateOf(false) }
     val bg by animateColorAsState(
         targetValue = when {
             isPrimary && isFocused -> TextPrimary.copy(alpha = 0.85f)
@@ -229,17 +196,13 @@ fun NetflixHeroCtaButton(label: String, isPrimary: Boolean, onClick: () -> Unit)
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
         border = if (!isPrimary) ClickableSurfaceDefaults.border(
-            border = androidx.tv.material3.Border(
-                androidx.compose.foundation.BorderStroke(1.5.dp, GlassWhiteBorder)
-            ),
-            focusedBorder = androidx.tv.material3.Border(
-                androidx.compose.foundation.BorderStroke(1.5.dp, TextPrimary)
-            )
+            border = Border(BorderStroke(1.5.dp, GlassWhiteBorder)),
+            focusedBorder = Border(BorderStroke(1.5.dp, TextPrimary))
         ) else ClickableSurfaceDefaults.border(),
         modifier = Modifier
             .height(52.dp)
             .widthIn(min = if (isPrimary) 160.dp else 180.dp)
-            .androidx.compose.ui.focus.onFocusChanged { isFocused = it.isFocused }
+            .onFocusChanged { isFocused = it.isFocused }
     ) {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
@@ -254,24 +217,15 @@ fun NetflixHeroCtaButton(label: String, isPrimary: Boolean, onClick: () -> Unit)
 @Composable
 fun NetflixQualityBadge(text: String) {
     Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(TextPrimary)
-            .padding(horizontal = 7.dp, vertical = 3.dp)
-    ) {
-        Text(text = text, color = OledBlack, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-    }
+        modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(TextPrimary).padding(horizontal = 7.dp, vertical = 3.dp)
+    ) { Text(text = text, color = OledBlack, fontSize = 11.sp, fontWeight = FontWeight.Bold) }
 }
 
 @Composable
 fun NetflixMetaBadge(text: String) {
     Box(
-        modifier = Modifier
-            .border(1.dp, BadgeBorder, RoundedCornerShape(3.dp))
-            .padding(horizontal = 6.dp, vertical = 2.dp)
-    ) {
-        Text(text = text, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-    }
+        modifier = Modifier.border(1.dp, BadgeBorder, RoundedCornerShape(3.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+    ) { Text(text = text, color = TextSecondary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
 }
 
 @Composable
@@ -282,11 +236,9 @@ fun NetflixGenreChip(text: String) {
             .background(GlassBackground)
             .border(1.dp, GlassBorder, RoundedCornerShape(20.dp))
             .padding(horizontal = 12.dp, vertical = 5.dp)
-    ) {
-        Text(text = text, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-    }
+    ) { Text(text = text, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Medium) }
 }
 
-// Keep legacy names for backward compat
+// Backward-compat aliases
 @Composable fun QualityBadge(text: String) = NetflixQualityBadge(text)
 @Composable fun GenreChip(text: String) = NetflixGenreChip(text)
