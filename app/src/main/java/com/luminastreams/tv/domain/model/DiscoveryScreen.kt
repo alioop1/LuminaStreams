@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -52,11 +53,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.presentation.home.HomeState
 import com.luminastreams.tv.presentation.home.HomeViewModel
-import androidx.compose.foundation.layout.width
-// ============================================================================
-// הייבוא החדש לרכיב הפוסטרים ב-4K מה-HomeScreen
-// ============================================================================
-import com.luminastreams.tv.presentation.home.ContentRow4K
+import com.luminastreams.tv.presentation.home.NetflixContentRow
 
 @Composable
 fun DiscoveryScreen(
@@ -69,9 +66,7 @@ fun DiscoveryScreen(
 
     LaunchedEffect(mediaType) {
         val targetTab = if (mediaType == "tv") "סדרות" else "סרטים"
-        if (state.selectedTab != targetTab) {
-            viewModel.selectTab(targetTab)
-        }
+        if (state.selectedTab != targetTab) viewModel.selectTab(targetTab)
     }
 
     val movieGenres = listOf(
@@ -88,9 +83,7 @@ fun DiscoveryScreen(
 
     val activeGenres = if (mediaType == "tv") tvGenres else movieGenres
 
-    BackHandler(enabled = state.isFilterComplete) {
-        viewModel.clearGenre()
-    }
+    BackHandler(enabled = state.isFilterComplete) { viewModel.clearGenre() }
 
     val currentBg = state.focusedItem
     val imageRequest = remember(currentBg?.backdropUrl, currentBg?.posterUrl) {
@@ -100,30 +93,23 @@ fun DiscoveryScreen(
             .build()
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
 
         if (state.isFilterComplete) {
             AsyncImage(
                 model = imageRequest,
-                contentDescription = "Cinematic Backdrop",
+                contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize(),
                 alpha = 0.45f
             )
-
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f), Color.Black),
-                            startY = 300f
-                        )
+                modifier = Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f), Color.Black),
+                        startY = 300f
                     )
+                )
             )
         }
 
@@ -132,24 +118,13 @@ fun DiscoveryScreen(
             animationSpec = tween(500),
             label = "discovery_crossfade"
         ) { showResults ->
-
             if (!showResults) {
-                GenreSelectionGrid(
-                    mediaType = mediaType,
-                    activeGenres = activeGenres,
-                    viewModel = viewModel
-                )
+                GenreSelectionGrid(mediaType = mediaType, activeGenres = activeGenres, viewModel = viewModel)
             } else {
-                if (state.isLoading) {
-                    DiscoveryLoadingView()
-                } else if (state.discoveryResults.isEmpty()) {
-                    DiscoveryEmptyStateView()
-                } else {
-                    DiscoveryResultsView(
-                        state = state,
-                        viewModel = viewModel,
-                        onMovieClick = onMovieClick
-                    )
+                when {
+                    state.isLoading -> DiscoveryLoadingView()
+                    state.discoveryResults.isEmpty() -> DiscoveryEmptyStateView()
+                    else -> DiscoveryResultsView(state = state, viewModel = viewModel, onMovieClick = onMovieClick)
                 }
             }
         }
@@ -163,9 +138,7 @@ private fun GenreSelectionGrid(
     viewModel: HomeViewModel
 ) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 96.dp, start = 96.dp, end = 96.dp) // התאמה ל-4K
+        modifier = Modifier.fillMaxSize().padding(top = 96.dp, start = 96.dp, end = 96.dp)
     ) {
         Text(
             text = if (mediaType == "tv") "בחר ז'אנר סדרות" else "בחר ז'אנר סרטים",
@@ -174,35 +147,24 @@ private fun GenreSelectionGrid(
             fontWeight = FontWeight.Black,
             letterSpacing = 1.sp
         )
-
         Spacer(modifier = Modifier.height(48.dp))
-
         LazyVerticalGrid(
             columns = GridCells.Fixed(4),
             horizontalArrangement = Arrangement.spacedBy(24.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp),
             contentPadding = PaddingValues(bottom = 64.dp),
-            modifier = Modifier
-                .fillMaxSize()
-                .focusRestorer()
+            modifier = Modifier.fillMaxSize().focusRestorer()
         ) {
             items(activeGenres) { (id, name) ->
-                GenreCard(
-                    name = name,
-                    onClick = { viewModel.setGenreFilter(id, name) }
-                )
+                GenreCard(name = name, onClick = { viewModel.setGenreFilter(id, name) })
             }
         }
     }
 }
 
 @Composable
-private fun GenreCard(
-    name: String,
-    onClick: () -> Unit
-) {
+private fun GenreCard(name: String, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
-
     Surface(
         onClick = onClick,
         colors = ClickableSurfaceDefaults.colors(
@@ -223,25 +185,12 @@ private fun GenreCard(
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(
-                        Brush.linearGradient(
-                            listOf(Color(0x60E50914), Color.Transparent)
-                        )
-                    )
-            )
-
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = name,
-                    fontWeight = FontWeight.Black,
-                    fontSize = 26.sp,
-                    letterSpacing = 1.sp
+                modifier = Modifier.fillMaxSize().background(
+                    Brush.linearGradient(listOf(Color(0x60E50914), Color.Transparent))
                 )
+            )
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(text = name, fontWeight = FontWeight.Black, fontSize = 26.sp, letterSpacing = 1.sp)
             }
         }
     }
@@ -253,16 +202,11 @@ private fun DiscoveryResultsView(
     viewModel: HomeViewModel,
     onMovieClick: (String) -> Unit
 ) {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(top = 100.dp)
-    ) {
-        // מציג את רכיב הפוסטרים ב-4K המעודכן שלנו עם התאמה מושלמת
-        ContentRow4K(
+    Column(modifier = Modifier.fillMaxSize().padding(top = 100.dp)) {
+        NetflixContentRow(
             title = "תוצאות עבור: ${state.selectedGenreName}",
             movies = state.discoveryResults,
-            viewModel = viewModel,
+            onFocus = { movie -> viewModel.updateFocusedItem(movie, state.selectedGenreName, true) },
             onClick = onMovieClick
         )
     }
@@ -270,10 +214,7 @@ private fun DiscoveryResultsView(
 
 @Composable
 private fun DiscoveryLoadingView() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
                 text = "טוען כותרים...",
@@ -282,25 +223,16 @@ private fun DiscoveryLoadingView() {
                 fontWeight = FontWeight.Medium,
                 letterSpacing = 1.sp
             )
-
             Spacer(modifier = Modifier.height(24.dp))
-
             val infiniteTransition = rememberInfiniteTransition(label = "loading_anim")
             val alpha by infiniteTransition.animateFloat(
                 initialValue = 0.2f,
                 targetValue = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation = tween(800, easing = LinearEasing),
-                    repeatMode = RepeatMode.Reverse
-                ),
+                animationSpec = infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse),
                 label = "loading_alpha"
             )
-
             Box(
-                modifier = Modifier
-                    .width(140.dp)
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(50))
+                modifier = Modifier.width(140.dp).height(6.dp).clip(RoundedCornerShape(50))
                     .background(Color(0xFFE50914).copy(alpha = alpha))
             )
         }
@@ -309,23 +241,11 @@ private fun DiscoveryLoadingView() {
 
 @Composable
 private fun DiscoveryEmptyStateView() {
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-                text = "לא נמצאו תוצאות",
-                color = Color.White,
-                fontSize = 32.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Text(text = "לא נמצאו תוצאות", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Bold)
             Spacer(modifier = Modifier.height(16.dp))
-            Text(
-                text = "נסה לבחור ז'אנר אחר מהתפריט.",
-                color = Color.Gray,
-                fontSize = 20.sp
-            )
+            Text(text = "נסה לבחור ז'אנר אחר מהתפריט.", color = Color.Gray, fontSize = 20.sp)
         }
     }
 }
