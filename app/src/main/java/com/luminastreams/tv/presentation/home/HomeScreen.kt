@@ -14,21 +14,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -37,24 +35,23 @@ import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Scale
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.ui.components.TopNavBar
 
-// ─────────────────────────────────────────────
-//  Netflix Colour Tokens
-// ─────────────────────────────────────────────
+// ── Colour tokens ───────────────────────────────────────────
 private val NetflixRed       = Color(0xFFE50914)
 private val NetflixDarkRed   = Color(0xFFB20710)
-private val NfBlack          = Color(0xFF000000)
+private val NfBlack          = Color(0xFF000000)   // true OLED black
 private val NfDarkGray       = Color(0xFF141414)
 private val NfLightGray      = Color(0xFFB3B3B3)
 private val NfWhite          = Color(0xFFFFFFFF)
 private val GlassWhite       = Color(0x33FFFFFF)
 private val GlassWhiteBorder = Color(0x55FFFFFF)
 
-// ─────────────────────────────────────────────
-//  Root Home Screen
-// ─────────────────────────────────────────────
+// ── Root screen ───────────────────────────────────────────
 @Composable
 fun HomeScreen(
     state: HomeState,
@@ -65,6 +62,10 @@ fun HomeScreen(
     val config = LocalConfiguration.current
     val heroHeight = (config.screenHeightDp * 0.82f).dp
 
+    // Focus requesters for D-pad nav between nav bar and content
+    val navBarFocusRequester    = remember { FocusRequester() }
+    val firstRowFocusRequester  = remember { FocusRequester() }
+
     Box(modifier = Modifier.fillMaxSize().background(NfBlack)) {
         when {
             state.isLoading -> NetflixLoadingSkeleton()
@@ -73,10 +74,12 @@ fun HomeScreen(
                 val displayItem = state.focusedItem ?: state.movieTrending.firstOrNull()
 
                 LazyColumn(
-                    modifier = Modifier.fillMaxSize().focusRestorer(),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusRestorer { firstRowFocusRequester },
                     contentPadding = PaddingValues(bottom = 80.dp)
                 ) {
-                    item {
+                    item(key = "hero") {
                         NetflixHeroBanner(
                             movie = displayItem,
                             heroHeight = heroHeight,
@@ -106,14 +109,21 @@ fun HomeScreen(
                             if (state.tvDocumentary.isNotEmpty())   add("📽 Documentary"         to state.tvDocumentary)
                             if (state.tvTopRated.isNotEmpty())      add("⭐ Top Rated"           to state.tvTopRated)
                         }
-                        if (state.discoveryResults.isNotEmpty()) add("🎯 ${state.selectedGenreName}" to state.discoveryResults)
+                        if (state.discoveryResults.isNotEmpty())
+                            add("🎯 ${state.selectedGenreName}" to state.discoveryResults)
                     }
 
-                    allRows.forEach { (rowTitle, movies) ->
+                    allRows.forEachIndexed { index, (rowTitle, movies) ->
                         item(key = rowTitle) {
                             NetflixContentRow(
                                 title = rowTitle,
                                 movies = movies,
+                                // First content row gets the focus requester so D-pad Down
+                                // from TopNav lands here correctly
+                                rowModifier = if (index == 0)
+                                    Modifier.focusRequester(firstRowFocusRequester)
+                                else
+                                    Modifier,
                                 onFocus = { movie -> viewModel.updateFocusedItem(movie, rowTitle, true) },
                                 onClick = onMovieClick
                             )
@@ -121,6 +131,7 @@ fun HomeScreen(
                     }
                 }
 
+                // Floating TopNav — always on top
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -129,6 +140,8 @@ fun HomeScreen(
                 ) {
                     NetflixTopNav(
                         state = state,
+                        navBarFocusRequester = navBarFocusRequester,
+                        firstRowFocusRequester = firstRowFocusRequester,
                         onTabSelect = { viewModel.selectTab(it) },
                         onSearchClick = { navController.navigate("search") },
                         onProfileClick = {}
@@ -139,12 +152,12 @@ fun HomeScreen(
     }
 }
 
-// ─────────────────────────────────────────────
-//  Netflix Top Nav
-// ─────────────────────────────────────────────
+// ── Top Nav ────────────────────────────────────────────
 @Composable
 fun NetflixTopNav(
     state: HomeState,
+    navBarFocusRequester: FocusRequester,
+    firstRowFocusRequester: FocusRequester,
     onTabSelect: (String) -> Unit,
     onSearchClick: () -> Unit,
     onProfileClick: () -> Unit
@@ -153,6 +166,7 @@ fun NetflixTopNav(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .focusRestorer()
             .background(
                 Brush.verticalGradient(
                     0f to NfBlack.copy(alpha = 0.9f),
@@ -168,6 +182,7 @@ fun NetflixTopNav(
             onSearchClick = onSearchClick,
             onProfileClick = onProfileClick
         )
+        // Tab row — D-pad Down moves to firstRowFocusRequester
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -179,6 +194,7 @@ fun NetflixTopNav(
                 NetflixNavTab(
                     label = tab,
                     isSelected = state.selectedTab == tab,
+                    onDownPress = { firstRowFocusRequester.requestFocus() },
                     onClick = { onTabSelect(tab) }
                 )
             }
@@ -187,13 +203,17 @@ fun NetflixTopNav(
 }
 
 @Composable
-fun NetflixNavTab(label: String, isSelected: Boolean, onClick: () -> Unit) {
+fun NetflixNavTab(
+    label: String,
+    isSelected: Boolean,
+    onDownPress: () -> Unit,
+    onClick: () -> Unit
+) {
     var isFocused by remember { mutableStateOf(false) }
     val labelColor by animateColorAsState(
         targetValue = when {
-            isSelected -> NfWhite
-            isFocused  -> NfWhite
-            else       -> NfLightGray
+            isSelected || isFocused -> NfWhite
+            else -> NfLightGray
         },
         animationSpec = tween(150)
     )
@@ -205,7 +225,18 @@ fun NetflixNavTab(label: String, isSelected: Boolean, onClick: () -> Unit) {
                 focusedContainerColor = Color.Transparent
             ),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-            modifier = Modifier.onFocusChanged { isFocused = it.isFocused }
+            modifier = Modifier
+                .onFocusChanged { isFocused = it.isFocused }
+                // D-pad Down from tab → jump to first content row
+                .onPreviewKeyEvent { keyEvent ->
+                    if (keyEvent.nativeKeyEvent.keyCode ==
+                        android.view.KeyEvent.KEYCODE_DPAD_DOWN &&
+                        keyEvent.type == androidx.compose.ui.input.key.KeyEventType.KeyDown
+                    ) {
+                        onDownPress()
+                        true
+                    } else false
+                }
         ) {
             Text(
                 text = label,
@@ -227,9 +258,7 @@ fun NetflixNavTab(label: String, isSelected: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────
-//  Netflix Hero Banner
-// ─────────────────────────────────────────────
+// ── Hero Banner ───────────────────────────────────────────
 @Composable
 fun NetflixHeroBanner(
     movie: Movie?,
@@ -237,6 +266,7 @@ fun NetflixHeroBanner(
     onPlayClick: () -> Unit,
     onMoreInfoClick: () -> Unit
 ) {
+    val context = LocalContext.current
     Box(modifier = Modifier.fillMaxWidth().height(heroHeight)) {
 
         AnimatedContent(
@@ -245,14 +275,22 @@ fun NetflixHeroBanner(
             label = "hero_bg"
         ) { imageUrl ->
             AsyncImage(
-                model = imageUrl,
+                model = ImageRequest.Builder(context)
+                    .data(imageUrl)
+                    // Cap resolution to save VRAM on 2GB devices
+                    .size(1280, 720)
+                    .scale(Scale.FILL)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .crossfade(600)
+                    .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
         }
 
-        // Bottom fade
+        // Bottom fade — ends at pure OLED black
         Box(modifier = Modifier.fillMaxSize().background(
             Brush.verticalGradient(
                 0f to Color.Transparent, 0.4f to Color.Transparent,
@@ -285,9 +323,7 @@ fun NetflixHeroBanner(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
-
             Spacer(Modifier.height(16.dp))
-
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -297,26 +333,17 @@ fun NetflixHeroBanner(
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color(0xFF46D369))
                         .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text("97% Match", color = NfBlack, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                ) { Text("97% Match", color = NfBlack, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                val ratingText = movie?.rating?.let { if (it > 0f) "%.1f ★".format(it) else null } ?: ""
+                if (ratingText.isNotEmpty()) Text(ratingText, color = NfLightGray, fontSize = 15.sp)
+                Box(Modifier.border(1.dp, NfLightGray, RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                    Text("HD", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 }
-                // Rating instead of releaseDate (not available in Movie model)
-                val ratingText = movie?.rating?.let { if (it > 0f) "%.1f ★".format(it) else null } ?: "HD"
-                Text(text = ratingText, color = NfLightGray, fontSize = 15.sp)
-                Box(
-                    modifier = Modifier
-                        .border(1.dp, NfLightGray, RoundedCornerShape(3.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) { Text("HD", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
-                Box(
-                    modifier = Modifier
-                        .border(1.dp, NfLightGray, RoundedCornerShape(3.dp))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) { Text("16+", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold) }
+                Box(Modifier.border(1.dp, NfLightGray, RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                    Text("16+", color = NfLightGray, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                }
             }
-
             Spacer(Modifier.height(16.dp))
-
             Text(
                 text = movie?.overview ?: "",
                 color = NfLightGray,
@@ -325,11 +352,9 @@ fun NetflixHeroBanner(
                 maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
-
             Spacer(Modifier.height(32.dp))
-
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                NetflixHeroButton(label = "▶  Play", isPrimary = true, onClick = onPlayClick)
+                NetflixHeroButton(label = "▶  Play",      isPrimary = true,  onClick = onPlayClick)
                 NetflixHeroButton(label = "ℹ  More Info", isPrimary = false, onClick = onMoreInfoClick)
             }
         }
@@ -353,10 +378,7 @@ fun NetflixHeroButton(label: String, isPrimary: Boolean, onClick: () -> Unit) {
     )
     Surface(
         onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = bgColor,
-            focusedContainerColor = bgColor
-        ),
+        colors = ClickableSurfaceDefaults.colors(containerColor = bgColor, focusedContainerColor = bgColor),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
         border = if (!isPrimary) ClickableSurfaceDefaults.border(
@@ -378,17 +400,17 @@ fun NetflixHeroButton(label: String, isPrimary: Boolean, onClick: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────
-//  Netflix Content Row
-// ─────────────────────────────────────────────
+// ── Content Row ───────────────────────────────────────────
 @Composable
 fun NetflixContentRow(
     title: String,
     movies: List<Movie>,
+    rowModifier: Modifier = Modifier,
     onFocus: (Movie) -> Unit,
     onClick: (String) -> Unit
 ) {
-    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+    val listState = rememberLazyListState()
+    Column(modifier = Modifier.padding(vertical = 4.dp).then(rowModifier)) {
         Text(
             text = title,
             color = NfWhite,
@@ -397,8 +419,12 @@ fun NetflixContentRow(
             modifier = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp)
         )
         LazyRow(
+            state = listState,
             contentPadding = PaddingValues(horizontal = 64.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // focusRestorer keeps D-pad Left/Right inside the row and
+            // restores last focused card when returning to this row
+            modifier = Modifier.focusRestorer()
         ) {
             items(movies, key = { it.id }) { movie ->
                 NetflixPosterCard(
@@ -414,15 +440,21 @@ fun NetflixContentRow(
 @Composable
 fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+
     val cardScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.18f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = Spring.StiffnessMedium)
+        targetValue = if (isFocused) 1.15f else 1.0f,
+        // Spring that doesn't overshoot too far — safe for TV edge cards
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "card_scale"
     )
 
     Column(
         modifier = Modifier
             .width(130.dp)
+            // External scale so the TV focus engine isn't confused
             .scale(cardScale)
+            // Vertical padding gives room for scale pop without clipping
             .padding(vertical = 20.dp)
     ) {
         Surface(
@@ -432,6 +464,7 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
                 focusedContainerColor = NfDarkGray
             ),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+            // focusedScale = 1.0f because we handle scale ourselves above
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(
                 focusedBorder = Border(BorderStroke(2.5.dp, NfWhite), shape = RoundedCornerShape(6.dp))
@@ -443,8 +476,16 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
                     if (it.isFocused) onFocus()
                 }
         ) {
+            // Memory-safe image: capped at 320x480 (poster is never shown bigger)
             AsyncImage(
-                model = movie.posterUrl,
+                model = ImageRequest.Builder(context)
+                    .data(movie.posterUrl)
+                    .size(320, 480)
+                    .scale(Scale.FILL)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .crossfade(300)
+                    .build(),
                 contentDescription = movie.title,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
@@ -469,15 +510,13 @@ fun NetflixPosterCard(movie: Movie, onFocus: () -> Unit, onClick: () -> Unit) {
     }
 }
 
-// ─────────────────────────────────────────────
-//  Loading Skeleton
-// ─────────────────────────────────────────────
+// ── Loading Skeleton ───────────────────────────────────────
 @Composable
 fun NetflixLoadingSkeleton() {
     val infiniteTransition = rememberInfiniteTransition(label = "shimmer")
     val shimmerAlpha by infiniteTransition.animateFloat(
         initialValue = 0.3f,
-        targetValue = 0.7f,
+        targetValue  = 0.7f,
         animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
         label = "shimmer_alpha"
     )
@@ -502,9 +541,7 @@ fun NetflixLoadingSkeleton() {
     }
 }
 
-// ─────────────────────────────────────────────
-//  Error Screen
-// ─────────────────────────────────────────────
+// ── Error Screen ──────────────────────────────────────────
 @Composable
 fun NetflixErrorScreen(message: String, onRetry: () -> Unit) {
     Box(modifier = Modifier.fillMaxSize().background(NfBlack), contentAlignment = Alignment.Center) {
