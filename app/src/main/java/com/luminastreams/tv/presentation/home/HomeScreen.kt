@@ -8,6 +8,7 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -87,7 +88,7 @@ private val IconTv: ImageVector
             curveTo(1f, 18.1f, 1.9f, 19f, 3f, 19f); lineTo(10f, 19f); lineTo(10f, 21f)
             lineTo(14f, 21f); lineTo(14f, 19f); lineTo(21f, 19f)
             curveTo(22.1f, 19f, 23f, 18.1f, 23f, 17f); lineTo(23f, 5f)
-            curveTo(23f, 3.9f, 22.1f, 3f, 21f, 3f); close()
+            curveTo(22.1f, 3f, 21f, 3f); close()
             moveTo(21f, 17f); lineTo(3f, 17f); lineTo(3f, 5f); lineTo(21f, 5f); lineTo(21f, 17f); close()
         }
     }.build()
@@ -128,7 +129,6 @@ fun HomeScreen(
     val heroMovies = if (state.selectedTab == "סרטים") state.movieTrending else state.tvTrending
     var heroIndex  by remember(state.selectedTab) { mutableStateOf(0) }
     LaunchedEffect(heroMovies, state.focusedItem) {
-        // Only auto-cycle when no manual focus override
         if (state.focusedItem == null && heroMovies.size > 1) {
             while (true) {
                 delay(8000)
@@ -145,7 +145,6 @@ fun HomeScreen(
         }
     }
 
-    // Full-screen Box — sidebar lives HERE, outside the when{} so it always renders
     Box(modifier = Modifier.fillMaxSize().background(NfBlack)) {
 
         // ── Content layer ────────────────────────────────────────
@@ -215,7 +214,6 @@ fun HomeScreen(
                     }
                 }
 
-                // TopNav overlay
                 Box(modifier = Modifier.fillMaxWidth().zIndex(10f).align(Alignment.TopCenter)) {
                     NfTopNav(
                         state          = state,
@@ -232,7 +230,7 @@ fun HomeScreen(
             }
         }
 
-        // ── Sidebar — ALWAYS rendered outside when{}, zIndex 20 ──
+        // ── Sidebar — ALWAYS outside when{}, zIndex 20 ──
         NfSidebar(
             expanded       = sidebarExpanded,
             activeId       = activeNavId,
@@ -264,20 +262,14 @@ fun NfSidebar(
     onClose: () -> Unit,
     onNavSelect: (String) -> Unit
 ) {
-    // Dim overlay
     AnimatedVisibility(
-        visible = expanded,
-        enter   = fadeIn(tween(180)),
-        exit    = fadeOut(tween(160)),
+        visible  = expanded,
+        enter    = fadeIn(tween(180)),
+        exit     = fadeOut(tween(160)),
         modifier = Modifier.zIndex(19f)
     ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.65f))
-        )
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.65f)))
     }
-    // Panel
     AnimatedVisibility(
         visible  = expanded,
         enter    = slideInHorizontally(tween(230, easing = FastOutSlowInEasing)) { -it },
@@ -288,14 +280,7 @@ fun NfSidebar(
             modifier = Modifier
                 .fillMaxHeight()
                 .width(300.dp)
-                .background(
-                    Brush.horizontalGradient(
-                        listOf(
-                            NfSidebarBg,
-                            NfSidebarBg.copy(alpha = 0.98f)
-                        )
-                    )
-                )
+                .background(Brush.horizontalGradient(listOf(NfSidebarBg, NfSidebarBg.copy(alpha = 0.98f))))
         ) {
             Column(
                 modifier = Modifier
@@ -303,18 +288,11 @@ fun NfSidebar(
                     .padding(vertical = 52.dp)
                     .focusProperties {}
             ) {
-                // Logo
                 Row(
                     modifier = Modifier.padding(start = 32.dp, bottom = 36.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        "LUMINA",
-                        color      = NfRed,
-                        fontSize   = 24.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 6.sp
-                    )
+                    Text("LUMINA", color = NfRed, fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
                 }
                 navItems.forEachIndexed { idx, item ->
                     NfSidebarItem(
@@ -346,13 +324,12 @@ private fun NfSidebarItem(
     onClick: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    val bgColor by animateColorAsState(
-        targetValue   = when { isActive -> NfRed.copy(alpha = 0.2f); isFocused -> GlassWhite; else -> Color.Transparent },
-        animationSpec = tween(150)
+    val bgColor   by animateColorAsState(
+        when { isActive -> NfRed.copy(alpha = 0.2f); isFocused -> GlassWhite; else -> Color.Transparent },
+        tween(150)
     )
     val textColor by animateColorAsState(
-        targetValue   = if (isFocused || isActive) NfWhite else NfLightGray,
-        animationSpec = tween(150)
+        if (isFocused || isActive) NfWhite else NfLightGray, tween(150)
     )
     val leftBar by animateDpAsState(if (isActive) 3.dp else 0.dp, tween(150))
 
@@ -373,29 +350,13 @@ private fun NfSidebarItem(
         Spacer(Modifier.width(if (isActive) 12.dp else 16.dp))
         Surface(
             onClick  = onClick,
-            colors   = ClickableSurfaceDefaults.colors(
-                containerColor        = Color.Transparent,
-                focusedContainerColor = Color.Transparent
-            ),
+            colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp)
         ) {
-            Row(
-                verticalAlignment    = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Icon(
-                    item.icon,
-                    contentDescription = null,
-                    tint     = if (isActive) NfRed else textColor,
-                    modifier = Modifier.size(24.dp)
-                )
-                Text(
-                    item.label,
-                    color      = textColor,
-                    fontSize   = 18.sp,
-                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal
-                )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Icon(item.icon, contentDescription = null, tint = if (isActive) NfRed else textColor, modifier = Modifier.size(24.dp))
+                Text(item.label, color = textColor, fontSize = 18.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal)
             }
         }
     }
@@ -419,13 +380,11 @@ fun NfTopNav(
         modifier = Modifier
             .fillMaxWidth()
             .focusProperties {}
-            .background(
-                Brush.verticalGradient(
-                    0f   to NfBlack.copy(alpha = 0.95f),
-                    0.6f to NfBlack.copy(alpha = 0.55f),
-                    1f   to Color.Transparent
-                )
-            )
+            .background(Brush.verticalGradient(
+                0f   to NfBlack.copy(alpha = 0.95f),
+                0.6f to NfBlack.copy(alpha = 0.55f),
+                1f   to Color.Transparent
+            ))
     ) {
         TopNavBar(
             rdStatus           = true,
@@ -434,15 +393,8 @@ fun NfTopNav(
             onVoiceSearchClick = {},
             onSearchClick      = onSearchClick,
             onProfileClick     = onProfileClick,
-            onDownPress        = {
-                if (firstRowReady) {
-                    try { firstRowFR.requestFocus() } catch (_: Exception) {}
-                }
-            },
-            onLeftEdge = {
-                onSidebarOpen()
-                try { sidebarFirstFR.requestFocus() } catch (_: Exception) {}
-            }
+            onDownPress        = { if (firstRowReady) try { firstRowFR.requestFocus() } catch (_: Exception) {} },
+            onLeftEdge         = { onSidebarOpen(); try { sidebarFirstFR.requestFocus() } catch (_: Exception) {} }
         )
         Row(
             modifier              = Modifier.fillMaxWidth().padding(start = 64.dp, bottom = 12.dp),
@@ -453,12 +405,8 @@ fun NfTopNav(
                 NfNavTab(
                     label       = tab,
                     isSelected  = state.selectedTab == tab,
-                    onDownPress = {
-                        if (firstRowReady) {
-                            try { firstRowFR.requestFocus() } catch (_: Exception) {}
-                        }
-                    },
-                    onClick = { onTabSelect(tab) }
+                    onDownPress = { if (firstRowReady) try { firstRowFR.requestFocus() } catch (_: Exception) {} },
+                    onClick     = { onTabSelect(tab) }
                 )
             }
         }
@@ -468,16 +416,11 @@ fun NfTopNav(
 @Composable
 fun NfNavTab(label: String, isSelected: Boolean, onDownPress: () -> Unit, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
-    val labelColor by animateColorAsState(
-        if (isSelected || isFocused) NfWhite else NfLightGray, tween(150)
-    )
+    val labelColor by animateColorAsState(if (isSelected || isFocused) NfWhite else NfLightGray, tween(150))
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Surface(
             onClick  = onClick,
-            colors   = ClickableSurfaceDefaults.colors(
-                containerColor        = Color.Transparent,
-                focusedContainerColor = Color.Transparent
-            ),
+            colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
             modifier = Modifier
                 .onFocusChanged { isFocused = it.isFocused }
@@ -486,13 +429,9 @@ fun NfNavTab(label: String, isSelected: Boolean, onDownPress: () -> Unit, onClic
                     else false
                 }
         ) {
-            Text(
-                label,
-                color      = labelColor,
-                fontSize   = 16.sp,
+            Text(label, color = labelColor, fontSize = 16.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                modifier   = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-            )
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp))
         }
         if (isSelected) {
             Box(Modifier.width(24.dp).height(3.dp).clip(RoundedCornerShape(2.dp)).background(NfWhite))
@@ -511,9 +450,7 @@ fun NfHeroBanner(
     onDownPress: () -> Unit
 ) {
     val context = LocalContext.current
-
     Box(modifier = Modifier.fillMaxWidth().height(heroHeight)) {
-        // Background image — cross-fade on movie change
         AnimatedContent(
             targetState    = movie?.backdropUrl ?: movie?.posterUrl,
             transitionSpec = { fadeIn(tween(900)) togetherWith fadeOut(tween(600)) },
@@ -521,124 +458,53 @@ fun NfHeroBanner(
         ) { url ->
             AsyncImage(
                 model = ImageRequest.Builder(context)
-                    .data(url)
-                    .size(1920, 1080)
-                    .scale(Scale.FILL)
-                    .memoryCachePolicy(CachePolicy.ENABLED)
-                    .diskCachePolicy(CachePolicy.ENABLED)
-                    .crossfade(900)
-                    .build(),
-                contentDescription = null,
-                contentScale       = ContentScale.Crop,
-                modifier           = Modifier.fillMaxSize()
+                    .data(url).size(1920, 1080).scale(Scale.FILL)
+                    .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
+                    .crossfade(900).build(),
+                contentDescription = null, contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
         }
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.0f to Color.Transparent, 0.35f to Color.Transparent, 0.72f to NfBlack.copy(0.55f), 1.0f to NfBlack)))
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(0.0f to NfBlack.copy(0.9f), 0.5f to NfBlack.copy(0.15f), 1.0f to Color.Transparent)))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0.0f to NfBlack.copy(0.55f), 0.22f to Color.Transparent)))
 
-        // Netflix gradient layers
-        Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                0.0f to Color.Transparent,
-                0.35f to Color.Transparent,
-                0.72f to NfBlack.copy(0.55f),
-                1.0f  to NfBlack
-            )
-        ))
-        Box(Modifier.fillMaxSize().background(
-            Brush.horizontalGradient(
-                0.0f  to NfBlack.copy(0.9f),
-                0.5f  to NfBlack.copy(0.15f),
-                1.0f  to Color.Transparent
-            )
-        ))
-        Box(Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                0.0f to NfBlack.copy(0.55f),
-                0.22f to Color.Transparent
-            )
-        ))
-
-        // Content
         Column(
             modifier = Modifier
                 .align(Alignment.BottomStart)
                 .padding(start = 72.dp, bottom = 72.dp)
                 .fillMaxWidth(0.52f)
         ) {
-            // Title with animated fade-in
             AnimatedContent(
                 targetState    = movie?.title ?: "",
                 transitionSpec = { fadeIn(tween(600)) togetherWith fadeOut(tween(400)) },
                 label          = "hero_title"
             ) { title ->
-                Text(
-                    title,
-                    color      = NfWhite,
-                    fontSize   = 56.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    lineHeight = 62.sp,
-                    maxLines   = 3,
-                    overflow   = TextOverflow.Ellipsis
-                )
+                Text(title, color = NfWhite, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold,
+                    lineHeight = 62.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(16.dp))
-
-            Row(
-                verticalAlignment    = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(
-                    Modifier
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(MatchGreen)
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
-                ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(Modifier.clip(RoundedCornerShape(4.dp)).background(MatchGreen).padding(horizontal = 8.dp, vertical = 4.dp)) {
                     Text("97% Match", color = NfBlack, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 val rating = movie?.rating?.let { if (it > 0f) "%.1f ★".format(it) else null } ?: ""
-                if (rating.isNotEmpty()) {
-                    Text(rating, color = NfLightGray, fontSize = 15.sp)
-                }
-                movie?.year?.let { y ->
-                    if (y > 0) Text("$y", color = NfMidGray, fontSize = 14.sp)
-                }
+                if (rating.isNotEmpty()) Text(rating, color = NfLightGray, fontSize = 15.sp)
             }
             Spacer(Modifier.height(14.dp))
-
             AnimatedContent(
                 targetState    = movie?.overview ?: "",
                 transitionSpec = { fadeIn(tween(500)) togetherWith fadeOut(tween(300)) },
                 label          = "hero_overview"
             ) { overview ->
-                Text(
-                    overview,
-                    color      = NfLightGray,
-                    fontSize   = 15.sp,
-                    lineHeight = 22.sp,
-                    maxLines   = 3,
-                    overflow   = TextOverflow.Ellipsis
-                )
+                Text(overview, color = NfLightGray, fontSize = 15.sp, lineHeight = 22.sp,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.height(32.dp))
-
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                NfHeroButton(
-                    label        = "▶  Play",
-                    isPrimary    = true,
-                    focusRequester = playButtonFR,
-                    onDownPress  = onDownPress,
-                    onClick      = onPlayClick
-                )
-                NfHeroButton(
-                    label        = "ℹ  More Info",
-                    isPrimary    = false,
-                    focusRequester = null,
-                    onDownPress  = onDownPress,
-                    onClick      = onMoreInfoClick
-                )
+                NfHeroButton("▶  Play",      isPrimary = true,  focusRequester = playButtonFR, onDownPress = onDownPress, onClick = onPlayClick)
+                NfHeroButton("ℹ  More Info", isPrimary = false, focusRequester = null,         onDownPress = onDownPress, onClick = onMoreInfoClick)
             }
-
-            // Hero dot indicators (Netflix-style)
-            if (false) { /* placeholder for future dot indicator */ }
         }
     }
 }
@@ -653,26 +519,18 @@ fun NfHeroButton(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val bg by animateColorAsState(
-        when {
-            isPrimary && isFocused -> NfWhite.copy(alpha = 0.85f)
-            isPrimary              -> NfWhite
-            isFocused              -> GlassWhite.copy(alpha = 0.55f)
-            else                   -> GlassWhite
-        },
+        when { isPrimary && isFocused -> NfWhite.copy(alpha = 0.85f); isPrimary -> NfWhite; isFocused -> GlassWhite.copy(alpha = 0.55f); else -> GlassWhite },
         tween(120)
     )
     val fg by animateColorAsState(if (isPrimary) NfBlack else NfWhite, tween(120))
-
     val baseMod = Modifier
-        .height(54.dp)
-        .widthIn(min = if (isPrimary) 168.dp else 190.dp)
+        .height(54.dp).widthIn(min = if (isPrimary) 168.dp else 190.dp)
         .onFocusChanged { isFocused = it.isFocused }
         .onPreviewKeyEvent { kev ->
             if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) { onDownPress(); true }
             else false
         }
     val finalMod = if (focusRequester != null) baseMod.focusRequester(focusRequester) else baseMod
-
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
@@ -681,11 +539,7 @@ fun NfHeroButton(
         border   = ClickableSurfaceDefaults.border(),
         modifier = finalMod
     ) {
-        Row(
-            Modifier.fillMaxSize().padding(horizontal = 26.dp),
-            Arrangement.Center,
-            Alignment.CenterVertically
-        ) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 26.dp), Arrangement.Center, Alignment.CenterVertically) {
             Text(label, color = fg, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         }
     }
@@ -703,13 +557,8 @@ fun NfContentRow(
     onClick: (String) -> Unit
 ) {
     Column(modifier = Modifier.padding(vertical = 4.dp).then(rowModifier)) {
-        Text(
-            title,
-            color      = NfWhite,
-            fontSize   = 20.sp,
-            fontWeight = FontWeight.Bold,
-            modifier   = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp)
-        )
+        Text(title, color = NfWhite, fontSize = 20.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 64.dp, top = 24.dp, bottom = 12.dp))
         LazyRow(
             state                 = rememberLazyListState(),
             contentPadding        = PaddingValues(horizontal = 64.dp),
@@ -745,19 +594,11 @@ fun NfPosterCard(
         animationSpec = tween(160, easing = FastOutSlowInEasing),
         label         = "card_scale"
     )
-
     Column(modifier = Modifier.width(150.dp).padding(vertical = 12.dp)) {
-        Box(
-            modifier = Modifier
-                .aspectRatio(2f / 3f)
-                .graphicsLayer { scaleX = cardScale; scaleY = cardScale }
-        ) {
+        Box(modifier = Modifier.aspectRatio(2f / 3f).graphicsLayer { scaleX = cardScale; scaleY = cardScale }) {
             Surface(
                 onClick  = onClick,
-                colors   = ClickableSurfaceDefaults.colors(
-                    containerColor        = NfDarkGray,
-                    focusedContainerColor = NfDarkGray
-                ),
+                colors   = ClickableSurfaceDefaults.colors(containerColor = NfDarkGray, focusedContainerColor = NfDarkGray),
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
                 border   = ClickableSurfaceDefaults.border(
@@ -768,7 +609,7 @@ fun NfPosterCard(
                     .onFocusChanged { fs -> isFocused = fs.isFocused; if (fs.isFocused) onFocus() }
                     .onPreviewKeyEvent { kev ->
                         when {
-                            onUpPress != null && kev.key == Key.DirectionUp   && kev.type == KeyEventType.KeyDown -> { onUpPress(); true }
+                            onUpPress != null && kev.key == Key.DirectionUp && kev.type == KeyEventType.KeyDown -> { onUpPress(); true }
                             onLeftEdgePress != null && kev.key == Key.DirectionLeft && kev.type == KeyEventType.KeyDown -> { onLeftEdgePress(); false }
                             else -> false
                         }
@@ -776,24 +617,16 @@ fun NfPosterCard(
             ) {
                 AsyncImage(
                     model = ImageRequest.Builder(context)
-                        .data(movie.posterUrl)
-                        .size(300, 450)
-                        .scale(Scale.FILL)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .crossfade(250)
-                        .build(),
+                        .data(movie.posterUrl).size(300, 450).scale(Scale.FILL)
+                        .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
+                        .crossfade(250).build(),
                     contentDescription = movie.title,
-                    contentScale       = ContentScale.Crop,
-                    modifier           = Modifier.fillMaxSize()
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
             if (isFocused) {
-                Box(
-                    Modifier.matchParentSize().background(
-                        Brush.verticalGradient(listOf(Color.Transparent, NfBlack.copy(alpha = 0.5f)))
-                    )
-                )
+                Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, NfBlack.copy(alpha = 0.5f)))))
             }
         }
         AnimatedVisibility(
@@ -801,15 +634,9 @@ fun NfPosterCard(
             enter   = fadeIn(tween(140)) + slideInVertically { it / 3 },
             exit    = fadeOut(tween(100))
         ) {
-            Text(
-                movie.title,
-                color      = NfWhite,
-                fontSize   = 12.sp,
-                fontWeight = FontWeight.SemiBold,
-                maxLines   = 2,
-                overflow   = TextOverflow.Ellipsis,
-                modifier   = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp)
-            )
+            Text(movie.title, color = NfWhite, fontSize = 12.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp, start = 2.dp, end = 2.dp))
         }
     }
 }
@@ -818,24 +645,16 @@ fun NfPosterCard(
 @Composable
 fun NfLoadingSkeleton() {
     val inf   = rememberInfiniteTransition(label = "shimmer")
-    val alpha by inf.animateFloat(
-        0.2f, 0.6f,
-        infiniteRepeatable(tween(900), RepeatMode.Reverse),
-        label = "shimmer_alpha"
-    )
+    val alpha by inf.animateFloat(0.2f, 0.6f, infiniteRepeatable(tween(900), RepeatMode.Reverse), label = "shimmer_alpha")
     val shimmer = NfDarkGray.copy(alpha = alpha)
     Column(Modifier.fillMaxSize().background(NfBlack)) {
         Box(Modifier.fillMaxWidth().fillMaxHeight(0.82f).background(shimmer))
         Spacer(Modifier.height(24.dp))
         repeat(2) {
-            Box(Modifier.padding(start = 64.dp).width(200.dp).height(22.dp)
-                .clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Box(Modifier.padding(start = 64.dp).width(200.dp).height(22.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             Spacer(Modifier.height(12.dp))
             Row(Modifier.padding(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                repeat(6) {
-                    Box(Modifier.width(150.dp).aspectRatio(2f / 3f)
-                        .clip(RoundedCornerShape(6.dp)).background(shimmer))
-                }
+                repeat(6) { Box(Modifier.width(150.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(6.dp)).background(shimmer)) }
             }
             Spacer(Modifier.height(28.dp))
         }
@@ -853,10 +672,7 @@ fun NfErrorScreen(message: String, onRetry: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             Surface(
                 onClick  = onRetry,
-                colors   = ClickableSurfaceDefaults.colors(
-                    containerColor        = NfRed,
-                    focusedContainerColor = NfDarkRed
-                ),
+                colors   = ClickableSurfaceDefaults.colors(containerColor = NfRed, focusedContainerColor = NfDarkRed),
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                 modifier = Modifier.height(48.dp).width(160.dp)
