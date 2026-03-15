@@ -37,8 +37,10 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -50,8 +52,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -66,17 +72,18 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 // ─── Palette ─────────────────────────────────────────────────────────────────────
-private val BG         = Color(0xFF080808)
-private val RED        = Color(0xFFE50914)
-private val RED2       = Color(0xFFB20710)
-private val WHITE      = Color(0xFFFFFFFF)
-private val DIM        = Color(0xCCFFFFFF)
-private val DIM2       = Color(0x99FFFFFF)
-private val DIM3       = Color(0x4DFFFFFF)
-private val GOLD       = Color(0xFFFFD700)
-private val CARD_BG    = Color(0xFF181818)
-private val NAV_SEL_BG = Color(0xFF2E2E2E)
-private val NAV_HOVER  = Color(0x18FFFFFF)
+private val BG          = Color(0xFF080808)
+private val RED         = Color(0xFFE50914)
+private val RED2        = Color(0xFFB20710)
+private val WHITE       = Color(0xFFFFFFFF)
+private val DIM         = Color(0xCCFFFFFF)
+private val DIM2        = Color(0x99FFFFFF)
+private val DIM3        = Color(0x4DFFFFFF)
+private val GOLD        = Color(0xFFFFD700)
+private val CARD_BG     = Color(0xFF181818)
+private val NAV_SEL_BG  = Color(0xFF2E2E2E)
+private val NAV_HOVER   = Color(0x22FFFFFF)
+private val ACCENT_RED  = Color(0xFFE50914)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
@@ -364,6 +371,7 @@ private fun HomeInputLayer(
     onSeriesTab: () -> Unit
 ) {
     val rootFR          = remember { FocusRequester() }
+    val firstNavFR      = remember { FocusRequester() }
     var rootHasFocus    by remember { mutableStateOf(false) }
     var suppressUntilMs by remember { mutableLongStateOf(0L) }
 
@@ -377,6 +385,13 @@ private fun HomeInputLayer(
             val sz = rows.getOrNull(focusState.currentRowIndex)?.second?.size ?: 0
             if (sz > 0) focusState.currentItemIndex = focusState.currentItemIndex.coerceIn(0, sz - 1)
             if (!rootHasFocus) rootFR.safe()
+        }
+    }
+    // When nav becomes active, move focus into the first nav pill
+    LaunchedEffect(focusState.isNavFocused) {
+        if (focusState.isNavFocused) {
+            delay(50)
+            firstNavFR.safe()
         }
     }
 
@@ -395,12 +410,16 @@ private fun HomeInputLayer(
                             focusState.currentRowIndex--
                             focusState.currentItemIndex = 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                        } else focusState.isNavFocused = true
+                        } else {
+                            focusState.isNavFocused = true
+                        }
                         true
                     }
                     Key.DirectionDown -> {
-                        if (focusState.isNavFocused) focusState.isNavFocused = false
-                        else if (focusState.currentRowIndex < rows.size - 1) {
+                        if (focusState.isNavFocused) {
+                            focusState.isNavFocused = false
+                            rootFR.safe()
+                        } else if (focusState.currentRowIndex < rows.size - 1) {
                             focusState.currentRowIndex++
                             focusState.currentItemIndex = 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
@@ -434,7 +453,11 @@ private fun HomeInputLayer(
                         true
                     }
                     Key.Back, Key.Escape -> {
-                        if (focusState.isNavFocused) { focusState.isNavFocused = false; true } else false
+                        if (focusState.isNavFocused) {
+                            focusState.isNavFocused = false
+                            rootFR.safe()
+                            true
+                        } else false
                     }
                     else -> false
                 }
@@ -443,9 +466,11 @@ private fun HomeInputLayer(
         ArvioTopNav(
             isActive      = focusState.isNavFocused,
             activeTab     = activeTab,
+            firstNavFR    = firstNavFR,
             onSearchClick = onSearch,
             onMoviesTab   = onMoviesTab,
             onSeriesTab   = onSeriesTab,
+            onNavExit     = { focusState.isNavFocused = false; rootFR.safe() },
             modifier      = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
         )
         HomeRowsLayer(
@@ -459,42 +484,145 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioTopNav
+// LuminaStreams Logo
+// ══════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun LuminaLogo() {
+    val redColor   = ACCENT_RED
+    val inf        = rememberInfiniteTransition(label = "logoGlow")
+    val glowAlpha  by inf.animateFloat(
+        initialValue  = 0.55f,
+        targetValue   = 1.00f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(1800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "ga"
+    )
+
+    Box(
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Glow layer behind text
+        Box(
+            Modifier
+                .matchParentSize()
+                .drawBehind {
+                    drawCircle(
+                        color  = redColor.copy(alpha = glowAlpha * 0.18f),
+                        radius = size.width * 0.85f,
+                        center = Offset(size.width * 0.3f, size.height * 0.5f)
+                    )
+                }
+        )
+        Text(
+            text = buildAnnotatedString {
+                withStyle(SpanStyle(
+                    color         = WHITE,
+                    fontSize      = 22.sp,
+                    fontWeight    = FontWeight.Black,
+                    letterSpacing = 3.sp
+                )) { append("LUMINA") }
+                withStyle(SpanStyle(
+                    color         = redColor,
+                    fontSize      = 14.sp,
+                    fontWeight    = FontWeight.Bold,
+                    letterSpacing = 1.5.sp,
+                    fontStyle     = FontStyle.Normal
+                )) { append("STREAMS") }
+            }
+        )
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ArvioTopNav  — fully focusable nav bar
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
     isActive: Boolean,
     activeTab: String,
+    firstNavFR: FocusRequester,
     onSearchClick: () -> Unit,
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit,
+    onNavExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val time = remember {
         val c = java.util.Calendar.getInstance()
         "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
     }
+
+    // Animated top bar background: fades in when nav is active
+    val barBgAlpha by animateFloatAsState(
+        targetValue   = if (isActive) 1f else 0f,
+        animationSpec = tween(220),
+        label         = "barBg"
+    )
+
     Row(
-        modifier.padding(horizontal = 48.dp, vertical = 22.dp).fillMaxWidth(),
+        modifier
+            .background(Color(0xFF0A0A0A).copy(alpha = barBgAlpha * 0.92f))
+            .padding(horizontal = 48.dp, vertical = 16.dp)
+            .fillMaxWidth()
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                    onNavExit(); true
+                } else false
+            },
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(
-            text          = "LUMINA",
-            color         = WHITE,
-            fontSize      = 20.sp,
-            fontWeight    = FontWeight.Black,
-            letterSpacing = 4.sp
+        LuminaLogo()
+        Spacer(Modifier.width(32.dp))
+
+        // Search — gets firstNavFR so DPAD-up from rows lands here
+        NavPill(
+            label      = "Search",
+            icon       = Icons.Default.Search,
+            selected   = false,
+            isNavActive = isActive,
+            focusRequester = firstNavFR,
+            onClick    = onSearchClick
         )
-        Spacer(Modifier.width(28.dp))
-        NavPill(label = "Search",    icon = Icons.Default.Search,   selected = false,                                      onClick = onSearchClick)
-        NavPill(label = "Home",      icon = Icons.Default.Home,     selected = activeTab != "סרטים" && activeTab != "סדרות", onClick = {})
-        NavPill(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                                      onClick = {})
-        NavPill(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",                   onClick = onSeriesTab)
+        NavPill(
+            label      = "Movies",
+            icon       = Icons.Default.Movie,
+            selected   = activeTab == "סרטים",
+            isNavActive = isActive,
+            onClick    = onMoviesTab
+        )
+        NavPill(
+            label      = "TV Shows",
+            icon       = Icons.Default.LiveTv,
+            selected   = activeTab == "סדרות",
+            isNavActive = isActive,
+            onClick    = onSeriesTab
+        )
+        NavPill(
+            label      = "Watchlist",
+            icon       = Icons.Default.Bookmark,
+            selected   = false,
+            isNavActive = isActive,
+            onClick    = {}
+        )
+        NavPill(
+            label      = "Settings",
+            icon       = Icons.Default.Settings,
+            selected   = false,
+            isNavActive = isActive,
+            onClick    = {}
+        )
+
         Spacer(Modifier.weight(1f))
-        NavPill(label = "Settings",  icon = Icons.Default.Settings, selected = false,                                      onClick = {})
-        Spacer(Modifier.width(20.dp))
-        Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+        Text(
+            text       = time,
+            color      = WHITE,
+            fontSize   = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.5.sp
+        )
     }
 }
 
@@ -504,43 +632,97 @@ private fun NavPill(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     selected: Boolean,
+    isNavActive: Boolean,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val bg by animateColorAsState(
+
+    val pillColor by animateColorAsState(
         targetValue   = when {
-            selected -> NAV_SEL_BG
-            focused  -> NAV_HOVER
-            else     -> Color.Transparent
+            selected && focused -> Color(0xFF3D3D3D)
+            selected            -> NAV_SEL_BG
+            focused             -> NAV_HOVER
+            else                -> Color.Transparent
         },
-        animationSpec = tween(180),
+        animationSpec = tween(150),
         label         = "pillBg"
     )
+    val textColor by animateColorAsState(
+        targetValue   = if (focused || selected) WHITE else WHITE.copy(alpha = 0.70f),
+        animationSpec = tween(150),
+        label         = "pillText"
+    )
+    val indicatorAlpha by animateFloatAsState(
+        targetValue   = if (selected) 1f else 0f,
+        animationSpec = tween(200),
+        label         = "indicator"
+    )
+    val scale by animateFloatAsState(
+        targetValue   = if (focused) 1.06f else 1.00f,
+        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
+        label         = "pillScale"
+    )
+
+    val modBase = if (focusRequester != null)
+        Modifier.focusRequester(focusRequester)
+    else Modifier
+
     Surface(
         onClick  = onClick,
+        enabled  = true,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50), RoundedCornerShape(50)),
         colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = bg,
-            focusedContainerColor = bg,
-            pressedContainerColor = bg
+            containerColor        = pillColor,
+            focusedContainerColor = pillColor,
+            pressedContainerColor = Color(0xFF3A3A3A)
         ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.00f),
-        border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
-        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-        modifier = Modifier.height(46.dp).onFocusChanged { focused = it.isFocused }
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f), // we handle scale ourselves
+        border   = ClickableSurfaceDefaults.border(
+            border        = if (selected) Border(BorderStroke(1.dp, WHITE.copy(alpha = 0.15f)), shape = RoundedCornerShape(50)) else Border.None,
+            focusedBorder = Border(BorderStroke(1.5.dp, WHITE.copy(alpha = 0.55f)), shape = RoundedCornerShape(50))
+        ),
+        glow     = ClickableSurfaceDefaults.glow(
+            glow        = Glow.None,
+            focusedGlow = if (selected) Glow(elevationColor = WHITE.copy(alpha = 0.12f), elevation = 8.dp) else Glow.None
+        ),
+        modifier = modBase
+            .height(44.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused }
     ) {
-        Row(
-            Modifier.padding(horizontal = 20.dp),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(icon, null, Modifier.size(18.dp), tint = WHITE)
-            Text(
-                text          = label,
-                color         = WHITE,
-                fontSize      = 16.sp,
-                fontWeight    = if (selected) FontWeight.Bold else FontWeight.Normal,
-                letterSpacing = 0.2.sp
+            Row(
+                Modifier
+                    .padding(horizontal = 18.dp)
+                    .fillMaxHeight()
+                    .weight(1f),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier    = Modifier.size(17.dp),
+                    tint        = if (selected) ACCENT_RED else textColor
+                )
+                Text(
+                    text          = label,
+                    color         = textColor,
+                    fontSize      = 15.sp,
+                    fontWeight    = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
+                    letterSpacing = 0.2.sp
+                )
+            }
+            // Red underline indicator for selected tab
+            Box(
+                Modifier
+                    .fillMaxWidth(0.6f)
+                    .height(2.dp)
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(ACCENT_RED.copy(alpha = indicatorAlpha))
             )
         }
     }
