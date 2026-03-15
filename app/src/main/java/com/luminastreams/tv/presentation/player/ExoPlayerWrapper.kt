@@ -9,6 +9,7 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,15 +18,32 @@ import kotlinx.coroutines.flow.asStateFlow
 
 class ExoPlayerWrapper(context: Context) {
 
-    // 1. Context Leak Trap: Solved. We strictly grab the application context.
     private val appContext = context.applicationContext
 
-    val trackSelector = DefaultTrackSelector(appContext)
+    private val renderersFactory = DefaultRenderersFactory(appContext).apply {
+        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+        setEnableDecoderFallback(true)
+    }
 
-    // 2. The isolated player instance
-    val player: ExoPlayer = ExoPlayer.Builder(appContext)
+    val trackSelector = DefaultTrackSelector(appContext).apply {
+        setParameters(
+            buildUponParameters()
+                .setPreferredVideoMimeTypes(
+                    MimeTypes.VIDEO_AV1,
+                    MimeTypes.VIDEO_H265,
+                    MimeTypes.VIDEO_H264
+                )
+                .setPreferredAudioMimeTypes(
+                    MimeTypes.AUDIO_AC3,
+                    MimeTypes.AUDIO_E_AC3,
+                    MimeTypes.AUDIO_AAC
+                )
+                .setTunnelingEnabled(true)
+        )
+    }
+
+    val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
         .setTrackSelector(trackSelector)
-        .build()
         .apply {
             setAudioAttributes(
                 AudioAttributes.Builder()
@@ -35,9 +53,11 @@ class ExoPlayerWrapper(context: Context) {
                 true
             )
         }
+        .setHandleAudioBecomingNoisy(true)
+        .setPlayWhenReady(true)
+        .build()
 
-    // 3. Clean state observation for Compose
-    private val _isPlaying = MutableStateFlow(true)
+    private val _isPlaying = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
     init {
@@ -49,38 +69,56 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String) {
-        val mediaItem = MediaItem.fromUri(Uri.parse(videoUrl))
-        player.setMediaItem(mediaItem)
-        player.prepare()
-        player.playWhenReady = true
+        try {
+            val mediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(videoUrl))
+                .build()
+
+            player.setMediaItem(mediaItem)
+            player.prepare()
+            player.playWhenReady = true
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    // 4. Hardware-Safe Subtitle Swap
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
-        val currentMediaItem = player.currentMediaItem ?: return
+        try {
+            val currentMediaItem = player.currentMediaItem ?: return
 
-        val mimeType = if (isVtt || subtitleUrl.endsWith(".vtt")) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+            val mimeType = if (isVtt || subtitleUrl.endsWith(".vtt")) {
+                MimeTypes.TEXT_VTT
+            } else {
+                MimeTypes.APPLICATION_SUBRIP
+            }
 
-        val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
-            .setMimeType(mimeType)
-            .setLanguage(lang)
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-            .build()
+            val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
+                .setMimeType(mimeType)
+                .setLanguage(lang)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
 
-        // Rebuild the current media item with the new subtitle track attached
-        val newMediaItem = currentMediaItem.buildUpon()
-            .setSubtitleConfigurations(listOf(subtitleConfig))
-            .build()
+            val newMediaItem = currentMediaItem.buildUpon()
+                .setSubtitleConfigurations(listOf(subtitleConfig))
+                .build()
 
-        // Replace seamlessly without calling .prepare() and flushing the decoder!
-        player.replaceMediaItem(player.currentMediaItemIndex, newMediaItem)
+            player.replaceMediaItem(player.currentMediaItemIndex, newMediaItem)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
-    fun play() = player.play()
+    fun play() {
+        player.play()
+    }
 
-    fun pause() = player.pause()
+    fun pause() {
+        player.pause()
+    }
 
-    fun seekTo(position: Long) = player.seekTo(position)
+    fun seekTo(position: Long) {
+        player.seekTo(position.coerceIn(0, player.duration))
+    }
 
     fun release() {
         player.release()
