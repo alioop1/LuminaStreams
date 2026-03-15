@@ -68,7 +68,7 @@ fun DiscoveryScreen(
     )
     val genres = if (mediaType == "tv") tvGenres else movieGenres
 
-    BackHandler(enabled = state.isFilterComplete) { viewModel.clearGenre() }
+    BackHandler(enabled = state.sFilterComplete) { viewModel.clearGenre() }
 
     Box(Modifier.fillMaxSize().background(C_BG)) {
         if (state.isFilterComplete && state.focusedItem != null) {

@@ -44,17 +44,16 @@ class ExoPlayerWrapper(context: Context) {
 
     val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
         .setTrackSelector(trackSelector)
-        .apply {
-            setAudioAttributes(
-                AudioAttributes.Builder()
-                    .setUsage(C.USAGE_MEDIA)
-                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                    .build(),
-                true
-            )
-        }
+        .setAudioAttributes(
+            AudioAttributes.Builder()
+                .setUsage(C.USAGE_MEDIA)
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .build(),
+            /* handleAudioFocus = */ true
+        )
         .setHandleAudioBecomingNoisy(true)
-        .setPlayWhenReady(true)
+        // ✅ FIXED: setPlayWhenReady() does NOT exist on ExoPlayer.Builder in Media3.
+        // Set playWhenReady on the player instance after building (see prepareStream below).
         .build()
 
     private val _isPlaying = MutableStateFlow(false)
@@ -73,9 +72,9 @@ class ExoPlayerWrapper(context: Context) {
             val mediaItem = MediaItem.Builder()
                 .setUri(Uri.parse(videoUrl))
                 .build()
-
             player.setMediaItem(mediaItem)
             player.prepare()
+            // ✅ Set playWhenReady HERE — on the instance, not the builder
             player.playWhenReady = true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -85,42 +84,31 @@ class ExoPlayerWrapper(context: Context) {
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
         try {
             val currentMediaItem = player.currentMediaItem ?: return
-
             val mimeType = if (isVtt || subtitleUrl.endsWith(".vtt")) {
                 MimeTypes.TEXT_VTT
             } else {
                 MimeTypes.APPLICATION_SUBRIP
             }
-
             val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
                 .setMimeType(mimeType)
                 .setLanguage(lang)
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
-
             val newMediaItem = currentMediaItem.buildUpon()
                 .setSubtitleConfigurations(listOf(subtitleConfig))
                 .build()
-
             player.replaceMediaItem(player.currentMediaItemIndex, newMediaItem)
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
-    fun play() {
-        player.play()
-    }
-
-    fun pause() {
-        player.pause()
-    }
+    fun play()  { player.play() }
+    fun pause() { player.pause() }
 
     fun seekTo(position: Long) {
-        player.seekTo(position.coerceIn(0, player.duration))
+        player.seekTo(position.coerceIn(0, player.duration.coerceAtLeast(0)))
     }
 
-    fun release() {
-        player.release()
-    }
+    fun release() { player.release() }
 }

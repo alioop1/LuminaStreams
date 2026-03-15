@@ -82,12 +82,8 @@ class MainActivity : ComponentActivity() {
 fun LuminaAppShell() {
     val navController = rememberNavController()
     val repository    = remember { MediaRepositoryImpl() }
-    val homeViewModel: HomeViewModel = viewModel(
-        factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T = HomeViewModel(repository) as T
-        }
-    )
+    // HomeViewModel now manages its own OkHttp client — no repository needed
+    val homeViewModel: HomeViewModel = viewModel()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AppNavHostContainer(navController, homeViewModel, repository)
