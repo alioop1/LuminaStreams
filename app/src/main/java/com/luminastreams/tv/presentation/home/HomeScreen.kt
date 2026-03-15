@@ -256,7 +256,7 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// HomeHeroOverlay — text-only, ARVIO style (no buttons)
+// HomeHeroOverlay — text-only, ARVIO style
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeHeroOverlay(hero: Movie?) {
@@ -300,7 +300,7 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
             overflow      = TextOverflow.Ellipsis
         )
 
-        // Metadata: year | genre | runtime | IMDb badge
+        // Metadata: year | genre | resolutionBadge | IMDb badge
         Row(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -313,11 +313,8 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
                 Text(movie.genre, color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 MetaPipe()
             }
-            if (movie.runtime > 0) {
-                val h = movie.runtime / 60
-                val m = movie.runtime % 60
-                val rt = if (h > 0) "${h}h ${m}m" else "${m}m"
-                Text(rt, color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            if (movie.resolutionBadge.isNotBlank()) {
+                Text(movie.resolutionBadge, color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 if (movie.rating > 0f) MetaPipe()
             }
             if (movie.rating > 0f) {
@@ -338,7 +335,7 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
             }
         }
 
-        // Overview — 3 lines, readable size
+        // Overview — 3 lines
         Text(
             text       = movie.overview,
             color      = DIM2,
@@ -467,7 +464,7 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioTopNav — selected=white filled, unselected=transparent+border
+// ArvioTopNav
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
@@ -491,12 +488,12 @@ private fun ArvioTopNav(
             letterSpacing = 4.sp,
             modifier      = Modifier.padding(end = 10.dp)
         )
-        NavTab(label = "Search",    icon = Icons.Default.Search,   selected = false,                  onClick = onSearchClick)
+        NavTab(label = "Search",    icon = Icons.Default.Search,   selected = false,                                      onClick = onSearchClick)
         NavTab(label = "Home",      icon = Icons.Default.Home,     selected = activeTab != "סרטים" && activeTab != "סדרות", onClick = {})
-        NavTab(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                  onClick = {})
-        NavTab(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",  onClick = onSeriesTab)
+        NavTab(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                                      onClick = {})
+        NavTab(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",                    onClick = onSeriesTab)
         Spacer(Modifier.weight(1f))
-        NavTab(label = "Settings",  icon = Icons.Default.Settings, selected = false,                  onClick = {})
+        NavTab(label = "Settings",  icon = Icons.Default.Settings, selected = false,                                      onClick = {})
         val time = remember {
             val c = java.util.Calendar.getInstance()
             "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
@@ -505,7 +502,6 @@ private fun ArvioTopNav(
     }
 }
 
-// NavTab: selected = white pill | unselected = transparent + subtle border
 @Composable
 private fun NavTab(
     label: String,
@@ -514,13 +510,8 @@ private fun NavTab(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-
     val bgColor by animateColorAsState(
-        targetValue   = when {
-            selected -> WHITE
-            focused  -> Color(0x22FFFFFF)
-            else     -> Color.Transparent
-        },
+        targetValue   = when { selected -> WHITE; focused -> Color(0x22FFFFFF); else -> Color.Transparent },
         animationSpec = tween(160), label = "navBg"
     )
     val contentColor by animateColorAsState(
@@ -528,14 +519,9 @@ private fun NavTab(
         animationSpec = tween(160), label = "navFg"
     )
     val borderAlpha by animateFloatAsState(
-        targetValue   = when {
-            selected -> 0f
-            focused  -> 0.5f
-            else     -> 0.22f
-        },
+        targetValue   = when { selected -> 0f; focused -> 0.5f; else -> 0.22f },
         animationSpec = tween(160), label = "navBorder"
     )
-
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(
@@ -658,8 +644,6 @@ private fun ArvioContentRow(
     val rowState       = rememberLazyListState()
     val currentFocused by rememberUpdatedState(focusedItemIndex)
     val currentIsCur   by rememberUpdatedState(isCurrentRow)
-
-    // Poster 2:3
     val cardW = 130.dp
     val cardH = 190.dp
 
@@ -716,7 +700,7 @@ private fun ArvioContentRow(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioCard — poster (2:3), white border on focus
+// ArvioCard — poster 2:3
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ArvioCard(
@@ -731,7 +715,6 @@ fun ArvioCard(
     val ctx = LocalContext.current
     var selfFocused by remember { mutableStateOf(false) }
     val focused = isFocusedOverride || selfFocused
-
     val zoom by animateFloatAsState(
         targetValue   = if (focused) 1.06f else 1.00f,
         animationSpec = spring(Spring.DampingRatioLowBouncy, Spring.StiffnessMediumLow),
@@ -766,7 +749,6 @@ fun ArvioCard(
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> selfFocused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
-                // posterUrl first, fallback to backdrop
                 AsyncImage(
                     model = remember(movie.posterUrl, movie.backdropUrl) {
                         ImageRequest.Builder(ctx)
@@ -803,9 +785,6 @@ fun ArvioCard(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// NfCard — alias
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfCard(
     movie: Movie,
@@ -897,9 +876,6 @@ fun HomeError(message: String, onRetry: () -> Unit) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Back-compat aliases
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable fun NfLoadingSkeleton() = HomeLoading()
 @Composable fun NfErrorScreen(msg: String, onRetry: () -> Unit) = HomeError(msg, onRetry)
 @Composable fun LuminaSidebar(
