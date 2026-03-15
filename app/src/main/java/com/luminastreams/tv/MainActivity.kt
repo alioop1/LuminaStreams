@@ -5,6 +5,7 @@
 )
 package com.luminastreams.tv
 
+import android.app.Application
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
@@ -13,8 +14,9 @@ import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Modifier
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -81,6 +83,8 @@ fun AppNavHostContainer(
     repository: MediaRepositoryImpl
 ) {
     val context = LocalContext.current
+    // Application נדרש ל-AndroidViewModel
+    val application = context.applicationContext as Application
 
     NavHost(navController = navController, startDestination = "home") {
 
@@ -113,28 +117,24 @@ fun AppNavHostContainer(
             )
             LaunchedEffect(fullId) { detailsViewModel.onEvent(DetailsEvent.LoadInitialData(fullId)) }
             DetailsScreen(
-                state               = detailsViewModel.state.collectAsState().value,
-                onEvent             = detailsViewModel::onEvent,
-                onPlayDirectUrl     = { url ->
+                state                 = detailsViewModel.state.collectAsState().value,
+                onEvent               = detailsViewModel::onEvent,
+                onPlayDirectUrl       = { url ->
                     try {
                         context.startActivity(
                             Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                         )
                     } catch (_: Exception) {}
                 },
-                onNavigateBack            = { navController.popBackStack() },
-                onRecommendationClick     = { id -> navController.navigate("details/$id") }
+                onNavigateBack        = { navController.popBackStack() },
+                onRecommendationClick = { id -> navController.navigate("details/$id") }
             )
         }
 
-        // ── Search — מחובר ל-SearchScreen האמיתי
+        // ── Search — AndroidViewModel צריך Application
         composable("search") {
             val searchViewModel: SearchViewModel = viewModel(
-                factory = object : ViewModelProvider.Factory {
-                    @Suppress("UNCHECKED_CAST")
-                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        SearchViewModel(repository) as T
-                }
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
             SearchScreen(
                 state          = searchViewModel.state.collectAsState().value,
@@ -144,14 +144,10 @@ fun AppNavHostContainer(
             )
         }
 
-        // ── Settings — מחובר ל-SettingsScreen האמיתי
+        // ── Settings — AndroidViewModel צריך Application
         composable("settings") {
             val settingsViewModel: SettingsViewModel = viewModel(
-                factory = object : ViewModelProvider.Factory {
-                    @Suppress("UNCHECKED_CAST")
-                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        SettingsViewModel(context) as T
-                }
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
             SettingsScreen(
                 state            = settingsViewModel.state.collectAsState().value,
@@ -161,7 +157,7 @@ fun AppNavHostContainer(
             )
         }
 
-        // ── Watchlist — placeholder screen
+        // ── Watchlist
         composable("watchlist") {
             WatchlistScreen(onNavigateBack = { navController.popBackStack() })
         }
@@ -172,11 +168,11 @@ fun AppNavHostContainer(
 fun WatchlistScreen(onNavigateBack: () -> Unit) {
     androidx.activity.compose.BackHandler { onNavigateBack() }
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF080808)),
-        contentAlignment = androidx.compose.ui.Alignment.Center
+        modifier         = Modifier.fillMaxSize().background(Color(0xFF080808)),
+        contentAlignment = Alignment.Center
     ) {
         androidx.tv.material3.Text(
-            text = "Watchlist — Coming Soon",
+            text  = "Watchlist — Coming Soon",
             color = Color.White,
             fontSize = 28.sp
         )
