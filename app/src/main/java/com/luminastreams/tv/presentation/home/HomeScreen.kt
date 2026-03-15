@@ -37,7 +37,6 @@ import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
@@ -54,7 +53,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
@@ -72,18 +70,17 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 // ─── Palette ─────────────────────────────────────────────────────────────────────
-private val BG          = Color(0xFF080808)
-private val RED         = Color(0xFFE50914)
-private val RED2        = Color(0xFFB20710)
-private val WHITE       = Color(0xFFFFFFFF)
-private val DIM         = Color(0xCCFFFFFF)
-private val DIM2        = Color(0x99FFFFFF)
-private val DIM3        = Color(0x4DFFFFFF)
-private val GOLD        = Color(0xFFFFD700)
-private val CARD_BG     = Color(0xFF181818)
-private val NAV_SEL_BG  = Color(0xFF2E2E2E)
-private val NAV_HOVER   = Color(0x22FFFFFF)
-private val ACCENT_RED  = Color(0xFFE50914)
+private val BG         = Color(0xFF080808)
+private val RED        = Color(0xFFE50914)
+private val RED2       = Color(0xFFB20710)
+private val WHITE      = Color(0xFFFFFFFF)
+private val DIM        = Color(0xCCFFFFFF)
+private val DIM2       = Color(0x99FFFFFF)
+private val DIM3       = Color(0x4DFFFFFF)
+private val GOLD       = Color(0xFFFFD700)
+private val CARD_BG    = Color(0xFF181818)
+private val NAV_SEL_BG = Color(0xFF2E2E2E)
+private val NAV_HOVER  = Color(0x22FFFFFF)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
@@ -387,12 +384,8 @@ private fun HomeInputLayer(
             if (!rootHasFocus) rootFR.safe()
         }
     }
-    // When nav becomes active, move focus into the first nav pill
     LaunchedEffect(focusState.isNavFocused) {
-        if (focusState.isNavFocused) {
-            delay(50)
-            firstNavFR.safe()
-        }
+        if (focusState.isNavFocused) { delay(50); firstNavFR.safe() }
     }
 
     Box(
@@ -454,9 +447,7 @@ private fun HomeInputLayer(
                     }
                     Key.Back, Key.Escape -> {
                         if (focusState.isNavFocused) {
-                            focusState.isNavFocused = false
-                            rootFR.safe()
-                            true
+                            focusState.isNavFocused = false; rootFR.safe(); true
                         } else false
                     }
                     else -> false
@@ -488,33 +479,7 @@ private fun HomeInputLayer(
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun LuminaLogo() {
-    val redColor   = ACCENT_RED
-    val inf        = rememberInfiniteTransition(label = "logoGlow")
-    val glowAlpha  by inf.animateFloat(
-        initialValue  = 0.55f,
-        targetValue   = 1.00f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(1800, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "ga"
-    )
-
-    Box(
-        contentAlignment = Alignment.CenterStart
-    ) {
-        // Glow layer behind text
-        Box(
-            Modifier
-                .matchParentSize()
-                .drawBehind {
-                    drawCircle(
-                        color  = redColor.copy(alpha = glowAlpha * 0.18f),
-                        radius = size.width * 0.85f,
-                        center = Offset(size.width * 0.3f, size.height * 0.5f)
-                    )
-                }
-        )
+    Column(horizontalAlignment = Alignment.Start) {
         Text(
             text = buildAnnotatedString {
                 withStyle(SpanStyle(
@@ -524,19 +489,28 @@ private fun LuminaLogo() {
                     letterSpacing = 3.sp
                 )) { append("LUMINA") }
                 withStyle(SpanStyle(
-                    color         = redColor,
-                    fontSize      = 14.sp,
+                    color         = RED,
+                    fontSize      = 13.sp,
                     fontWeight    = FontWeight.Bold,
-                    letterSpacing = 1.5.sp,
-                    fontStyle     = FontStyle.Normal
+                    letterSpacing = 2.sp
                 )) { append("STREAMS") }
             }
+        )
+        // thin red accent line under the logo
+        Box(
+            Modifier
+                .width(56.dp)
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(
+                    Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f)))
+                )
         )
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioTopNav  — fully focusable nav bar
+// ArvioTopNav
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
@@ -553,76 +527,54 @@ private fun ArvioTopNav(
         val c = java.util.Calendar.getInstance()
         "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
     }
-
-    // Animated top bar background: fades in when nav is active
-    val barBgAlpha by animateFloatAsState(
-        targetValue   = if (isActive) 1f else 0f,
-        animationSpec = tween(220),
-        label         = "barBg"
-    )
-
     Row(
         modifier
-            .background(Color(0xFF0A0A0A).copy(alpha = barBgAlpha * 0.92f))
-            .padding(horizontal = 48.dp, vertical = 16.dp)
-            .fillMaxWidth()
             .onPreviewKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
                     onNavExit(); true
                 } else false
-            },
+            }
+            .padding(horizontal = 48.dp, vertical = 22.dp)
+            .fillMaxWidth(),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         LuminaLogo()
-        Spacer(Modifier.width(32.dp))
-
-        // Search — gets firstNavFR so DPAD-up from rows lands here
+        Spacer(Modifier.width(28.dp))
         NavPill(
-            label      = "Search",
-            icon       = Icons.Default.Search,
-            selected   = false,
-            isNavActive = isActive,
+            label          = "Search",
+            icon           = Icons.Default.Search,
+            selected       = false,
             focusRequester = firstNavFR,
-            onClick    = onSearchClick
+            onClick        = onSearchClick
         )
         NavPill(
-            label      = "Movies",
-            icon       = Icons.Default.Movie,
-            selected   = activeTab == "סרטים",
-            isNavActive = isActive,
-            onClick    = onMoviesTab
+            label   = "Home",
+            icon    = Icons.Default.Home,
+            selected = activeTab != "סרטים" && activeTab != "סדרות",
+            onClick  = {}
         )
         NavPill(
-            label      = "TV Shows",
-            icon       = Icons.Default.LiveTv,
-            selected   = activeTab == "סדרות",
-            isNavActive = isActive,
-            onClick    = onSeriesTab
+            label    = "Watchlist",
+            icon     = Icons.Default.Bookmark,
+            selected = false,
+            onClick  = {}
         )
         NavPill(
-            label      = "Watchlist",
-            icon       = Icons.Default.Bookmark,
-            selected   = false,
-            isNavActive = isActive,
-            onClick    = {}
+            label    = "TV",
+            icon     = Icons.Default.LiveTv,
+            selected = activeTab == "סדרות",
+            onClick  = onSeriesTab
         )
-        NavPill(
-            label      = "Settings",
-            icon       = Icons.Default.Settings,
-            selected   = false,
-            isNavActive = isActive,
-            onClick    = {}
-        )
-
         Spacer(Modifier.weight(1f))
-        Text(
-            text       = time,
-            color      = WHITE,
-            fontSize   = 18.sp,
-            fontWeight = FontWeight.SemiBold,
-            letterSpacing = 0.5.sp
+        NavPill(
+            label    = "Settings",
+            icon     = Icons.Default.Settings,
+            selected = false,
+            onClick  = {}
         )
+        Spacer(Modifier.width(20.dp))
+        Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
     }
 }
 
@@ -632,97 +584,53 @@ private fun NavPill(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     selected: Boolean,
-    isNavActive: Boolean,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-
-    val pillColor by animateColorAsState(
+    val bg by animateColorAsState(
         targetValue   = when {
-            selected && focused -> Color(0xFF3D3D3D)
-            selected            -> NAV_SEL_BG
-            focused             -> NAV_HOVER
-            else                -> Color.Transparent
+            selected -> NAV_SEL_BG
+            focused  -> NAV_HOVER
+            else     -> Color.Transparent
         },
-        animationSpec = tween(150),
+        animationSpec = tween(180),
         label         = "pillBg"
     )
-    val textColor by animateColorAsState(
-        targetValue   = if (focused || selected) WHITE else WHITE.copy(alpha = 0.70f),
-        animationSpec = tween(150),
-        label         = "pillText"
-    )
-    val indicatorAlpha by animateFloatAsState(
-        targetValue   = if (selected) 1f else 0f,
-        animationSpec = tween(200),
-        label         = "indicator"
-    )
-    val scale by animateFloatAsState(
-        targetValue   = if (focused) 1.06f else 1.00f,
-        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
-        label         = "pillScale"
-    )
 
-    val modBase = if (focusRequester != null)
-        Modifier.focusRequester(focusRequester)
-    else Modifier
+    val baseMod = if (focusRequester != null)
+        Modifier.height(46.dp).focusRequester(focusRequester).onFocusChanged { focused = it.isFocused }
+    else
+        Modifier.height(46.dp).onFocusChanged { focused = it.isFocused }
 
     Surface(
         onClick  = onClick,
-        enabled  = true,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50), RoundedCornerShape(50)),
         colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = pillColor,
-            focusedContainerColor = pillColor,
-            pressedContainerColor = Color(0xFF3A3A3A)
+            containerColor        = bg,
+            focusedContainerColor = bg,
+            pressedContainerColor = bg
         ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f), // we handle scale ourselves
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.00f),
         border   = ClickableSurfaceDefaults.border(
-            border        = if (selected) Border(BorderStroke(1.dp, WHITE.copy(alpha = 0.15f)), shape = RoundedCornerShape(50)) else Border.None,
-            focusedBorder = Border(BorderStroke(1.5.dp, WHITE.copy(alpha = 0.55f)), shape = RoundedCornerShape(50))
+            border        = Border.None,
+            focusedBorder = Border(BorderStroke(1.5.dp, WHITE.copy(alpha = 0.5f)), shape = RoundedCornerShape(50))
         ),
-        glow     = ClickableSurfaceDefaults.glow(
-            glow        = Glow.None,
-            focusedGlow = if (selected) Glow(elevationColor = WHITE.copy(alpha = 0.12f), elevation = 8.dp) else Glow.None
-        ),
-        modifier = modBase
-            .height(44.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .onFocusChanged { focused = it.isFocused }
+        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        modifier = baseMod
     ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally
+        Row(
+            Modifier.padding(horizontal = 20.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Row(
-                Modifier
-                    .padding(horizontal = 18.dp)
-                    .fillMaxHeight()
-                    .weight(1f),
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    modifier    = Modifier.size(17.dp),
-                    tint        = if (selected) ACCENT_RED else textColor
-                )
-                Text(
-                    text          = label,
-                    color         = textColor,
-                    fontSize      = 15.sp,
-                    fontWeight    = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
-                    letterSpacing = 0.2.sp
-                )
-            }
-            // Red underline indicator for selected tab
-            Box(
-                Modifier
-                    .fillMaxWidth(0.6f)
-                    .height(2.dp)
-                    .clip(RoundedCornerShape(1.dp))
-                    .background(ACCENT_RED.copy(alpha = indicatorAlpha))
+            Icon(icon, null, Modifier.size(18.dp), tint = if (selected) RED else WHITE)
+            Text(
+                text          = label,
+                color         = WHITE,
+                fontSize      = 16.sp,
+                fontWeight    = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = 0.2.sp
             )
         }
     }
