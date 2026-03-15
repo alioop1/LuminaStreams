@@ -21,7 +21,6 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -44,7 +43,9 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
@@ -69,7 +70,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ─── Palette ─────────────────────────────────────────────────────────────────────
+// ─── Palette ──────────────────────────────────────────────────────────────────
 private val BG         = Color(0xFF080808)
 private val RED        = Color(0xFFE50914)
 private val RED2       = Color(0xFFB20710)
@@ -79,12 +80,12 @@ private val DIM2       = Color(0x99FFFFFF)
 private val DIM3       = Color(0x4DFFFFFF)
 private val GOLD       = Color(0xFFFFD700)
 private val CARD_BG    = Color(0xFF181818)
-private val NAV_SEL_BG = Color(0xFF2E2E2E)
-private val NAV_HOVER  = Color(0x22FFFFFF)
+private val NAV_SEL_BG = Color(0xFF1A1A1A)
+private val NAV_HOVER  = Color(0x14FFFFFF)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
-// ─── Focus state ───────────────────────────────────────────────────────────────
+// ─── Focus state ──────────────────────────────────────────────────────────────
 @Stable
 class HomeFocusState(
     initialRowIndex: Int = 0,
@@ -103,7 +104,7 @@ class HomeFocusState(
     }
 }
 
-// ─── Scrims ─────────────────────────────────────────────────────────────────────
+// ─── Scrims ───────────────────────────────────────────────────────────────────
 private val leftScrim = Brush.horizontalGradient(
     colorStops = arrayOf(
         0.00f to Color(0xD9080808),
@@ -447,7 +448,9 @@ private fun HomeInputLayer(
                     }
                     Key.Back, Key.Escape -> {
                         if (focusState.isNavFocused) {
-                            focusState.isNavFocused = false; rootFR.safe(); true
+                            focusState.isNavFocused = false
+                            rootFR.safe()
+                            true
                         } else false
                     }
                     else -> false
@@ -475,7 +478,7 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// LuminaStreams Logo
+// LuminaLogo
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun LuminaLogo() {
@@ -496,15 +499,12 @@ private fun LuminaLogo() {
                 )) { append("STREAMS") }
             }
         )
-        // thin red accent line under the logo
         Box(
             Modifier
                 .width(56.dp)
                 .height(2.dp)
                 .clip(RoundedCornerShape(1.dp))
-                .background(
-                    Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f)))
-                )
+                .background(Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f))))
         )
     }
 }
@@ -534,103 +534,141 @@ private fun ArvioTopNav(
                     onNavExit(); true
                 } else false
             }
-            .padding(horizontal = 48.dp, vertical = 22.dp)
+            .padding(horizontal = 48.dp, vertical = 20.dp)
             .fillMaxWidth(),
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         LuminaLogo()
-        Spacer(Modifier.width(28.dp))
+        Spacer(Modifier.width(24.dp))
+
+        // Search — gets firstNavFR so focus lands here when nav opens
         NavPill(
             label          = "Search",
             icon           = Icons.Default.Search,
-            selected       = false,
+            isSelected     = false,
             focusRequester = firstNavFR,
             onClick        = onSearchClick
         )
         NavPill(
-            label   = "Home",
-            icon    = Icons.Default.Home,
-            selected = activeTab != "סרטים" && activeTab != "סדרות",
-            onClick  = {}
+            label      = "Movies",
+            icon       = Icons.Default.Movie,
+            isSelected = activeTab == "סרטים",
+            onClick    = onMoviesTab
         )
         NavPill(
-            label    = "Watchlist",
-            icon     = Icons.Default.Bookmark,
-            selected = false,
-            onClick  = {}
+            label      = "TV",
+            icon       = Icons.Default.LiveTv,
+            isSelected = activeTab == "סדרות",
+            onClick    = onSeriesTab
         )
         NavPill(
-            label    = "TV",
-            icon     = Icons.Default.LiveTv,
-            selected = activeTab == "סדרות",
-            onClick  = onSeriesTab
+            label      = "Watchlist",
+            icon       = Icons.Default.Bookmark,
+            isSelected = false,
+            onClick    = {}
+        )
+        NavPill(
+            label      = "Settings",
+            icon       = Icons.Default.Settings,
+            isSelected = false,
+            onClick    = {}
         )
         Spacer(Modifier.weight(1f))
-        NavPill(
-            label    = "Settings",
-            icon     = Icons.Default.Settings,
-            selected = false,
-            onClick  = {}
-        )
-        Spacer(Modifier.width(20.dp))
         Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
     }
 }
 
-// ─── NavPill ─────────────────────────────────────────────────────────────────────
+// ─── NavPill — red glowing underline, no rounded border ───────────────────────
 @Composable
 private fun NavPill(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    selected: Boolean,
+    isSelected: Boolean,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val bg by animateColorAsState(
-        targetValue   = when {
-            selected -> NAV_SEL_BG
-            focused  -> NAV_HOVER
-            else     -> Color.Transparent
-        },
+    val active  = isSelected || focused
+
+    // red glow underline alpha
+    val glowAlpha by animateFloatAsState(
+        targetValue   = if (active) 1f else 0f,
+        animationSpec = tween(200),
+        label         = "glowAlpha"
+    )
+    val textAlpha by animateFloatAsState(
+        targetValue   = if (active) 1f else 0.55f,
         animationSpec = tween(180),
-        label         = "pillBg"
+        label         = "textAlpha"
     )
 
-    val baseMod = if (focusRequester != null)
-        Modifier.height(46.dp).focusRequester(focusRequester).onFocusChanged { focused = it.isFocused }
-    else
-        Modifier.height(46.dp).onFocusChanged { focused = it.isFocused }
+    val density = LocalDensity.current
+
+    val baseMod = (if (focusRequester != null)
+        Modifier.focusRequester(focusRequester) else Modifier)
+        .onFocusChanged { focused = it.isFocused }
 
     Surface(
         onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50), RoundedCornerShape(50)),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp), RoundedCornerShape(0.dp)),
         colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = bg,
-            focusedContainerColor = bg,
-            pressedContainerColor = bg
+            containerColor        = Color.Transparent,
+            focusedContainerColor = NAV_HOVER,
+            pressedContainerColor = NAV_SEL_BG
         ),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.00f),
-        border   = ClickableSurfaceDefaults.border(
-            border        = Border.None,
-            focusedBorder = Border(BorderStroke(1.5.dp, WHITE.copy(alpha = 0.5f)), shape = RoundedCornerShape(50))
-        ),
+        border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
         glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = baseMod
+            .height(52.dp)
+            .drawBehind {
+                if (glowAlpha > 0.01f) {
+                    val barH  = with(density) { 3.dp.toPx() }
+                    val barW  = size.width * 0.72f
+                    val left  = (size.width - barW) / 2f
+                    val top   = size.height - barH
+                    // glow shadow
+                    drawRect(
+                        brush  = Brush.verticalGradient(
+                            listOf(
+                                Color.Transparent,
+                                RED.copy(alpha = 0.35f * glowAlpha)
+                            ),
+                            startY = size.height - with(density) { 16.dp.toPx() },
+                            endY   = size.height
+                        ),
+                        size   = Size(size.width, with(density) { 16.dp.toPx() }),
+                        topLeft = Offset(0f, size.height - with(density) { 16.dp.toPx() })
+                    )
+                    // solid red bar
+                    drawRoundRect(
+                        color       = RED.copy(alpha = glowAlpha),
+                        topLeft     = Offset(left, top),
+                        size        = Size(barW, barH),
+                        cornerRadius = CornerRadius(barH / 2)
+                    )
+                }
+            }
     ) {
         Row(
-            Modifier.padding(horizontal = 20.dp),
+            Modifier.padding(horizontal = 16.dp),
             verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
-            Icon(icon, null, Modifier.size(18.dp), tint = if (selected) RED else WHITE)
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(17.dp).graphicsLayer { alpha = textAlpha },
+                tint     = if (isSelected) RED else WHITE
+            )
             Text(
                 text          = label,
                 color         = WHITE,
-                fontSize      = 16.sp,
-                fontWeight    = if (selected || focused) FontWeight.SemiBold else FontWeight.Normal,
-                letterSpacing = 0.2.sp
+                fontSize      = 15.sp,
+                fontWeight    = if (active) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = 0.2.sp,
+                modifier      = Modifier.graphicsLayer { alpha = textAlpha }
             )
         }
     }
@@ -787,7 +825,7 @@ private fun ArvioContentRow(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioCard — poster 2:3, UHD crisp
+// ArvioCard
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ArvioCard(
@@ -829,7 +867,7 @@ fun ArvioCard(
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(
                     border        = Border.None,
-                    focusedBorder = Border(BorderStroke(2.dp, WHITE.copy(alpha = 0.90f)), shape = RoundedCornerShape(8.dp))
+                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, WHITE.copy(alpha = 0.90f)), shape = RoundedCornerShape(8.dp))
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
