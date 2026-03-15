@@ -37,6 +37,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
@@ -48,6 +49,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -57,6 +59,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -70,7 +73,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ─── Palette ───────────────────────────────────────────────────────────────
+// ─── Palette ────────────────────────────────────────────────────────────────
 private val BG        = Color(0xFF080808)
 private val RED       = Color(0xFFE50914)
 private val RED2      = Color(0xFFB20710)
@@ -84,9 +87,9 @@ private val NAV_HOVER = Color(0x18FFFFFF)
 private val NAV_PRESS = Color(0xFF1E1E1E)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
-private val NAV_COUNT = 5  // Search, Movies, TV, Watchlist, Settings
+private const val NAV_COUNT = 5
 
-// ─── Focus state ───────────────────────────────────────────────────────────
+// ─── Focus state ────────────────────────────────────────────────────────────
 @Stable
 class HomeFocusState(initialRowIndex: Int = 0, initialItemIndex: Int = 0) {
     var isNavFocused     by mutableStateOf(false)
@@ -102,7 +105,7 @@ class HomeFocusState(initialRowIndex: Int = 0, initialItemIndex: Int = 0) {
     }
 }
 
-// ─── Scrims ────────────────────────────────────────────────────────────────
+// ─── Scrims ─────────────────────────────────────────────────────────────────
 private val leftScrim = Brush.horizontalGradient(colorStops = arrayOf(
     0.00f to Color(0xD9080808), 0.15f to Color(0xB3080808),
     0.30f to Color(0x80080808), 0.48f to Color(0x33080808), 0.62f to Color.Transparent))
@@ -112,9 +115,8 @@ private val bottomScrim = Brush.verticalGradient(colorStops = arrayOf(
     0.00f to Color.Transparent, 0.55f to Color.Transparent,
     0.72f to Color(0x66080808), 0.85f to Color(0xCC080808), 1.00f to Color(0xF5080808)))
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeScreen
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeScreen(
     state: HomeState,
@@ -172,20 +174,21 @@ fun HomeScreen(
         }
         BackdropLayer(hero)
         HomeInputLayer(
-            rows = rows, focusState = focusState, fastThreshMs = fastThreshMs,
-            activeTab = state.selectedTab, onMovieClick = onMovieClick,
+            rows        = rows, focusState = focusState, fastThreshMs = fastThreshMs,
+            activeTab   = state.selectedTab, onMovieClick = onMovieClick,
             onHeroFocus = { hero = it },
             onSearch    = { navController.navigate("search") },
             onMoviesTab = { viewModel.selectTab("סרטים") },
-            onSeriesTab = { viewModel.selectTab("סדרות") }
+            onSeriesTab = { viewModel.selectTab("סדרות") },
+            onWatchlist = { navController.navigate("watchlist") },
+            onSettings  = { navController.navigate("settings") }
         )
         HomeHeroOverlay(hero = hero)
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // BackdropLayer
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
@@ -208,8 +211,7 @@ private fun BackdropLayer(hero: Movie?) {
                             .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true).crossfade(false).build()
                     },
-                    contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -219,9 +221,8 @@ private fun BackdropLayer(hero: Movie?) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeHeroOverlay
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeHeroOverlay(hero: Movie?) {
     val config = LocalConfiguration.current
@@ -237,18 +238,16 @@ private fun HomeHeroOverlay(hero: Movie?) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // ArvioHeroInfo
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
-    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp),
-        horizontalAlignment = Alignment.Start) {
-        Text(movie.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
-            lineHeight = 52.sp, letterSpacing = 0.3.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(0.dp)) {
-            if (movie.year > 0)             { Text(movie.year.toString(), color=DIM, fontSize=14.sp, fontWeight=FontWeight.Medium); MetaPipe() }
-            if (movie.genre.isNotBlank())  { Text(movie.genre,           color=DIM, fontSize=14.sp, fontWeight=FontWeight.Medium); MetaPipe() }
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(10.dp), horizontalAlignment = Alignment.Start) {
+        Text(movie.title, color=WHITE, fontSize=46.sp, fontWeight=FontWeight.Black,
+            lineHeight=52.sp, letterSpacing=0.3.sp, maxLines=2, overflow=TextOverflow.Ellipsis)
+        Row(verticalAlignment=Alignment.CenterVertically, horizontalArrangement=Arrangement.spacedBy(0.dp)) {
+            if (movie.year > 0)            { Text(movie.year.toString(), color=DIM, fontSize=14.sp, fontWeight=FontWeight.Medium); MetaPipe() }
+            if (movie.genre.isNotBlank()) { Text(movie.genre,           color=DIM, fontSize=14.sp, fontWeight=FontWeight.Medium); MetaPipe() }
             if (movie.resolutionBadge.isNotBlank()) {
                 Text(movie.resolutionBadge, color=DIM, fontSize=14.sp, fontWeight=FontWeight.Medium)
                 if (movie.rating > 0f) MetaPipe()
@@ -268,9 +267,8 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
 }
 @Composable private fun MetaPipe() = Text("  |  ", color=DIM3, fontSize=13.sp)
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeInputLayer
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeInputLayer(
     rows: List<Pair<String, List<Movie>>>,
@@ -281,7 +279,9 @@ private fun HomeInputLayer(
     onHeroFocus: (Movie) -> Unit,
     onSearch: () -> Unit,
     onMoviesTab: () -> Unit,
-    onSeriesTab: () -> Unit
+    onSeriesTab: () -> Unit,
+    onWatchlist: () -> Unit,
+    onSettings: () -> Unit
 ) {
     val rootFR          = remember { FocusRequester() }
     val firstNavFR      = remember { FocusRequester() }
@@ -373,6 +373,8 @@ private fun HomeInputLayer(
             onSearchClick = onSearch,
             onMoviesTab   = onMoviesTab,
             onSeriesTab   = onSeriesTab,
+            onWatchlist   = onWatchlist,
+            onSettings    = onSettings,
             onNavExit     = { focusState.isNavFocused = false; rootFR.safe() },
             modifier      = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
         )
@@ -383,9 +385,8 @@ private fun HomeInputLayer(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // LuminaLogo
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun LuminaLogo() {
     Column(horizontalAlignment = Alignment.Start) {
@@ -398,9 +399,8 @@ private fun LuminaLogo() {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // ArvioTopNav
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
     activeTab: String,
@@ -409,6 +409,8 @@ private fun ArvioTopNav(
     onSearchClick: () -> Unit,
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit,
+    onWatchlist: () -> Unit,
+    onSettings: () -> Unit,
     onNavExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -428,21 +430,19 @@ private fun ArvioTopNav(
     ) {
         LuminaLogo()
         Spacer(Modifier.width(20.dp))
-        NavPill("Search",   Icons.Default.Search,   false,              0, focusState, firstNavFR, onSearchClick)
+        NavPill("Search",   Icons.Default.Search,   false,             0, focusState, firstNavFR, onSearchClick)
         NavPill("Movies",   Icons.Default.Movie,    activeTab=="סרטים", 1, focusState, null,       onMoviesTab)
         NavPill("TV",       Icons.Default.LiveTv,   activeTab=="סדרות", 2, focusState, null,       onSeriesTab)
-        NavPill("Watchlist",Icons.Default.Bookmark, false,              3, focusState, null,       {})
-        NavPill("Settings", Icons.Default.Settings, false,              4, focusState, null,       {})
+        NavPill("Watchlist",Icons.Default.Bookmark, false,             3, focusState, null,       onWatchlist)
+        NavPill("Settings", Icons.Default.Settings, false,             4, focusState, null,       onSettings)
         Spacer(Modifier.weight(1f))
         Text(time, color=WHITE, fontSize=17.sp, fontWeight=FontWeight.SemiBold, letterSpacing=0.5.sp)
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════════════
 // NavPill
-// הפס האדום מצויר על ה-Surface עצמו אבל דרך drawWithContent
-// כך הוא נמצא בתוך ה-bounds של ה-Surface ולא גולש
-// ──────────────────────────────────────────────────────────────────────────
+// פס אדום מצויר דרך drawWithCache — מדויק לפיקסל, אין overflow
 @Composable
 private fun NavPill(
     label: String,
@@ -454,7 +454,9 @@ private fun NavPill(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val showBar = focused || isSelected
+    // פס ואייקון אדום רק כשיש focus ממשי, או כשה-tab הזה פעיל (Movies/TV)
+    val showBar   = focused || isSelected
+    val iconRed   = focused || isSelected  // אייקון אדום רק כשצריך
 
     LaunchedEffect(focused) { if (focused) focusState.navItemIndex = index }
 
@@ -462,9 +464,13 @@ private fun NavPill(
     val contentAlpha by animateFloatAsState(if (showBar) 1f else 0.52f, tween(160), label="ca")
     val density = LocalDensity.current
 
+    // שמור את גודל ה-Surface כדי לצייר את הפס בדיוק
+    var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
+
     val pillMod = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
         .onFocusChanged { focused = it.isFocused }
         .height(44.dp)
+        .onSizeChanged { surfaceSize = it }
 
     Surface(
         onClick  = onClick,
@@ -477,58 +483,70 @@ private fun NavPill(
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
         glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-        modifier = pillMod.drawWithContent {
-            drawContent()
-            if (barAlpha > 0.01f) {
-                val barH  = with(density) { 3.dp.toPx() }
-                val padH  = with(density) { 10.dp.toPx() }
-                val barW  = (size.width - padH * 2f).coerceAtLeast(0f)
-                val left  = padH
-                val top   = size.height - barH
-                val glowH = with(density) { 14.dp.toPx() }
-                drawRect(
-                    brush   = Brush.verticalGradient(
-                        listOf(Color.Transparent, RED.copy(alpha = 0.5f * barAlpha)),
-                        startY = top - glowH, endY = top
-                    ),
-                    topLeft = Offset(left, top - glowH),
-                    size    = Size(barW, glowH)
+        modifier = pillMod
+    ) {
+        // הכל בתוך Box אחד; הפס מצויר מעל התוכן דרך drawWithCache
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawWithCache {
+                    onDrawWithContent {
+                        drawContent()
+                        if (barAlpha > 0.01f && surfaceSize != IntSize.Zero) {
+                            val barH  = with(density) { 3.dp.toPx() }
+                            val padH  = with(density) { 10.dp.toPx() }
+                            val w     = surfaceSize.width.toFloat()
+                            val h     = surfaceSize.height.toFloat()
+                            val barW  = (w - padH * 2f).coerceAtLeast(0f)
+                            val left  = padH
+                            val top   = h - barH
+                            val glowH = with(density) { 12.dp.toPx() }
+                            // glow gradient
+                            drawRect(
+                                brush   = Brush.verticalGradient(
+                                    listOf(Color.Transparent, RED.copy(alpha = 0.45f * barAlpha)),
+                                    startY = top - glowH, endY = top
+                                ),
+                                topLeft = Offset(left, top - glowH),
+                                size    = Size(barW, glowH)
+                            )
+                            // פס מלא
+                            drawRoundRect(
+                                color        = RED.copy(alpha = barAlpha),
+                                topLeft      = Offset(left, top),
+                                size         = Size(barW, barH),
+                                cornerRadius = CornerRadius(barH / 2)
+                            )
+                        }
+                    }
+                }
+        ) {
+            Row(
+                Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector        = icon,
+                    contentDescription = null,
+                    modifier           = Modifier.size(16.dp).graphicsLayer { alpha = contentAlpha },
+                    tint               = if (iconRed) RED else WHITE
                 )
-                drawRoundRect(
-                    color        = RED.copy(alpha = barAlpha),
-                    topLeft      = Offset(left, top),
-                    size         = Size(barW, barH),
-                    cornerRadius = CornerRadius(barH / 2)
+                Text(
+                    text          = label,
+                    color         = WHITE,
+                    fontSize      = 14.sp,
+                    fontWeight    = if (showBar) FontWeight.SemiBold else FontWeight.Normal,
+                    letterSpacing = 0.2.sp,
+                    modifier      = Modifier.graphicsLayer { alpha = contentAlpha }
                 )
             }
-        }
-    ) {
-        Row(
-            Modifier.padding(horizontal = 14.dp),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector        = icon,
-                contentDescription = null,
-                modifier           = Modifier.size(16.dp).graphicsLayer { alpha = contentAlpha },
-                tint               = if (focused || isSelected) RED else WHITE
-            )
-            Text(
-                text          = label,
-                color         = WHITE,
-                fontSize      = 14.sp,
-                fontWeight    = if (showBar) FontWeight.SemiBold else FontWeight.Normal,
-                letterSpacing = 0.2.sp,
-                modifier      = Modifier.graphicsLayer { alpha = contentAlpha }
-            )
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeRowsLayer
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeRowsLayer(
     rows: List<Pair<String, List<Movie>>>,
@@ -565,8 +583,7 @@ private fun HomeRowsLayer(
                         targetValue = if (index <= currentRowIndex) 1f else 0.18f,
                         animationSpec = tween(260), label = "rowAlpha"
                     )
-                    Box(Modifier.fillMaxWidth().height(220.dp).clipToBounds()
-                        .graphicsLayer { alpha = rowAlpha }) {
+                    Box(Modifier.fillMaxWidth().height(220.dp).clipToBounds().graphicsLayer { alpha = rowAlpha }) {
                         ArvioContentRow(
                             title = title, movies = movies,
                             isCurrentRow     = !focusState.isNavFocused && index == currentRowIndex,
@@ -588,9 +605,8 @@ private fun HomeRowsLayer(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // ArvioContentRow
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioContentRow(
     title: String, movies: List<Movie>,
@@ -622,11 +638,9 @@ private fun ArvioContentRow(
         Text(title, color=WHITE, fontSize=14.sp, fontWeight=FontWeight.SemiBold,
             letterSpacing=0.3.sp, modifier=Modifier.padding(start=52.dp, bottom=8.dp))
         val fadeMod = if (rowFade.value < 0.999f) Modifier.graphicsLayer { alpha=rowFade.value } else Modifier
-        LazyRow(
-            modifier=fadeMod, state=rowState,
+        LazyRow(modifier=fadeMod, state=rowState,
             contentPadding=PaddingValues(horizontal=52.dp, vertical=4.dp),
-            horizontalArrangement=Arrangement.spacedBy(10.dp)
-        ) {
+            horizontalArrangement=Arrangement.spacedBy(10.dp)) {
             itemsIndexed(movies, key={_,m->m.id}) { idx, movie ->
                 ArvioCard(
                     movie=movie, cardW=cardW, cardH=cardH,
@@ -639,9 +653,8 @@ private fun ArvioContentRow(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // ArvioCard
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun ArvioCard(
     movie: Movie,
@@ -663,9 +676,7 @@ fun ArvioCard(
         spring(Spring.DampingRatioLowBouncy, Spring.StiffnessMediumLow), label="zoom")
 
     Column(modifier=modifier.width(cardW), horizontalAlignment=Alignment.Start) {
-        Box(Modifier.width(cardW).height(cardH)
-            .graphicsLayer { scaleX=zoom; scaleY=zoom }
-            .zIndex(if (focused) 8f else 0f)) {
+        Box(Modifier.width(cardW).height(cardH).graphicsLayer { scaleX=zoom; scaleY=zoom }.zIndex(if (focused) 8f else 0f)) {
             Surface(
                 onClick  = onClick,
                 colors   = ClickableSurfaceDefaults.colors(containerColor=CARD_BG, focusedContainerColor=CARD_BG),
@@ -675,10 +686,8 @@ fun ArvioCard(
                     border        = Border.None,
                     focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.dp, WHITE.copy(alpha=0.9f)), shape=RoundedCornerShape(8.dp))
                 ),
-                glow     = ClickableSurfaceDefaults.glow(
-                    glow=Glow.None,
-                    focusedGlow=Glow(elevationColor=WHITE.copy(alpha=0.14f), elevation=12.dp)
-                ),
+                glow     = ClickableSurfaceDefaults.glow(glow=Glow.None,
+                    focusedGlow=Glow(elevationColor=WHITE.copy(alpha=0.14f), elevation=12.dp)),
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> selfFocused=fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
@@ -690,9 +699,8 @@ fun ArvioCard(
                             .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true).crossfade(false).build()
                     },
-                    contentDescription = movie.title,
-                    contentScale       = ContentScale.Crop,
-                    modifier           = Modifier.fillMaxSize()
+                    contentDescription = movie.title, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
@@ -709,9 +717,8 @@ fun NfCard(movie: Movie, modifier: Modifier=Modifier, isFocusedOverride: Boolean
     onFocused: ()->Unit={}, onClick: ()->Unit
 ) = ArvioCard(movie=movie, modifier=modifier, isFocusedOverride=isFocusedOverride, onFocused=onFocused, onClick=onClick)
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeLoading
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label="sk")
@@ -744,9 +751,8 @@ fun HomeLoading() {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════════════
 // HomeError
-// ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
