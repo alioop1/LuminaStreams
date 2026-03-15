@@ -10,8 +10,14 @@ import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateColorAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -19,10 +25,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -42,6 +45,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -78,7 +82,7 @@ private val GOLD  = Color(0xFFFFC107)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
-// ─── HomeFocusState — ARVIO-style state machine, no Compose focus magic ───
+// ─── HomeFocusState — ARVIO-style state machine ───────────────────────────
 @Stable
 class HomeFocusState(
     initialRowIndex: Int = 0,
@@ -156,11 +160,9 @@ fun HomeScreen(
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val fastScrollThresholdMs = 650L
 
-    // hero = focused item
     var hero by remember { mutableStateOf<Movie?>(null) }
     val latestRows by rememberUpdatedState(rows)
 
-    // Initialise hero once data arrives
     LaunchedEffect(state.isLoading) {
         if (!state.isLoading) {
             hero = latestRows.getOrNull(focusState.currentRowIndex)
@@ -169,7 +171,6 @@ fun HomeScreen(
         }
     }
 
-    // Update hero with fast-scroll debounce (ARVIO pattern)
     LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex to focusState.currentItemIndex }
             .distinctUntilChanged()
@@ -196,32 +197,29 @@ fun HomeScreen(
             state.error != null -> { HomeError(state.error) { viewModel.selectTab(state.selectedTab) }; return@Box }
         }
 
-        // ── Layer 0: backdrop + triple scrim ──────────────────────────────
         BackdropLayer(hero)
 
-        // ── Layer 1: input handler + top bar + rows ───────────────────────
         HomeInputLayer(
-            rows              = rows,
-            focusState        = focusState,
+            rows               = rows,
+            focusState         = focusState,
             fastScrollThreshMs = fastScrollThresholdMs,
-            activeTab         = state.selectedTab,
-            onMovieClick      = onMovieClick,
-            onHeroFocus       = { hero = it },
-            onSearch          = { navController.navigate("search") },
-            onMoviesTab       = { viewModel.selectTab("סרטים") },
-            onSeriesTab       = { viewModel.selectTab("סדרות") }
+            activeTab          = state.selectedTab,
+            onMovieClick       = onMovieClick,
+            onHeroFocus        = { hero = it },
+            onSearch           = { navController.navigate("search") },
+            onMoviesTab        = { viewModel.selectTab("סרטים") },
+            onSeriesTab        = { viewModel.selectTab("סדרות") }
         )
 
-        // ── Layer 2: hero metadata floating above everything (zIndex=3) ───
         HomeHeroLayer(
-            hero = hero,
+            hero   = hero,
             onPlay = { hero?.id?.let(onMovieClick) }
         )
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// BackdropLayer  — crossfade backdrop + 3 scrim passes
+// BackdropLayer
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
@@ -236,14 +234,11 @@ private fun BackdropLayer(hero: Movie?) {
     }
 
     Box(Modifier.fillMaxSize()) {
-        // solid base
         Box(Modifier.fillMaxSize().background(BG))
-
-        // backdrop crossfade — 320 ms, no AnimatedContent overhead
         Crossfade(
-            targetState  = hero?.backdropUrl ?: hero?.posterUrl,
+            targetState   = hero?.backdropUrl ?: hero?.posterUrl,
             animationSpec = tween(320),
-            label        = "backdrop"
+            label         = "backdrop"
         ) { url ->
             if (url != null) {
                 AsyncImage(
@@ -260,8 +255,6 @@ private fun BackdropLayer(hero: Movie?) {
                 )
             }
         }
-
-        // triple scrim drawn in a single pass
         Box(
             Modifier.fillMaxSize().drawBehind {
                 drawRect(brush = heroLeftScrim)
@@ -273,14 +266,13 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HomeHeroLayer  — floats at zIndex 3, bottom-left, above rows
+// HomeHeroLayer
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeHeroLayer(hero: Movie?, onPlay: () -> Unit) {
     val configuration = LocalConfiguration.current
-    // rows occupy bottom 36% → hero sits just above them
     val rowsHeight = (configuration.screenHeightDp * 0.36f).dp.coerceIn(240.dp, 320.dp)
-    val heroPad   = rowsHeight + 8.dp
+    val heroPad    = rowsHeight + 8.dp
 
     Box(
         Modifier
@@ -303,7 +295,7 @@ private fun HomeHeroLayer(hero: Movie?, onPlay: () -> Unit) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HomeInputLayer  — all d-pad logic, sidebar + top bar + rows
+// HomeInputLayer
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeInputLayer(
@@ -395,32 +387,27 @@ private fun HomeInputLayer(
                         if (focusState.isSidebarFocused) {
                             focusState.isSidebarFocused = false
                             true
-                        } else {
-                            false
-                        }
+                        } else false
                     }
                     else -> false
                 }
             }
     ) {
-        // top bar
         LuminaTopBar(
-            isFocused    = focusState.isSidebarFocused,
-            activeTab    = activeTab,
+            isFocused     = focusState.isSidebarFocused,
+            activeTab     = activeTab,
             onSearchClick = onSearch,
-            modifier     = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
+            modifier      = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
         )
 
-        // rows
         HomeRowsLayer(
-            rows           = rows,
-            focusState     = focusState,
+            rows               = rows,
+            focusState         = focusState,
             fastScrollThreshMs = fastScrollThreshMs,
-            onItemFocused  = onHeroFocus,
-            onItemClick    = onMovieClick
+            onItemFocused      = onHeroFocus,
+            onItemClick        = onMovieClick
         )
 
-        // sidebar dim overlay
         AnimatedVisibility(
             visible  = focusState.isSidebarFocused,
             enter    = fadeIn(tween(200)),
@@ -430,7 +417,6 @@ private fun HomeInputLayer(
             Box(Modifier.fillMaxSize().background(Color.Black.copy(0.65f)))
         }
 
-        // sidebar panel
         LuminaSidebar(
             open          = focusState.isSidebarFocused,
             activeTab     = activeTab,
@@ -443,7 +429,7 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HomeRowsLayer  — rows in bottom 36%, row alpha fade like ARVIO
+// HomeRowsLayer
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeRowsLayer(
@@ -491,16 +477,12 @@ private fun HomeRowsLayer(
                 modifier = Modifier.fillMaxSize().clipToBounds(),
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
-                itemsIndexed(
-                    rows,
-                    key = { _, pair -> pair.first }
-                ) { index, (title, movies) ->
-                    // rows below current fade to 25% — ARVIO signature
+                itemsIndexed(rows, key = { _, pair -> pair.first }) { index, (title, movies) ->
                     val targetAlpha = if (index <= currentRowIndex) 1f else 0.25f
                     val rowAlpha by animateFloatAsState(
-                        targetValue  = targetAlpha,
+                        targetValue   = targetAlpha,
                         animationSpec = tween(300),
-                        label        = "rowAlpha"
+                        label         = "rowAlpha"
                     )
                     Box(
                         Modifier
@@ -510,14 +492,14 @@ private fun HomeRowsLayer(
                             .graphicsLayer { alpha = rowAlpha }
                     ) {
                         LuminaContentRow(
-                            title           = title,
-                            movies          = movies,
-                            isCurrentRow    = !focusState.isSidebarFocused && index == currentRowIndex,
+                            title            = title,
+                            movies           = movies,
+                            isCurrentRow     = !focusState.isSidebarFocused && index == currentRowIndex,
                             focusedItemIndex = if (!focusState.isSidebarFocused && index == currentRowIndex) focusState.currentItemIndex else -1,
-                            isFastScrolling = isFastScrolling,
-                            startPadding    = 56.dp,
-                            onItemClick     = onItemClick,
-                            onItemFocused   = { movie, itemIdx ->
+                            isFastScrolling  = isFastScrolling,
+                            startPadding     = 56.dp,
+                            onItemClick      = onItemClick,
+                            onItemFocused    = { movie, itemIdx ->
                                 focusState.currentRowIndex  = index
                                 focusState.currentItemIndex = itemIdx
                                 focusState.isSidebarFocused = false
@@ -555,11 +537,11 @@ private fun LuminaContentRow(
     val density = LocalDensity.current
     val itemWidth = 110.dp
     val itemSpacing = 10.dp
+    @Suppress("UNUSED_VARIABLE")
     val itemSpanPx = remember(density, itemWidth, itemSpacing) {
         with(density) { (itemWidth + itemSpacing).toPx().coerceAtLeast(1f) }
     }
 
-    // scroll to focused card
     LaunchedEffect(focusedItemIndex, isCurrentRow) {
         if (!isCurrentRow || focusedItemIndex < 0) return@LaunchedEffect
         val totalItems = movies.size
@@ -570,7 +552,6 @@ private fun LuminaContentRow(
         else rowState.animateScrollToItem(target)
     }
 
-    // page-turn fade
     val rowFade = remember { Animatable(1f) }
     var lastPage by remember { mutableIntStateOf(0) }
     val pageIndex by remember { derivedStateOf { rowState.firstVisibleItemIndex / 6 } }
@@ -600,10 +581,10 @@ private fun LuminaContentRow(
         ) {
             itemsIndexed(movies, key = { _, m -> m.id }) { idx, movie ->
                 NfCard(
-                    movie       = movie,
+                    movie             = movie,
                     isFocusedOverride = currentIsCurrent && idx == currentFocused,
-                    onFocused   = { onItemFocused(movie, idx) },
-                    onClick     = { onItemClick(movie.id) }
+                    onFocused         = { onItemFocused(movie, idx) },
+                    onClick           = { onItemClick(movie.id) }
                 )
             }
         }
@@ -611,7 +592,7 @@ private fun LuminaContentRow(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// NfCard — zoom only, no border, no glow (kept as-is, already correct)
+// NfCard
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfCard(
@@ -665,7 +646,6 @@ fun NfCard(
                         Brush.verticalGradient(listOf(Color.Transparent, BG.copy(0.75f)))
                     )
                 )
-                // resolution badge
                 Box(
                     Modifier.align(Alignment.TopEnd).padding(4.dp)
                         .clip(RoundedCornerShape(3.dp)).background(Color(0xCC000000))
@@ -673,7 +653,6 @@ fun NfCard(
                 ) {
                     Text(movie.resolutionBadge, color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                 }
-                // title on focus
                 AnimatedVisibility(
                     visible  = focused,
                     enter    = fadeIn(tween(110)) + slideInVertically(tween(130)) { it / 2 },
@@ -693,7 +672,7 @@ fun NfCard(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HeroInfo  — title / meta / big buttons (kept same, already good)
+// HeroInfo
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroInfo(movie: Movie, onPlay: () -> Unit, modifier: Modifier = Modifier) {
@@ -702,7 +681,6 @@ private fun HeroInfo(movie: Movie, onPlay: () -> Unit, modifier: Modifier = Modi
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.Start
     ) {
-        // meta row
         Row(
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -723,14 +701,12 @@ private fun HeroInfo(movie: Movie, onPlay: () -> Unit, modifier: Modifier = Modi
             }
         }
 
-        // title
         Text(
             movie.title, color = WHITE,
             fontSize = 52.sp, fontWeight = FontWeight.Black,
             lineHeight = 58.sp, maxLines = 3, overflow = TextOverflow.Ellipsis
         )
 
-        // overview
         Text(
             movie.overview, color = DIM,
             fontSize = 14.sp, lineHeight = 22.sp,
@@ -739,7 +715,6 @@ private fun HeroInfo(movie: Movie, onPlay: () -> Unit, modifier: Modifier = Modi
 
         Spacer(Modifier.height(8.dp))
 
-        // action buttons (height=72dp, icon=30dp, text=22sp — unchanged)
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(
                 onClick = onPlay,
@@ -802,7 +777,7 @@ private fun HeroInfo(movie: Movie, onPlay: () -> Unit, modifier: Modifier = Modi
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// LuminaTopBar  — slim bar, no tabs
+// LuminaTopBar
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 private fun LuminaTopBar(
@@ -816,7 +791,6 @@ private fun LuminaTopBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Logo
         Text(
             "LUMINA",
             color = RED,
@@ -828,7 +802,6 @@ private fun LuminaTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // active tab pill
             Box(
                 Modifier
                     .clip(RoundedCornerShape(4.dp))
@@ -837,7 +810,6 @@ private fun LuminaTopBar(
             ) {
                 Text(activeTab, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }
-            // search hint
             Surface(
                 onClick = onSearchClick,
                 colors  = ClickableSurfaceDefaults.colors(
@@ -862,7 +834,7 @@ private fun LuminaTopBar(
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// LuminaSidebar  — slides in from left (ARVIO style)
+// LuminaSidebar
 // ══════════════════════════════════════════════════════════════════════════
 @Composable
 fun LuminaSidebar(
@@ -887,7 +859,6 @@ fun LuminaSidebar(
                     Brush.horizontalGradient(listOf(Color(0xFF040404), Color(0xFF111111)))
                 )
         ) {
-            // red accent line right edge
             Box(
                 Modifier
                     .align(Alignment.CenterEnd)
@@ -962,11 +933,14 @@ private fun SidebarRow(
 ) {
     var focused by remember { mutableStateOf(false) }
     val bg by animateColorAsState(
-        when { active -> RED.copy(0.18f); focused -> WHITE.copy(0.09f); else -> Color.Transparent },
-        tween(130), label = "sidebarBg"
+        targetValue   = when { active -> RED.copy(0.18f); focused -> WHITE.copy(0.09f); else -> Color.Transparent },
+        animationSpec = tween(130),
+        label         = "sidebarBg"
     )
     val textColor by animateColorAsState(
-        if (active || focused) WHITE else DIM, tween(130), label = "sidebarText"
+        targetValue   = if (active || focused) WHITE else DIM,
+        animationSpec = tween(130),
+        label         = "sidebarText"
     )
 
     Surface(
@@ -1016,13 +990,15 @@ private fun SidebarRow(
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label = "sk")
     val p by inf.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(1100, easing = androidx.compose.animation.core.LinearEasing),
-            androidx.compose.animation.core.RepeatMode.Restart), "sp"
+        initialValue   = 0f,
+        targetValue    = 1f,
+        animationSpec  = infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+        label          = "sp"
     )
     val shimmer = Brush.linearGradient(
         listOf(Color(0xFF161616), Color(0xFF2B2B2B), Color(0xFF161616)),
-        start = Offset(p * 1800f - 900f, 0f), end = Offset(p * 1800f, 400f)
+        start = Offset(p * 1800f - 900f, 0f),
+        end   = Offset(p * 1800f, 400f)
     )
     Box(Modifier.fillMaxSize().background(BG)) {
         Column(
