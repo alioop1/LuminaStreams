@@ -5,17 +5,15 @@ plugins {
 }
 
 android {
-    namespace = "com.luminastreams.tv"
+    namespace  = "com.luminastreams.tv"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.luminastreams.tv"
-        minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "1.0.0-Lumina"
-
-        // ── TV: multi-core rendering hint ──────────────────────────────────
+        applicationId   = "com.luminastreams.tv"
+        minSdk          = 26
+        targetSdk       = 35
+        versionCode     = 1
+        versionName     = "1.0.0-Lumina"
         vectorDrawables.useSupportLibrary = true
     }
 
@@ -23,16 +21,15 @@ android {
         compose = true
     }
 
-    // ── Release: R8 full-mode + resource shrinking ─────────────────────────
     buildTypes {
         getByName("debug") {
-            isDebuggable = true
-            isMinifyEnabled = false
+            isDebuggable      = true
+            isMinifyEnabled   = false
             isShrinkResources = false
         }
         getByName("release") {
-            isDebuggable = false
-            isMinifyEnabled = true
+            isDebuggable      = false
+            isMinifyEnabled   = true
             isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -50,15 +47,13 @@ android {
         jvmToolchain(21)
     }
 
-    // ── Compose compiler — performance flags ───────────────────────────────
-    // ✅ FIXED: stabilityConfigurationFiles (plural) — new API in Compose compiler plugin
+    // ✅ stabilityConfigurationFiles (plural) — correct API for Compose compiler plugin
     composeCompiler {
         stabilityConfigurationFiles.add(
             rootProject.layout.projectDirectory.file("stability_config.conf")
         )
     }
 
-    // ── Packaging: strip unused native libs to reduce APK / install time ──
     packaging {
         resources {
             excludes += setOf(
@@ -69,26 +64,19 @@ android {
                 "**/*.kotlin_builtins"
             )
         }
-        // Keep only armeabi-v7a + arm64-v8a — all Android TVs are ARM
-        jniLibs {
-            pickFirsts += setOf("**/*.so")
-        }
     }
 
-    // ── ABI splits: ship separate APKs per CPU arch for lean installs ──────
     splits {
         abi {
-            isEnable = true
+            isEnable       = true
             reset()
-            // All Android TV hardware is ARM; x86/x86_64 only needed for emulators
             include("armeabi-v7a", "arm64-v8a", "x86_64")
-            isUniversalApk = true   // keep universal as fallback
+            isUniversalApk = true
         }
     }
 
-    // ── Lint ───────────────────────────────────────────────────────────────
     lint {
-        abortOnError = false
+        abortOnError       = false
         checkReleaseBuilds = false
     }
 }
@@ -96,7 +84,7 @@ android {
 dependencies {
     // ── AndroidX core ──────────────────────────────────────────────────────
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)          // required for TrackSelectionDialogBuilder
+    implementation(libs.androidx.appcompat)   // required by TrackSelectionDialogBuilder
     implementation(libs.material)
 
     // ── Compose TV ────────────────────────────────────────────────────────
@@ -109,39 +97,41 @@ dependencies {
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
-    // ✅ FIXED: string literals instead of catalog aliases (cascade-safe)
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.tooling.preview)
 
-    // ── Material Icons Extended (Tv, LiveTv, VideoLibrary …) ──────────────
-    implementation("androidx.compose.material:material-icons-extended")
+    // ✅ FIXED: catalog alias instead of bare string (ensures version = 1.7.6)
+    // was: implementation("androidx.compose.material:material-icons-extended")
+    //      ↑ no version = Unresolved reference / version conflict
+    implementation(libs.androidx.compose.material.icons.extended)
 
-    // ── Media3 / ExoPlayer — FULL suite for TV 4K playback ────────────────
+    // ── Media3 / ExoPlayer — full TV 4K suite ─────────────────────────────
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.exoplayer.hls)          // HLS streams
-    implementation("androidx.media3:media3-exoplayer-dash:1.5.0")    // DASH (Real-Debrid links)
-    implementation("androidx.media3:media3-datasource-okhttp:1.5.0") // OkHttp transport layer
-    implementation("androidx.media3:media3-common:1.5.0")            // subtitle / track types
-    implementation("androidx.media3:media3-decoder:1.5.0")           // software decoders fallback
+    implementation(libs.androidx.media3.exoplayer.dash)         // DASH (Real-Debrid links)
+    implementation(libs.androidx.media3.datasource.okhttp)      // OkHttp transport layer
+    implementation(libs.androidx.media3.common)                 // subtitle / track types
+    implementation(libs.androidx.media3.decoder)                // software decoder fallback
 
-    // ── Coil — memory-optimised image loading ──────────────────────────────
-    // coil-okhttp does NOT exist as a separate artifact.
-    // Coil detects OkHttp on the classpath automatically (via okhttp3 below).
+    // ── Coil 2 image loading ──────────────────────────────────────────────
+    // ✅ DO NOT upgrade to Coil 3 — entire codebase uses coil.* packages:
+    //    LuminaApp.kt  → coil.ImageLoader, coil.memory.MemoryCache, coil.disk.DiskCache
+    //    LocalStorage.kt → coil.imageLoader extension
+    // Coil 3 moved all of this to coil3.* = compile errors throughout
     implementation(libs.coil.compose)
 
-    // ── Palette — backdrop color theming ──────────────────────────────────
+    // ── Palette / Security ─────────────────────────────────────────────────
     implementation(libs.androidx.palette.ktx)
-
-    // ── Security — EncryptedSharedPreferences for RD token ────────────────
     implementation(libs.androidx.security.crypto)
 
     // ── Networking ────────────────────────────────────────────────────────
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging.interceptor)
     implementation(libs.jsoup)
+    implementation(libs.gson)
 
     // ── Coroutines ────────────────────────────────────────────────────────
     implementation(libs.kotlinx.coroutines.android)
