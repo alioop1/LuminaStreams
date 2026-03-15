@@ -11,6 +11,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
@@ -69,7 +71,6 @@ fun DiscoveryScreen(
     BackHandler(enabled = state.isFilterComplete) { viewModel.clearGenre() }
 
     Box(Modifier.fillMaxSize().background(C_BG)) {
-        // blurred backdrop when results are shown
         if (state.isFilterComplete && state.focusedItem != null) {
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
@@ -101,12 +102,12 @@ fun DiscoveryScreen(
                 )
             } else {
                 when {
-                    state.isLoading               -> DiscLoader()
+                    state.isLoading                  -> DiscLoader()
                     state.discoveryResults.isEmpty() -> DiscEmpty()
                     else -> DiscResults(
-                        state   = state,
+                        state     = state,
                         viewModel = viewModel,
-                        onClick = onMovieClick
+                        onClick   = onMovieClick
                     )
                 }
             }
@@ -114,7 +115,7 @@ fun DiscoveryScreen(
     }
 }
 
-// ─── Genre Grid ───────────────────────────────────────────────────────────────
+// ─── Genre Grid ──────────────────────────────────────────────────────────────
 @Composable
 private fun GenreGrid(
     mediaType: String,
@@ -175,7 +176,6 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
                 .onFocusChanged { focused = it.isFocused }
         ) {
             Box(Modifier.fillMaxSize()) {
-                // subtle red corner gradient
                 Box(Modifier.fillMaxSize().background(
                     Brush.linearGradient(
                         listOf(C_RED.copy(if (focused) 0.22f else 0.08f), Color.Transparent),
@@ -191,7 +191,6 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
                     textAlign  = TextAlign.Center,
                     modifier   = Modifier.align(Alignment.Center).padding(12.dp)
                 )
-                // bottom red bar on focus
                 AnimatedVisibility(
                     visible  = focused,
                     enter    = fadeIn(tween(130)) + expandHorizontally(tween(200)),
@@ -207,20 +206,39 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
     }
 }
 
-// ─── Results ──────────────────────────────────────────────────────────────────
+// ─── Results ─────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(top = 80.dp)) {
-        NfContentRow(
-            title   = "תוצאות: ${state.selectedGenreName}",
-            movies  = state.discoveryResults,
-            onFocus = { movie: Movie -> viewModel.updateFocusedItem(movie, state.selectedGenreName, true) },
-            onClick = onClick
+    var focusedIdx by remember { mutableIntStateOf(0) }
+
+    Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 56.dp)) {
+        Text(
+            text       = "תוצאות: ${state.selectedGenreName}",
+            color      = C_WH,
+            fontSize   = 22.sp,
+            fontWeight = FontWeight.Bold,
+            modifier   = Modifier.padding(bottom = 16.dp, end = 56.dp)
         )
+        LazyRow(
+            contentPadding        = PaddingValues(end = 56.dp, top = 10.dp, bottom = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            itemsIndexed(state.discoveryResults, key = { _, m -> m.id }) { idx, movie ->
+                NfCard(
+                    movie             = movie,
+                    isFocusedOverride = idx == focusedIdx,
+                    onFocused         = {
+                        focusedIdx = idx
+                        viewModel.updateFocusedItem(movie, state.selectedGenreName, true)
+                    },
+                    onClick = { onClick(movie.id) }
+                )
+            }
+        }
     }
 }
 
-// ─── Loader ───────────────────────────────────────────────────────────────────
+// ─── Loader ──────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscLoader() {
     val inf = rememberInfiniteTransition(label = "dl")
@@ -243,7 +261,7 @@ private fun DiscLoader() {
     }
 }
 
-// ─── Empty ────────────────────────────────────────────────────────────────────
+// ─── Empty ───────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscEmpty() {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -251,7 +269,7 @@ private fun DiscEmpty() {
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Text("🎬", fontSize = 44.sp)
+            Text("🎦", fontSize = 44.sp)
             Text("לא נמצאו תוצאות", color = C_WH, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text("נסה ז'אנר אחר", color = C_DIM, fontSize = 16.sp)
         }
