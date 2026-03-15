@@ -89,7 +89,7 @@ private val NAV_PRESS = Color(0xFF1E1E1E)
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 private const val NAV_COUNT = 5
 
-// ─── Focus state ────────────────────────────────────────────────────────────
+// ─── Focus state ─────────────────────────────────────────────────────────────
 @Stable
 class HomeFocusState(initialRowIndex: Int = 0, initialItemIndex: Int = 0) {
     var isNavFocused     by mutableStateOf(false)
@@ -105,7 +105,7 @@ class HomeFocusState(initialRowIndex: Int = 0, initialItemIndex: Int = 0) {
     }
 }
 
-// ─── Scrims ─────────────────────────────────────────────────────────────────
+// ─── Scrims ──────────────────────────────────────────────────────────────────
 private val leftScrim = Brush.horizontalGradient(colorStops = arrayOf(
     0.00f to Color(0xD9080808), 0.15f to Color(0xB3080808),
     0.30f to Color(0x80080808), 0.48f to Color(0x33080808), 0.62f to Color.Transparent))
@@ -426,23 +426,24 @@ private fun ArvioTopNav(
             .padding(horizontal = 48.dp, vertical = 18.dp)
             .fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(2.dp)
+        // spacedBy(8.dp) — רווח נוח בין הכפתורים
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         LuminaLogo()
-        Spacer(Modifier.width(20.dp))
-        NavPill("Search",   Icons.Default.Search,   false,             0, focusState, firstNavFR, onSearchClick)
-        NavPill("Movies",   Icons.Default.Movie,    activeTab=="סרטים", 1, focusState, null,       onMoviesTab)
-        NavPill("TV",       Icons.Default.LiveTv,   activeTab=="סדרות", 2, focusState, null,       onSeriesTab)
-        NavPill("Watchlist",Icons.Default.Bookmark, false,             3, focusState, null,       onWatchlist)
-        NavPill("Settings", Icons.Default.Settings, false,             4, focusState, null,       onSettings)
+        Spacer(Modifier.width(16.dp))
+        // כל NavPill עם wrapContentWidth — לא מתפשט
+        NavPill("Search",    Icons.Default.Search,   isSelected = false,              index = 0, focusState = focusState, focusRequester = firstNavFR, onClick = onSearchClick)
+        NavPill("Movies",    Icons.Default.Movie,    isSelected = activeTab=="סרטים",  index = 1, focusState = focusState, onClick = onMoviesTab)
+        NavPill("TV Shows",  Icons.Default.LiveTv,   isSelected = activeTab=="סדרות",  index = 2, focusState = focusState, onClick = onSeriesTab)
+        NavPill("Watchlist", Icons.Default.Bookmark, isSelected = false,              index = 3, focusState = focusState, onClick = onWatchlist)
+        NavPill("Settings",  Icons.Default.Settings, isSelected = false,              index = 4, focusState = focusState, onClick = onSettings)
         Spacer(Modifier.weight(1f))
         Text(time, color=WHITE, fontSize=17.sp, fontWeight=FontWeight.SemiBold, letterSpacing=0.5.sp)
     }
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// NavPill
-// פס אדום מצויר דרך drawWithCache — מדויק לפיקסל, אין overflow
+// NavPill — wrapContentWidth מובטח שלא יתפשט
 @Composable
 private fun NavPill(
     label: String,
@@ -454,23 +455,23 @@ private fun NavPill(
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    // פס ואייקון אדום רק כשיש focus ממשי, או כשה-tab הזה פעיל (Movies/TV)
     val showBar   = focused || isSelected
-    val iconRed   = focused || isSelected  // אייקון אדום רק כשצריך
+    val iconRed   = focused || isSelected
 
     LaunchedEffect(focused) { if (focused) focusState.navItemIndex = index }
 
-    val barAlpha     by animateFloatAsState(if (showBar) 1f else 0f, tween(160), label="bar")
-    val contentAlpha by animateFloatAsState(if (showBar) 1f else 0.52f, tween(160), label="ca")
-    val density = LocalDensity.current
+    val barAlpha     by animateFloatAsState(if (showBar) 1f else 0f,     tween(160), label = "bar")
+    val contentAlpha by animateFloatAsState(if (showBar) 1f else 0.52f,  tween(160), label = "ca")
+    val density      =  LocalDensity.current
+    var surfaceSize  by remember { mutableStateOf(IntSize.Zero) }
 
-    // שמור את גודל ה-Surface כדי לצייר את הפס בדיוק
-    var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
-
-    val pillMod = (if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
-        .onFocusChanged { focused = it.isFocused }
+    // חשוב: wrapContentWidth() מונע את ההתפשטות
+    val pillMod = Modifier
+        .wrapContentWidth()
         .height(44.dp)
         .onSizeChanged { surfaceSize = it }
+        .let { m -> if (focusRequester != null) m.focusRequester(focusRequester) else m }
+        .onFocusChanged { focused = it.isFocused }
 
     Surface(
         onClick  = onClick,
@@ -485,10 +486,10 @@ private fun NavPill(
         glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = pillMod
     ) {
-        // הכל בתוך Box אחד; הפס מצויר מעל התוכן דרך drawWithCache
         Box(
             modifier = Modifier
-                .fillMaxSize()
+                .wrapContentWidth()
+                .fillMaxHeight()
                 .drawWithCache {
                     onDrawWithContent {
                         drawContent()
@@ -501,7 +502,6 @@ private fun NavPill(
                             val left  = padH
                             val top   = h - barH
                             val glowH = with(density) { 12.dp.toPx() }
-                            // glow gradient
                             drawRect(
                                 brush   = Brush.verticalGradient(
                                     listOf(Color.Transparent, RED.copy(alpha = 0.45f * barAlpha)),
@@ -510,7 +510,6 @@ private fun NavPill(
                                 topLeft = Offset(left, top - glowH),
                                 size    = Size(barW, glowH)
                             )
-                            // פס מלא
                             drawRoundRect(
                                 color        = RED.copy(alpha = barAlpha),
                                 topLeft      = Offset(left, top),
@@ -522,7 +521,10 @@ private fun NavPill(
                 }
         ) {
             Row(
-                Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                Modifier
+                    .wrapContentWidth()
+                    .fillMaxHeight()
+                    .padding(horizontal = 14.dp),
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
@@ -538,6 +540,7 @@ private fun NavPill(
                     fontSize      = 14.sp,
                     fontWeight    = if (showBar) FontWeight.SemiBold else FontWeight.Normal,
                     letterSpacing = 0.2.sp,
+                    softWrap      = false,
                     modifier      = Modifier.graphicsLayer { alpha = contentAlpha }
                 )
             }
