@@ -743,7 +743,7 @@ fun ArvioCard(
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
-                    focusedGlow = Glow(glowColor = WHITE.copy(alpha = 0.14f), elevation = 12.dp)
+                    focusedGlow = Glow(elevationColor = WHITE.copy(alpha = 0.14f), elevation = 12.dp)
                 ),
                 modifier = Modifier
                     .fillMaxSize()
@@ -867,7 +867,7 @@ fun HomeError(message: String, onRetry: () -> Unit) {
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
-                    focusedGlow = Glow(glowColor = RED.copy(alpha = 0.5f), elevation = 16.dp)
+                    focusedGlow = Glow(elevationColor = RED.copy(alpha = 0.5f), elevation = 16.dp)
                 ),
                 modifier = Modifier.height(52.dp).width(160.dp)
             ) {
