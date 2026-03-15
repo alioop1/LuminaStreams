@@ -23,7 +23,6 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -66,18 +65,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ─── Palette ───────────────────────────────────────────────────────────────────
-private val BG        = Color(0xFF080808)
-private val RED       = Color(0xFFE50914)
-private val RED2      = Color(0xFFB20710)
-private val WHITE     = Color(0xFFFFFFFF)
-private val DIM       = Color(0xCCFFFFFF)
-private val DIM2      = Color(0x99FFFFFF)
-private val DIM3      = Color(0x4DFFFFFF)
-private val GOLD      = Color(0xFFFFD700)
-private val PILL_SEL  = Color(0xFFFFFFFF)
-private val PILL_UNS  = Color(0x00FFFFFF)  // transparent bg for unselected
-private val CARD_BG   = Color(0xFF181818)
+// ─── Palette ─────────────────────────────────────────────────────────────────────
+private val BG       = Color(0xFF080808)
+private val RED      = Color(0xFFE50914)
+private val RED2     = Color(0xFFB20710)
+private val WHITE    = Color(0xFFFFFFFF)
+private val DIM      = Color(0xCCFFFFFF)
+private val DIM2     = Color(0x99FFFFFF)
+private val DIM3     = Color(0x4DFFFFFF)
+private val GOLD     = Color(0xFFFFD700)
+private val CARD_BG  = Color(0xFF181818)
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
@@ -100,14 +97,14 @@ class HomeFocusState(
     }
 }
 
-// ─── Scrims ───────────────────────────────────────────────────────────────────
+// ─── Scrims ─────────────────────────────────────────────────────────────────────
 private val leftScrim = Brush.horizontalGradient(
     colorStops = arrayOf(
         0.00f to Color(0xD9080808),
         0.15f to Color(0xB3080808),
-        0.32f to Color(0x80080808),
-        0.50f to Color(0x33080808),
-        0.65f to Color.Transparent
+        0.30f to Color(0x80080808),
+        0.48f to Color(0x33080808),
+        0.62f to Color.Transparent
     )
 )
 private val topScrim = Brush.verticalGradient(
@@ -259,13 +256,13 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// HomeHeroOverlay — text-only, no buttons (ARVIO style)
+// HomeHeroOverlay — text-only, ARVIO style (no buttons)
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeHeroOverlay(hero: Movie?) {
-    val config = LocalConfiguration.current
-    val rowsH  = (config.screenHeightDp * 0.38f).dp.coerceIn(230.dp, 320.dp)
-    val heroBottomPad = rowsH + 20.dp
+    val config        = LocalConfiguration.current
+    val rowsH         = (config.screenHeightDp * 0.40f).dp.coerceIn(250.dp, 340.dp)
+    val heroBottomPad = rowsH + 24.dp
 
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         key(hero?.id) {
@@ -274,7 +271,7 @@ private fun HomeHeroOverlay(hero: Movie?) {
                     movie    = m,
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 52.dp, end = 460.dp, bottom = heroBottomPad)
+                        .padding(start = 52.dp, end = 440.dp, bottom = heroBottomPad)
                 )
             }
         }
@@ -282,7 +279,7 @@ private fun HomeHeroOverlay(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioHeroInfo — pure text, ARVIO style
+// ArvioHeroInfo — pure text, no buttons
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
@@ -295,15 +292,15 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
         Text(
             text          = movie.title,
             color         = WHITE,
-            fontSize      = 48.sp,
+            fontSize      = 46.sp,
             fontWeight    = FontWeight.Black,
-            lineHeight    = 54.sp,
-            letterSpacing = 0.5.sp,
+            lineHeight    = 52.sp,
+            letterSpacing = 0.3.sp,
             maxLines      = 2,
             overflow      = TextOverflow.Ellipsis
         )
 
-        // Metadata row — date | genre | runtime | budget | IMDb
+        // Metadata: year | genre | runtime | IMDb badge
         Row(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -319,9 +316,9 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
             if (movie.runtime > 0) {
                 val h = movie.runtime / 60
                 val m = movie.runtime % 60
-                val runtimeStr = if (h > 0) "${h}h ${m}m" else "${m}m"
-                Text(runtimeStr, color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                MetaPipe()
+                val rt = if (h > 0) "${h}h ${m}m" else "${m}m"
+                Text(rt, color = DIM, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                if (movie.rating > 0f) MetaPipe()
             }
             if (movie.rating > 0f) {
                 Box(
@@ -334,14 +331,14 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
                         verticalAlignment     = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Text("IMDb",  color = Color(0xFF1A1A1A), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                        Text("IMDb", color = Color(0xFF1A1A1A), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                         Text("%.1f".format(movie.rating), color = Color(0xFF1A1A1A), fontSize = 12.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
         }
 
-        // Overview — 3 lines, readable
+        // Overview — 3 lines, readable size
         Text(
             text       = movie.overview,
             color      = DIM2,
@@ -356,11 +353,7 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
 
 @Composable
 private fun MetaPipe() {
-    Text(
-        text     = "  |  ",
-        color    = DIM3,
-        fontSize = 13.sp
-    )
+    Text("  |  ", color = DIM3, fontSize = 13.sp)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -474,7 +467,7 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioTopNav — ARVIO style: selected=white pill, unselected=transparent+border
+// ArvioTopNav — selected=white filled, unselected=transparent+border
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
@@ -488,21 +481,18 @@ private fun ArvioTopNav(
     Row(
         modifier.padding(horizontal = 44.dp, vertical = 20.dp).fillMaxWidth(),
         verticalAlignment     = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Wordmark
         Text(
             text          = "LUMINA",
             color         = WHITE,
             fontSize      = 18.sp,
             fontWeight    = FontWeight.Black,
             letterSpacing = 4.sp,
-            modifier      = Modifier.padding(end = 12.dp)
+            modifier      = Modifier.padding(end = 10.dp)
         )
-        // Nav order: Search, Home, Watchlist, TV, Settings (ARVIO order)
         NavTab(label = "Search",    icon = Icons.Default.Search,   selected = false,                  onClick = onSearchClick)
         NavTab(label = "Home",      icon = Icons.Default.Home,     selected = activeTab != "סרטים" && activeTab != "סדרות", onClick = {})
-        NavTab(label = "Movies",    icon = Icons.Default.Movie,    selected = activeTab == "סרטים",   onClick = onMoviesTab)
         NavTab(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                  onClick = {})
         NavTab(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",  onClick = onSeriesTab)
         Spacer(Modifier.weight(1f))
@@ -515,7 +505,7 @@ private fun ArvioTopNav(
     }
 }
 
-// NavTab — selected: white filled pill | unselected: transparent with subtle border
+// NavTab: selected = white pill | unselected = transparent + subtle border
 @Composable
 private fun NavTab(
     label: String,
@@ -527,26 +517,23 @@ private fun NavTab(
 
     val bgColor by animateColorAsState(
         targetValue   = when {
-            selected -> PILL_SEL
+            selected -> WHITE
             focused  -> Color(0x22FFFFFF)
-            else     -> PILL_UNS
+            else     -> Color.Transparent
         },
-        animationSpec = tween(160),
-        label         = "navBg"
+        animationSpec = tween(160), label = "navBg"
     )
     val contentColor by animateColorAsState(
         targetValue   = if (selected) Color.Black else WHITE,
-        animationSpec = tween(160),
-        label         = "navContent"
+        animationSpec = tween(160), label = "navFg"
     )
-    val borderColor by animateColorAsState(
+    val borderAlpha by animateFloatAsState(
         targetValue   = when {
-            selected -> Color.Transparent
-            focused  -> Color(0x66FFFFFF)
-            else     -> Color(0x33FFFFFF)
+            selected -> 0f
+            focused  -> 0.5f
+            else     -> 0.22f
         },
-        animationSpec = tween(160),
-        label         = "navBorder"
+        animationSpec = tween(160), label = "navBorder"
     )
 
     Surface(
@@ -558,8 +545,8 @@ private fun NavTab(
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50), RoundedCornerShape(50)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         border   = ClickableSurfaceDefaults.border(
-            border        = Border(BorderStroke(1.dp, borderColor), shape = RoundedCornerShape(50)),
-            focusedBorder = Border(BorderStroke(1.dp, borderColor), shape = RoundedCornerShape(50))
+            border        = Border(BorderStroke(1.dp, WHITE.copy(alpha = borderAlpha)), shape = RoundedCornerShape(50)),
+            focusedBorder = Border(BorderStroke(1.dp, WHITE.copy(alpha = borderAlpha)), shape = RoundedCornerShape(50))
         ),
         glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier.height(38.dp).onFocusChanged { focused = it.isFocused }
@@ -570,12 +557,7 @@ private fun NavTab(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(icon, null, Modifier.size(16.dp), tint = contentColor)
-            Text(
-                label,
-                color      = contentColor,
-                fontSize   = 14.sp,
-                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
-            )
+            Text(label, color = contentColor, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
         }
     }
 }
@@ -592,7 +574,6 @@ private fun HomeRowsLayer(
     onItemClick: (String) -> Unit
 ) {
     val config          = LocalConfiguration.current
-    // poster cards are taller — give rows zone more height
     val rowsViewH       = (config.screenHeightDp * 0.40f).dp.coerceIn(250.dp, 340.dp)
     val currentRowIndex = focusState.currentRowIndex
 
@@ -633,9 +614,8 @@ private fun HomeRowsLayer(
                         animationSpec = tween(260),
                         label         = "rowAlpha"
                     )
-                    // poster card: 150w x 220h + label = ~260dp per row
                     Box(
-                        Modifier.fillMaxWidth().height(210.dp).clipToBounds()
+                        Modifier.fillMaxWidth().height(220.dp).clipToBounds()
                             .graphicsLayer { alpha = rowAlpha }
                     ) {
                         ArvioContentRow(
@@ -679,9 +659,9 @@ private fun ArvioContentRow(
     val currentFocused by rememberUpdatedState(focusedItemIndex)
     val currentIsCur   by rememberUpdatedState(isCurrentRow)
 
-    // Poster card dimensions (2:3 ratio)
+    // Poster 2:3
     val cardW = 130.dp
-    val cardH = 185.dp
+    val cardH = 190.dp
 
     LaunchedEffect(focusedItemIndex, isCurrentRow) {
         if (!isCurrentRow || focusedItemIndex < 0) return@LaunchedEffect
@@ -742,7 +722,7 @@ private fun ArvioContentRow(
 fun ArvioCard(
     movie: Movie,
     cardW: androidx.compose.ui.unit.Dp = 130.dp,
-    cardH: androidx.compose.ui.unit.Dp = 185.dp,
+    cardH: androidx.compose.ui.unit.Dp = 190.dp,
     modifier: Modifier = Modifier,
     isFocusedOverride: Boolean = false,
     onFocused: () -> Unit = {},
@@ -781,12 +761,12 @@ fun ArvioCard(
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
-                    focusedGlow = Glow(WHITE.copy(0.20f), 12.dp)
+                    focusedGlow = Glow(WHITE.copy(0.18f), 12.dp)
                 ),
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> selfFocused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
-                // Use posterUrl for portrait cards, fallback to backdrop
+                // posterUrl first, fallback to backdrop
                 AsyncImage(
                     model = remember(movie.posterUrl, movie.backdropUrl) {
                         ImageRequest.Builder(ctx)
@@ -804,7 +784,6 @@ fun ArvioCard(
                 )
             }
         }
-
         Spacer(Modifier.height(5.dp))
         Text(
             text       = movie.title,
@@ -825,7 +804,7 @@ fun ArvioCard(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// NfCard — back-compat alias
+// NfCard — alias
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun NfCard(
@@ -866,7 +845,7 @@ fun HomeLoading() {
             }
             Spacer(Modifier.height(36.dp))
             Box(Modifier.width(380.dp).height(52.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
-            Box(Modifier.width(280.dp).height(52.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
+            Box(Modifier.width(260.dp).height(52.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Box(Modifier.width(40.dp).height(20.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
@@ -882,7 +861,7 @@ fun HomeLoading() {
                 Box(Modifier.width(120.dp).height(12.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    repeat(8) { Box(Modifier.width(130.dp).height(185.dp).clip(RoundedCornerShape(8.dp)).background(shimmer)) }
+                    repeat(8) { Box(Modifier.width(130.dp).height(190.dp).clip(RoundedCornerShape(8.dp)).background(shimmer)) }
                 }
                 Spacer(Modifier.height(14.dp))
             }
