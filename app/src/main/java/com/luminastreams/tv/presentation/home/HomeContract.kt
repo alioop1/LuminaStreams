@@ -3,10 +3,8 @@ package com.luminastreams.tv.presentation.home
 import com.luminastreams.tv.domain.model.Movie
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  HomeContract.kt — single source of truth for HomeScreen state & events
-//  Updated: added Netflix / Apple TV+ / Disney+ category fields
+//  HomeContract.kt — single source of truth for state & events
 // ══════════════════════════════════════════════════════════════════════════════
-
 data class HomeState(
     val isLoading:      Boolean      = true,
     val error:          String?      = null,
@@ -18,9 +16,9 @@ data class HomeState(
     val movieDrama:     List<Movie>  = emptyList(),
     val movieScifi:     List<Movie>  = emptyList(),
     val movieTopRated:  List<Movie>  = emptyList(),
-    val movieNetflix:   List<Movie>  = emptyList(),   // Netflix provider (id=8)
-    val movieAppleTV:   List<Movie>  = emptyList(),   // Apple TV+ provider (id=350)
-    val movieDisney:    List<Movie>  = emptyList(),   // Disney+ provider (id=337)
+    val movieNetflix:   List<Movie>  = emptyList(),
+    val movieAppleTV:   List<Movie>  = emptyList(),
+    val movieDisney:    List<Movie>  = emptyList(),
     // ── TV Shows ────────────────────────────────────────────────────────────
     val tvTrending:     List<Movie>  = emptyList(),
     val tvPremieres:    List<Movie>  = emptyList(),
@@ -31,6 +29,11 @@ data class HomeState(
     val tvNetflix:      List<Movie>  = emptyList(),
     val tvAppleTV:      List<Movie>  = emptyList(),
     val tvDisney:       List<Movie>  = emptyList(),
+    // ── Discovery (used by DiscoveryScreen) ─────────────────────────────────
+    val isFilterComplete:  Boolean      = false,
+    val selectedGenreName: String       = "",
+    val discoveryResults:  List<Movie>  = emptyList(),
+    val focusedItem:       Movie?       = null,
 )
 
 sealed class HomeEvent {

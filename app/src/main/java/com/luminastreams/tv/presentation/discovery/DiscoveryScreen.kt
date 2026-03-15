@@ -35,7 +35,9 @@ import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.Movie
-import com.luminastreams.tv.presentation.home.*
+import com.luminastreams.tv.presentation.home.HomeState
+import com.luminastreams.tv.presentation.home.HomeViewModel
+import com.luminastreams.tv.presentation.home.NfCard
 
 private val C_BG  = Color(0xFF000000)
 private val C_RED = Color(0xFFE50914)
@@ -58,23 +60,25 @@ fun DiscoveryScreen(
 
     val movieGenres = listOf(
         "28" to "פעולה", "12" to "הרפתקאות", "16" to "אנימציה", "35" to "קומדיה",
-        "80" to "פשע",         "99" to "דוקו",         "18" to "דרמה",         "878" to "מדע בדיוני",
-        "53" to "מותחן",      "27" to "אימה",         "10751" to "משפחה", "14" to "פנטזיה"
+        "80" to "פשע",    "99" to "דוקו",    "18" to "דרמה",   "878" to "מדע בדיוני",
+        "53" to "מותחן",  "27" to "אימה",  "10751" to "משפחה",  "14" to "פנטזיה"
     )
     val tvGenres = listOf(
-        "10759" to "אקשן",    "16" to "אנימציה",  "35" to "קומדיה",
-        "80" to "פשע",          "99" to "דוקו",          "18" to "דרמה",
-        "10762" to "ילדים",  "9648" to "מסתורין",   "10765" to "מדע בדיוני"
+        "10759" to "אקשן",   "16" to "אנימציה",    "35" to "קומדיה",
+        "80" to "פשע",        "99" to "דוקו",        "18" to "דרמה",
+        "10762" to "ילדים", "9648" to "מסתורין", "10765" to "מדע בדיוני"
     )
     val genres = if (mediaType == "tv") tvGenres else movieGenres
 
-    BackHandler(enabled = state.sFilterComplete) { viewModel.clearGenre() }
+    // ✅ FIXED: was state.sFilterComplete (typo) → state.isFilterComplete
+    BackHandler(enabled = state.isFilterComplete) { viewModel.clearGenre() }
 
     Box(Modifier.fillMaxSize().background(C_BG)) {
+        // ✅ FIXED: was state.isFilterComplete (correct) and state.focusedItem (correct)
         if (state.isFilterComplete && state.focusedItem != null) {
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
-                    .data(state.focusedItem.backdropUrl ?: state.focusedItem.posterUrl)
+                    .data(state.focusedItem.backdropUrl.ifBlank { state.focusedItem.posterUrl })
                     .crossfade(600).build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
@@ -90,50 +94,33 @@ fun DiscoveryScreen(
             targetState    = state.isFilterComplete,
             transitionSpec = {
                 (fadeIn(tween(300)) + slideInVertically(tween(360)) { 50 }) togetherWith
-                (fadeOut(tween(200)) + slideOutVertically(tween(240)) { -30 })
+                        (fadeOut(tween(200)) + slideOutVertically(tween(240)) { -30 })
             },
             label = "disc_content"
         ) { showResults ->
             if (!showResults) {
-                GenreGrid(
-                    mediaType = mediaType,
-                    genres    = genres,
-                    onPick    = { id, name -> viewModel.setGenreFilter(id, name) }
-                )
+                GenreGrid(mediaType = mediaType, genres = genres, onPick = { id, name -> viewModel.setGenreFilter(id, name) })
             } else {
                 when {
                     state.isLoading                  -> DiscLoader()
                     state.discoveryResults.isEmpty() -> DiscEmpty()
-                    else -> DiscResults(
-                        state     = state,
-                        viewModel = viewModel,
-                        onClick   = onMovieClick
-                    )
+                    else -> DiscResults(state = state, viewModel = viewModel, onClick = onMovieClick)
                 }
             }
         }
     }
 }
 
-// ─── Genre Grid ──────────────────────────────────────────────────────────────
+// ─── Genre Grid ───────────────────────────────────────────────────────────────
 @Composable
-private fun GenreGrid(
-    mediaType: String,
-    genres: List<Pair<String, String>>,
-    onPick: (String, String) -> Unit
-) {
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(top = 80.dp, start = 64.dp, end = 64.dp)
-    ) {
+private fun GenreGrid(mediaType: String, genres: List<Pair<String, String>>, onPick: (String, String) -> Unit) {
+    Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 64.dp, end = 64.dp)) {
         Text(
             if (mediaType == "tv") "בחר ז'אנר סדרות" else "בחר ז'אנר סרטים",
             color = C_WH, fontSize = 42.sp, fontWeight = FontWeight.Black
         )
         Box(Modifier.padding(top = 6.dp, bottom = 28.dp).width(52.dp).height(4.dp)
             .clip(RoundedCornerShape(2.dp)).background(C_RED))
-
         LazyVerticalGrid(
             columns = GridCells.Fixed(4),
             horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -151,23 +138,14 @@ private fun GenreGrid(
 @Composable
 private fun GenreCard(name: String, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(
-        if (focused) 1.06f else 1f,
-        spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium)
-    )
+    val scale by animateFloatAsState(if (focused) 1.06f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium))
     val borderColor by animateColorAsState(if (focused) C_WH else C_WH.copy(0.15f), tween(150))
     val cardShape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp), RoundedCornerShape(14.dp))
 
-    Box(
-        Modifier.height(120.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-    ) {
+    Box(Modifier.height(120.dp).graphicsLayer { scaleX = scale; scaleY = scale }) {
         Surface(
             onClick = onClick,
-            colors  = ClickableSurfaceDefaults.colors(
-                containerColor        = C_WH.copy(0.07f),
-                focusedContainerColor = C_WH.copy(0.13f)
-            ),
+            colors  = ClickableSurfaceDefaults.colors(containerColor = C_WH.copy(0.07f), focusedContainerColor = C_WH.copy(0.13f)),
             shape   = cardShape,
             scale   = ClickableSurfaceDefaults.scale(focusedScale = 1f),
             glow    = ClickableSurfaceDefaults.glow(focusedGlow = Glow(C_RED.copy(0.45f), 18.dp)),
@@ -183,14 +161,10 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
                         end   = androidx.compose.ui.geometry.Offset(300f, 300f)
                     )
                 ))
-                Text(
-                    name,
-                    color      = if (focused) C_WH else C_WH.copy(0.80f),
-                    fontSize   = 22.sp,
-                    fontWeight = if (focused) FontWeight.ExtraBold else FontWeight.Bold,
-                    textAlign  = TextAlign.Center,
-                    modifier   = Modifier.align(Alignment.Center).padding(12.dp)
-                )
+                Text(name, color = if (focused) C_WH else C_WH.copy(0.80f),
+                    fontSize = 22.sp, fontWeight = if (focused) FontWeight.ExtraBold else FontWeight.Bold,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.Center).padding(12.dp))
                 AnimatedVisibility(
                     visible  = focused,
                     enter    = fadeIn(tween(130)) + expandHorizontally(tween(200)),
@@ -206,18 +180,16 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
     }
 }
 
-// ─── Results ─────────────────────────────────────────────────────────────────
+// ─── Results ──────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (String) -> Unit) {
     var focusedIdx by remember { mutableIntStateOf(0) }
 
     Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 56.dp)) {
         Text(
-            text       = "תוצאות: ${state.selectedGenreName}",
-            color      = C_WH,
-            fontSize   = 22.sp,
-            fontWeight = FontWeight.Bold,
-            modifier   = Modifier.padding(bottom = 16.dp, end = 56.dp)
+            text = "תוצאות: ${state.selectedGenreName}",
+            color = C_WH, fontSize = 22.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 16.dp, end = 56.dp)
         )
         LazyRow(
             contentPadding        = PaddingValues(end = 56.dp, top = 10.dp, bottom = 10.dp),
@@ -229,7 +201,8 @@ private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (St
                     isFocusedOverride = idx == focusedIdx,
                     onFocused         = {
                         focusedIdx = idx
-                        viewModel.updateFocusedItem(movie, state.selectedGenreName, true)
+                        // ✅ FIXED: removed extra boolean param (was updateFocusedItem(movie, name, true))
+                        viewModel.updateFocusedItem(movie, state.selectedGenreName)
                     },
                     onClick = { onClick(movie.id) }
                 )
@@ -238,37 +211,27 @@ private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (St
     }
 }
 
-// ─── Loader ──────────────────────────────────────────────────────────────────
+// ─── Loader ───────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscLoader() {
     val inf = rememberInfiniteTransition(label = "dl")
-    val p by inf.animateFloat(
-        0f, 1f,
-        infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        "dp"
-    )
+    val p by inf.animateFloat(0f, 1f,
+        infiniteRepeatable(tween(800, easing = FastOutSlowInEasing), RepeatMode.Reverse), "dp")
     Box(Modifier.fillMaxSize(), Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("טוען...", color = C_DIM, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-            Box(
-                Modifier.width(180.dp).height(4.dp)
-                    .clip(RoundedCornerShape(50)).background(C_WH.copy(0.12f))
-            ) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(p)
-                    .clip(RoundedCornerShape(50)).background(C_RED))
+            Box(Modifier.width(180.dp).height(4.dp).clip(RoundedCornerShape(50)).background(C_WH.copy(0.12f))) {
+                Box(Modifier.fillMaxHeight().fillMaxWidth(p).clip(RoundedCornerShape(50)).background(C_RED))
             }
         }
     }
 }
 
-// ─── Empty ───────────────────────────────────────────────────────────────────
+// ─── Empty ────────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscEmpty() {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text("🎦", fontSize = 44.sp)
             Text("לא נמצאו תוצאות", color = C_WH, fontSize = 26.sp, fontWeight = FontWeight.Bold)
             Text("נסה ז'אנר אחר", color = C_DIM, fontSize = 16.sp)
