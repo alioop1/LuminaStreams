@@ -66,15 +66,18 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 // ─── Palette ─────────────────────────────────────────────────────────────────────
-private val BG       = Color(0xFF080808)
-private val RED      = Color(0xFFE50914)
-private val RED2     = Color(0xFFB20710)
-private val WHITE    = Color(0xFFFFFFFF)
-private val DIM      = Color(0xCCFFFFFF)
-private val DIM2     = Color(0x99FFFFFF)
-private val DIM3     = Color(0x4DFFFFFF)
-private val GOLD     = Color(0xFFFFD700)
-private val CARD_BG  = Color(0xFF181818)
+private val BG          = Color(0xFF080808)
+private val RED         = Color(0xFFE50914)
+private val RED2        = Color(0xFFB20710)
+private val WHITE       = Color(0xFFFFFFFF)
+private val DIM         = Color(0xCCFFFFFF)
+private val DIM2        = Color(0x99FFFFFF)
+private val DIM3        = Color(0x4DFFFFFF)
+private val GOLD        = Color(0xFFFFD700)
+private val CARD_BG     = Color(0xFF181818)
+// Nav pill colours — exactly like the reference screenshot
+private val NAV_SEL_BG  = Color(0xFF2E2E2E)   // dark charcoal pill
+private val NAV_HOVER   = Color(0x18FFFFFF)   // very faint hover, no border
 
 private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
@@ -256,7 +259,7 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// HomeHeroOverlay — text-only, ARVIO style
+// HomeHeroOverlay
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HomeHeroOverlay(hero: Movie?) {
@@ -279,7 +282,7 @@ private fun HomeHeroOverlay(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioHeroInfo — pure text, no buttons
+// ArvioHeroInfo
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
@@ -288,7 +291,6 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(10.dp),
         horizontalAlignment = Alignment.Start
     ) {
-        // Title
         Text(
             text          = movie.title,
             color         = WHITE,
@@ -299,8 +301,6 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
             maxLines      = 2,
             overflow      = TextOverflow.Ellipsis
         )
-
-        // Metadata: year | genre | resolutionBadge | IMDb badge
         Row(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -334,8 +334,6 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
                 }
             }
         }
-
-        // Overview — 3 lines
         Text(
             text       = movie.overview,
             color      = DIM2,
@@ -349,9 +347,7 @@ private fun ArvioHeroInfo(movie: Movie, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun MetaPipe() {
-    Text("  |  ", color = DIM3, fontSize = 13.sp)
-}
+private fun MetaPipe() = Text("  |  ", color = DIM3, fontSize = 13.sp)
 
 // ══════════════════════════════════════════════════════════════════════════════
 // HomeInputLayer
@@ -368,7 +364,7 @@ private fun HomeInputLayer(
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit
 ) {
-    val rootFR = remember { FocusRequester() }
+    val rootFR          = remember { FocusRequester() }
     var rootHasFocus    by remember { mutableStateOf(false) }
     var suppressUntilMs by remember { mutableLongStateOf(0L) }
 
@@ -464,7 +460,13 @@ private fun HomeInputLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioTopNav
+// ArvioTopNav — pixel-perfect match to reference screenshot
+//
+// Layout:  [Logo]  [Search]  [Home●]  [Watchlist]  [TV]  ···  [Settings]  [15:45]
+//
+// Selected pill  →  dark charcoal background (#2E2E2E), no border, white bold text
+// Unselected     →  fully transparent, NO border, white normal text
+// Hover/focus    →  very faint white tint, still no border
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ArvioTopNav(
@@ -475,75 +477,119 @@ private fun ArvioTopNav(
     onSeriesTab: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val time = remember {
+        val c = java.util.Calendar.getInstance()
+        "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
+    }
+
     Row(
-        modifier.padding(horizontal = 44.dp, vertical = 20.dp).fillMaxWidth(),
+        modifier
+            .padding(horizontal = 48.dp, vertical = 22.dp)
+            .fillMaxWidth(),
         verticalAlignment     = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        // Logo area
         Text(
             text          = "LUMINA",
             color         = WHITE,
-            fontSize      = 18.sp,
+            fontSize      = 20.sp,
             fontWeight    = FontWeight.Black,
-            letterSpacing = 4.sp,
-            modifier      = Modifier.padding(end = 10.dp)
+            letterSpacing = 4.sp
         )
-        NavTab(label = "Search",    icon = Icons.Default.Search,   selected = false,                                      onClick = onSearchClick)
-        NavTab(label = "Home",      icon = Icons.Default.Home,     selected = activeTab != "סרטים" && activeTab != "סדרות", onClick = {})
-        NavTab(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                                      onClick = {})
-        NavTab(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",                    onClick = onSeriesTab)
+
+        Spacer(Modifier.width(28.dp))
+
+        NavPill(label = "Search",    icon = Icons.Default.Search,   selected = false,                                       onClick = onSearchClick)
+        NavPill(label = "Home",      icon = Icons.Default.Home,     selected = activeTab != "סרטים" && activeTab != "סדרות",  onClick = {})
+        NavPill(label = "Watchlist", icon = Icons.Default.Bookmark, selected = false,                                       onClick = {})
+        NavPill(label = "TV",        icon = Icons.Default.LiveTv,   selected = activeTab == "סדרות",                     onClick = onSeriesTab)
+
         Spacer(Modifier.weight(1f))
-        NavTab(label = "Settings",  icon = Icons.Default.Settings, selected = false,                                      onClick = {})
-        val time = remember {
-            val c = java.util.Calendar.getInstance()
-            "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-        }
-        Text(time, color = WHITE, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 16.dp))
+
+        NavPill(label = "Settings",  icon = Icons.Default.Settings, selected = false,                                       onClick = {})
+
+        Spacer(Modifier.width(20.dp))
+
+        // Clock — plain text, right-aligned, matches reference
+        Text(
+            text       = time,
+            color      = WHITE,
+            fontSize   = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.5.sp
+        )
     }
 }
 
+// ─── NavPill ─────────────────────────────────────────────────────────────────────
+// Rules (from reference screenshot):
+//   selected  → solid dark pill (#2E2E2E), white BOLD text + icon, NO border
+//   unselected → fully transparent, white normal text + icon, NO border, NO bg
+//   focused   → faint tint only (#18FFFFFF), still NO border
 @Composable
-private fun NavTab(
+private fun NavPill(
     label: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     selected: Boolean,
     onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val bgColor by animateColorAsState(
-        targetValue   = when { selected -> WHITE; focused -> Color(0x22FFFFFF); else -> Color.Transparent },
-        animationSpec = tween(160), label = "navBg"
+
+    val bg by animateColorAsState(
+        targetValue   = when {
+            selected -> NAV_SEL_BG
+            focused  -> NAV_HOVER
+            else     -> Color.Transparent
+        },
+        animationSpec = tween(180),
+        label         = "pillBg"
     )
-    val contentColor by animateColorAsState(
-        targetValue   = if (selected) Color.Black else WHITE,
-        animationSpec = tween(160), label = "navFg"
-    )
-    val borderAlpha by animateFloatAsState(
-        targetValue   = when { selected -> 0f; focused -> 0.5f; else -> 0.22f },
-        animationSpec = tween(160), label = "navBorder"
-    )
+
     Surface(
         onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(
+            shape        = RoundedCornerShape(50),
+            focusedShape = RoundedCornerShape(50)
+        ),
         colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = bgColor,
-            focusedContainerColor = bgColor
+            containerColor            = bg,
+            focusedContainerColor     = bg,
+            pressedContainerColor     = bg.copy(alpha = (bg.alpha * 0.7f).coerceAtLeast(0.05f))
         ),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50), RoundedCornerShape(50)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        scale    = ClickableSurfaceDefaults.scale(
+            focusedScale = 1.00f   // no zoom — pill stays same size on focus
+        ),
         border   = ClickableSurfaceDefaults.border(
-            border        = Border(BorderStroke(1.dp, WHITE.copy(alpha = borderAlpha)), shape = RoundedCornerShape(50)),
-            focusedBorder = Border(BorderStroke(1.dp, WHITE.copy(alpha = borderAlpha)), shape = RoundedCornerShape(50))
+            border        = Border.None,   // NEVER a border
+            focusedBorder = Border.None
         ),
-        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-        modifier = Modifier.height(38.dp).onFocusChanged { focused = it.isFocused }
+        glow     = ClickableSurfaceDefaults.glow(
+            glow        = Glow.None,
+            focusedGlow = Glow.None
+        ),
+        modifier = Modifier
+            .height(46.dp)
+            .onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            Modifier.padding(horizontal = 16.dp),
+            modifier              = Modifier.padding(horizontal = 20.dp),
             verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(icon, null, Modifier.size(16.dp), tint = contentColor)
-            Text(label, color = contentColor, fontSize = 14.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+            Icon(
+                imageVector        = icon,
+                contentDescription = null,
+                modifier           = Modifier.size(18.dp),
+                tint               = WHITE
+            )
+            Text(
+                text       = label,
+                color      = WHITE,
+                fontSize   = 16.sp,
+                fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+                letterSpacing = 0.2.sp
+            )
         }
     }
 }
@@ -594,9 +640,8 @@ private fun HomeRowsLayer(
                 verticalArrangement = Arrangement.spacedBy(0.dp)
             ) {
                 itemsIndexed(rows, key = { _, p -> p.first }) { index, (title, movies) ->
-                    val targetAlpha = if (index <= currentRowIndex) 1f else 0.18f
                     val rowAlpha by animateFloatAsState(
-                        targetValue   = targetAlpha,
+                        targetValue   = if (index <= currentRowIndex) 1f else 0.18f,
                         animationSpec = tween(260),
                         label         = "rowAlpha"
                     )
@@ -700,7 +745,7 @@ private fun ArvioContentRow(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ArvioCard — poster 2:3
+// ArvioCard — poster 2:3, UHD crisp
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ArvioCard(
@@ -712,18 +757,23 @@ fun ArvioCard(
     onFocused: () -> Unit = {},
     onClick: () -> Unit
 ) {
-    val ctx = LocalContext.current
+    val ctx        = LocalContext.current
+    val density    = LocalDensity.current
+    val cardWPx    = remember(cardW, density) { with(density) { cardW.roundToPx().coerceIn(1, 1080) } }
+    val cardHPx    = remember(cardH, density) { with(density) { cardH.roundToPx().coerceIn(1, 1620) } }
     var selfFocused by remember { mutableStateOf(false) }
-    val focused = isFocusedOverride || selfFocused
+    val focused     = isFocusedOverride || selfFocused
+
     val zoom by animateFloatAsState(
-        targetValue   = if (focused) 1.06f else 1.00f,
+        targetValue   = if (focused) 1.07f else 1.00f,
         animationSpec = spring(Spring.DampingRatioLowBouncy, Spring.StiffnessMediumLow),
         label         = "cardZoom"
     )
 
     Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
         Box(
-            Modifier.width(cardW).height(cardH)
+            Modifier
+                .width(cardW).height(cardH)
                 .graphicsLayer { scaleX = zoom; scaleY = zoom }
                 .zIndex(if (focused) 8f else 0f)
         ) {
@@ -733,27 +783,31 @@ fun ArvioCard(
                     containerColor        = CARD_BG,
                     focusedContainerColor = CARD_BG
                 ),
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp), RoundedCornerShape(8.dp)),
+                shape    = ClickableSurfaceDefaults.shape(
+                    shape        = RoundedCornerShape(8.dp),
+                    focusedShape = RoundedCornerShape(8.dp)
+                ),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(
                     border        = Border.None,
                     focusedBorder = Border(
-                        BorderStroke(2.dp, WHITE.copy(alpha = 0.95f)),
+                        BorderStroke(2.dp, WHITE.copy(alpha = 0.90f)),
                         shape = RoundedCornerShape(8.dp)
                     )
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
-                    focusedGlow = Glow(WHITE.copy(0.18f), 12.dp)
+                    focusedGlow = Glow(WHITE.copy(alpha = 0.15f), elevationColor = WHITE.copy(0.08f), shadowElevation = 10.dp)
                 ),
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier
+                    .fillMaxSize()
                     .onFocusChanged { fs -> selfFocused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
                 AsyncImage(
-                    model = remember(movie.posterUrl, movie.backdropUrl) {
+                    model = remember(movie.posterUrl, movie.backdropUrl, cardWPx, cardHPx) {
                         ImageRequest.Builder(ctx)
                             .data(movie.posterUrl.ifBlank { movie.backdropUrl })
-                            .size(260, 390)
+                            .size(cardWPx * 2, cardHPx * 2)   // 2× for UHD sharpness
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true)
@@ -820,7 +874,7 @@ fun HomeLoading() {
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(5) { Box(Modifier.width(90.dp).height(38.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
+                repeat(5) { Box(Modifier.width(100.dp).height(46.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
             }
             Spacer(Modifier.height(36.dp))
             Box(Modifier.width(380.dp).height(52.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
