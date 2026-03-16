@@ -115,7 +115,7 @@ fun HomeScreen(
     onMovieClick:  (String) -> Unit
 ) {
     val rows: List<RowDef> = remember(state.selectedTab, state) {
-        if (state.selectedTab == "\u05E1\u05E8\u05D8\u05D9\u05DD") buildList {
+        if (state.selectedTab == "סרטים") buildList {
             if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
             if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
             if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
@@ -173,14 +173,17 @@ fun HomeScreen(
         BackdropLayer(focusState.heroMovie)
         HeroOverlay(focusState.heroMovie, rowsViewH)
         ContentLayer(
-            rows = rows, focusState = focusState, activeTab = state.selectedTab,
-            rowsViewH = rowsViewH,
-            onMovieClick = onMovieClick, onHeroUpdate = { focusState.heroMovie = it },
-            onSearch    = { navController.navigate("search") },
-            onMoviesTab = { viewModel.selectTab("\u05E1\u05E8\u05D8\u05D9\u05DD") },
-            onSeriesTab = { viewModel.selectTab("\u05E1\u05D3\u05E8\u05D5\u05EA") },
-            onWatchlist = { navController.navigate("watchlist") },
-            onSettings  = { navController.navigate("settings") }
+            rows        = rows,
+            focusState  = focusState,
+            activeTab   = state.selectedTab,
+            rowsViewH   = rowsViewH,
+            onMovieClick = onMovieClick,
+            onHeroUpdate = { focusState.heroMovie = it },
+            onSearch     = { navController.navigate("search") },
+            onMoviesTab  = { viewModel.selectTab("סרטים") },
+            onSeriesTab  = { viewModel.selectTab("סדרות") },
+            onWatchlist  = { navController.navigate("watchlist") },
+            onSettings   = { navController.navigate("settings") }
         )
     }
 }
@@ -194,26 +197,31 @@ private fun BackdropLayer(hero: Movie?) {
     val cfg = LocalConfiguration.current
     val dns = LocalDensity.current
     val (bwPx, bhPx) = remember(cfg, dns) {
-        with(dns) { cfg.screenWidthDp.dp.roundToPx().coerceIn(1,3840) to cfg.screenHeightDp.dp.roundToPx().coerceIn(1,2160) }
+        with(dns) { cfg.screenWidthDp.dp.roundToPx().coerceIn(1, 3840) to cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 2160) }
     }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
         Crossfade(
-            targetState = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
+            targetState   = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
             animationSpec = tween(700, easing = FastOutSlowInEasing), label = "bd"
         ) { url ->
             if (!url.isNullOrBlank()) {
                 AsyncImage(
                     model = remember(url, bwPx, bhPx) {
                         ImageRequest.Builder(ctx).data(url).size(bwPx, bhPx)
-                            .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true).crossfade(false).build()
                     },
-                    contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                    contentDescription = null,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier.fillMaxSize()
                 )
             }
         }
-        Box(Modifier.fillMaxSize().drawBehind { drawRect(leftScrim); drawRect(topScrim); drawRect(bottomScrim) })
+        Box(Modifier.fillMaxSize().drawBehind {
+            drawRect(leftScrim); drawRect(topScrim); drawRect(bottomScrim)
+        })
     }
 }
 
@@ -227,27 +235,41 @@ private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
         hero?.let { m ->
             key(m.id) {
                 Column(
-                    modifier = Modifier.align(Alignment.BottomStart)
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
                         .padding(start = 56.dp, end = 460.dp, bottom = bottomPad),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text(m.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
-                        lineHeight = 52.sp, letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        m.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
+                        lineHeight = 52.sp, letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (m.year > 0)           { Text(m.year.toString(), color = DIM, fontSize = 13.sp); Text("  \u00B7  ", color = DIM3, fontSize = 13.sp) }
-                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); Text("  \u00B7  ", color = DIM3, fontSize = 13.sp) }
+                        if (m.year > 0) {
+                            Text(m.year.toString(), color = DIM, fontSize = 13.sp)
+                            Text("  ·  ", color = DIM3, fontSize = 13.sp)
+                        }
+                        if (m.genre.isNotBlank()) {
+                            Text(m.genre, color = DIM, fontSize = 13.sp)
+                            Text("  ·  ", color = DIM3, fontSize = 13.sp)
+                        }
                         if (m.rating > 0f) {
-                            Row(Modifier.clip(RoundedCornerShape(4.dp)).background(GOLD)
-                                .padding(horizontal = 7.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            Row(
+                                Modifier.clip(RoundedCornerShape(4.dp)).background(GOLD)
+                                    .padding(horizontal = 7.dp, vertical = 3.dp),
+                                verticalAlignment     = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text("IMDb", color = Color(0xFF1A1A1A), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                                 Text("%.1f".format(m.rating), color = Color(0xFF1A1A1A), fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                         }
                     }
-                    Text(m.overview, color = DIM2, fontSize = 14.sp, lineHeight = 22.sp,
-                        maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 580.dp))
+                    Text(
+                        m.overview, color = DIM2, fontSize = 14.sp, lineHeight = 22.sp,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.widthIn(max = 580.dp)
+                    )
                 }
             }
         }
@@ -264,6 +286,7 @@ private fun ContentLayer(
     onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
+    // firstNavFR now points to the first pill (Home), not Search
     val firstNavFR = remember { FocusRequester() }
     val rowFRs     = remember(rows.size) { List(rows.size) { FocusRequester() } }
 
@@ -310,116 +333,251 @@ private fun ContentLayer(
                 }
             }
     ) {
-        // NavBar always on top with zIndex 10
         TopNavBar(
-            activeTab = activeTab, firstNavFR = firstNavFR, focusState = focusState,
-            onSearch = onSearch, onMoviesTab = onMoviesTab, onSeriesTab = onSeriesTab,
-            onWatchlist = onWatchlist, onSettings = onSettings,
-            onNavExit = { focusState.isNavFocused = false },
-            modifier  = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
+            activeTab   = activeTab,
+            firstNavFR  = firstNavFR,
+            focusState  = focusState,
+            onSearch    = onSearch,
+            onMoviesTab = onMoviesTab,
+            onSeriesTab = onSeriesTab,
+            onWatchlist = onWatchlist,
+            onSettings  = onSettings,
+            onNavExit   = { focusState.isNavFocused = false },
+            modifier    = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
         )
         RowsLayer(
-            rows = rows, focusState = focusState, rowFRs = rowFRs,
-            rowsViewH = rowsViewH, onItemFocus = onHeroUpdate, onItemClick = onMovieClick
+            rows        = rows,
+            focusState  = focusState,
+            rowFRs      = rowFRs,
+            rowsViewH   = rowsViewH,
+            onItemFocus = onHeroUpdate,
+            onItemClick = onMovieClick
         )
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  TOP NAV BAR
-//  FIX: solid dark background + pills use Color(0x44FFFFFF) idle so always visible
+//
+//  Layout (top to bottom):
+//    Row 1 ─ 56dp ─ Logo | Search bar (full-width fake input) | Clock
+//    Row 2 ─ 48dp ─ Home pill | TV pill | Watchlist pill | Settings pill
+//
+//  Search is a pill-shaped tappable bar that navigates to the search screen.
+//  No search icon pill inside the pills row.
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun TopNavBar(
-    activeTab: String, firstNavFR: FocusRequester, focusState: HomeFocusState,
-    onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
-    onWatchlist: () -> Unit, onSettings: () -> Unit, onNavExit: () -> Unit,
+    activeTab: String,
+    firstNavFR: FocusRequester,
+    focusState: HomeFocusState,
+    onSearch: () -> Unit,
+    onMoviesTab: () -> Unit,
+    onSeriesTab: () -> Unit,
+    onWatchlist: () -> Unit,
+    onSettings: () -> Unit,
+    onNavExit: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         while (true) {
             val c = java.util.Calendar.getInstance()
-            time = "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
+            time = "%02d:%02d".format(
+                c.get(java.util.Calendar.HOUR_OF_DAY),
+                c.get(java.util.Calendar.MINUTE)
+            )
             delay(30_000)
         }
     }
-    // Solid-enough gradient so pills are always readable against the backdrop
-    Box(modifier = modifier.background(
-        Brush.verticalGradient(listOf(Color(0xFF050505), Color(0xD0050505), Color(0x80050505), Color.Transparent))
-    )) {
+
+    // Solid gradient so nav is always readable against any backdrop
+    Column(
+        modifier = modifier.background(
+            Brush.verticalGradient(
+                listOf(Color(0xFF050505), Color(0xE0050505), Color(0x99050505), Color.Transparent)
+            )
+        )
+    ) {
+        // ─── Row 1: Logo + Search bar + Clock ───────────────────────
         Row(
             modifier = Modifier
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { onNavExit(); true } else false
-                }
-                .padding(horizontal = 52.dp).height(72.dp).fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                .fillMaxWidth()
+                .height(60.dp)
+                .padding(horizontal = 52.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             LuminaLogo()
-            Spacer(Modifier.width(16.dp))
-            NavPill("Search",    Icons.Default.Search,   false,                               firstNavFR) { onSearch() }
-            NavPill("Home",      Icons.Default.Home,     activeTab == "\u05E1\u05E8\u05D8\u05D9\u05DD", null)      { onMoviesTab() }
-            NavPill("Watchlist", Icons.Default.Bookmark, false,                               null)       { onWatchlist() }
-            NavPill("TV",        Icons.Default.LiveTv,   activeTab == "\u05E1\u05D3\u05E8\u05D5\u05EA", null)      { onSeriesTab() }
-            NavPill("Settings",  Icons.Default.Settings, false,                               null)       { onSettings() }
-            Spacer(Modifier.weight(1f))
-            Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            // Search bar — takes remaining space between logo and clock
+            SearchBarButton(
+                modifier  = Modifier.weight(1f),
+                onClick   = onSearch
+            )
+            Text(
+                time,
+                color         = WHITE,
+                fontSize      = 17.sp,
+                fontWeight    = FontWeight.Bold,
+                letterSpacing = 1.sp
+            )
+        }
+
+        // ─── Row 2: Navigation pills (no Search) ────────────────────
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp)
+                .padding(horizontal = 52.dp)
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                        onNavExit(); true
+                    } else false
+                },
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            NavPill(
+                label          = "Home",
+                icon           = Icons.Default.Home,
+                isSelected     = activeTab == "סרטים",
+                focusRequester = firstNavFR
+            ) { onMoviesTab() }
+            NavPill(
+                label      = "TV Shows",
+                icon       = Icons.Default.LiveTv,
+                isSelected = activeTab == "סדרות"
+            ) { onSeriesTab() }
+            NavPill(
+                label      = "Watchlist",
+                icon       = Icons.Default.Bookmark,
+                isSelected = false
+            ) { onWatchlist() }
+            NavPill(
+                label      = "Settings",
+                icon       = Icons.Default.Settings,
+                isSelected = false
+            ) { onSettings() }
+        }
+
+        Spacer(Modifier.height(4.dp))
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  SEARCH BAR BUTTON — fake input field look, click navigates to search screen
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun SearchBarButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        colors  = ClickableSurfaceDefaults.colors(
+            containerColor        = Color(0x33FFFFFF),
+            focusedContainerColor = Color(0x55FFFFFF),
+            pressedContainerColor = Color(0x44FFFFFF),
+            contentColor          = DIM2,
+            focusedContentColor   = WHITE
+        ),
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+        border = ClickableSurfaceDefaults.border(
+            border        = Border(androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)), shape = RoundedCornerShape(50)),
+            focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x88FFFFFF)), shape = RoundedCornerShape(50))
+        ),
+        glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        modifier = modifier.height(38.dp)
+    ) {
+        Row(
+            modifier              = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector        = Icons.Default.Search,
+                contentDescription = null,
+                modifier           = Modifier.size(16.dp)
+            )
+            Text(
+                text       = "Search movies, shows...",
+                fontSize   = 13.sp,
+                fontWeight = FontWeight.Normal,
+                letterSpacing = 0.2.sp
+            )
         }
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  LUMINA LOGO
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun LuminaLogo() {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.size(34.dp).clip(RoundedCornerShape(7.dp)).background(RED), Alignment.Center) {
+    Row(
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Box(
+            Modifier.size(34.dp).clip(RoundedCornerShape(7.dp)).background(RED),
+            Alignment.Center
+        ) {
             Text("L", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Black)
         }
         Column {
-            Text("LUMINA",  color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
-            Text("STREAMS", color = RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 9.sp)
+            Text("LUMINA",  color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Black,  letterSpacing = 2.sp,  lineHeight = 14.sp)
+            Text("STREAMS", color = RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,   letterSpacing = 2.sp,  lineHeight = 9.sp)
         }
     }
 }
 
-// FIX: idle containerColor raised from 0x22 to 0x44 so pills are ALWAYS visible
-// contentColor = full WHITE (no .copy(alpha)) so text is never invisible
+// ─────────────────────────────────────────────────────────────────────────────
+//  NAV PILL — no Search, just Home / TV / Watchlist / Settings
+//  containerColor = 0x44 (27%) so always visible even on bright backdrops
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun NavPill(
-    label: String, icon: ImageVector, isSelected: Boolean,
-    focusRequester: FocusRequester?, onClick: () -> Unit
+    label: String,
+    icon: ImageVector,
+    isSelected: Boolean,
+    focusRequester: FocusRequester? = null,
+    onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
         colors  = ClickableSurfaceDefaults.colors(
-            containerColor        = if (isSelected) WHITE          else Color(0x44FFFFFF),
-            focusedContainerColor = if (isSelected) WHITE          else Color(0x77FFFFFF),
+            containerColor        = if (isSelected) WHITE else Color(0x44FFFFFF),
+            focusedContainerColor = if (isSelected) WHITE else Color(0x77FFFFFF),
             pressedContainerColor = Color(0x33FFFFFF),
             contentColor          = if (isSelected) Color(0xFF0D0D0D) else WHITE,
-            focusedContentColor   = if (isSelected) Color(0xFF0D0D0D) else WHITE,
+            focusedContentColor   = if (isSelected) Color(0xFF0D0D0D) else WHITE
         ),
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
         border = ClickableSurfaceDefaults.border(Border.None, Border.None),
         glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-        modifier = Modifier.height(40.dp).wrapContentWidth()
+        modifier = Modifier
+            .height(36.dp)
+            .wrapContentWidth()
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
+            modifier              = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(icon, null, Modifier.size(15.dp))
-            Text(label, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                letterSpacing = 0.1.sp, softWrap = false)
+            Text(
+                label,
+                fontSize   = 13.sp,
+                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                letterSpacing = 0.1.sp,
+                softWrap   = false
+            )
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ROWS LAYER
-//  FIX: row item height raised to 264dp; no clipToBounds on items so zoom glows
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsLayer(
@@ -449,19 +607,25 @@ private fun RowsLayer(
                 .clipToBounds()
         ) {
             LazyColumn(
-                state = listState,
+                state          = listState,
                 contentPadding = PaddingValues(bottom = rowsViewH),
-                modifier = Modifier.fillMaxSize()
+                modifier       = Modifier.fillMaxSize()
             ) {
                 itemsIndexed(rows, key = { i, r ->
-                    when (r) { is RowDef.Regular -> "R_${r.title}_$i"; is RowDef.Studio -> "S_${r.brand.name}_$i" }
+                    when (r) {
+                        is RowDef.Regular -> "R_${r.title}_$i"
+                        is RowDef.Studio  -> "S_${r.brand.name}_$i"
+                    }
                 }) { index, rowDef ->
                     val alpha by animateFloatAsState(
                         targetValue   = if (index <= curRow) 1f else 0.10f,
-                        animationSpec = tween(250), label = "row_alpha"
+                        animationSpec = tween(250),
+                        label         = "row_alpha"
                     )
                     Box(
-                        Modifier.fillMaxWidth().height(264.dp)
+                        Modifier
+                            .fillMaxWidth()
+                            .height(264.dp)
                             .graphicsLayer { this.alpha = alpha }
                             .zIndex(if (!focusState.isNavFocused && index == curRow) 10f else index.toFloat())
                     ) {
@@ -494,37 +658,33 @@ private fun ContentRow(
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (movies.isEmpty()) return
-
     val extMovies = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val startIdx  = if (movies.size >= 2) movies.size else 0
     val rowState  = rememberLazyListState(initialFirstVisibleItemIndex = startIdx.coerceAtLeast(0))
-
     LaunchedEffect(isActiveRow) {
-        if (isActiveRow) {
-            delay(80)
-            runCatching { firstCardFR?.requestFocus() }
-        }
+        if (isActiveRow) { delay(80); runCatching { firstCardFR?.requestFocus() } }
     }
-
     Column {
         Text(
-            text = title,
-            color = WHITE.copy(if (isActiveRow) 1f else 0.45f),
-            fontSize = 13.sp, fontWeight = if (isActiveRow) FontWeight.Bold else FontWeight.Normal,
-            letterSpacing = 0.5.sp, modifier = Modifier.padding(start = 52.dp, bottom = 8.dp)
+            text     = title,
+            color    = WHITE.copy(if (isActiveRow) 1f else 0.45f),
+            fontSize = 13.sp,
+            fontWeight    = if (isActiveRow) FontWeight.Bold else FontWeight.Normal,
+            letterSpacing = 0.5.sp,
+            modifier      = Modifier.padding(start = 52.dp, bottom = 8.dp)
         )
         LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()
+            state                  = rowState,
+            contentPadding         = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
+            horizontalArrangement  = Arrangement.spacedBy(10.dp),
+            modifier               = Modifier.fillMaxWidth()
         ) {
             itemsIndexed(extMovies, key = { idx, m -> "${m.id}_$idx" }) { idx, movie ->
                 PosterCard(
-                    movie    = movie,
-                    modifier = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
+                    movie     = movie,
+                    modifier  = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
                     onFocused = { onItemFocus(movie) },
-                    onClick  = { onItemClick(movie.id) }
+                    onClick   = { onItemClick(movie.id) }
                 )
             }
         }
@@ -541,22 +701,17 @@ private fun StudioRow(
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (movies.isEmpty()) return
-
     val extMovies = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val startIdx  = if (movies.size >= 2) movies.size else 0
     val rowState  = rememberLazyListState(initialFirstVisibleItemIndex = startIdx.coerceAtLeast(0))
-
     LaunchedEffect(isActiveRow) {
-        if (isActiveRow) {
-            delay(80)
-            runCatching { firstCardFR?.requestFocus() }
-        }
+        if (isActiveRow) { delay(80); runCatching { firstCardFR?.requestFocus() } }
     }
-
     Column {
         Row(
             Modifier.padding(start = 52.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             StudioLogo(brand, isActiveRow)
             Text(
@@ -565,22 +720,24 @@ private fun StudioRow(
                     StudioBrand.APPLE_TV -> "Apple TV+ Originals"
                     StudioBrand.DISNEY   -> "Disney+ Exclusives"
                 },
-                color = WHITE.copy(if (isActiveRow) 0.80f else 0.35f),
-                fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.3.sp
+                color         = WHITE.copy(if (isActiveRow) 0.80f else 0.35f),
+                fontSize      = 12.sp,
+                fontWeight    = FontWeight.Medium,
+                letterSpacing = 0.3.sp
             )
         }
         LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
+            state                 = rowState,
+            contentPadding        = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
-            modifier = Modifier.fillMaxWidth()
+            modifier              = Modifier.fillMaxWidth()
         ) {
             itemsIndexed(extMovies, key = { idx, m -> "${m.id}_$idx" }) { idx, movie ->
                 PosterCard(
-                    movie    = movie,
-                    modifier = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
+                    movie     = movie,
+                    modifier  = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
                     onFocused = { onItemFocus(movie) },
-                    onClick  = { onItemClick(movie.id) }
+                    onClick   = { onItemClick(movie.id) }
                 )
             }
         }
@@ -591,31 +748,41 @@ private fun StudioRow(
 private fun StudioLogo(brand: StudioBrand, isActive: Boolean) {
     val a = if (isActive) 1f else 0.4f
     when (brand) {
-        StudioBrand.NETFLIX  -> Box(
-            Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(3.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center
-        ) { Text("N", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black) }
-        StudioBrand.APPLE_TV -> Box(
-            Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(11.dp))
-                .background(APPLE_BG.copy(a)).border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp))
-                .padding(horizontal = 9.dp), Alignment.Center
-        ) { Text("tv+", color = WHITE.copy(a), fontSize = 13.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic) }
-        StudioBrand.DISNEY   -> Box(
-            Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(3.dp))
-                .background(DISNEY_BLUE.copy(a)).padding(horizontal = 8.dp), Alignment.Center
-        ) { Text("DISNEY+", color = WHITE.copy(a), fontSize = 8.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp) }
+        StudioBrand.NETFLIX  ->
+            Box(Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(3.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center) {
+                Text("N", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
+            }
+        StudioBrand.APPLE_TV ->
+            Box(
+                Modifier.height(22.dp).wrapContentWidth()
+                    .clip(RoundedCornerShape(11.dp))
+                    .background(APPLE_BG.copy(a))
+                    .border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp))
+                    .padding(horizontal = 9.dp),
+                Alignment.Center
+            ) { Text("tv+", color = WHITE.copy(a), fontSize = 13.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic) }
+        StudioBrand.DISNEY   ->
+            Box(
+                Modifier.height(22.dp).wrapContentWidth()
+                    .clip(RoundedCornerShape(3.dp))
+                    .background(DISNEY_BLUE.copy(a))
+                    .padding(horizontal = 8.dp),
+                Alignment.Center
+            ) { Text("DISNEY+", color = WHITE.copy(a), fontSize = 8.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp) }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  POSTER CARD
-//  FIX: ContentScale.FillBounds so poster is never cropped at the bottom
+//  POSTER CARD  —  ContentScale.FillBounds → no bottom crop
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
-    movie: Movie,
-    cardW: Dp = 130.dp,
-    cardH: Dp = 200.dp,       // raised from 192 → 200 to show full poster
-    modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit
+    movie:    Movie,
+    cardW:    Dp = 130.dp,
+    cardH:    Dp = 200.dp,
+    modifier: Modifier = Modifier,
+    onFocused: () -> Unit = {},
+    onClick:   () -> Unit
 ) {
     val ctx     = LocalContext.current
     val density = LocalDensity.current
@@ -642,40 +809,58 @@ fun PosterCard(
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(
                     border        = Border.None,
-                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(9.dp))
+                    focusedBorder = Border(
+                        androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)),
+                        shape = RoundedCornerShape(9.dp)
+                    )
                 ),
                 glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.22f), 18.dp)),
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
-                // FIX: FillBounds stretches image to exactly fill card — no bottom crop
                 AsyncImage(
                     model = remember(movie.posterUrl, movie.backdropUrl, wPx, hPx) {
-                        ImageRequest.Builder(ctx).data(movie.posterUrl.ifBlank { movie.backdropUrl })
-                            .size(wPx, hPx).memoryCachePolicy(CachePolicy.ENABLED)
-                            .diskCachePolicy(CachePolicy.ENABLED).allowHardware(true).crossfade(false).build()
+                        ImageRequest.Builder(ctx)
+                            .data(movie.posterUrl.ifBlank { movie.backdropUrl })
+                            .size(wPx, hPx)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .diskCachePolicy(CachePolicy.ENABLED)
+                            .allowHardware(true).crossfade(false).build()
                     },
                     contentDescription = movie.title,
-                    contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.fillMaxSize()
+                    contentScale       = ContentScale.FillBounds,
+                    modifier           = Modifier.fillMaxSize()
                 )
                 if (movie.rating > 0f) {
-                    Box(Modifier.align(Alignment.TopEnd).padding(5.dp)
-                        .clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                    ) { Text("\u2605 %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
         Spacer(Modifier.height(5.dp))
-        Text(movie.title, color = if (focused) WHITE else DIM, fontSize = 11.sp,
+        Text(
+            movie.title,
+            color      = if (focused) WHITE else DIM,
+            fontSize   = 11.sp,
             fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(cardW))
-        Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
+            maxLines   = 1,
+            overflow   = TextOverflow.Ellipsis,
+            modifier   = Modifier.width(cardW)
+        )
+        Text(
+            if (movie.mediaType == "tv") "TV Show" else "Movie",
+            color    = DIM3,
+            fontSize = 10.sp
+        )
     }
 }
 
-// Aliases
+// Aliases for backward-compat
 @Composable
 fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 200.dp, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
     PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
@@ -692,18 +877,27 @@ fun HomeLoading() {
     val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "sp")
     val shimmer = Brush.linearGradient(
         listOf(Color(0xFF101010), Color(0xFF292929), Color(0xFF101010)),
-        start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f))
+        start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f)
+    )
     Box(Modifier.fillMaxSize().background(BG)) {
-        Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 52.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Column(
+            Modifier.fillMaxSize().padding(top = 80.dp, start = 52.dp, end = 52.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            // Skeleton search bar
+            Box(Modifier.fillMaxWidth().height(38.dp).clip(RoundedCornerShape(50)).background(shimmer))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(5) { Box(Modifier.width(120.dp).height(40.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
+                repeat(4) { Box(Modifier.width(100.dp).height(36.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
             }
-            Spacer(Modifier.height(28.dp))
+            Spacer(Modifier.height(20.dp))
             Box(Modifier.width(420.dp).height(56.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
             Spacer(Modifier.height(4.dp))
             Box(Modifier.width(240.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             Spacer(Modifier.height(6.dp))
-            repeat(3) { Box(Modifier.fillMaxWidth(0.48f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(shimmer)); Spacer(Modifier.height(5.dp)) }
+            repeat(3) {
+                Box(Modifier.fillMaxWidth(0.48f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+                Spacer(Modifier.height(5.dp))
+            }
             Spacer(Modifier.weight(1f))
             repeat(2) {
                 Box(Modifier.width(130.dp).height(11.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
@@ -720,8 +914,11 @@ fun HomeLoading() {
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("\u26A0", fontSize = 52.sp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Text("⚠", fontSize = 52.sp)
             Text(message, color = DIM, fontSize = 16.sp, maxLines = 2)
             Surface(
                 onClick  = onRetry,
@@ -730,7 +927,11 @@ fun HomeError(message: String, onRetry: () -> Unit) {
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                 glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(RED.copy(0.55f), 20.dp)),
                 modifier = Modifier.height(50.dp).width(160.dp)
-            ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Retry", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold) } }
+            ) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Text("Retry", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+            }
         }
     }
 }
