@@ -51,7 +51,6 @@ import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 
-// ── Custom vector icons ───────────────────────────────────────────────────────
 val CustomPauseIcon: ImageVector
     get() = ImageVector.Builder("Pause", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -107,11 +106,10 @@ fun PlayerScreen(
     var showSubMenu  by remember { mutableStateOf(false) }
     var activityTick by remember { mutableIntStateOf(0) }
 
-    // ── FocusRequesters that connect seekbar ↔ control pills ─────────────────
-    // Seekbar FR — owned here so control pills can send focus back up
     val seekBarFR   = remember { FocusRequester() }
-    // First control pill FR — seekbar DOWN sends focus here
     val firstPillFR = remember { FocusRequester() }
+    // FIX: dedicated FR for first item in subtitle panel so D-pad works inside it
+    val firstSubFR  = remember { FocusRequester() }
 
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
@@ -126,7 +124,6 @@ fun PlayerScreen(
         }
     }
 
-    // When controls become visible → focus seekbar
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(120)
@@ -134,11 +131,13 @@ fun PlayerScreen(
         }
     }
 
-    // FIX #5: When subtitle panel closes → restore D-pad to seekbar.
-    // Without this, nothing has focus after panel closes and all D-pad input is lost.
+    // FIX: when panel opens → focus first subtitle row; when closes → restore seekbar
     LaunchedEffect(showSubMenu) {
-        if (!showSubMenu) {
-            delay(160)   // wait for exit animation to complete
+        if (showSubMenu) {
+            delay(200)
+            runCatching { firstSubFR.requestFocus() }
+        } else {
+            delay(160)
             runCatching { seekBarFR.requestFocus() }
         }
     }
@@ -186,7 +185,6 @@ fun PlayerScreen(
                 } else false
             }
     ) {
-        // ── Video surface ─────────────────────────────────────────────────────
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -202,7 +200,6 @@ fun PlayerScreen(
             update = { pv -> if (pv.player != exoWrapper.player) pv.player = exoWrapper.player }
         )
 
-        // ── Controls overlay ──────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls,
             enter    = fadeIn(tween(200)),
@@ -212,7 +209,6 @@ fun PlayerScreen(
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
                 listOf(CTRL_BG.copy(0.6f), Color.Transparent, Color.Transparent, CTRL_BG)
             ))) {
-                // Center pause indicator
                 AnimatedVisibility(
                     visible  = !isPlaying,
                     enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
@@ -227,7 +223,6 @@ fun PlayerScreen(
                     }
                 }
 
-                // Top bar
                 Row(
                     modifier = Modifier.align(Alignment.TopStart).fillMaxWidth()
                         .padding(horizontal = 64.dp, vertical = 32.dp),
@@ -250,25 +245,19 @@ fun PlayerScreen(
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
 
-                // Bottom controls
                 Column(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .padding(horizontal = 64.dp, vertical = 40.dp)
                 ) {
-                    // ── Seekbar — passes seekBarFR (owned by parent) + callback for DOWN
                     PlayerProgressControls(
                         exoWrapper    = exoWrapper,
                         isPlaying     = isPlaying,
                         isRtl         = isRtl,
-                        seekFR        = seekBarFR,       // ← parent-owned FR
-                        onDownPressed = {               // ← DOWN → first control pill
-                            runCatching { firstPillFR.requestFocus() }
-                        }
+                        seekFR        = seekBarFR,
+                        onDownPressed = { runCatching { firstPillFR.requestFocus() } }
                     )
                     Spacer(Modifier.height(20.dp))
 
-                    // ── Control pills row
-                    // onPreviewKeyEvent: UP from any pill → back to seekbar
                     Row(
                         modifier = Modifier.fillMaxWidth()
                             .onPreviewKeyEvent { ev ->
@@ -281,7 +270,6 @@ fun PlayerScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // ← First pill gets firstPillFR so seekbar DOWN lands here
                             ControlPill(
                                 icon      = CustomAudioIcon,
                                 text      = "Audio",
@@ -304,11 +292,18 @@ fun PlayerScreen(
                                 } catch (_: Exception) {}
                                 activityTick++
                             }
-                            if (state.availableSubtitles.isNotEmpty()) {
-                                ControlPill(
-                                    icon = Icons.Default.Search,
-                                    text = if (state.isSubtitlesLoading) "Loading..." else "Web Subs (${state.availableSubtitles.size})"
-                                ) { showSubMenu = true; activityTick++ }
+                            // FIX: Web Subs pill is ALWAYS shown.
+                            // Shows Loading... while fetching, then count when ready.
+                            ControlPill(
+                                icon = Icons.Default.Search,
+                                text = when {
+                                    state.isSubtitlesLoading           -> "Loading Subs..."
+                                    state.availableSubtitles.isEmpty() -> "Web Subs"
+                                    else                               -> "Web Subs (${state.availableSubtitles.size})"
+                                }
+                            ) {
+                                if (!state.isSubtitlesLoading) showSubMenu = true
+                                activityTick++
                             }
                         }
                         ControlPill(Icons.Default.Close, "Exit") {
@@ -319,7 +314,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Subtitle picker panel ─────────────────────────────────────────────
+        // Subtitle picker panel
         AnimatedVisibility(
             visible  = showSubMenu,
             enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) + fadeIn(tween(250)),
@@ -347,24 +342,37 @@ fun PlayerScreen(
                         Text("Subtitles", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Black)
                     }
                     Spacer(Modifier.height(24.dp))
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(state.availableSubtitles) { sub ->
-                            Surface(
-                                onClick  = { exoWrapper.applySubtitle(sub.url, sub.lang); showSubMenu = false },
-                                colors   = ClickableSurfaceDefaults.colors(
-                                    containerColor = Color(0xFF1A1A1A), focusedContainerColor = RED,
-                                    contentColor = WHITE, focusedContentColor = WHITE),
-                                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-                                modifier = Modifier.fillMaxWidth().height(52.dp)
-                            ) {
-                                Row(
-                                    Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                    if (state.availableSubtitles.isEmpty()) {
+                        // Empty state — loading or no results
+                        Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
+                            Text(
+                                text = if (state.isSubtitlesLoading) "Searching for subtitles..." else "No subtitles found",
+                                color = DIM, fontSize = 15.sp
+                            )
+                        }
+                    } else {
+                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(state.availableSubtitles, key = { it.url }) { sub ->
+                                val isFirst = sub == state.availableSubtitles.first()
+                                Surface(
+                                    onClick  = { exoWrapper.applySubtitle(sub.url, sub.lang); showSubMenu = false },
+                                    colors   = ClickableSurfaceDefaults.colors(
+                                        containerColor = Color(0xFF1A1A1A), focusedContainerColor = RED,
+                                        contentColor = WHITE, focusedContentColor = WHITE),
+                                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+                                    // FIX: attach firstSubFR to first item so panel is navigable with D-pad
+                                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                                        .let { if (isFirst) it.focusRequester(firstSubFR) else it }
                                 ) {
-                                    Text("${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                    Text(sub.source, color = DIM, fontSize = 12.sp)
+                                    Row(
+                                        Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text("${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(sub.source, color = DIM, fontSize = 12.sp)
+                                    }
                                 }
                             }
                         }
@@ -376,20 +384,16 @@ fun PlayerScreen(
 }
 
 private fun getFlagEmoji(lang: String): String = when (lang.lowercase().take(3)) {
-    "heb", "he" -> "🇮🇱"; "eng", "en" -> "🇺🇸"; "ara", "ar" -> "🇸🇦"
-    "rus", "ru" -> "🇷🇺"; "fre", "fr" -> "🇫🇷"; "spa", "es" -> "🇪🇸"
-    "ger", "de" -> "🇩🇪"; else -> "🌐"
+    "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"; "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"; "ara", "ar" -> "\uD83C\uDDF8\uD83C\uDDE6"
+    "rus", "ru" -> "\uD83C\uDDF7\uD83C\uDDFA"; "fre", "fr" -> "\uD83C\uDDEB\uD83C\uDDF7"; "spa", "es" -> "\uD83C\uDDEA\uD83C\uDDF8"
+    "ger", "de" -> "\uD83C\uDDE9\uD83C\uDDEA"; else -> "\uD83C\uDF10"
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  SEEK BAR — accepts parent-owned seekFR + DOWN callback to reach pills below
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
     isPlaying:     Boolean,
     isRtl:         Boolean,
-    // ↓ Parent owns these so pills can send focus back up
     seekFR:        FocusRequester = remember { FocusRequester() },
     onDownPressed: () -> Unit     = {}
 ) {
@@ -404,7 +408,6 @@ fun PlayerProgressControls(
             delay(500)
         }
     }
-    // Focus seekbar when controls appear
     LaunchedEffect(Unit) { runCatching { seekFR.requestFocus() } }
 
     val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
@@ -440,9 +443,7 @@ fun PlayerProgressControls(
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                                 if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true
                             }
-                            // ← KEY FIX: DOWN from seekbar → focus first control pill
                             KeyEvent.KEYCODE_DPAD_DOWN -> { onDownPressed(); true }
-                            // UP already at top of controls — consume silently
                             KeyEvent.KEYCODE_DPAD_UP -> true
                             else -> false
                         }
@@ -463,9 +464,6 @@ fun PlayerProgressControls(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  CONTROL PILL — added optional modifier param for FocusRequester injection
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun ControlPill(
     icon:     ImageVector,

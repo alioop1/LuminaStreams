@@ -115,7 +115,7 @@ fun HomeScreen(
     onMovieClick:  (String) -> Unit
 ) {
     val rows: List<RowDef> = remember(state.selectedTab, state) {
-        if (state.selectedTab == "סרטים") buildList {
+        if (state.selectedTab == "\u05E1\u05E8\u05D8\u05D9\u05DD") buildList {
             if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
             if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
             if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
@@ -140,8 +140,6 @@ fun HomeScreen(
 
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
-    // ── Shared rowsViewH so hero and rows use the SAME value ─────────────────
-    // FIX #1: Hero used 0.42 but rows used 0.44 → hero text overlapped rows
     val config    = LocalConfiguration.current
     val rowsViewH = remember(config.screenHeightDp) {
         (config.screenHeightDp * 0.44f).dp.coerceIn(270.dp, 380.dp)
@@ -173,15 +171,14 @@ fun HomeScreen(
             state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
         }
         BackdropLayer(focusState.heroMovie)
-        // FIX #1: Pass rowsViewH so hero doesn't overlap rows
         HeroOverlay(focusState.heroMovie, rowsViewH)
         ContentLayer(
             rows = rows, focusState = focusState, activeTab = state.selectedTab,
             rowsViewH = rowsViewH,
             onMovieClick = onMovieClick, onHeroUpdate = { focusState.heroMovie = it },
             onSearch    = { navController.navigate("search") },
-            onMoviesTab = { viewModel.selectTab("סרטים") },
-            onSeriesTab = { viewModel.selectTab("סדרות") },
+            onMoviesTab = { viewModel.selectTab("\u05E1\u05E8\u05D8\u05D9\u05DD") },
+            onSeriesTab = { viewModel.selectTab("\u05E1\u05D3\u05E8\u05D5\u05EA") },
             onWatchlist = { navController.navigate("watchlist") },
             onSettings  = { navController.navigate("settings") }
         )
@@ -221,11 +218,10 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  HERO OVERLAY — FIX #1: uses shared rowsViewH + extra gap so no overlap
+//  HERO OVERLAY
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
-    // Extra gap between hero text and first content row
     val bottomPad = rowsViewH + 24.dp
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         hero?.let { m ->
@@ -238,8 +234,8 @@ private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
                     Text(m.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
                         lineHeight = 52.sp, letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (m.year > 0)           { Text(m.year.toString(), color = DIM, fontSize = 13.sp); Text("  ·  ", color = DIM3, fontSize = 13.sp) }
-                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); Text("  ·  ", color = DIM3, fontSize = 13.sp) }
+                        if (m.year > 0)           { Text(m.year.toString(), color = DIM, fontSize = 13.sp); Text("  \u00B7  ", color = DIM3, fontSize = 13.sp) }
+                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); Text("  \u00B7  ", color = DIM3, fontSize = 13.sp) }
                         if (m.rating > 0f) {
                             Row(Modifier.clip(RoundedCornerShape(4.dp)).background(GOLD)
                                 .padding(horizontal = 7.dp, vertical = 3.dp),
@@ -259,7 +255,7 @@ private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  CONTENT LAYER — non-focusable wrapper
+//  CONTENT LAYER
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ContentLayer(
@@ -314,6 +310,7 @@ private fun ContentLayer(
                 }
             }
     ) {
+        // NavBar always on top with zIndex 10
         TopNavBar(
             activeTab = activeTab, firstNavFR = firstNavFR, focusState = focusState,
             onSearch = onSearch, onMoviesTab = onMoviesTab, onSeriesTab = onSeriesTab,
@@ -329,7 +326,8 @@ private fun ContentLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TOP NAV BAR — FIX #2: pills always visible with subtle bg + higher text opacity
+//  TOP NAV BAR
+//  FIX: solid dark background + pills use Color(0x44FFFFFF) idle so always visible
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun TopNavBar(
@@ -346,8 +344,9 @@ private fun TopNavBar(
             delay(30_000)
         }
     }
+    // Solid-enough gradient so pills are always readable against the backdrop
     Box(modifier = modifier.background(
-        Brush.verticalGradient(listOf(Color(0xF5050505), Color(0xB0050505), Color.Transparent))
+        Brush.verticalGradient(listOf(Color(0xFF050505), Color(0xD0050505), Color(0x80050505), Color.Transparent))
     )) {
         Row(
             modifier = Modifier
@@ -360,11 +359,11 @@ private fun TopNavBar(
         ) {
             LuminaLogo()
             Spacer(Modifier.width(16.dp))
-            NavPill("Search",    Icons.Default.Search,   false,               firstNavFR) { onSearch() }
-            NavPill("Home",      Icons.Default.Home,     activeTab == "סרטים", null)      { onMoviesTab() }
-            NavPill("Watchlist", Icons.Default.Bookmark, false,               null)       { onWatchlist() }
-            NavPill("TV",        Icons.Default.LiveTv,   activeTab == "סדרות", null)      { onSeriesTab() }
-            NavPill("Settings",  Icons.Default.Settings, false,               null)       { onSettings() }
+            NavPill("Search",    Icons.Default.Search,   false,                               firstNavFR) { onSearch() }
+            NavPill("Home",      Icons.Default.Home,     activeTab == "\u05E1\u05E8\u05D8\u05D9\u05DD", null)      { onMoviesTab() }
+            NavPill("Watchlist", Icons.Default.Bookmark, false,                               null)       { onWatchlist() }
+            NavPill("TV",        Icons.Default.LiveTv,   activeTab == "\u05E1\u05D3\u05E8\u05D5\u05EA", null)      { onSeriesTab() }
+            NavPill("Settings",  Icons.Default.Settings, false,                               null)       { onSettings() }
             Spacer(Modifier.weight(1f))
             Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         }
@@ -384,22 +383,20 @@ private fun LuminaLogo() {
     }
 }
 
-// ── NavPill — FIX #2: ALL pills have slight bg + 82% text opacity when idle
+// FIX: idle containerColor raised from 0x22 to 0x44 so pills are ALWAYS visible
+// contentColor = full WHITE (no .copy(alpha)) so text is never invisible
 @Composable
 private fun NavPill(
     label: String, icon: ImageVector, isSelected: Boolean,
     focusRequester: FocusRequester?, onClick: () -> Unit
 ) {
-    // TV Surface's containerColor/focusedContainerColor controls background.
-    // contentColor/focusedContentColor controls icon + text color automatically.
     Surface(
         onClick = onClick,
         colors  = ClickableSurfaceDefaults.colors(
-            // Idle: subtle dark-glass background + bright text so ALWAYS visible
-            containerColor        = if (isSelected) WHITE          else Color(0x22FFFFFF),
-            focusedContainerColor = if (isSelected) WHITE          else Color(0x55FFFFFF),
+            containerColor        = if (isSelected) WHITE          else Color(0x44FFFFFF),
+            focusedContainerColor = if (isSelected) WHITE          else Color(0x77FFFFFF),
             pressedContainerColor = Color(0x33FFFFFF),
-            contentColor          = if (isSelected) Color(0xFF0D0D0D) else WHITE.copy(0.82f),
+            contentColor          = if (isSelected) Color(0xFF0D0D0D) else WHITE,
             focusedContentColor   = if (isSelected) Color(0xFF0D0D0D) else WHITE,
         ),
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -421,7 +418,8 @@ private fun NavPill(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ROWS LAYER — FIX #3: no clipToBounds on items, height 256dp, rows clip outer only
+//  ROWS LAYER
+//  FIX: row item height raised to 264dp; no clipToBounds on items so zoom glows
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsLayer(
@@ -443,13 +441,17 @@ private fun RowsLayer(
     }
 
     Box(Modifier.fillMaxSize()) {
-        // Outer box clips rows from overflowing into hero area
-        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(rowsViewH).clipToBounds()) {
+        Box(
+            Modifier
+                .align(Alignment.BottomStart)
+                .fillMaxWidth()
+                .height(rowsViewH)
+                .clipToBounds()
+        ) {
             LazyColumn(
                 state = listState,
-                // Bottom padding = rowsViewH so last row can scroll to top
                 contentPadding = PaddingValues(bottom = rowsViewH),
-                modifier = Modifier.fillMaxSize()   // NO clipToBounds on LazyColumn itself
+                modifier = Modifier.fillMaxSize()
             ) {
                 itemsIndexed(rows, key = { i, r ->
                     when (r) { is RowDef.Regular -> "R_${r.title}_$i"; is RowDef.Studio -> "S_${r.brand.name}_$i" }
@@ -458,12 +460,9 @@ private fun RowsLayer(
                         targetValue   = if (index <= curRow) 1f else 0.10f,
                         animationSpec = tween(250), label = "row_alpha"
                     )
-                    // FIX #3: height 256dp (was 228dp), NO clipToBounds → zoom won't be clipped
                     Box(
-                        Modifier.fillMaxWidth().height(256.dp)
-                            // NO clipToBounds — allows card zoom to overflow without being cut
+                        Modifier.fillMaxWidth().height(264.dp)
                             .graphicsLayer { this.alpha = alpha }
-                            // Active row on top so focused card doesn't get covered by next row
                             .zIndex(if (!focusState.isNavFocused && index == curRow) 10f else index.toFloat())
                     ) {
                         val isActive    = !focusState.isNavFocused && index == curRow
@@ -486,7 +485,7 @@ private fun RowsLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  CONTENT ROW — FIX #4: endless scrolling via 3x repeated list
+//  CONTENT ROW
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ContentRow(
@@ -496,12 +495,10 @@ private fun ContentRow(
 ) {
     if (movies.isEmpty()) return
 
-    // FIX #4: 3× repeated list — "endless" scroll. Start in the middle section.
     val extMovies = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
-    val startIdx  = if (movies.size >= 2) movies.size else 0  // first item of middle section
+    val startIdx  = if (movies.size >= 2) movies.size else 0
     val rowState  = rememberLazyListState(initialFirstVisibleItemIndex = startIdx.coerceAtLeast(0))
 
-    // When this row becomes active, focus first card of middle section
     LaunchedEffect(isActiveRow) {
         if (isActiveRow) {
             delay(80)
@@ -535,7 +532,7 @@ private fun ContentRow(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  STUDIO ROW — FIX #4: same endless trick
+//  STUDIO ROW
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun StudioRow(
@@ -610,11 +607,14 @@ private fun StudioLogo(brand: StudioBrand, isActive: Boolean) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  POSTER CARD — TV Surface handles focus border+glow
+//  POSTER CARD
+//  FIX: ContentScale.FillBounds so poster is never cropped at the bottom
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
-    movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 192.dp,
+    movie: Movie,
+    cardW: Dp = 130.dp,
+    cardH: Dp = 200.dp,       // raised from 192 → 200 to show full poster
     modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit
 ) {
     val ctx     = LocalContext.current
@@ -630,9 +630,10 @@ fun PosterCard(
     )
 
     Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
-        Box(Modifier.width(cardW).height(cardH)
-            .graphicsLayer { scaleX = zoom; scaleY = zoom }
-            .zIndex(if (focused) 8f else 0f)
+        Box(
+            Modifier.width(cardW).height(cardH)
+                .graphicsLayer { scaleX = zoom; scaleY = zoom }
+                .zIndex(if (focused) 8f else 0f)
         ) {
             Surface(
                 onClick  = onClick,
@@ -647,19 +648,22 @@ fun PosterCard(
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
+                // FIX: FillBounds stretches image to exactly fill card — no bottom crop
                 AsyncImage(
                     model = remember(movie.posterUrl, movie.backdropUrl, wPx, hPx) {
                         ImageRequest.Builder(ctx).data(movie.posterUrl.ifBlank { movie.backdropUrl })
                             .size(wPx, hPx).memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED).allowHardware(true).crossfade(false).build()
                     },
-                    contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
+                    contentDescription = movie.title,
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
                 )
                 if (movie.rating > 0f) {
                     Box(Modifier.align(Alignment.TopEnd).padding(5.dp)
                         .clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
-                    ) { Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+                    ) { Text("\u2605 %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -671,9 +675,9 @@ fun PosterCard(
     }
 }
 
-// ── Aliases ──────────────────────────────────────────────────────────────────
+// Aliases
 @Composable
-fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 192.dp, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
+fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 200.dp, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
     PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
 @Composable
 fun NfCard(movie: Movie, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
@@ -705,7 +709,7 @@ fun HomeLoading() {
                 Box(Modifier.width(130.dp).height(11.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    repeat(8) { Box(Modifier.width(130.dp).height(192.dp).clip(RoundedCornerShape(9.dp)).background(shimmer)) }
+                    repeat(8) { Box(Modifier.width(130.dp).height(200.dp).clip(RoundedCornerShape(9.dp)).background(shimmer)) }
                 }
                 Spacer(Modifier.height(16.dp))
             }
@@ -717,7 +721,7 @@ fun HomeLoading() {
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Text("⚠", fontSize = 52.sp)
+            Text("\u26A0", fontSize = 52.sp)
             Text(message, color = DIM, fontSize = 16.sp, maxLines = 2)
             Surface(
                 onClick  = onRetry,
