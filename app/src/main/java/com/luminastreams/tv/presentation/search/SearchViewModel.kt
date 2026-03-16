@@ -2,6 +2,8 @@ package com.luminastreams.tv.presentation.search
 
 import android.app.Application
 import android.content.Context
+import androidx.compose.runtime.Immutable
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.domain.model.MediaType
@@ -12,6 +14,42 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+
+// ── State ─────────────────────────────────────────────────────────────────────
+@Immutable
+data class SearchState(
+    val query: String = "",
+    val isSearching: Boolean = false,
+    val isVoiceListening: Boolean = false,
+    val containsHebrew: Boolean = false,
+    val results: List<SearchResult> = emptyList(),
+    val searchHistory: List<String> = emptyList(),
+    val trendingSearches: List<SearchResult> = emptyList(),
+    val autocompleteSuggestions: List<String> = emptyList(),
+    val suggestedCorrection: String? = null,
+    val dynamicThemeColor: Color? = null,
+    val filters: List<String> = listOf("הכל", "סרטים", "סדרות"),
+    val selectedFilter: String = "הכל",
+    val exactMatch: SearchResult? = null,
+    val focusedItemUrl: String? = null
+)
+
+// ── Events ────────────────────────────────────────────────────────────────────
+sealed interface SearchEvent {
+    data class ShowError(val message: String) : SearchEvent
+    data class NavigateToDetails(val id: String) : SearchEvent
+    object TriggerHapticFeedback : SearchEvent
+}
+
+// ── Intents ───────────────────────────────────────────────────────────────────
+sealed interface SearchIntent {
+    data class UpdateQuery(val query: String) : SearchIntent
+    data class SelectFilter(val filter: String) : SearchIntent
+    data class SetFocusedBackground(val url: String?) : SearchIntent
+    data class SetVoiceListeningState(val isListening: Boolean) : SearchIntent
+    object ClearHistory : SearchIntent
+    data class RemoveHistoryItem(val item: String) : SearchIntent
+}
 
 @OptIn(FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
@@ -199,13 +237,4 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
         _state.update { it.copy(searchHistory = newHistory) }
     }
-}
-
-sealed interface SearchIntent {
-    data class UpdateQuery(val query: String) : SearchIntent
-    data class SelectFilter(val filter: String) : SearchIntent
-    data class SetFocusedBackground(val url: String?) : SearchIntent
-    data class SetVoiceListeningState(val isListening: Boolean) : SearchIntent
-    object ClearHistory : SearchIntent
-    data class RemoveHistoryItem(val item: String) : SearchIntent // Batch 2
 }
