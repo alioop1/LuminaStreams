@@ -89,6 +89,15 @@ private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
 
+// ══════════════════════════════════════════════════════════════════
+//  PLAYER SCREEN
+//  Focus flow (D-pad):
+//    [Back btn] ← UP from seekbar (when controls visible)
+//    [Seekbar]  ← default focus when controls shown
+//                 DOWN → pill row
+//    [Pills]    ← UP → seekbar
+//    [Sub panel]← dedicated FR on first item, ESC/BACK closes panel
+// ══════════════════════════════════════════════════════════════════
 @Composable
 fun PlayerScreen(
     videoUrl: String,
@@ -106,10 +115,11 @@ fun PlayerScreen(
     var showSubMenu  by remember { mutableStateOf(false) }
     var activityTick by remember { mutableIntStateOf(0) }
 
-    val seekBarFR   = remember { FocusRequester() }
-    val firstPillFR = remember { FocusRequester() }
-    // FIX: dedicated FR for first item in subtitle panel so D-pad works inside it
-    val firstSubFR  = remember { FocusRequester() }
+    // Focus requesters for all navigable elements
+    val backBtnFR   = remember { FocusRequester() }   // ← back arrow top-left
+    val seekBarFR   = remember { FocusRequester() }   // ← progress bar
+    val firstPillFR = remember { FocusRequester() }   // ← first pill (Audio)
+    val firstSubFR  = remember { FocusRequester() }   // ← first subtitle row
 
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
@@ -118,12 +128,14 @@ fun PlayerScreen(
         if (isPlaying) showControls = false
     }
 
+    // Auto-apply Hebrew subtitle if found
     LaunchedEffect(state.availableSubtitles) {
         state.availableSubtitles.firstOrNull { it.lang.contains("heb", true) }?.let { sub ->
             exoWrapper.applySubtitle(sub.url, sub.lang)
         }
     }
 
+    // When controls appear → focus seekbar
     LaunchedEffect(showControls) {
         if (showControls) {
             delay(120)
@@ -131,7 +143,7 @@ fun PlayerScreen(
         }
     }
 
-    // FIX: when panel opens → focus first subtitle row; when closes → restore seekbar
+    // When subtitle panel opens → focus first row; closes → back to seekbar
     LaunchedEffect(showSubMenu) {
         if (showSubMenu) {
             delay(200)
@@ -144,6 +156,7 @@ fun PlayerScreen(
 
     DisposableEffect(Unit) { onDispose { exoWrapper.release() } }
 
+    // Auto-hide controls after 5s while playing
     LaunchedEffect(showControls, isPlaying, activityTick) {
         if (showControls && isPlaying && !showSubMenu) {
             delay(5000)
@@ -153,27 +166,29 @@ fun PlayerScreen(
 
     BackHandler {
         when {
-            showSubMenu  -> showSubMenu = false
+            showSubMenu  -> showSubMenu  = false
             showControls -> showControls = false
             else         -> { exoWrapper.pause(); onNavigateBack() }
         }
     }
 
     Box(
-        modifier = Modifier.fillMaxSize().background(Color.Black)
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
             .focusable()
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && !showSubMenu) {
                     activityTick++
                     when (event.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                            if (showControls) { if (isPlaying) exoWrapper.pause() else exoWrapper.play() }
-                            else showControls = true
+                            if (showControls) {
+                                if (isPlaying) exoWrapper.pause() else exoWrapper.play()
+                            } else showControls = true
                             true
                         }
-                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            showControls = true; true
-                        }
+                        KeyEvent.KEYCODE_DPAD_UP   -> { showControls = true; true }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> { showControls = true; true }
                         KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                             if (isPlaying) exoWrapper.pause() else exoWrapper.play()
                             showControls = true; true
@@ -185,6 +200,7 @@ fun PlayerScreen(
                 } else false
             }
     ) {
+        // ── Video surface ───────────────────────────────────────────
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -193,22 +209,31 @@ fun PlayerScreen(
                     useController = false
                     resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
                     setBackgroundColor(android.graphics.Color.BLACK)
-                    layoutParams  = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    layoutParams  = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
                     keepScreenOn  = true
                 }
             },
             update = { pv -> if (pv.player != exoWrapper.player) pv.player = exoWrapper.player }
         )
 
+        // ── Controls overlay ────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls,
             enter    = fadeIn(tween(200)),
             exit     = fadeOut(tween(350)),
             modifier = Modifier.fillMaxSize()
         ) {
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-                listOf(CTRL_BG.copy(0.6f), Color.Transparent, Color.Transparent, CTRL_BG)
-            ))) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f))
+                    )
+                )
+            ) {
+                // Paused indicator
                 AnimatedVisibility(
                     visible  = !isPlaying,
                     enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
@@ -216,37 +241,62 @@ fun PlayerScreen(
                     modifier = Modifier.align(Alignment.Center)
                 ) {
                     Box(
-                        Modifier.size(80.dp).background(Color.Black.copy(0.6f), CircleShape)
-                            .border(2.dp, WHITE.copy(0.7f), CircleShape), Alignment.Center
+                        Modifier.size(80.dp)
+                            .background(Color.Black.copy(0.6f), CircleShape)
+                            .border(2.dp, WHITE.copy(0.7f), CircleShape),
+                        Alignment.Center
                     ) {
                         Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
                     }
                 }
 
+                // ── TOP BAR: Back btn + title/buffering ─────────────
+                // Back button has its own FocusRequester.
+                // D-pad UP from seekbar will call backBtnFR.requestFocus().
                 Row(
-                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth()
-                        .padding(horizontal = 64.dp, vertical = 32.dp),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .padding(horizontal = 64.dp, vertical = 32.dp)
+                        // Pressing DOWN from top bar → back to seekbar
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                                runCatching { seekBarFR.requestFocus() }
+                                true
+                            } else false
+                        },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
                         onClick  = { exoWrapper.pause(); onNavigateBack() },
                         shape    = ClickableSurfaceDefaults.shape(CircleShape),
                         colors   = ClickableSurfaceDefaults.colors(
-                            containerColor = CTRL_BG, focusedContainerColor = WHITE,
-                            contentColor = WHITE, focusedContentColor = Color.Black),
-                        scale    = ClickableSurfaceDefaults.scale(1.1f),
-                        modifier = Modifier.size(48.dp)
+                            containerColor        = CTRL_BG,
+                            focusedContainerColor = WHITE,
+                            contentColor          = WHITE,
+                            focusedContentColor   = Color.Black
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                        modifier = Modifier
+                            .size(48.dp)
+                            .focusRequester(backBtnFR)  // ← now reachable via D-pad
                     ) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
                             Icon(Icons.Default.ArrowBack, null, Modifier.size(22.dp))
                         }
                     }
                     Spacer(Modifier.width(16.dp))
-                    if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
+                    Text(
+                        text = if (!isPlaying) "Buffering..." else "",
+                        color = DIM, fontSize = 14.sp
+                    )
                 }
 
+                // ── BOTTOM: seekbar + pills ──────────────────────────
                 Column(
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
                         .padding(horizontal = 64.dp, vertical = 40.dp)
                 ) {
                     PlayerProgressControls(
@@ -254,12 +304,16 @@ fun PlayerScreen(
                         isPlaying     = isPlaying,
                         isRtl         = isRtl,
                         seekFR        = seekBarFR,
+                        // UP from seekbar → back button
+                        onUpPressed   = { runCatching { backBtnFR.requestFocus() } },
                         onDownPressed = { runCatching { firstPillFR.requestFocus() } }
                     )
                     Spacer(Modifier.height(20.dp))
 
+                    // Pill row — UP returns to seekbar
                     Row(
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
                                     runCatching { seekBarFR.requestFocus() }
@@ -271,9 +325,9 @@ fun PlayerScreen(
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             ControlPill(
-                                icon      = CustomAudioIcon,
-                                text      = "Audio",
-                                modifier  = Modifier.focusRequester(firstPillFR)
+                                icon     = CustomAudioIcon,
+                                text     = "Audio",
+                                modifier = Modifier.focusRequester(firstPillFR)
                             ) {
                                 try {
                                     TrackSelectionDialogBuilder(
@@ -292,14 +346,13 @@ fun PlayerScreen(
                                 } catch (_: Exception) {}
                                 activityTick++
                             }
-                            // FIX: Web Subs pill is ALWAYS shown.
-                            // Shows Loading... while fetching, then count when ready.
+                            // Always visible — shows loading state or count
                             ControlPill(
                                 icon = Icons.Default.Search,
                                 text = when {
                                     state.isSubtitlesLoading           -> "Loading Subs..."
                                     state.availableSubtitles.isEmpty() -> "Web Subs"
-                                    else                               -> "Web Subs (${state.availableSubtitles.size})"
+                                    else -> "Web Subs (${state.availableSubtitles.size})"
                                 }
                             ) {
                                 if (!state.isSubtitlesLoading) showSubMenu = true
@@ -314,7 +367,7 @@ fun PlayerScreen(
             }
         }
 
-        // Subtitle picker panel
+        // ── Subtitle picker panel ────────────────────────────────────
         AnimatedVisibility(
             visible  = showSubMenu,
             enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) + fadeIn(tween(250)),
@@ -322,31 +375,56 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.7f))
-                    .clickable(indication = null,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.7f))
+                    .clickable(
+                        indication = null,
                         interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                     ) { showSubMenu = false },
                 contentAlignment = Alignment.CenterEnd
             ) {
                 Column(
-                    modifier = Modifier.fillMaxHeight().width(420.dp)
-                        .background(Color(0xFF0E0E0E)).border(1.dp, Color(0x22FFFFFF))
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .width(420.dp)
+                        .background(Color(0xFF0E0E0E))
+                        .border(1.dp, Color(0x22FFFFFF))
                         .padding(32.dp)
-                        .clickable(indication = null,
+                        // Block click-through so tapping inside doesn't close
+                        .clickable(
+                            indication = null,
                             interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
                         ) {}
+                        // ESC/BACK key inside panel closes it
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown &&
+                                (ev.key == Key.Back || ev.key == Key.Escape)
+                            ) {
+                                showSubMenu = false; true
+                            } else false
+                        }
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(28.dp).background(RED, RoundedCornerShape(2.dp)))
+                        Box(
+                            Modifier.width(4.dp).height(28.dp)
+                                .background(RED, RoundedCornerShape(2.dp))
+                        )
                         Spacer(Modifier.width(12.dp))
                         Text("Subtitles", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Black)
                     }
                     Spacer(Modifier.height(24.dp))
+
                     if (state.availableSubtitles.isEmpty()) {
-                        // Empty state — loading or no results
-                        Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
+                        Box(
+                            Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                            Alignment.Center
+                        ) {
                             Text(
-                                text = if (state.isSubtitlesLoading) "Searching for subtitles..." else "No subtitles found",
+                                text = if (state.isSubtitlesLoading)
+                                    "Searching for subtitles..."
+                                else
+                                    "No subtitles found",
                                 color = DIM, fontSize = 15.sp
                             )
                         }
@@ -355,22 +433,33 @@ fun PlayerScreen(
                             items(state.availableSubtitles, key = { it.url }) { sub ->
                                 val isFirst = sub == state.availableSubtitles.first()
                                 Surface(
-                                    onClick  = { exoWrapper.applySubtitle(sub.url, sub.lang); showSubMenu = false },
-                                    colors   = ClickableSurfaceDefaults.colors(
-                                        containerColor = Color(0xFF1A1A1A), focusedContainerColor = RED,
-                                        contentColor = WHITE, focusedContentColor = WHITE),
+                                    onClick = {
+                                        exoWrapper.applySubtitle(sub.url, sub.lang)
+                                        showSubMenu = false
+                                    },
+                                    colors  = ClickableSurfaceDefaults.colors(
+                                        containerColor        = Color(0xFF1A1A1A),
+                                        focusedContainerColor = RED,
+                                        contentColor          = WHITE,
+                                        focusedContentColor   = WHITE
+                                    ),
                                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
                                     scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-                                    // FIX: attach firstSubFR to first item so panel is navigable with D-pad
-                                    modifier = Modifier.fillMaxWidth().height(52.dp)
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(52.dp)
                                         .let { if (isFirst) it.focusRequester(firstSubFR) else it }
                                 ) {
                                     Row(
                                         Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
+                                        verticalAlignment     = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
-                                        Text("${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                                        Text(
+                                            "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize   = 16.sp
+                                        )
                                         Text(sub.source, color = DIM, fontSize = 12.sp)
                                     }
                                 }
@@ -383,18 +472,29 @@ fun PlayerScreen(
     }
 }
 
+// ══════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════
 private fun getFlagEmoji(lang: String): String = when (lang.lowercase().take(3)) {
-    "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"; "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"; "ara", "ar" -> "\uD83C\uDDF8\uD83C\uDDE6"
-    "rus", "ru" -> "\uD83C\uDDF7\uD83C\uDDFA"; "fre", "fr" -> "\uD83C\uDDEB\uD83C\uDDF7"; "spa", "es" -> "\uD83C\uDDEA\uD83C\uDDF8"
-    "ger", "de" -> "\uD83C\uDDE9\uD83C\uDDEA"; else -> "\uD83C\uDF10"
+    "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
+    "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"
+    "ara", "ar" -> "\uD83C\uDDF8\uD83C\uDDE6"
+    "rus", "ru" -> "\uD83C\uDDF7\uD83C\uDDFA"
+    "fre", "fr" -> "\uD83C\uDDEB\uD83C\uDDF7"
+    "spa", "es" -> "\uD83C\uDDEA\uD83C\uDDF8"
+    "ger", "de" -> "\uD83C\uDDE9\uD83C\uDDEA"
+    else        -> "\uD83C\uDF10"
 }
 
+// ── Progress controls ─────────────────────────────────────────────
+// Added onUpPressed callback so seekbar can delegate UP to back button
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
     isPlaying:     Boolean,
     isRtl:         Boolean,
     seekFR:        FocusRequester = remember { FocusRequester() },
+    onUpPressed:   () -> Unit     = {},
     onDownPressed: () -> Unit     = {}
 ) {
     var currentPosition by remember { mutableLongStateOf(0L) }
@@ -411,19 +511,20 @@ fun PlayerProgressControls(
     LaunchedEffect(Unit) { runCatching { seekFR.requestFocus() } }
 
     val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
-    val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp, label = "bar_h")
+    val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp,  label = "bar_h")
     val thumbSize by animateDpAsState(if (seekFocused) 18.dp else 0.dp, label = "thumb")
 
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Text("-${formatTime((videoDuration - currentPosition).coerceAtLeast(0L))}", color = DIM, fontSize = 13.sp)
-            Text(formatTime(videoDuration), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text(formatTime(videoDuration),   color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(10.dp))
         Box(
             modifier = Modifier
-                .fillMaxWidth().height(28.dp)
+                .fillMaxWidth()
+                .height(28.dp)
                 .focusRequester(seekFR)
                 .onFocusChanged { seekFocused = it.isFocused }
                 .focusable()
@@ -443,18 +544,22 @@ fun PlayerProgressControls(
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                                 if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true
                             }
+                            KeyEvent.KEYCODE_DPAD_UP   -> { onUpPressed();   true }
                             KeyEvent.KEYCODE_DPAD_DOWN -> { onDownPressed(); true }
-                            KeyEvent.KEYCODE_DPAD_UP -> true
                             else -> false
                         }
                     } else false
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50))
-                .background(WHITE.copy(if (seekFocused) 0.25f else 0.18f)))
-            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50))
-                .background(if (seekFocused) WHITE else RED))
+            Box(
+                Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50))
+                    .background(WHITE.copy(if (seekFocused) 0.25f else 0.18f))
+            )
+            Box(
+                Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50))
+                    .background(if (seekFocused) WHITE else RED)
+            )
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
                     Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE))
@@ -464,6 +569,7 @@ fun PlayerProgressControls(
     }
 }
 
+// ── Control pill ─────────────────────────────────────────────────
 @Composable
 fun ControlPill(
     icon:     ImageVector,
@@ -479,9 +585,9 @@ fun ControlPill(
             contentColor          = WHITE,
             focusedContentColor   = WHITE
         ),
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
         modifier = modifier
     ) {
         Row(
@@ -490,7 +596,13 @@ fun ControlPill(
         ) {
             Icon(icon, null, Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(
+                text,
+                fontWeight = FontWeight.SemiBold,
+                fontSize   = 15.sp,
+                maxLines   = 1,
+                overflow   = TextOverflow.Ellipsis
+            )
         }
     }
 }
