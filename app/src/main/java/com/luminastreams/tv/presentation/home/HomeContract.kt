@@ -8,7 +8,7 @@ import com.luminastreams.tv.domain.model.Movie
 data class HomeState(
     val isLoading:      Boolean      = true,
     val error:          String?      = null,
-    val selectedTab:    String       = "סרטים",
+    val selectedTab:    String       = "ראשי",
     // ── Movies ──────────────────────────────────────────────────────────────
     val movieTrending:  List<Movie>  = emptyList(),
     val moviePremieres: List<Movie>  = emptyList(),

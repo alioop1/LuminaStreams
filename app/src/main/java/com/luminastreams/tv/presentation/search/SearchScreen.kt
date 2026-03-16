@@ -133,19 +133,17 @@ private val LANGUAGES = listOf(
     "ja"  to "🇯🇵 Japanese","ko" to "🇰🇷 Korean"
 )
 private val PLATFORMS = listOf(
-    "8"   to "N  Netflix",
-    "337" to "D+ Disney+",
-    "350" to " Apple TV+",
-    "384" to "⬛ Max",
-    "387" to "HBO",
-    "386" to "🦚 Peacock",
-    "2"   to "🎬 Apple iTunes",
-    "3"   to "▶ Google Play",
-    "10"  to "A  Amazon",
-    "15"  to "🎯 Hulu",
-    "531" to "P  Paramount+",
-    "257" to "🔵 Fubo",
-    "190" to "📺 Discovery+"
+    "8"   to "https://images.ctfassets.net/y2ske730sjqp/4aEQ1zAUZF5pLSDtfviWjb/ba04f8d5bd01428f6e3803cc6effaf30/Netflix_N.png", // Netflix (Custom)
+    "337" to "https://image.tmdb.org/t/p/w92/97yvRBw1GzX7fXprcF80er19ot.jpg", // Disney+
+    "350" to "https://image.tmdb.org/t/p/w92/6uhKBfmtzFqOcLousHwZuzcrScK.jpg", // Apple TV+
+    "384" to "https://image.tmdb.org/t/p/w92/6YZ2Qk212u4eZ4WzEBSYwQJntWz.jpg", // Max
+    "387" to "https://image.tmdb.org/t/p/w92/aS2zvJWn9mwiCOeaa8hFhnwNCB5.jpg", // HBO Max
+    "386" to "https://image.tmdb.org/t/p/w92/xTHq2oDheY2p9W8e4j2iI0Zt2L8.jpg", // Peacock
+    "10"  to "https://image.tmdb.org/t/p/w92/68MNrwlkpF7WnmNPXLah69CR5cb.jpg", // Amazon Prime
+    "15"  to "https://image.tmdb.org/t/p/w92/giwM8XX4V2AQb9vsoN7yti82tKK.jpg", // Hulu
+    "531" to "https://image.tmdb.org/t/p/w92/fi83B1bZV9GpnwO1XkS1aOOEQH3.jpg", // Paramount+
+    "257" to "https://image.tmdb.org/t/p/w92/2wjcjwXoW2R0I5k0j4k0w1B2lVw.jpg", // Fubo
+    "190" to "https://image.tmdb.org/t/p/w92/2fF80l9HnI1aP5BvV0R8G8XpY0n.jpg"  // Discovery+
 )
 private val SEARCH_HINTS = listOf(
     "Search movies, series, actors...",
@@ -167,8 +165,11 @@ fun SearchScreen(
     // ── State ──────────────────────────────────────────────────
     var query        by remember { mutableStateOf("") }
     var filters      by remember { mutableStateOf(FilterState()) }
-    var results      by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    var isLoading    by remember { mutableStateOf(false) }
+    var results       by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var isLoading     by remember { mutableStateOf(false) }
+    var currentPage   by remember { mutableStateOf(1) }
+    var isFetching    by remember { mutableStateOf(false) }
+    var endReached    by remember { mutableStateOf(false) }
     var searchHistory by remember { mutableStateOf<List<String>>(emptyList()) }
     var showHistory  by remember { mutableStateOf(false) }
     var lastFocusedResultIdx by remember { mutableStateOf(0) }
@@ -190,7 +191,7 @@ fun SearchScreen(
         }
     }
 
-    // Trigger for Discover Now button — called explicitly, not auto
+    // Trigger for Discover Now button
     fun triggerSearch() {
         showHistory = false
         if (query.isNotBlank()) {
@@ -199,8 +200,11 @@ fun SearchScreen(
         searchJob?.cancel()
         searchJob = scope.launch {
             isLoading = true
-            results = if (query.isNotBlank()) fetchTextSearch(query, filters)
-            else fetchDiscovery(filters)
+            currentPage = 2 // <--- התיקון הקריטי: אנחנו טוענים 2 עמודים, אז מתחילים מ-2
+            endReached = false
+            val p1 = if (query.isNotBlank()) fetchTextSearch(query, filters, 1) else fetchDiscovery(filters, 1)
+            val p2 = if (query.isNotBlank()) fetchTextSearch(query, filters, 2) else fetchDiscovery(filters, 2)
+            results = (p1 + p2).distinctBy { it.id }
             isLoading = false
             if (results.isNotEmpty()) {
                 delay(100)
@@ -214,7 +218,11 @@ fun SearchScreen(
         delay(180)
         runCatching { backFR.requestFocus() }
         isLoading = true
-        results = fetchDiscovery(filters)
+        currentPage = 2 // <--- גם כאן מעדכנים ל-2
+        endReached = false
+        val p1 = fetchDiscovery(filters, 1)
+        val p2 = fetchDiscovery(filters, 2)
+        results = (p1 + p2).distinctBy { it.id }
         isLoading = false
     }
 
@@ -284,7 +292,20 @@ fun SearchScreen(
                         firstResultFR    = firstResultFR,
                         initialFocusIdx  = lastFocusedResultIdx,
                         onFocusIdx       = { lastFocusedResultIdx = it },
-                        onResultClick    = onResultClick
+                        onResultClick    = onResultClick,
+                        onLoadMore       = {
+                            if (!isFetching && !endReached) {
+                                isFetching = true
+                                scope.launch {
+                                    currentPage++
+                                    val newRes = if (query.isNotBlank()) fetchTextSearch(query, filters, currentPage)
+                                    else fetchDiscovery(filters, currentPage)
+                                    if (newRes.isEmpty()) endReached = true
+                                    else results = (results + newRes).distinctBy { it.id }
+                                    isFetching = false
+                                }
+                            }
+                        }
                     )
                 }
             }
@@ -947,36 +968,60 @@ private fun SimplePillRow(
     onToggle    : (String) -> Unit = {}
 ) {
     val firstFR = remember { FocusRequester() }
+    val context = LocalContext.current
 
     LazyRow(
         Modifier.fillMaxWidth().focusRestorer { firstFR },
         contentPadding        = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp) // ריווח מעט גדול יותר ללוגואים
     ) {
-        itemsIndexed(items) { idx, (v, l) ->
-            val isSel = if (multiSelect) v in selectedSet else v == selected
+        itemsIndexed(items) { idx, (id, value) ->
+            val isSel = if (multiSelect) id in selectedSet else id == selected
+            val isImageUrl = value.startsWith("http") // בדיקה אם זה קישור ללוגו
+
             Surface(
-                onClick  = { if (multiSelect) onToggle(v) else onSelect(v) },
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                onClick  = { if (multiSelect) onToggle(id) else onSelect(id) },
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)), // צורה מעט יותר מרובעת ללוגו
                 colors   = ClickableSurfaceDefaults.colors(
                     containerColor        = if (isSel) SEL_BG else IDLE_BG,
-                    focusedContainerColor = if (isSel) Color(0x38E50914) else Color(0x18FFFFFF),
-                    contentColor          = if (isSel) WHITE  else DIM,
+                    focusedContainerColor = if (isSel) Color(0x38E50914) else Color(0x28FFFFFF),
+                    contentColor          = WHITE,
                     focusedContentColor   = WHITE
                 ),
                 border   = ClickableSurfaceDefaults.border(
-                    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(50)),
-                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, if (isSel) RED     else WHITE.copy(0.35f)), shape = RoundedCornerShape(50))
+                    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(8.dp)),
+                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, if (isSel) RED     else WHITE.copy(0.5f)), shape = RoundedCornerShape(8.dp))
                 ),
-                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
                 modifier = Modifier
-                    .height(25.dp)
+                    .height(36.dp) // גובה קצת יותר משמעותי ללוגואים
                     .let { if (idx == 0) it.focusRequester(firstFR) else it }
             ) {
-                Box(Modifier.fillMaxHeight().padding(horizontal = 9.dp), Alignment.Center) {
-                    Text(l, fontSize = 9.sp,
-                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                        softWrap = false)
+                Box(
+                    Modifier
+                        .fillMaxHeight()
+                        .padding(horizontal = 8.dp),
+                    Alignment.Center
+                ) {
+                    if (isImageUrl) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(value)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier
+                                .size(24.dp) // גודל הלוגו בתוך הכפתור
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                    } else {
+                        Text(
+                            value,
+                            fontSize = 10.sp,
+                            fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal
+                        )
+                    }
                 }
             }
         }
@@ -999,13 +1044,13 @@ private fun ResultsGrid(
     firstResultFR   : FocusRequester,
     initialFocusIdx : Int,
     onFocusIdx      : (Int) -> Unit,
-    onResultClick   : (SearchResult) -> Unit
+    onResultClick   : (SearchResult) -> Unit,
+    onLoadMore      : () -> Unit // <--- נוסף
 ) {
     val gridState = rememberLazyGridState()
 
-    // Feature 30: Auto-focus first result
     LaunchedEffect(results.size) {
-        if (results.isNotEmpty()) {
+        if (results.isNotEmpty() && results.size <= 40) { // פוקוס רק בטעינה ראשונית
             delay(100)
             runCatching { firstResultFR.requestFocus() }
         }
@@ -1019,15 +1064,16 @@ private fun ResultsGrid(
         verticalArrangement   = Arrangement.spacedBy(14.dp),
         modifier              = Modifier
             .fillMaxSize()
-            // Feature 27: D-pad LEFT from first column → panel
             .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
-                    // Let default handle it; edge case handled by FocusRequester
-                    false
-                } else false
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) false else false
             }
     ) {
         itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
+            // מזהה כשאנחנו 8 פריטים לפני הסוף וקורא לעוד
+            if (idx >= results.size - 8) {
+                LaunchedEffect(idx) { onLoadMore() }
+            }
+
             DiscoveryCard(
                 result    = result,
                 modifier  = if (idx == 0) Modifier.focusRequester(firstResultFR) else Modifier,
@@ -1199,14 +1245,15 @@ private fun EmptyState(query: String, activeFilters: Int) {
 // ══════════════════════════════════════════════════════════════════
 //  NETWORK — TEXT SEARCH  (Feature 1, TMDB /search/multi)
 // ══════════════════════════════════════════════════════════════════
-private suspend fun fetchTextSearch(query: String, f: FilterState): List<SearchResult> =
+private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
         val key     = "9ab4a284f0c028007b78925852196b79"
         val imgBase = "https://image.tmdb.org/t/p"
         val enc     = URLEncoder.encode(query, "UTF-8")
         val out     = mutableListOf<SearchResult>()
         try {
-            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=1&include_adult=false")
+            // התיקון כאן: שימוש ב page=$page במקום page=1
+            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection)
                 .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
             if (con.responseCode == 200) {
@@ -1245,7 +1292,7 @@ private suspend fun fetchTextSearch(query: String, f: FilterState): List<SearchR
 // ══════════════════════════════════════════════════════════════════
 //  NETWORK — DISCOVER  (Feature 2, TMDB /discover)
 // ══════════════════════════════════════════════════════════════════
-private suspend fun fetchDiscovery(f: FilterState): List<SearchResult> =
+private suspend fun fetchDiscovery(f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
         val key     = "9ab4a284f0c028007b78925852196b79"
         val imgBase = "https://image.tmdb.org/t/p"
@@ -1259,7 +1306,8 @@ private suspend fun fetchDiscovery(f: FilterState): List<SearchResult> =
 
         for (mt in types) {
             try {
-                val sb = StringBuilder("$base/discover/$mt?api_key=$key&language=en-US&page=1&sort_by=${f.sortBy}")
+                // התיקון כאן: שימוש ב page=$page במקום page=1
+                val sb = StringBuilder("$base/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=${f.sortBy}")
                 if (f.genres.isNotEmpty())
                     sb.append("&with_genres=${f.genres.joinToString(",")}")
                 if (f.decade > 0) {
@@ -1279,7 +1327,7 @@ private suspend fun fetchDiscovery(f: FilterState): List<SearchResult> =
                 if (con.responseCode == 200) {
                     val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
                         .optJSONArray("results") ?: continue
-                    for (i in 0 until minOf(arr.length(), 40)) {
+                    for (i in 0 until arr.length()) {
                         val j     = arr.getJSONObject(i)
                         val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
                         else j.optString("title").ifBlank { j.optString("original_title") }

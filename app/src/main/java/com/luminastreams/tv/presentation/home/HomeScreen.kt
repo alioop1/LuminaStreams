@@ -49,7 +49,8 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 // ═══════════════════════════════════════════════════════════════════
 //  PALETTE
 // ═══════════════════════════════════════════════════════════════════
@@ -76,9 +77,11 @@ private val NAV_FOCUS   = Color(0x30FFFFFF)
 //  ROW_LANDSCAPE_H: label(20) + pad(8) + card(158) + pad(8) = 194dp
 //  ROW_PORTRAIT_H:  label(20) + pad(8) + card(222) + pad(8) = 258dp
 // ═══════════════════════════════════════════════════════════════════
-private val NAV_SEARCH_H   = 52.dp
-private val NAV_PILLS_H    = 44.dp
-private val NAV_H          = NAV_SEARCH_H + NAV_PILLS_H   // 96dp
+private val NAV_SEARCH_H   = 24.dp
+private val NAV_PILLS_H    = 34.dp // גובה אזור הפילס כולו
+private val NAV_PILL_H     = 28.dp // גובה הפיל הבודד עצמו - נוסף עבור האינדיקטור
+private val NAV_GAP        = 12.dp
+private val NAV_H          = NAV_SEARCH_H + NAV_PILLS_H + NAV_GAP
 
 private val LAND_W = 280.dp
 private val LAND_H = 158.dp   // 16:9
@@ -156,26 +159,40 @@ fun HomeScreen(
     onMovieClick:  (String) -> Unit
 ) {
     val rows: List<RowDef> = remember(state.selectedTab, state) {
-        if (state.selectedTab == "סרטים") buildList {
-            if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
-            if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
-            if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
-            if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV,     state.movieAppleTV))
-            if (state.movieAction.isNotEmpty())    add(RowDef.Regular("Action & Adventure",    state.movieAction))
-            if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("Drama",                 state.movieDrama))
-            if (state.movieDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,       state.movieDisney))
-            if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi",                state.movieScifi))
-            if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated",             state.movieTopRated))
-        } else buildList {
-            if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("Trending Shows",    state.tvTrending))
-            if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,  state.tvNetflix))
-            if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("On The Air",         state.tvPremieres))
-            if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV, state.tvAppleTV))
-            if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("Drama",              state.tvDrama))
-            if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("Crime & Thriller",   state.tvCrime))
-            if (state.tvDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,   state.tvDisney))
-            if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi & Fantasy",   state.tvScifi))
-            if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated Shows",    state.tvTopRated))
+        when (state.selectedTab) {
+            "ראשי" -> buildList {
+                // תמהיל למסך הבית (Home) - מערבב סרטים וסדרות
+                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Movies",       state.movieTrending))
+                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("Popular Shows",         state.tvTrending))
+                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
+                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
+                if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio(StudioBrand.APPLE_TV,     state.tvAppleTV))
+            }
+            "סרטים" -> buildList {
+                // רק סרטים (Movies)
+                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
+                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
+                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
+                if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV,     state.movieAppleTV))
+                if (state.movieAction.isNotEmpty())    add(RowDef.Regular("Action & Adventure",    state.movieAction))
+                if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("Drama",                 state.movieDrama))
+                if (state.movieDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,       state.movieDisney))
+                if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi",                state.movieScifi))
+                if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated",             state.movieTopRated))
+            }
+            "סדרות" -> buildList {
+                // רק סדרות (TV Shows)
+                if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("Trending Shows",    state.tvTrending))
+                if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,  state.tvNetflix))
+                if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("On The Air",        state.tvPremieres))
+                if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV, state.tvAppleTV))
+                if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("Drama",             state.tvDrama))
+                if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("Crime & Thriller",  state.tvCrime))
+                if (state.tvDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,   state.tvDisney))
+                if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi & Fantasy",  state.tvScifi))
+                if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated Shows",   state.tvTopRated))
+            }
+            else -> emptyList()
         }
     }
 
@@ -187,7 +204,7 @@ fun HomeScreen(
     // Panel height = show current row fully + tiny peek of next one
     val panelH = remember(rows.size) {
         if (rows.isEmpty()) ROW_PORTRAIT_H
-        else ROW_PORTRAIT_H + 28.dp  // one full portrait row + breathing room
+        else ROW_PORTRAIT_H + 16.dp  // one full portrait row + breathing room
     }
 
     LaunchedEffect(Unit) {
@@ -226,14 +243,15 @@ fun HomeScreen(
 
         // ── Nav + rows ────────────────────────────────────────────────
         ContentLayer(
-            rows        = rows,
-            focusState  = focusState,
-            activeTab   = state.selectedTab,
-            panelH      = panelH,
+            rows         = rows,
+            focusState   = focusState,
+            activeTab    = state.selectedTab,
+            panelH       = panelH,
             rowHeightFor = ::rowHeightFor,
             onMovieClick = onMovieClick,
             onHeroUpdate = { focusState.heroMovie = it },
             onSearch     = { navController.navigate("search") },
+            onHomeTab    = { viewModel.selectTab("ראשי") }, // <-- הטאב הראשי
             onMoviesTab  = { viewModel.selectTab("סרטים") },
             onSeriesTab  = { viewModel.selectTab("סדרות") },
             onWatchlist  = { navController.navigate("watchlist") },
@@ -279,8 +297,6 @@ private fun BackdropLayer(hero: Movie?) {
 
 // ═══════════════════════════════════════════════════════════════════
 //  HERO OVERLAY
-//  Matches screenshot: title (serif-weight, large), date·genre·runtime·IMDb,
-//  overview text. Sits above the rows panel, below the nav.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroOverlay(hero: Movie?, panelH: Dp) {
@@ -289,20 +305,21 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
             key(m.id) {
                 Column(
                     modifier = Modifier
+                        // מפתח הקסם: מעגנים למטה כדי לא לעלות על הפוסטרים
                         .align(Alignment.BottomStart)
                         .padding(
                             start  = 60.dp,
-                            end    = 460.dp,
-                            top    = NAV_H + 8.dp,
-                            bottom = panelH + 28.dp
+                            end    = 400.dp,
+                            // מוחקים את ה-top לגמרי! ככה הקופסה לא נמחצת ויכולה לגדול כלפי מעלה
+                            bottom = panelH + 16.dp // שומר על מרווח אוויר מושלם של 32 פיקסלים מעל הפוסטרים
                         ),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     // ── Title ──────────────────────────────────────────
                     val tsz = when {
-                        m.title.length > 26 -> 36.sp
-                        m.title.length > 16 -> 46.sp
-                        else                -> 56.sp
+                        m.title.length > 26 -> 28.sp
+                        m.title.length > 16 -> 34.sp
+                        else                -> 44.sp
                     }
                     Text(
                         text          = m.title,
@@ -321,17 +338,16 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                         horizontalArrangement = Arrangement.spacedBy(0.dp)
                     ) {
                         if (m.year > 0) {
-                            Text(m.year.toString(), color = DIM, fontSize = 14.sp)
+                            Text(m.year.toString(), color = DIM, fontSize = 13.sp)
                             MetaDot()
                         }
                         if (m.genre.isNotBlank()) {
-                            Text(m.genre, color = DIM, fontSize = 14.sp)
+                            Text(m.genre, color = DIM, fontSize = 13.sp)
                             MetaDot()
                         }
-                        Text(if (m.mediaType == "tv") "TV Series" else "Movie", color = DIM, fontSize = 14.sp)
+                        Text(if (m.mediaType == "tv") "TV Series" else "Movie", color = DIM, fontSize = 13.sp)
                         if (m.rating > 0f) {
                             MetaDot()
-                            // IMDb badge — matches screenshot style
                             Row(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
@@ -351,11 +367,11 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                         Text(
                             text       = m.overview,
                             color      = DIM2,
-                            fontSize   = 14.sp,
-                            lineHeight = 22.sp,
-                            maxLines   = 3,
+                            fontSize   = 13.sp,
+                            lineHeight = 20.sp,
+                            maxLines   = 4, // 4 שורות זה האיזון המושלם למסך טלוויזיה
                             overflow   = TextOverflow.Ellipsis,
-                            modifier   = Modifier.widthIn(max = 580.dp)
+                            modifier   = Modifier.widthIn(max = 640.dp)
                         )
                     }
                 }
@@ -363,7 +379,6 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
         }
     }
 }
-
 @Composable private fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
 // ═══════════════════════════════════════════════════════════════════
@@ -374,7 +389,10 @@ private fun ContentLayer(
     rows: List<RowDef>, focusState: HomeFocusState, activeTab: String,
     panelH: Dp, rowHeightFor: (Int) -> Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
-    onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
+    onSearch: () -> Unit,
+    onHomeTab: () -> Unit, // <-- נוסף
+    onMoviesTab: () -> Unit,
+    onSeriesTab: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
     val firstNavFR   = remember { FocusRequester() }
@@ -423,6 +441,7 @@ private fun ContentLayer(
             activeTab   = activeTab,
             firstNavFR  = firstNavFR,
             onSearch    = onSearch,
+            onHomeTab   = onHomeTab, // <-- מעבירים פנימה
             onMoviesTab = onMoviesTab,
             onSeriesTab = onSeriesTab,
             onWatchlist = onWatchlist,
@@ -452,16 +471,14 @@ private fun ContentLayer(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  TWO-ROW NAV BAR
-//  Row 1 (52dp): [Logo] [spacer] [Clock]
-//  Row 2 (44dp): [Home] [TV Shows] [Watchlist] [Settings] [spacer] [SearchBtn]
+//  TWO-ROW NAV BAR (עם אינדיקטור מחליק חלק מתוקן סופית)
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun TwoRowNavBar(
     activeTab: String, firstNavFR: FocusRequester,
-    onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
-    onWatchlist: () -> Unit, onSettings: () -> Unit, onNavExit: () -> Unit,
-    modifier: Modifier = Modifier
+    onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
+    onSeriesTab: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit,
+    onNavExit: () -> Unit, modifier: Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -472,6 +489,26 @@ private fun TwoRowNavBar(
         }
     }
 
+    // --- לוגיקת אינדיקטור מחליק ---
+    val density = LocalDensity.current
+    val tabPositions = remember { mutableStateMapOf<String, Offset>() }
+    val tabWidths = remember { mutableStateMapOf<String, Dp>() }
+
+    // התיקון הקריטי: קריאה ישירה מהמפה בלי remember כדי שזה יתעדכן בזמן אמת!
+    val targetX = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
+    val targetWidth = tabWidths[activeTab] ?: 0.dp
+
+    val animatedX by animateDpAsState(
+        targetValue = targetX,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "pillX"
+    )
+    val animatedWidth by animateDpAsState(
+        targetValue = targetWidth,
+        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
+        label = "pillW"
+    )
+
     Column(modifier = modifier) {
         // ── Row 1: Logo + Clock ──────────────────────────────────────
         Row(
@@ -480,33 +517,60 @@ private fun TwoRowNavBar(
         ) {
             LuminaLogo()
             Spacer(Modifier.weight(1f))
-            Text(
-                time,
-                color      = WHITE,
-                fontSize   = 18.sp,
-                fontWeight = FontWeight.Bold,
-                letterSpacing = 1.sp
-            )
+            Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         }
 
-        // ── Row 2: Pills + Search ────────────────────────────────────
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(NAV_PILLS_H)
-                .padding(horizontal = 52.dp)
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { onNavExit(); true } else false
-                },
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        Spacer(Modifier.height(NAV_GAP))
+
+        // ── Row 2: Pills + Search (עם אינדיקטור) ─────────────────────
+        Box(
+            modifier = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp),
+            contentAlignment = Alignment.CenterStart
         ) {
-            NavPill("Home",      Icons.Default.Home,     activeTab == "סרטים", firstNavFR) { onMoviesTab() }
-            NavPill("TV Shows",  Icons.Default.Tv,       activeTab == "סדרות")            { onSeriesTab() }
-            NavPill("Watchlist", Icons.Default.Bookmark, false)                            { onWatchlist() }
-            NavPill("Settings",  Icons.Default.Settings, false)                            { onSettings() }
-            Spacer(Modifier.weight(1f))
-            SearchBarButton(onClick = onSearch)
+            // האנימציה - המלבן הלבן מאחור (יוצג רק אחרי שהרוחב חושב)
+            if (animatedWidth > 0.dp) {
+                androidx.compose.material3.Surface(
+                    modifier = Modifier
+                        .offset(x = animatedX)
+                        .width(animatedWidth)
+                        .height(NAV_PILL_H),
+                    color = WHITE,
+                    shape = RoundedCornerShape(50)
+                ) {}
+            }
+
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { onNavExit(); true } else false
+                    },
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NavPill("Home", Icons.Default.Home, activeTab == "ראשי", firstNavFR, onHomeTab) { offset, width ->
+                    tabPositions["ראשי"] = offset
+                    tabWidths["ראשי"] = width
+                }
+                NavPill("Movies", Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab) { offset, width ->
+                    tabPositions["סרטים"] = offset
+                    tabWidths["סרטים"] = width
+                }
+                NavPill("TV Shows", Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab) { offset, width ->
+                    tabPositions["סדרות"] = offset
+                    tabWidths["סדרות"] = width
+                }
+                NavPill("Watchlist", Icons.Default.Bookmark, false, null, onWatchlist) { offset, width ->
+                    tabPositions["Watchlist"] = offset
+                    tabWidths["Watchlist"] = width
+                }
+                NavPill("Settings", Icons.Default.Settings, false, null, onSettings) { offset, width ->
+                    tabPositions["Settings"] = offset
+                    tabWidths["Settings"] = width
+                }
+                Spacer(Modifier.weight(1f))
+                SearchBarButton(onClick = onSearch)
+            }
         }
     }
 }
@@ -514,13 +578,13 @@ private fun TwoRowNavBar(
 // ── Logo ────────────────────────────────────────────────────────────────────
 @Composable
 private fun LuminaLogo() {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-        Box(Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(RED), Alignment.Center) {
-            Text("L", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Black)
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(RED), Alignment.Center) {
+            Text("L", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
         }
         Column {
-            Text("LUMINA",  color = WHITE, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp, lineHeight = 13.sp)
-            Text("STREAMS", color = RED,   fontSize = 7.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.4.sp, lineHeight = 8.sp)
+            Text("LUMINA",  color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 11.sp)
+            Text("STREAMS", color = RED,   fontSize = 6.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 7.sp)
         }
     }
 }
@@ -554,52 +618,48 @@ private fun SearchBarButton(onClick: () -> Unit) {
 
 // ═══════════════════════════════════════════════════════════════════
 //  NAV PILL
-//  Clean approach: Surface height fixed, content drives width via
-//  wrapContentWidth(). No IntrinsicSize tricks needed.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun NavPill(
     label: String, icon: ImageVector, isSelected: Boolean,
     focusRequester: FocusRequester? = null,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onTabPositioned: (Offset, Dp) -> Unit // השם שונה למניעת התנגשויות
 ) {
     var isFocused by remember { mutableStateOf(false) }
+    val density = LocalDensity.current
 
-    // Border visibility rules:
-    //   • idle, not selected  → NO border
-    //   • selected (active tab) → NO border (background fill is enough)
-    //   • focused (D-pad on it) → semi-transparent white border
-    val pillBorder = if (isFocused && !isSelected)
-        ClickableSurfaceDefaults.border(
-            border        = Border.None,
+    val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
+
+    Surface(
+        onClick = onClick,
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = NAV_FOCUS,
+            pressedContainerColor = Color(0x20FFFFFF),
+            contentColor = contentColor,
+            focusedContentColor = contentColor
+        ),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        border = ClickableSurfaceDefaults.border(
+            border = Border.None,
             focusedBorder = Border(
                 androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x66FFFFFF)),
                 shape = RoundedCornerShape(50)
             )
-        )
-    else
-        ClickableSurfaceDefaults.border(Border.None, Border.None)
-
-    Surface(
-        onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = if (isSelected) WHITE       else Color.Transparent,
-            focusedContainerColor = if (isSelected) WHITE       else NAV_FOCUS,
-            pressedContainerColor = Color(0x20FFFFFF),
-            contentColor          = if (isSelected) Color(0xFF0C0C0C) else WHITE,
-            focusedContentColor   = if (isSelected) Color(0xFF0C0C0C) else WHITE
         ),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        border   = pillBorder,
-        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier
-            .height(34.dp)
+            .height(NAV_PILL_H)
             .wrapContentWidth()
+            // התיקון: קריאה תקינה ל-Modifier יחד עם השם החדש של הפרמטר
+            .onGloballyPositioned { coords ->
+                onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
+            }
             .onFocusChanged { isFocused = it.isFocused }
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
-        // fillMaxSize + center alignment → text/icon always centered inside the border box
         Box(
             Modifier
                 .fillMaxHeight()
@@ -607,18 +667,15 @@ private fun NavPill(
                 .padding(horizontal = 16.dp),
             contentAlignment = Alignment.Center
         ) {
-            Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(icon, null, Modifier.size(14.dp))
                 Text(
                     label,
-                    fontSize      = 13.sp,
-                    fontWeight    = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                    fontSize = 13.sp,
+                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
                     letterSpacing = 0.2.sp,
-                    softWrap      = false,
-                    maxLines      = 1
+                    softWrap = false,
+                    maxLines = 1
                 )
             }
         }
@@ -648,7 +705,7 @@ private fun RowsPanel(
     }
     val animatedY by animateDpAsState(
         targetValue   = targetYOffset,
-        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMediumLow),
+        animationSpec = tween(durationMillis = 400, easing = FastOutSlowInEasing),
         label         = "rowsSlide"
     )
 
@@ -862,7 +919,7 @@ private fun LandscapeCard(
     var focused by remember { mutableStateOf(false) }
     val zoom by animateFloatAsState(
         targetValue   = if (focused) 1.06f else 1f,
-        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
+        animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing),
         label         = "lzoom"
     )
 
@@ -941,7 +998,7 @@ fun PosterCard(
     var focused by remember { mutableStateOf(false) }
     val zoom by animateFloatAsState(
         targetValue   = if (focused) 1.08f else 1f,
-        animationSpec = spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium),
+        animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing),
         label         = "pzoom"
     )
 
