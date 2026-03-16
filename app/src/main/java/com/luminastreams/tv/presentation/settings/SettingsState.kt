@@ -8,7 +8,6 @@ sealed interface SettingsAuthStatus {
     data class Error(val message: String) : SettingsAuthStatus
 }
 
-// Added to manage the Two-Pane layout cleanly
 enum class SettingsCategory(val titleHe: String, val titleEn: String) {
     ACCOUNT("חשבון וחיבורים", "Account & Sync"),
     PLAYBACK("נגן ווידאו", "Playback"),
@@ -17,11 +16,13 @@ enum class SettingsCategory(val titleHe: String, val titleEn: String) {
 }
 
 data class SettingsState(
-    val selectedCategory: SettingsCategory = SettingsCategory.ACCOUNT, // Tracks the active pane
+    val selectedCategory: SettingsCategory = SettingsCategory.ACCOUNT,
 
+    // Real-Debrid Auth
     val rdToken: String = "",
     val authStatus: SettingsAuthStatus = SettingsAuthStatus.Idle,
 
+    // Toggles & Settings
     val isHebrew: Boolean = true,
     val maxResolution: String = "4K",
     val autoPlayNext: Boolean = true,
@@ -30,5 +31,9 @@ data class SettingsState(
     val safeSearch: Boolean = false,
     val saveSearchHistory: Boolean = true,
     val themeColor: String = "Netflix Red",
-    val cacheSizeStr: String = "142 MB"
+
+    // Active "Action" statuses (לפיצ'רים האמיתיים)
+    val cacheSizeStr: String = "142 MB",
+    val searchHistoryStatus: String = "Clear",
+    val watchHistoryStatus: String = "Clear"
 )

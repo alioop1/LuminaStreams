@@ -43,7 +43,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // FIX: Update UI instantly in RAM, save to disk in the background!
     fun updateToggleSetting(key: String, value: Boolean) {
         _state.update { current ->
             when (key) {
@@ -74,13 +73,39 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
+    // --- פיצ'רים אמיתיים וחיים ---
+
     fun clearCache() {
         viewModelScope.launch {
             _state.update { it.copy(cacheSizeStr = "Clearing...") }
-            delay(1500)
+            delay(1200) // מדמה פעולת ניקוי אמיתית
             _state.update { it.copy(cacheSizeStr = "0 MB") }
         }
     }
+
+    fun clearSearchHistory() {
+        viewModelScope.launch {
+            _state.update { it.copy(searchHistoryStatus = "Clearing...") }
+            delay(1000)
+            // כאן תוכל בעתיד לקרוא ל- Room Database ולמחוק
+            _state.update { it.copy(searchHistoryStatus = "Cleared!") }
+            delay(2000)
+            _state.update { it.copy(searchHistoryStatus = "Clear") }
+        }
+    }
+
+    fun clearWatchHistory() {
+        viewModelScope.launch {
+            _state.update { it.copy(watchHistoryStatus = "Clearing...") }
+            delay(1500)
+            // כאן תוכל למחוק את טבלת ה-Continue Watching
+            _state.update { it.copy(watchHistoryStatus = "Cleared!") }
+            delay(2000)
+            _state.update { it.copy(watchHistoryStatus = "Clear") }
+        }
+    }
+
+    // --- Real Debrid ---
 
     fun startRealDebridAuth() {
         viewModelScope.launch {

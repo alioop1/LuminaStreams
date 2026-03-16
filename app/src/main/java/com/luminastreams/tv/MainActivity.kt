@@ -186,6 +186,7 @@ fun AppNavHostContainer(
                             state            = vm.state.collectAsState().value,
                             viewModel        = vm,
                             isRtl            = false,
+                            onNavigateBack = { navController.popBackStack() }, // <--- זו השורה שחסרה! היא אומרת לנווט אחורה כשלוחצים על הכפתור
                             onToggleLanguage = {}
                         )
                     }
