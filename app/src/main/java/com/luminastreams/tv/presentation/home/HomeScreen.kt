@@ -8,11 +8,9 @@ package com.luminastreams.tv.presentation.home
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -84,7 +82,6 @@ private val bottomScrim = Brush.verticalGradient(colorStops = arrayOf(
 //  ROW TYPES
 // ══════════════════════════════════════════════════════════════════════════════
 enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY }
-
 sealed class RowDef {
     data class Regular(val title: String,      val movies: List<Movie>) : RowDef()
     data class Studio (val brand: StudioBrand, val movies: List<Movie>) : RowDef()
@@ -96,7 +93,6 @@ sealed class RowDef {
 @Stable
 class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused     by mutableStateOf(false)
-    var navItemIndex     by mutableIntStateOf(0)
     var currentRowIndex  by mutableIntStateOf(initialRow)
     var heroMovie        by mutableStateOf<Movie?>(null)
     var lastNavEventTime by mutableLongStateOf(0L)
@@ -107,8 +103,6 @@ class HomeFocusState(initialRow: Int = 0) {
         )
     }
 }
-
-private fun FocusRequester.safe() = try { requestFocus() } catch (_: Exception) {}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  HOME SCREEN
@@ -146,26 +140,27 @@ fun HomeScreen(
 
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
-    LaunchedEffect(Unit) {
-        snapshotFlow { focusState.currentRowIndex }
-            .distinctUntilChanged()
-            .collectLatest { ri ->
-                if (focusState.isNavFocused) return@collectLatest
-                delay(200L)
-                val movies = when (val row = rows.getOrNull(ri)) {
-                    is RowDef.Regular -> row.movies
-                    is RowDef.Studio  -> row.movies
-                    null              -> emptyList()
-                }
-                if (focusState.heroMovie == null) focusState.heroMovie = movies.firstOrNull()
-            }
+    // ── Shared rowsViewH so hero and rows use the SAME value ─────────────────
+    // FIX #1: Hero used 0.42 but rows used 0.44 → hero text overlapped rows
+    val config    = LocalConfiguration.current
+    val rowsViewH = remember(config.screenHeightDp) {
+        (config.screenHeightDp * 0.44f).dp.coerceIn(270.dp, 380.dp)
     }
 
+    LaunchedEffect(Unit) {
+        snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
+            if (focusState.isNavFocused) return@collectLatest
+            delay(180L)
+            val movies = when (val r = rows.getOrNull(ri)) {
+                is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; null -> emptyList()
+            }
+            if (focusState.heroMovie == null) focusState.heroMovie = movies.firstOrNull()
+        }
+    }
     LaunchedEffect(state.isLoading, rows.size) {
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) {
-            focusState.heroMovie = when (val row = rows[0]) {
-                is RowDef.Regular -> row.movies.firstOrNull()
-                is RowDef.Studio  -> row.movies.firstOrNull()
+            focusState.heroMovie = when (val r = rows[0]) {
+                is RowDef.Regular -> r.movies.firstOrNull(); is RowDef.Studio -> r.movies.firstOrNull()
             }
         }
     }
@@ -178,15 +173,17 @@ fun HomeScreen(
             state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
         }
         BackdropLayer(focusState.heroMovie)
-        HeroOverlay(focusState.heroMovie)
-        ContentInputLayer(
-            rows         = rows, focusState = focusState, activeTab = state.selectedTab,
+        // FIX #1: Pass rowsViewH so hero doesn't overlap rows
+        HeroOverlay(focusState.heroMovie, rowsViewH)
+        ContentLayer(
+            rows = rows, focusState = focusState, activeTab = state.selectedTab,
+            rowsViewH = rowsViewH,
             onMovieClick = onMovieClick, onHeroUpdate = { focusState.heroMovie = it },
-            onSearch     = { navController.navigate("search") },
-            onMoviesTab  = { viewModel.selectTab("סרטים") },
-            onSeriesTab  = { viewModel.selectTab("סדרות") },
-            onWatchlist  = { navController.navigate("watchlist") },
-            onSettings   = { navController.navigate("settings") }
+            onSearch    = { navController.navigate("search") },
+            onMoviesTab = { viewModel.selectTab("סרטים") },
+            onSeriesTab = { viewModel.selectTab("סדרות") },
+            onWatchlist = { navController.navigate("watchlist") },
+            onSettings  = { navController.navigate("settings") }
         )
     }
 }
@@ -200,14 +197,13 @@ private fun BackdropLayer(hero: Movie?) {
     val cfg = LocalConfiguration.current
     val dns = LocalDensity.current
     val (bwPx, bhPx) = remember(cfg, dns) {
-        with(dns) { cfg.screenWidthDp.dp.roundToPx().coerceIn(1, 3840) to cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 2160) }
+        with(dns) { cfg.screenWidthDp.dp.roundToPx().coerceIn(1,3840) to cfg.screenHeightDp.dp.roundToPx().coerceIn(1,2160) }
     }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
         Crossfade(
-            targetState   = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
-            animationSpec = tween(700, easing = FastOutSlowInEasing),
-            label         = "backdrop"
+            targetState = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
+            animationSpec = tween(700, easing = FastOutSlowInEasing), label = "bd"
         ) { url ->
             if (!url.isNullOrBlank()) {
                 AsyncImage(
@@ -216,43 +212,38 @@ private fun BackdropLayer(hero: Movie?) {
                             .memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true).crossfade(false).build()
                     },
-                    contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
+                    contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             }
         }
-        Box(Modifier.fillMaxSize().drawBehind {
-            drawRect(leftScrim); drawRect(topScrim); drawRect(bottomScrim)
-        })
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(leftScrim); drawRect(topScrim); drawRect(bottomScrim) })
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  HERO OVERLAY
+//  HERO OVERLAY — FIX #1: uses shared rowsViewH + extra gap so no overlap
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
-private fun HeroOverlay(hero: Movie?) {
-    val config = LocalConfiguration.current
-    val rowsH  = (config.screenHeightDp * 0.42f).dp.coerceIn(260.dp, 360.dp)
+private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
+    // Extra gap between hero text and first content row
+    val bottomPad = rowsViewH + 24.dp
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         hero?.let { m ->
             key(m.id) {
                 Column(
                     modifier = Modifier.align(Alignment.BottomStart)
-                        .padding(start = 56.dp, end = 460.dp, bottom = rowsH + 14.dp),
+                        .padding(start = 56.dp, end = 460.dp, bottom = bottomPad),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(m.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
                         lineHeight = 52.sp, letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (m.year > 0)           { MetaChip(m.year.toString()); MetaDot() }
-                        if (m.genre.isNotBlank()) { MetaChip(m.genre); MetaDot() }
-                        if (m.resolutionBadge.isNotBlank()) { MetaChip(m.resolutionBadge); MetaDot() }
+                        if (m.year > 0)           { Text(m.year.toString(), color = DIM, fontSize = 13.sp); Text("  ·  ", color = DIM3, fontSize = 13.sp) }
+                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); Text("  ·  ", color = DIM3, fontSize = 13.sp) }
                         if (m.rating > 0f) {
                             Row(Modifier.clip(RoundedCornerShape(4.dp)).background(GOLD)
                                 .padding(horizontal = 7.dp, vertical = 3.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text("IMDb", color = Color(0xFF1A1A1A), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                                 Text("%.1f".format(m.rating), color = Color(0xFF1A1A1A), fontSize = 12.sp, fontWeight = FontWeight.Black)
@@ -260,45 +251,37 @@ private fun HeroOverlay(hero: Movie?) {
                         }
                     }
                     Text(m.overview, color = DIM2, fontSize = 14.sp, lineHeight = 22.sp,
-                        maxLines = 3, overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.widthIn(max = 580.dp))
+                        maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 580.dp))
                 }
             }
         }
     }
 }
 
-@Composable private fun MetaChip(text: String) = Text(text, color = DIM, fontSize = 13.sp, fontWeight = FontWeight.Medium)
-@Composable private fun MetaDot()               = Text("  ·  ", color = DIM3, fontSize = 13.sp)
-
 // ══════════════════════════════════════════════════════════════════════════════
-//  INPUT LAYER
+//  CONTENT LAYER — non-focusable wrapper
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
-private fun ContentInputLayer(
-    rows: List<RowDef>, focusState: HomeFocusState, activeTab: String,
+private fun ContentLayer(
+    rows: List<RowDef>, focusState: HomeFocusState, activeTab: String, rowsViewH: Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
     onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
-    val rootFR     = remember { FocusRequester() }
     val firstNavFR = remember { FocusRequester() }
-    var hasFocus   by remember { mutableStateOf(false) }
+    val rowFRs     = remember(rows.size) { List(rows.size) { FocusRequester() } }
 
-    LaunchedEffect(Unit) { delay(250); rootFR.safe() }
+    LaunchedEffect(Unit) { delay(300); runCatching { firstNavFR.requestFocus() } }
     LaunchedEffect(focusState.isNavFocused) {
-        if (focusState.isNavFocused) { delay(40); firstNavFR.safe() } else rootFR.safe()
-    }
-    LaunchedEffect(rows.size) {
-        if (rows.isNotEmpty()) {
-            focusState.currentRowIndex = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-            if (!hasFocus) rootFR.safe()
+        if (focusState.isNavFocused) { delay(40); runCatching { firstNavFR.requestFocus() } }
+        else {
+            val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
+            runCatching { rowFRs.getOrNull(idx)?.requestFocus() }
         }
     }
 
     Box(
         Modifier.fillMaxSize()
-            .focusRequester(rootFR).onFocusChanged { hasFocus = it.hasFocus }.focusable()
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key) {
@@ -307,19 +290,22 @@ private fun ContentInputLayer(
                         if (focusState.currentRowIndex > 0) {
                             focusState.currentRowIndex--
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                        } else focusState.isNavFocused = true
+                        } else {
+                            focusState.isNavFocused = true
+                        }
                         true
                     }
                     Key.DirectionDown -> {
-                        if (focusState.isNavFocused) { focusState.isNavFocused = false; true }
-                        else {
-                            val next = focusState.currentRowIndex + 1
-                            if (next < rows.size) {
-                                focusState.currentRowIndex = next
-                                focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                                true
-                            } else false
-                        }
+                        if (focusState.isNavFocused) {
+                            focusState.isNavFocused = false
+                            val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
+                            runCatching { rowFRs.getOrNull(idx)?.requestFocus() }
+                            true
+                        } else if (focusState.currentRowIndex < rows.size - 1) {
+                            focusState.currentRowIndex++
+                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                            true
+                        } else false
                     }
                     Key.Back, Key.Escape -> {
                         if (focusState.isNavFocused) { focusState.isNavFocused = false; true } else false
@@ -333,14 +319,17 @@ private fun ContentInputLayer(
             onSearch = onSearch, onMoviesTab = onMoviesTab, onSeriesTab = onSeriesTab,
             onWatchlist = onWatchlist, onSettings = onSettings,
             onNavExit = { focusState.isNavFocused = false },
-            modifier = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
+            modifier  = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
         )
-        RowsLayer(rows = rows, focusState = focusState, onItemFocus = onHeroUpdate, onItemClick = onMovieClick)
+        RowsLayer(
+            rows = rows, focusState = focusState, rowFRs = rowFRs,
+            rowsViewH = rowsViewH, onItemFocus = onHeroUpdate, onItemClick = onMovieClick
+        )
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TOP NAV BAR
+//  TOP NAV BAR — FIX #2: pills always visible with subtle bg + higher text opacity
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun TopNavBar(
@@ -358,7 +347,7 @@ private fun TopNavBar(
         }
     }
     Box(modifier = modifier.background(
-        Brush.verticalGradient(listOf(Color(0xF2050505), Color(0xA5050505), Color.Transparent))
+        Brush.verticalGradient(listOf(Color(0xF5050505), Color(0xB0050505), Color.Transparent))
     )) {
         Row(
             modifier = Modifier
@@ -367,15 +356,15 @@ private fun TopNavBar(
                 }
                 .padding(horizontal = 52.dp).height(72.dp).fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             LuminaLogo()
-            Spacer(Modifier.width(20.dp))
-            NavPill("Search",    Icons.Default.Search,   false,               0, focusState, firstNavFR) { onSearch() }
-            NavPill("Home",      Icons.Default.Home,     activeTab == "סרטים", 1, focusState, null)      { onMoviesTab() }
-            NavPill("Watchlist", Icons.Default.Bookmark, false,               2, focusState, null)      { onWatchlist() }
-            NavPill("TV",        Icons.Default.LiveTv,   activeTab == "סדרות", 3, focusState, null)      { onSeriesTab() }
-            NavPill("Settings",  Icons.Default.Settings, false,               4, focusState, null)      { onSettings() }
+            Spacer(Modifier.width(16.dp))
+            NavPill("Search",    Icons.Default.Search,   false,               firstNavFR) { onSearch() }
+            NavPill("Home",      Icons.Default.Home,     activeTab == "סרטים", null)      { onMoviesTab() }
+            NavPill("Watchlist", Icons.Default.Bookmark, false,               null)       { onWatchlist() }
+            NavPill("TV",        Icons.Default.LiveTv,   activeTab == "סדרות", null)      { onSeriesTab() }
+            NavPill("Settings",  Icons.Default.Settings, false,               null)       { onSettings() }
             Spacer(Modifier.weight(1f))
             Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
         }
@@ -395,59 +384,51 @@ private fun LuminaLogo() {
     }
 }
 
+// ── NavPill — FIX #2: ALL pills have slight bg + 82% text opacity when idle
 @Composable
 private fun NavPill(
-    label: String, icon: ImageVector, isSelected: Boolean, index: Int,
-    focusState: HomeFocusState, focusRequester: FocusRequester?, onClick: () -> Unit
+    label: String, icon: ImageVector, isSelected: Boolean,
+    focusRequester: FocusRequester?, onClick: () -> Unit
 ) {
-    var focused by remember { mutableStateOf(false) }
-    LaunchedEffect(focused) { if (focused) focusState.navItemIndex = index }
-
-    val bgColor by animateColorAsState(
-        targetValue   = when { isSelected -> WHITE; focused -> Color(0x40FFFFFF); else -> Color.Transparent },
-        animationSpec = tween(160), label = "pill_bg"
-    )
-    val contentColor by animateColorAsState(
-        targetValue   = when { isSelected -> Color(0xFF0D0D0D); focused -> WHITE; else -> WHITE.copy(0.52f) },
-        animationSpec = tween(160), label = "pill_fg"
-    )
-
+    // TV Surface's containerColor/focusedContainerColor controls background.
+    // contentColor/focusedContentColor controls icon + text color automatically.
     Surface(
-        onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent, focusedContainerColor = Color.Transparent, pressedContainerColor = Color(0x20FFFFFF)
+        onClick = onClick,
+        colors  = ClickableSurfaceDefaults.colors(
+            // Idle: subtle dark-glass background + bright text so ALWAYS visible
+            containerColor        = if (isSelected) WHITE          else Color(0x22FFFFFF),
+            focusedContainerColor = if (isSelected) WHITE          else Color(0x55FFFFFF),
+            pressedContainerColor = Color(0x33FFFFFF),
+            contentColor          = if (isSelected) Color(0xFF0D0D0D) else WHITE.copy(0.82f),
+            focusedContentColor   = if (isSelected) Color(0xFF0D0D0D) else WHITE,
         ),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-        border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
-        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border = ClickableSurfaceDefaults.border(Border.None, Border.None),
+        glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier.height(40.dp).wrapContentWidth()
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
-            .onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().background(bgColor, RoundedCornerShape(50)).padding(horizontal = 16.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(icon, null, Modifier.size(15.dp), tint = contentColor)
-            Text(label, color = contentColor, fontSize = 14.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            Icon(icon, null, Modifier.size(15.dp))
+            Text(label, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                 letterSpacing = 0.1.sp, softWrap = false)
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ROWS LAYER
+//  ROWS LAYER — FIX #3: no clipToBounds on items, height 256dp, rows clip outer only
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsLayer(
-    rows: List<RowDef>, focusState: HomeFocusState,
-    onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
+    rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
+    rowsViewH: Dp, onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
-    val config    = LocalConfiguration.current
-    val rowsViewH = (config.screenHeightDp * 0.44f).dp.coerceIn(270.dp, 380.dp)
-    val curRow    = focusState.currentRowIndex
+    val curRow = focusState.currentRowIndex
 
     var isFast by remember { mutableStateOf(false) }
     LaunchedEffect(focusState.lastNavEventTime) {
@@ -462,20 +443,31 @@ private fun RowsLayer(
     }
 
     Box(Modifier.fillMaxSize()) {
+        // Outer box clips rows from overflowing into hero area
         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(rowsViewH).clipToBounds()) {
             LazyColumn(
-                state = listState, contentPadding = PaddingValues(bottom = rowsViewH),
-                modifier = Modifier.fillMaxSize().clipToBounds()
+                state = listState,
+                // Bottom padding = rowsViewH so last row can scroll to top
+                contentPadding = PaddingValues(bottom = rowsViewH),
+                modifier = Modifier.fillMaxSize()   // NO clipToBounds on LazyColumn itself
             ) {
                 itemsIndexed(rows, key = { i, r ->
                     when (r) { is RowDef.Regular -> "R_${r.title}_$i"; is RowDef.Studio -> "S_${r.brand.name}_$i" }
                 }) { index, rowDef ->
                     val alpha by animateFloatAsState(
-                        targetValue = if (index <= curRow) 1f else 0.12f,
-                        animationSpec = tween(250), label = "alpha"
+                        targetValue   = if (index <= curRow) 1f else 0.10f,
+                        animationSpec = tween(250), label = "row_alpha"
                     )
-                    Box(Modifier.fillMaxWidth().height(228.dp).clipToBounds().graphicsLayer { this.alpha = alpha }) {
-                        val isActive = !focusState.isNavFocused && index == curRow
+                    // FIX #3: height 256dp (was 228dp), NO clipToBounds → zoom won't be clipped
+                    Box(
+                        Modifier.fillMaxWidth().height(256.dp)
+                            // NO clipToBounds — allows card zoom to overflow without being cut
+                            .graphicsLayer { this.alpha = alpha }
+                            // Active row on top so focused card doesn't get covered by next row
+                            .zIndex(if (!focusState.isNavFocused && index == curRow) 10f else index.toFloat())
+                    ) {
+                        val isActive    = !focusState.isNavFocused && index == curRow
+                        val firstCardFR = rowFRs.getOrNull(index)
                         val onFocus: (Movie) -> Unit = { m ->
                             focusState.currentRowIndex  = index
                             focusState.isNavFocused     = false
@@ -483,8 +475,8 @@ private fun RowsLayer(
                             onItemFocus(m)
                         }
                         when (rowDef) {
-                            is RowDef.Regular -> ContentRow(rowDef.title, rowDef.movies, isActive, onFocus, onItemClick)
-                            is RowDef.Studio  -> StudioRow(rowDef.brand,  rowDef.movies, isActive, onFocus, onItemClick)
+                            is RowDef.Regular -> ContentRow(rowDef.title, rowDef.movies, isActive, firstCardFR, onFocus, onItemClick)
+                            is RowDef.Studio  -> StudioRow(rowDef.brand,  rowDef.movies, isActive, firstCardFR, onFocus, onItemClick)
                         }
                     }
                 }
@@ -494,47 +486,80 @@ private fun RowsLayer(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  CONTENT ROW  ← closed properly here, no nesting of other composables!
+//  CONTENT ROW — FIX #4: endless scrolling via 3x repeated list
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ContentRow(
     title: String, movies: List<Movie>, isActiveRow: Boolean,
+    firstCardFR: FocusRequester?,
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (movies.isEmpty()) return
+
+    // FIX #4: 3× repeated list — "endless" scroll. Start in the middle section.
+    val extMovies = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
+    val startIdx  = if (movies.size >= 2) movies.size else 0  // first item of middle section
+    val rowState  = rememberLazyListState(initialFirstVisibleItemIndex = startIdx.coerceAtLeast(0))
+
+    // When this row becomes active, focus first card of middle section
+    LaunchedEffect(isActiveRow) {
+        if (isActiveRow) {
+            delay(80)
+            runCatching { firstCardFR?.requestFocus() }
+        }
+    }
+
     Column {
         Text(
             text = title,
-            color = WHITE.copy(if (isActiveRow) 1f else 0.42f),
+            color = WHITE.copy(if (isActiveRow) 1f else 0.45f),
             fontSize = 13.sp, fontWeight = if (isActiveRow) FontWeight.Bold else FontWeight.Normal,
             letterSpacing = 0.5.sp, modifier = Modifier.padding(start = 52.dp, bottom = 8.dp)
         )
         LazyRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                PosterCard(movie = movie, onFocused = { onItemFocus(movie) }, onClick = { onItemClick(movie.id) })
+            itemsIndexed(extMovies, key = { idx, m -> "${m.id}_$idx" }) { idx, movie ->
+                PosterCard(
+                    movie    = movie,
+                    modifier = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
+                    onFocused = { onItemFocus(movie) },
+                    onClick  = { onItemClick(movie.id) }
+                )
             }
         }
     }
-}  // ← ContentRow ends HERE (line ~280) — nothing nested inside
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  STUDIO ROW
+//  STUDIO ROW — FIX #4: same endless trick
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun StudioRow(
     brand: StudioBrand, movies: List<Movie>, isActiveRow: Boolean,
+    firstCardFR: FocusRequester?,
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (movies.isEmpty()) return
+
+    val extMovies = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
+    val startIdx  = if (movies.size >= 2) movies.size else 0
+    val rowState  = rememberLazyListState(initialFirstVisibleItemIndex = startIdx.coerceAtLeast(0))
+
+    LaunchedEffect(isActiveRow) {
+        if (isActiveRow) {
+            delay(80)
+            runCatching { firstCardFR?.requestFocus() }
+        }
+    }
+
     Column {
         Row(
             Modifier.padding(start = 52.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             StudioLogo(brand, isActiveRow)
             Text(
@@ -543,17 +568,23 @@ private fun StudioRow(
                     StudioBrand.APPLE_TV -> "Apple TV+ Originals"
                     StudioBrand.DISNEY   -> "Disney+ Exclusives"
                 },
-                color = WHITE.copy(if (isActiveRow) 0.75f else 0.30f),
+                color = WHITE.copy(if (isActiveRow) 0.80f else 0.35f),
                 fontSize = 12.sp, fontWeight = FontWeight.Medium, letterSpacing = 0.3.sp
             )
         }
         LazyRow(
+            state = rowState,
             contentPadding = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                PosterCard(movie = movie, onFocused = { onItemFocus(movie) }, onClick = { onItemClick(movie.id) })
+            itemsIndexed(extMovies, key = { idx, m -> "${m.id}_$idx" }) { idx, movie ->
+                PosterCard(
+                    movie    = movie,
+                    modifier = if (idx == startIdx && firstCardFR != null) Modifier.focusRequester(firstCardFR) else Modifier,
+                    onFocused = { onItemFocus(movie) },
+                    onClick  = { onItemClick(movie.id) }
+                )
             }
         }
     }
@@ -564,25 +595,22 @@ private fun StudioLogo(brand: StudioBrand, isActive: Boolean) {
     val a = if (isActive) 1f else 0.4f
     when (brand) {
         StudioBrand.NETFLIX  -> Box(
-            Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(3.dp)).background(NETFLIX_RED.copy(a)),
-            Alignment.Center
+            Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(3.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center
         ) { Text("N", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black) }
         StudioBrand.APPLE_TV -> Box(
             Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(11.dp))
                 .background(APPLE_BG.copy(a)).border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp))
-                .padding(horizontal = 9.dp),
-            Alignment.Center
+                .padding(horizontal = 9.dp), Alignment.Center
         ) { Text("tv+", color = WHITE.copy(a), fontSize = 13.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic) }
         StudioBrand.DISNEY   -> Box(
             Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(3.dp))
-                .background(DISNEY_BLUE.copy(a)).padding(horizontal = 8.dp),
-            Alignment.Center
+                .background(DISNEY_BLUE.copy(a)).padding(horizontal = 8.dp), Alignment.Center
         ) { Text("DISNEY+", color = WHITE.copy(a), fontSize = 8.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp) }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  POSTER CARD
+//  POSTER CARD — TV Surface handles focus border+glow
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
@@ -602,7 +630,10 @@ fun PosterCard(
     )
 
     Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
-        Box(Modifier.width(cardW).height(cardH).graphicsLayer { scaleX = zoom; scaleY = zoom }.zIndex(if (focused) 8f else 0f)) {
+        Box(Modifier.width(cardW).height(cardH)
+            .graphicsLayer { scaleX = zoom; scaleY = zoom }
+            .zIndex(if (focused) 8f else 0f)
+        ) {
             Surface(
                 onClick  = onClick,
                 colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
@@ -612,7 +643,7 @@ fun PosterCard(
                     border        = Border.None,
                     focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(9.dp))
                 ),
-                glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.20f), 18.dp)),
+                glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.22f), 18.dp)),
                 modifier = Modifier.fillMaxSize()
                     .onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
@@ -628,9 +659,7 @@ fun PosterCard(
                     Box(Modifier.align(Alignment.TopEnd).padding(5.dp)
                         .clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
-                    ) {
-                        Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
+                    ) { Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
                 }
             }
         }
@@ -642,42 +671,33 @@ fun PosterCard(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  BACKWARD-COMPAT ALIASES
-// ══════════════════════════════════════════════════════════════════════════════
+// ── Aliases ──────────────────────────────────────────────────────────────────
 @Composable
-fun ArvioCard(
-    movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 192.dp,
-    modifier: Modifier = Modifier, isFocusedOverride: Boolean = false,
-    onFocused: () -> Unit = {}, onClick: () -> Unit
-) = PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
-
+fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 192.dp, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
+    PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
 @Composable
-fun NfCard(
-    movie: Movie, modifier: Modifier = Modifier,
-    isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit
-) = PosterCard(movie, modifier = modifier, onFocused = onFocused, onClick = onClick)
+fun NfCard(movie: Movie, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
+    PosterCard(movie, modifier = modifier, onFocused = onFocused, onClick = onClick)
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  LOADING SKELETON
+//  LOADING / ERROR
 // ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label = "sk")
-    val p by inf.animateFloat(0f, 1f,
-        infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "sp")
+    val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "sp")
     val shimmer = Brush.linearGradient(
         listOf(Color(0xFF101010), Color(0xFF292929), Color(0xFF101010)),
         start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f))
     Box(Modifier.fillMaxSize().background(BG)) {
         Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 52.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                repeat(5) { Box(Modifier.width(110.dp).height(40.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
+                repeat(5) { Box(Modifier.width(120.dp).height(40.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
             }
-            Spacer(Modifier.height(30.dp))
-            Box(Modifier.width(400.dp).height(56.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
+            Spacer(Modifier.height(28.dp))
+            Box(Modifier.width(420.dp).height(56.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
             Spacer(Modifier.height(4.dp))
-            Box(Modifier.width(220.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+            Box(Modifier.width(240.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             Spacer(Modifier.height(6.dp))
             repeat(3) { Box(Modifier.fillMaxWidth(0.48f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(shimmer)); Spacer(Modifier.height(5.dp)) }
             Spacer(Modifier.weight(1f))
@@ -693,9 +713,6 @@ fun HomeLoading() {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  ERROR SCREEN
-// ══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
@@ -709,16 +726,12 @@ fun HomeError(message: String, onRetry: () -> Unit) {
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                 glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(RED.copy(0.55f), 20.dp)),
                 modifier = Modifier.height(50.dp).width(160.dp)
-            ) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Text("Retry", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                }
-            }
+            ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Retry", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold) } }
         }
     }
 }
 
-// ── Legacy stubs ──────────────────────────────────────────────────────────────
+// Legacy stubs
 @Composable fun NfLoadingSkeleton() = HomeLoading()
 @Composable fun NfErrorScreen(msg: String, onRetry: () -> Unit) = HomeError(msg, onRetry)
 @Composable fun LuminaSidebar(open: Boolean, activeTab: String, onClose: () -> Unit, onMoviesClick: () -> Unit, onSeriesClick: () -> Unit, onSearchClick: () -> Unit) {}
