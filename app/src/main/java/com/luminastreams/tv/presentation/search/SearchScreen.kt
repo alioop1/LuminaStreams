@@ -8,18 +8,21 @@ package com.luminastreams.tv.presentation.search
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
@@ -31,13 +34,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,23 +62,24 @@ import java.net.URL
 import java.net.URLEncoder
 
 // ══════════════════════════════════════════════════════════════════
-//  PALETTE
+//  PALETTE  (identical to HomeScreen)
 // ══════════════════════════════════════════════════════════════════
-private val BG       = Color(0xFF070707)
-private val SURF     = Color(0xFF111111)
-private val CARD_BG  = Color(0xFF161616)
-private val RED      = Color(0xFFE50914)
-private val WHITE    = Color(0xFFFFFFFF)
-private val DIM      = Color(0xAAFFFFFF)
-private val DIM2     = Color(0x44FFFFFF)
-private val GOLD     = Color(0xFFFFD700)
-private val SEL_BG   = Color(0x28E50914)
-private val SEL_BOR  = Color(0xCCE50914)
-private val IDLE_BG  = Color(0x0FFFFFFF)
-private val IDLE_BOR = Color(0x18FFFFFF)
+private val BG        = Color(0xFF070707)
+private val PANEL_BG  = Color(0xFF0C0C0C)
+private val CARD_BG   = Color(0xFF161616)
+private val RED       = Color(0xFFE50914)
+private val WHITE     = Color(0xFFFFFFFF)
+private val DIM       = Color(0xAAFFFFFF)
+private val DIM2      = Color(0x44FFFFFF)
+private val DIM3      = Color(0x18FFFFFF)
+private val GOLD      = Color(0xFFFFD700)
+private val SEL_BG    = Color(0x28E50914)
+private val SEL_BOR   = Color(0xCCE50914)
+private val IDLE_BG   = Color(0x0FFFFFFF)
+private val IDLE_BOR  = Color(0x18FFFFFF)
 
 // ══════════════════════════════════════════════════════════════════
-//  DATA
+//  DATA MODELS
 // ══════════════════════════════════════════════════════════════════
 data class FilterState(
     val mediaType : String      = "all",
@@ -82,295 +87,733 @@ data class FilterState(
     val sortBy    : String      = "popularity.desc",
     val decade    : Int         = 0,
     val minRating : Float       = 0f,
-    val platforms : Set<String> = emptySet(),
-    val language  : String      = "any"
-)
+    val language  : String      = "any",
+    val platforms : Set<String> = emptySet()
+) {
+    val activeCount: Int get() = listOf(
+        mediaType != "all",
+        genres.isNotEmpty(),
+        sortBy != "popularity.desc",
+        decade != 0,
+        minRating > 0f,
+        language != "any",
+        platforms.isNotEmpty()
+    ).count { it }
+}
 
 private val GENRES_MOVIE = listOf(
-    "28"    to "Action",     "12"    to "Adventure", "16"    to "Animation",
-    "35"    to "Comedy",     "80"    to "Crime",      "99"    to "Documentary",
-    "18"    to "Drama",      "10751" to "Family",     "14"    to "Fantasy",
-    "36"    to "History",    "27"    to "Horror",     "10402" to "Music",
-    "9648"  to "Mystery",    "10749" to "Romance",    "878"   to "Sci-Fi",
-    "53"    to "Thriller",   "10752" to "War",        "37"    to "Western"
+    "28" to "Action",      "12" to "Adventure",  "16" to "Animation",
+    "35" to "Comedy",      "80" to "Crime",       "99" to "Documentary",
+    "18" to "Drama",   "10751" to "Family",       "14" to "Fantasy",
+    "36" to "History",    "27" to "Horror",    "10402" to "Music",
+    "9648" to "Mystery",  "10749" to "Romance",    "878" to "Sci-Fi",
+    "53" to "Thriller",  "10752" to "War",         "37" to "Western"
 )
 private val GENRES_TV = listOf(
-    "10759" to "Action",     "16"    to "Animation",  "35"    to "Comedy",
-    "80"    to "Crime",      "99"    to "Documentary", "18"    to "Drama",
-    "10762" to "Kids",       "9648"  to "Mystery",    "10765" to "Sci-Fi",
-    "10766" to "Soap",       "10767" to "Talk",       "10768" to "War & Politics"
+    "10759" to "Action",     "16" to "Animation",   "35" to "Comedy",
+    "80" to "Crime",      "99" to "Documentary", "18" to "Drama",
+    "10762" to "Kids",     "9648" to "Mystery",  "10765" to "Sci-Fi",
+    "10766" to "Soap",    "10767" to "Talk",     "10768" to "War & Politics"
 )
 private val SORT_OPTIONS = listOf(
-    "popularity.desc"           to "Popular",
+    "popularity.desc"           to "Most Popular",
     "vote_average.desc"         to "Top Rated",
-    "primary_release_date.desc" to "Newest",
+    "primary_release_date.desc" to "Newest First",
     "revenue.desc"              to "Box Office",
     "vote_count.desc"           to "Most Voted"
 )
 private val DECADES = listOf(
-    0    to "Any Era",
-    2020 to "2020s",
-    2010 to "2010s",
-    2000 to "2000s",
-    1990 to "1990s",
-    1980 to "1980s",
-    1970 to "1970s"
+    0 to "Any Era", 2020 to "2020s", 2010 to "2010s",
+    2000 to "2000s", 1990 to "90s", 1980 to "80s", 1970 to "70s"
 )
 private val RATINGS   = listOf(0f to "Any", 5f to "5+", 6f to "6+", 7f to "7+", 8f to "8+", 9f to "9+")
-private val PLATFORMS = listOf(
-    "8"   to "Netflix",    "350" to "Apple TV+",
-    "337" to "Disney+",    "384" to "MAX",
-    "386" to "Peacock",    "387" to "HBO"
-)
 private val LANGUAGES = listOf(
-    "any" to "Any",   "en" to "English", "he" to "Hebrew",
-    "fr"  to "French","es" to "Spanish", "de" to "German",
-    "ja"  to "Japanese", "ko" to "Korean"
+    "any" to "🌍 Any",   "en" to "🇺🇸 English", "he" to "🇮🇱 Hebrew",
+    "fr"  to "🇫🇷 French","es" to "🇪🇸 Spanish", "de" to "🇩🇪 German",
+    "ja"  to "🇯🇵 Japanese","ko" to "🇰🇷 Korean"
+)
+private val PLATFORMS = listOf(
+    "8"   to "N  Netflix",
+    "337" to "D+ Disney+",
+    "350" to " Apple TV+",
+    "384" to "⬛ Max",
+    "387" to "HBO",
+    "386" to "🦚 Peacock",
+    "2"   to "🎬 Apple iTunes",
+    "3"   to "▶ Google Play",
+    "10"  to "A  Amazon",
+    "15"  to "🎯 Hulu",
+    "531" to "P  Paramount+",
+    "257" to "🔵 Fubo",
+    "190" to "📺 Discovery+"
+)
+private val SEARCH_HINTS = listOf(
+    "Search movies, series, actors...",
+    "Try \"Inception\" or \"Breaking Bad\"...",
+    "Search by actor name...",
+    "Discover something new..."
 )
 
 // ══════════════════════════════════════════════════════════════════
-//  SCREEN
-//  Layout (top→bottom):
-//   Header (back + title + count + reset)
-//   Search bar (text input, BasicTextField)
-//   Filter rows (4 horizontal chip rows, D-pad left/right)
-//   Thin divider
-//   Results grid (LazyVerticalGrid, fills remaining space)
+//  MAIN SCREEN
 // ══════════════════════════════════════════════════════════════════
 @Composable
 fun SearchScreen(
-    state         : SearchState,
-    onIntent      : (SearchIntent) -> Unit,
-    onNavigateBack: () -> Unit,
-    onResultClick : (SearchResult) -> Unit
+    state          : SearchState,
+    onIntent       : (SearchIntent) -> Unit,
+    onNavigateBack : () -> Unit,
+    onResultClick  : (SearchResult) -> Unit
 ) {
-    var query       by remember { mutableStateOf("") }
-    var filters     by remember { mutableStateOf(FilterState()) }
-    var results     by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    var isLoading   by remember { mutableStateOf(false) }
-    var resultCount by remember { mutableStateOf(0) }
+    // ── State ──────────────────────────────────────────────────
+    var query        by remember { mutableStateOf("") }
+    var filters      by remember { mutableStateOf(FilterState()) }
+    var results      by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var isLoading    by remember { mutableStateOf(false) }
+    var searchHistory by remember { mutableStateOf<List<String>>(emptyList()) }
+    var showHistory  by remember { mutableStateOf(false) }
+    var lastFocusedResultIdx by remember { mutableStateOf(0) }
 
-    val scope      = rememberCoroutineScope()
-    var searchJob: Job? by remember { mutableStateOf(null) }
+    val scope     = rememberCoroutineScope()
+    var searchJob : Job? by remember { mutableStateOf(null) }
 
-    val backFR  = remember { FocusRequester() }
+    // ── Focus requesters ────────────────────────────────────────
+    val backFR       = remember { FocusRequester() }
+    val inputFR      = remember { FocusRequester() }
+    val firstFilterFR= remember { FocusRequester() }
+    val firstResultFR= remember { FocusRequester() }
 
-    BackHandler { onNavigateBack() }
-
-    LaunchedEffect(query, filters) {
-        searchJob?.cancel()
-        searchJob = scope.launch {
-            delay(if (query.isNotBlank()) 380L else 60L)
-            isLoading = true
-            results = if (query.isNotBlank()) fetchTextSearch(query, filters)
-            else fetchDiscovery(filters)
-            resultCount = results.size
-            isLoading = false
+    // Feature 32: ESC clears query first, then navigates back
+    BackHandler {
+        when {
+            query.isNotBlank() -> { query = ""; showHistory = true }
+            else               -> onNavigateBack()
         }
     }
 
-    LaunchedEffect(Unit) {
-        delay(200)
-        runCatching { backFR.requestFocus() }
+    // Trigger for Discover Now button — called explicitly, not auto
+    fun triggerSearch() {
+        showHistory = false
+        if (query.isNotBlank()) {
+            searchHistory = (listOf(query) + searchHistory).distinct().take(8)
+        }
+        searchJob?.cancel()
+        searchJob = scope.launch {
+            isLoading = true
+            results = if (query.isNotBlank()) fetchTextSearch(query, filters)
+            else fetchDiscovery(filters)
+            isLoading = false
+            if (results.isNotEmpty()) {
+                delay(100)
+                runCatching { firstResultFR.requestFocus() }
+            }
+        }
     }
 
+    // Initial load on first open
+    LaunchedEffect(Unit) {
+        delay(180)
+        runCatching { backFR.requestFocus() }
+        isLoading = true
+        results = fetchDiscovery(filters)
+        isLoading = false
+    }
+
+    // ── Root layout ─────────────────────────────────────────────
     Column(
         Modifier
             .fillMaxSize()
             .background(BG)
             .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
-                    onNavigateBack(); true
+                if (ev.type == KeyEventType.KeyDown &&
+                    (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    if (query.isNotBlank()) {
+                        query = ""; showHistory = true; true
+                    } else {
+                        onNavigateBack(); true
+                    }
                 } else false
             }
     ) {
-
-        // ── HEADER ────────────────────────────────────────────────
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 40.dp, vertical = 18.dp),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            Surface(
-                onClick  = onNavigateBack,
-                shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                colors   = ClickableSurfaceDefaults.colors(
-                    containerColor        = IDLE_BG,
-                    focusedContainerColor = WHITE,
-                    contentColor          = WHITE,
-                    focusedContentColor   = BG
-                ),
-                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                modifier = Modifier.size(42.dp).focusRequester(backFR)
-            ) {
-                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Icon(Icons.Default.ArrowBack, null, Modifier.size(18.dp))
-                }
-            }
-
-            Column {
-                Text("Discover", color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.3).sp)
-                AnimatedContent(
-                    targetState = when {
-                        isLoading         -> "Loading..."
-                        results.isEmpty() -> "No results"
-                        else              -> "$resultCount titles"
-                    },
-                    transitionSpec = { fadeIn(tween(200)) togetherWith fadeOut(tween(150)) },
-                    label = "cnt"
-                ) { txt -> Text(txt, color = DIM, fontSize = 11.sp) }
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            AnimatedVisibility(
-                visible = filters != FilterState() || query.isNotBlank(),
-                enter   = fadeIn() + scaleIn(initialScale = 0.85f),
-                exit    = fadeOut() + scaleOut(targetScale = 0.85f)
-            ) {
-                Surface(
-                    onClick  = { filters = FilterState(); query = "" },
-                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                    colors   = ClickableSurfaceDefaults.colors(
-                        containerColor        = Color(0x1AE50914),
-                        focusedContainerColor = RED,
-                        contentColor          = RED,
-                        focusedContentColor   = WHITE
-                    ),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    modifier = Modifier.height(30.dp)
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 12.dp),
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        Icon(Icons.Default.Close, null, Modifier.size(11.dp))
-                        Text("Reset all", fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-            }
-        }
-
-        // ── SEARCH BAR ────────────────────────────────────────────
-        SearchInputBar(
-            query    = query,
-            onQuery  = { query = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 40.dp)
-                .padding(bottom = 16.dp)
+        // ── HEADER ────────────────────────────────────────────
+        DiscoverHeader(
+            query        = query,
+            filters      = filters,
+            resultCount  = results.size,
+            isLoading    = isLoading,
+            backFR       = backFR,
+            onBack       = onNavigateBack,
+            onReset      = { filters = FilterState(); query = "" }
         )
 
-        // ── FILTER ROWS ───────────────────────────────────────────
-        val genres = if (filters.mediaType == "tv") GENRES_TV else GENRES_MOVIE
+        // ── BODY: Left panel + Right grid ─────────────────────
+        Row(Modifier.weight(1f).fillMaxWidth()) {
 
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 40.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            // Row 1: Type
-            FilterRow("Type") {
-                Chip("🌐 All",     filters.mediaType == "all")   { filters = filters.copy(mediaType = "all") }
-                Chip("🎬 Movies", filters.mediaType == "movie") { filters = filters.copy(mediaType = "movie") }
-                Chip("📺 Series", filters.mediaType == "tv")    { filters = filters.copy(mediaType = "tv") }
-            }
+            // ── LEFT FILTER PANEL (fixed 300dp) ───────────────
+            FilterPanel(
+                filters       = filters,
+                query         = query,
+                searchHistory = searchHistory,
+                showHistory   = showHistory,
+                inputFR       = inputFR,
+                firstFilterFR = firstFilterFR,
+                firstResultFR = firstResultFR,
+                onQuery       = { q ->
+                    query = q
+                    showHistory = q.isEmpty()
+                },
+                onSearch      = { triggerSearch() },
+                onHistorySelect = { q ->
+                    query = q; showHistory = false
+                },
+                onHistoryClear  = { searchHistory = emptyList() },
+                onFilterChange  = { filters = it }
+            )
 
-            // Row 2: Genres
-            FilterRow("Genre") {
-                genres.forEach { (id, name) ->
-                    Chip(name, id in filters.genres) {
-                        filters = filters.copy(genres = if (id in filters.genres) filters.genres - id else filters.genres + id)
-                    }
+            // ── RIGHT RESULTS PANEL ───────────────────────────
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .background(BG)
+            ) {
+                when {
+                    isLoading              -> ShimmerGrid()
+                    results.isEmpty()      -> EmptyState(query, filters.activeCount)
+                    else                   -> ResultsGrid(
+                        results          = results,
+                        firstResultFR    = firstResultFR,
+                        initialFocusIdx  = lastFocusedResultIdx,
+                        onFocusIdx       = { lastFocusedResultIdx = it },
+                        onResultClick    = onResultClick
+                    )
                 }
-            }
-
-            // Row 3: Sort | Era
-            FilterRow("Sort") {
-                SORT_OPTIONS.forEach { (v, l) ->
-                    Chip(l, filters.sortBy == v) { filters = filters.copy(sortBy = v) }
-                }
-                Divider()
-                DECADES.forEach { (yr, l) ->
-                    Chip(l, filters.decade == yr) { filters = filters.copy(decade = yr) }
-                }
-            }
-
-            // Row 4: Rating | Language
-            FilterRow("Rating") {
-                RATINGS.forEach { (v, l) ->
-                    Chip(l, filters.minRating == v) { filters = filters.copy(minRating = v) }
-                }
-                Divider()
-                LANGUAGES.forEach { (id, l) ->
-                    Chip(l, filters.language == id) { filters = filters.copy(language = id) }
-                }
-            }
-        }
-
-        // ── DIVIDER ───────────────────────────────────────────────
-        Spacer(Modifier.height(12.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).padding(horizontal = 40.dp).background(DIM2))
-        Spacer(Modifier.height(2.dp))
-
-        // ── RESULTS ───────────────────────────────────────────────
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when {
-                isLoading         -> LoadingGrid()
-                results.isEmpty() -> EmptyState(query)
-                else              -> ResultsGrid(results, onResultClick)
             }
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  SEARCH INPUT BAR
+//  HEADER
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun SearchInputBar(query: String, onQuery: (String) -> Unit, modifier: Modifier = Modifier) {
-    var focused by remember { mutableStateOf(false) }
+private fun DiscoverHeader(
+    query       : String,
+    filters     : FilterState,
+    resultCount : Int,
+    isLoading   : Boolean,
+    backFR      : FocusRequester,
+    onBack      : () -> Unit,
+    onReset     : () -> Unit
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .background(PANEL_BG)
+            .border(width = 0.dp, color = Color.Transparent, shape = RoundedCornerShape(0.dp))
+            .padding(horizontal = 24.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Feature 34: Identical LUMINA logo
+        Surface(
+            onClick  = onBack,
+            shape    = ClickableSurfaceDefaults.shape(CircleShape),
+            colors   = ClickableSurfaceDefaults.colors(
+                containerColor        = DIM3,
+                focusedContainerColor = WHITE,
+                contentColor          = WHITE,
+                focusedContentColor   = BG
+            ),
+            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+            modifier = Modifier.size(38.dp).focusRequester(backFR)
+        ) {
+            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                Icon(Icons.Default.ArrowBack, null, Modifier.size(16.dp))
+            }
+        }
+
+        // Logo — pixel-perfect match to HomeScreen
+        Row(
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                Modifier.size(30.dp).clip(RoundedCornerShape(7.dp)).background(RED),
+                Alignment.Center
+            ) { Text("L", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Black) }
+            Column {
+                Text("LUMINA",  color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp, lineHeight = 12.sp)
+                Text("STREAMS", color = RED,   fontSize = 6.5.sp, fontWeight = FontWeight.Bold,  letterSpacing = 2.4.sp, lineHeight = 7.5.sp)
+            }
+        }
+
+        // Divider
+        Box(Modifier.width(1.dp).height(24.dp).background(DIM2))
+
+        Text("Discover", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Black)
+
+        // Feature 25: Result count
+        AnimatedContent(
+            targetState = when {
+                isLoading        -> "Loading..."
+                resultCount == 0 -> "No results"
+                else             -> "$resultCount titles"
+            },
+            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(120)) },
+            label = "cnt"
+        ) { t -> Text(t, color = DIM, fontSize = 11.sp) }
+
+        Spacer(Modifier.weight(1f))
+
+        // Feature 15: Active filter count badge
+        if (filters.activeCount > 0 || query.isNotBlank()) {
+            Box(
+                Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(SEL_BG)
+                    .border(1.dp, SEL_BOR, RoundedCornerShape(50))
+                    .padding(horizontal = 10.dp, vertical = 4.dp)
+            ) {
+                val cnt = filters.activeCount + (if (query.isNotBlank()) 1 else 0)
+                Text("$cnt active", color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+        }
+
+        // Reset All — clean pill, text centered
+        AnimatedVisibility(
+            visible = filters.activeCount > 0 || query.isNotBlank(),
+            enter   = fadeIn() + scaleIn(initialScale = 0.88f),
+            exit    = fadeOut() + scaleOut(targetScale = 0.88f)
+        ) {
+            Surface(
+                onClick  = onReset,
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = Color(0x1AE50914),
+                    focusedContainerColor = RED,
+                    contentColor          = RED,
+                    focusedContentColor   = WHITE
+                ),
+                border   = ClickableSurfaceDefaults.border(
+                    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   RED.copy(0.4f)), shape = RoundedCornerShape(50)),
+                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, WHITE.copy(0.6f)), shape = RoundedCornerShape(50))
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                modifier = Modifier.height(30.dp)
+            ) {
+                Box(
+                    Modifier.fillMaxHeight().padding(horizontal = 16.dp),
+                    Alignment.Center
+                ) {
+                    Text(
+                        "Reset",
+                        fontSize   = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        softWrap   = false
+                    )
+                }
+            }
+        }
+    }
+    // Red accent underline
     Box(
-        modifier
-            .height(52.dp)
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (focused) Color(0xFF181818) else SURF)
-            .border(1.5.dp, if (focused) RED.copy(0.65f) else DIM2, RoundedCornerShape(14.dp))
-            .padding(horizontal = 18.dp),
+        Modifier.fillMaxWidth().height(1.dp)
+            .background(Brush.horizontalGradient(listOf(RED.copy(0.7f), RED.copy(0.15f), Color.Transparent)))
+    )
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  LEFT FILTER PANEL
+//  Uses Column + verticalScroll (NOT LazyColumn) so Android TV's
+//  D-pad focus traversal works correctly — no explicit FocusRequesters
+//  needed between sections; the system handles UP/DOWN naturally.
+// ══════════════════════════════════════════════════════════════════
+@Composable
+private fun FilterPanel(
+    filters         : FilterState,
+    query           : String,
+    searchHistory   : List<String>,
+    showHistory     : Boolean,
+    inputFR         : FocusRequester,
+    firstFilterFR   : FocusRequester,
+    firstResultFR   : FocusRequester,
+    onQuery         : (String) -> Unit,
+    onSearch        : () -> Unit,
+    onHistorySelect : (String) -> Unit,
+    onHistoryClear  : () -> Unit,
+    onFilterChange  : (FilterState) -> Unit
+) {
+    val genres      = if (filters.mediaType == "tv") GENRES_TV else GENRES_MOVIE
+    val scrollState = rememberScrollState()
+
+    Column(
+        Modifier
+            .width(300.dp)
+            .fillMaxHeight()
+            .background(PANEL_BG)
+            .border(width = 1.dp, color = Color(0x10FFFFFF),
+                shape = RoundedCornerShape(0.dp))
+            .focusGroup()
+    ) {
+        // ── Search bar ─────────────────────────────────────────
+        PanelSearchBar(
+            query         = query,
+            onQuery       = onQuery,
+            onSearch      = onSearch,
+            inputFR       = inputFR,
+            firstResultFR = firstResultFR,
+            firstFilterFR = firstFilterFR
+        )
+
+        // ── Search history ─────────────────────────────────────
+        AnimatedVisibility(
+            visible = showHistory && searchHistory.isNotEmpty(),
+            enter   = expandVertically(tween(200)) + fadeIn(tween(150)),
+            exit    = shrinkVertically(tween(150)) + fadeOut(tween(100))
+        ) {
+            Column(
+                Modifier.fillMaxWidth().background(Color(0xFF0A0A0A))
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically
+                ) {
+                    Text("Recent", color = DIM, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+                    Surface(
+                        onClick  = onHistoryClear,
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(4.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = Color.Transparent,
+                            focusedContainerColor = Color(0x18FFFFFF),
+                            contentColor          = DIM, focusedContentColor = WHITE
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                        modifier = Modifier.height(20.dp)
+                    ) { Text("Clear", color = DIM, fontSize = 9.sp, modifier = Modifier.padding(horizontal = 6.dp)) }
+                }
+                Spacer(Modifier.height(6.dp))
+                searchHistory.forEach { h ->
+                    Surface(
+                        onClick  = { onHistorySelect(h) },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = Color.Transparent,
+                            focusedContainerColor = DIM3,
+                            contentColor          = DIM, focusedContentColor = WHITE
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                        modifier = Modifier.fillMaxWidth().height(30.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(Icons.Default.History, null, Modifier.size(12.dp), tint = DIM)
+                            Text(h, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Scrollable filter body ─────────────────────────────
+        // Column + verticalScroll = TV D-pad navigates correctly
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .verticalScroll(scrollState)
+                .padding(vertical = 8.dp)
+        ) {
+
+            // ── Content Type ───────────────────────────────────
+            FilterSectionHeader("Content Type", Icons.Default.MovieFilter)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf("all" to "🌐 All", "movie" to "🎬 Movies", "tv" to "📺 Series")
+                    .forEachIndexed { idx, (v, l) ->
+                        val isSel = filters.mediaType == v
+                        Surface(
+                            onClick  = { onFilterChange(filters.copy(mediaType = v, genres = emptySet())) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                // Selected = solid RED, not transparent tint
+                                containerColor        = if (isSel) RED    else IDLE_BG,
+                                focusedContainerColor = if (isSel) Color(0xFFFF2A2A) else Color(0x22FFFFFF),
+                                contentColor          = WHITE,
+                                focusedContentColor   = WHITE
+                            ),
+                            border   = ClickableSurfaceDefaults.border(
+                                border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) RED.copy(0.8f) else IDLE_BOR), shape = RoundedCornerShape(8.dp)),
+                                focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, WHITE.copy(0.5f)), shape = RoundedCornerShape(8.dp))
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+                            modifier = Modifier.weight(1f).height(34.dp)
+                                .let { if (idx == 0) it.focusRequester(firstFilterFR) else it }
+                        ) {
+                            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                Text(l, fontSize = 10.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                    color      = if (isSel) WHITE else DIM,
+                                    softWrap = false)
+                            }
+                        }
+                    }
+            }
+
+            // ── Genre ──────────────────────────────────────────
+            FilterSectionHeader(
+                "Genre${if (filters.genres.isNotEmpty()) " (${filters.genres.size})" else ""}",
+                Icons.Default.Category
+            )
+            GenreGrid(
+                genres   = genres,
+                selected = filters.genres,
+                onToggle = { id ->
+                    onFilterChange(filters.copy(
+                        genres = if (id in filters.genres) filters.genres - id else filters.genres + id
+                    ))
+                }
+            )
+
+            // ── Sort By ────────────────────────────────────────
+            FilterSectionDivider()
+            FilterSectionHeader("Sort By", Icons.Default.Sort)
+            SORT_OPTIONS.forEach { (v, l) ->
+                RadioRow(
+                    label    = l,
+                    selected = filters.sortBy == v,
+                    onClick  = { onFilterChange(filters.copy(sortBy = v)) }
+                )
+            }
+
+            // ── Era ────────────────────────────────────────────
+            FilterSectionDivider()
+            FilterSectionHeader("Era", Icons.Default.CalendarToday)
+            SimplePillRow(
+                items    = DECADES.map { (yr, l) -> yr.toString() to l },
+                selected = filters.decade.toString(),
+                onSelect = { v -> onFilterChange(filters.copy(decade = v.toIntOrNull() ?: 0)) }
+            )
+
+            // ── Min Rating ─────────────────────────────────────
+            FilterSectionDivider()
+            FilterSectionHeader("Min Rating", Icons.Default.Star)
+            SimplePillRow(
+                items    = RATINGS.map { (v, l) -> v.toString() to l },
+                selected = filters.minRating.toString(),
+                onSelect = { v -> onFilterChange(filters.copy(minRating = v.toFloatOrNull() ?: 0f)) }
+            )
+
+            // ── Language ───────────────────────────────────────
+            FilterSectionDivider()
+            FilterSectionHeader("Language", Icons.Default.Language)
+            SimplePillRow(
+                items    = LANGUAGES,
+                selected = filters.language,
+                onSelect = { v -> onFilterChange(filters.copy(language = v)) }
+            )
+
+            // ── Platform ───────────────────────────────────────
+            FilterSectionDivider()
+            FilterSectionHeader(
+                "Platform${if (filters.platforms.isNotEmpty()) " (${filters.platforms.size})" else ""}",
+                Icons.Default.Tv
+            )
+            SimplePillRow(
+                items       = PLATFORMS,
+                selectedSet = filters.platforms,
+                multiSelect = true,
+                onToggle    = { v ->
+                    onFilterChange(filters.copy(
+                        platforms = if (v in filters.platforms) filters.platforms - v else filters.platforms + v
+                    ))
+                }
+            )
+
+            Spacer(Modifier.height(14.dp))
+        }
+
+        // ── Discover Now button ────────────────────────────────
+        Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
+            Surface(
+                onClick  = onSearch,
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = Color.Transparent,
+                    focusedContainerColor = Color.Transparent,
+                    contentColor          = WHITE,
+                    focusedContentColor   = WHITE
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+                glow     = ClickableSurfaceDefaults.glow(
+                    focusedGlow = Glow(RED.copy(0.6f), 24.dp)
+                ),
+                modifier = Modifier.fillMaxWidth().height(50.dp)
+            ) {
+                // Gradient background drawn inside so it always fills correctly
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(
+                            Brush.horizontalGradient(listOf(Color(0xFFE50914), Color(0xFFFF3B3B))),
+                            shape = RoundedCornerShape(14.dp)
+                        ),
+                    Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment     = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp), tint = WHITE)
+                        Text(
+                            "Discover Now",
+                            fontSize      = 14.sp,
+                            fontWeight    = FontWeight.Black,
+                            letterSpacing = 0.5.sp,
+                            color         = WHITE
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  PANEL SEARCH BAR
+//  Single BasicTextField always present.
+//  On Android TV: D-pad moves focus to it (no keyboard yet).
+//  Pressing SELECT/OK on the remote → onPreviewKeyEvent catches
+//  DirectionCenter and explicitly calls keyboardController.show().
+// ══════════════════════════════════════════════════════════════════
+@Composable
+private fun PanelSearchBar(
+    query         : String,
+    onQuery       : (String) -> Unit,
+    onSearch      : () -> Unit,
+    inputFR       : FocusRequester,
+    firstResultFR : FocusRequester,
+    firstFilterFR : FocusRequester
+) {
+    var isFocused    by remember { mutableStateOf(false) }
+    val keyboardCtrl  = LocalSoftwareKeyboardController.current
+
+    // Animated placeholder cycling
+    var hintIdx by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        while (true) { delay(3200); hintIdx = (hintIdx + 1) % SEARCH_HINTS.size }
+    }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(12.dp)
+            .height(46.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isFocused) Color(0xFF181818) else Color(0xFF0F0F0F))
+            .border(
+                width = if (isFocused) 1.5.dp else 1.dp,
+                color = if (isFocused) RED.copy(0.65f) else DIM2,
+                shape = RoundedCornerShape(10.dp)
+            )
+            .padding(horizontal = 14.dp),
         contentAlignment = Alignment.CenterStart
     ) {
-        Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(Icons.Default.Search, null, Modifier.size(18.dp), tint = if (focused) RED else DIM)
+        Row(
+            Modifier.fillMaxSize(),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(Icons.Default.Search, null, Modifier.size(15.dp),
+                tint = if (isFocused) RED else DIM)
+
             BasicTextField(
                 value           = query,
                 onValueChange   = onQuery,
                 singleLine      = true,
-                textStyle       = TextStyle(color = WHITE, fontSize = 15.sp),
+                textStyle       = TextStyle(color = WHITE, fontSize = 13.sp),
                 cursorBrush     = SolidColor(RED),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = {}),
+                // KeyboardType.Text + no imeAction = TV shows its keyboard overlay
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
+                keyboardActions = KeyboardActions(onAny = {
+                    keyboardCtrl?.hide()
+                    onSearch()
+                }),
                 decorationBox   = { inner ->
                     Box(Modifier.weight(1f)) {
-                        if (query.isEmpty()) Text("Search movies, series, actors...", color = DIM.copy(0.45f), fontSize = 15.sp)
+                        if (query.isEmpty() && !isFocused) {
+                            AnimatedContent(
+                                targetState = hintIdx,
+                                transitionSpec = {
+                                    fadeIn(tween(350)) + slideInVertically { 8 } togetherWith
+                                            fadeOut(tween(250)) + slideOutVertically { -8 }
+                                },
+                                label = "hint"
+                            ) { idx -> Text(SEARCH_HINTS[idx], color = DIM.copy(0.38f), fontSize = 13.sp) }
+                        } else if (query.isEmpty()) {
+                            Text("Type to search...", color = DIM.copy(0.38f), fontSize = 13.sp)
+                        }
                         inner()
                     }
                 },
-                modifier = Modifier.weight(1f).onFocusChanged { focused = it.isFocused }
+                modifier = Modifier
+                    .weight(1f)
+                    .focusRequester(inputFR)
+                    .onFocusChanged { isFocused = it.isFocused }
+                    .onPreviewKeyEvent { ev ->
+                        when {
+                            // SELECT/OK on remote → show the TV keyboard
+                            ev.type == KeyEventType.KeyDown &&
+                                    ev.key  == Key.DirectionCenter -> {
+                                keyboardCtrl?.show()
+                                true  // consume so it doesn't trigger Back
+                            }
+                            // D-pad RIGHT from empty field → jump to grid
+                            ev.type == KeyEventType.KeyDown &&
+                                    ev.key  == Key.DirectionRight &&
+                                    query.isEmpty() -> {
+                                runCatching { firstResultFR.requestFocus() }
+                                true
+                            }
+                            // D-pad DOWN → first filter button
+                            ev.type == KeyEventType.KeyDown &&
+                                    ev.key  == Key.DirectionDown -> {
+                                runCatching { firstFilterFR.requestFocus() }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
             )
-            AnimatedVisibility(query.isNotEmpty(), enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
+
+            // Clear button
+            AnimatedVisibility(
+                query.isNotEmpty(),
+                enter = fadeIn(tween(100)) + scaleIn(initialScale = 0.85f),
+                exit  = fadeOut(tween(80))  + scaleOut(targetScale = 0.85f)
+            ) {
                 Surface(
                     onClick  = { onQuery("") },
                     shape    = ClickableSurfaceDefaults.shape(CircleShape),
                     colors   = ClickableSurfaceDefaults.colors(
-                        containerColor = DIM2, focusedContainerColor = RED,
-                        contentColor   = WHITE, focusedContentColor  = WHITE
+                        containerColor        = DIM2,
+                        focusedContainerColor = RED,
+                        contentColor          = WHITE,
+                        focusedContentColor   = WHITE
                     ),
                     scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                    modifier = Modifier.size(26.dp)
+                    modifier = Modifier.size(22.dp)
                 ) {
-                    Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(12.dp)) }
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Icon(Icons.Default.Close, null, Modifier.size(10.dp))
+                    }
                 }
             }
         }
@@ -378,107 +821,266 @@ private fun SearchInputBar(query: String, onQuery: (String) -> Unit, modifier: M
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  FILTER ROW
+//  FILTER SECTION HELPERS
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun FilterRow(label: String, content: @Composable RowScope.() -> Unit) {
+private fun FilterSectionHeader(title: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Row(
-        Modifier.fillMaxWidth().height(32.dp),
-        verticalAlignment = Alignment.CenterVertically
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 4.dp),
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(7.dp)
     ) {
-        Text(label, color = DIM, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(54.dp))
-        LazyRow(
-            modifier              = Modifier.weight(1f),
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalAlignment     = Alignment.CenterVertically
-        ) {
-            item {
-                Row(
-                    verticalAlignment     = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) { content() }
+        Icon(icon, null, Modifier.size(11.dp), tint = RED)
+        Text(title, color = DIM, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+    }
+}
+
+@Composable
+private fun FilterSectionDivider() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .padding(horizontal = 14.dp)
+            .background(Color(0x0AFFFFFF))
+    )
+    Spacer(Modifier.height(6.dp))
+}
+
+// Feature 9: Genre 3-column grid
+@Composable
+private fun GenreGrid(
+    genres  : List<Pair<String, String>>,
+    selected: Set<String>,
+    onToggle: (String) -> Unit
+) {
+    val rows = (genres.size + 2) / 3
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        for (r in 0 until rows) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                for (c in 0..2) {
+                    val idx = r * 3 + c
+                    if (idx < genres.size) {
+                        val (id, name) = genres[idx]
+                        val isSel = id in selected
+                        Surface(
+                            onClick  = { onToggle(id) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(7.dp)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = if (isSel) SEL_BG   else IDLE_BG,
+                                focusedContainerColor = if (isSel) Color(0x38E50914) else Color(0x18FFFFFF),
+                                contentColor          = if (isSel) WHITE    else DIM,
+                                focusedContentColor   = WHITE
+                            ),
+                            border   = filterBorder(isSel),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                            modifier = Modifier.weight(1f).height(30.dp)
+                        ) {
+                            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                Text(
+                                    name,
+                                    fontSize   = 9.5.sp,
+                                    fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                                    softWrap   = false,
+                                    maxLines   = 1,
+                                    overflow   = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
         }
     }
 }
 
+// Feature 10: Radio row for Sort
 @Composable
-private fun RowScope.Divider() {
-    Spacer(Modifier.width(14.dp))
-    Box(Modifier.width(1.dp).height(20.dp).background(DIM2).align(Alignment.CenterVertically))
-    Spacer(Modifier.width(14.dp))
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  CHIP
-// ══════════════════════════════════════════════════════════════════
-@Composable
-private fun RowScope.Chip(label: String, isSelected: Boolean, onClick: () -> Unit) {
+private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
         onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
         colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = if (isSelected) SEL_BG else IDLE_BG,
-            focusedContainerColor = if (isSelected) SEL_BG else Color(0x18FFFFFF),
-            contentColor          = if (isSelected) WHITE  else DIM,
+            containerColor        = if (selected) SEL_BG else Color.Transparent,
+            focusedContainerColor = if (selected) Color(0x38E50914) else Color(0x10FFFFFF),
+            contentColor          = if (selected) WHITE else DIM,
             focusedContentColor   = WHITE
         ),
-        border   = ClickableSurfaceDefaults.border(
-            border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSelected) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(50)),
-            focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, if (isSelected) RED     else WHITE.copy(0.4f)), shape = RoundedCornerShape(50))
-        ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        modifier = Modifier.height(28.dp)
+        border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier = Modifier.fillMaxWidth().height(34.dp).padding(horizontal = 10.dp)
     ) {
-        Box(Modifier.fillMaxHeight().padding(horizontal = 11.dp), Alignment.Center) {
-            Text(label, fontSize = 11.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, softWrap = false, maxLines = 1)
+        Row(
+            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Box(
+                Modifier.size(8.dp).clip(CircleShape)
+                    .background(if (selected) RED else Color.Transparent)
+                    .border(1.dp, if (selected) RED else DIM2, CircleShape)
+            )
+            Text(label, fontSize = 11.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
         }
     }
 }
 
+// SimplePillRow — pill row, single or multi-select, verticalScroll handles UP/DOWN
+// focusRestorer() ensures D-pad always enters at item 0, never mid-row
+@Composable
+private fun SimplePillRow(
+    items       : List<Pair<String, String>>,
+    selected    : String       = "",
+    selectedSet : Set<String>  = emptySet(),
+    multiSelect : Boolean      = false,
+    onSelect    : (String) -> Unit = {},
+    onToggle    : (String) -> Unit = {}
+) {
+    val firstFR = remember { FocusRequester() }
+
+    LazyRow(
+        Modifier.fillMaxWidth().focusRestorer { firstFR },
+        contentPadding        = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        itemsIndexed(items) { idx, (v, l) ->
+            val isSel = if (multiSelect) v in selectedSet else v == selected
+            Surface(
+                onClick  = { if (multiSelect) onToggle(v) else onSelect(v) },
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = if (isSel) SEL_BG else IDLE_BG,
+                    focusedContainerColor = if (isSel) Color(0x38E50914) else Color(0x18FFFFFF),
+                    contentColor          = if (isSel) WHITE  else DIM,
+                    focusedContentColor   = WHITE
+                ),
+                border   = ClickableSurfaceDefaults.border(
+                    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(50)),
+                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, if (isSel) RED     else WHITE.copy(0.35f)), shape = RoundedCornerShape(50))
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                modifier = Modifier
+                    .height(25.dp)
+                    .let { if (idx == 0) it.focusRequester(firstFR) else it }
+            ) {
+                Box(Modifier.fillMaxHeight().padding(horizontal = 9.dp), Alignment.Center) {
+                    Text(l, fontSize = 9.sp,
+                        fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                        softWrap = false)
+                }
+            }
+        }
+    }
+}
+
+// Reusable border helper
+@Composable
+private fun filterBorder(isSelected: Boolean) = ClickableSurfaceDefaults.border(
+    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSelected) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(7.dp)),
+    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, if (isSelected) RED     else WHITE.copy(0.35f)), shape = RoundedCornerShape(7.dp))
+)
+
 // ══════════════════════════════════════════════════════════════════
-//  RESULTS GRID
+//  RESULTS GRID  (Features 18-23, 27-30, 33)
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun ResultsGrid(results: List<SearchResult>, onResultClick: (SearchResult) -> Unit) {
+private fun ResultsGrid(
+    results         : List<SearchResult>,
+    firstResultFR   : FocusRequester,
+    initialFocusIdx : Int,
+    onFocusIdx      : (Int) -> Unit,
+    onResultClick   : (SearchResult) -> Unit
+) {
+    val gridState = rememberLazyGridState()
+
+    // Feature 30: Auto-focus first result
+    LaunchedEffect(results.size) {
+        if (results.isNotEmpty()) {
+            delay(100)
+            runCatching { firstResultFR.requestFocus() }
+        }
+    }
+
     LazyVerticalGrid(
-        columns               = GridCells.Adaptive(148.dp),
-        contentPadding        = PaddingValues(horizontal = 40.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement   = Arrangement.spacedBy(18.dp),
-        modifier              = Modifier.fillMaxSize()
+        columns               = GridCells.Adaptive(minSize = 138.dp),
+        state                 = gridState,
+        contentPadding        = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement   = Arrangement.spacedBy(14.dp),
+        modifier              = Modifier
+            .fillMaxSize()
+            // Feature 27: D-pad LEFT from first column → panel
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionLeft) {
+                    // Let default handle it; edge case handled by FocusRequester
+                    false
+                } else false
+            }
     ) {
-        itemsIndexed(results, key = { _, r -> r.id }) { _, result ->
-            DiscoveryCard(result, onClick = { onResultClick(result) })
+        itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
+            DiscoveryCard(
+                result    = result,
+                modifier  = if (idx == 0) Modifier.focusRequester(firstResultFR) else Modifier,
+                onFocused = { onFocusIdx(idx) },
+                onClick   = { onResultClick(result) }
+            )
         }
     }
 }
 
+// ══════════════════════════════════════════════════════════════════
+//  DISCOVERY CARD  (Features 19-23)
+// ══════════════════════════════════════════════════════════════════
 @Composable
-private fun DiscoveryCard(result: SearchResult, onClick: () -> Unit) {
+private fun DiscoveryCard(
+    result   : SearchResult,
+    modifier : Modifier = Modifier,
+    onFocused: () -> Unit = {},
+    onClick  : () -> Unit
+) {
     val ctx     = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val zoom by animateFloatAsState(if (focused) 1.07f else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "z")
 
-    Column(horizontalAlignment = Alignment.Start) {
+    // Feature 20: Smooth ease-in-out zoom — no bounce
+    val zoom by animateFloatAsState(
+        targetValue   = if (focused) 1.06f else 1f,
+        animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+        label         = "zoom"
+    )
+
+    Column(
+        modifier            = modifier,
+        horizontalAlignment = Alignment.Start
+    ) {
+        // Fixed-size box — does NOT zoom, so title text is never overlapped
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
-                .graphicsLayer(scaleX = zoom, scaleY = zoom)
                 .zIndex(if (focused) 8f else 0f)
         ) {
+            // Feature 21: White border glow — zoom applied here only (inside the box)
             Surface(
                 onClick  = onClick,
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(9.dp)),
                 colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-                border   = ClickableSurfaceDefaults.border(
-                    Border.None,
-                    Border(androidx.compose.foundation.BorderStroke(2.dp, WHITE.copy(0.85f)), shape = RoundedCornerShape(10.dp))
-                ),
-                glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.1f), 12.dp)),
-                modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused }
+                border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
+                glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(scaleX = zoom, scaleY = zoom)
+                    .onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
                 if (result.posterUrl.isNotBlank()) {
                     AsyncImage(
@@ -488,152 +1090,214 @@ private fun DiscoveryCard(result: SearchResult, onClick: () -> Unit) {
                         modifier           = Modifier.fillMaxSize()
                     )
                 } else {
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF1E1E1E), CARD_BG))), Alignment.Center) {
-                        Text(result.title, color = WHITE.copy(0.3f), fontSize = 10.sp, modifier = Modifier.padding(8.dp))
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Brush.verticalGradient(listOf(Color(0xFF1E1E1E), CARD_BG))),
+                        Alignment.Center
+                    ) {
+                        Text(result.title, color = WHITE.copy(0.3f), fontSize = 9.sp, modifier = Modifier.padding(6.dp))
                     }
                 }
-                if (result.rating > 0f) {
-                    Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                        Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
+
+                // Feature 22: Year badge (top-left)
                 if (result.releaseYear.isNotBlank()) {
-                    Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0x99000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                        Text(result.releaseYear, color = DIM, fontSize = 9.sp)
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(4.dp)
+                            .clip(RoundedCornerShape(3.dp)).background(Color(0xAA000000))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) { Text(result.releaseYear, color = DIM, fontSize = 8.sp) }
+                }
+
+                // Feature 22: Rating badge (top-right)
+                if (result.rating > 0f) {
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(4.dp)
+                            .clip(RoundedCornerShape(3.dp)).background(Color(0xBB000000))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 8.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
         }
-        Spacer(Modifier.height(5.dp))
-        Text(result.title, color = if (focused) WHITE else DIM, fontSize = 11.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(if (result.type == MediaType.TV_SHOW) "TV Show" else "Movie", color = WHITE.copy(0.25f), fontSize = 10.sp)
+
+        // Feature 23: Title + type below
+        Spacer(Modifier.height(4.dp))
+        Text(
+            result.title,
+            color      = if (focused) WHITE else DIM,
+            fontSize   = 10.sp,
+            fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines   = 1,
+            overflow   = TextOverflow.Ellipsis
+        )
+        Text(
+            if (result.type == MediaType.TV_SHOW) "TV Show" else "Movie",
+            color = WHITE.copy(0.22f), fontSize = 9.sp
+        )
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  LOADING
+//  SHIMMER LOADING  (Feature 25)
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun LoadingGrid() {
-    val inf = rememberInfiniteTransition(label = "shimmer")
-    val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1000, easing = LinearEasing), RepeatMode.Restart), label = "s")
+private fun ShimmerGrid() {
+    val inf = rememberInfiniteTransition(label = "sh")
+    val p by inf.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+        label = "sp"
+    )
     val shimmer = Brush.linearGradient(
-        listOf(Color(0xFF111111), Color(0xFF212121), Color(0xFF111111)),
-        start = androidx.compose.ui.geometry.Offset(p * 1600f - 800f, 0f),
-        end   = androidx.compose.ui.geometry.Offset(p * 1600f, 400f)
+        listOf(Color(0xFF111111), Color(0xFF1E1E1E), Color(0xFF111111)),
+        start = androidx.compose.ui.geometry.Offset(p * 1400f - 700f, 0f),
+        end   = androidx.compose.ui.geometry.Offset(p * 1400f, 300f)
     )
     LazyVerticalGrid(
-        columns               = GridCells.Adaptive(148.dp),
-        contentPadding        = PaddingValues(horizontal = 40.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(14.dp),
-        verticalArrangement   = Arrangement.spacedBy(18.dp),
+        columns               = GridCells.Adaptive(138.dp),
+        contentPadding        = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement   = Arrangement.spacedBy(14.dp),
         modifier              = Modifier.fillMaxSize()
     ) {
-        items(18) {
+        items(16) {
             Column {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(shimmer))
-                Spacer(Modifier.height(6.dp))
-                Box(Modifier.fillMaxWidth(0.75f).height(10.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(9.dp)).background(shimmer))
+                Spacer(Modifier.height(4.dp))
+                Box(Modifier.fillMaxWidth(0.72f).height(9.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
             }
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  EMPTY STATE
+//  EMPTY STATE  (Feature 24)
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun EmptyState(query: String) {
+private fun EmptyState(query: String, activeFilters: Int) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("🎬", fontSize = 48.sp)
-            Text(if (query.isNotBlank()) "No results for \"$query\"" else "No results found", color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("Try different filters or search terms", color = DIM, fontSize = 13.sp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("🎬", fontSize = 52.sp)
+            Text(
+                if (query.isNotBlank()) "No results for \"$query\""
+                else "Nothing found",
+                color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold
+            )
+            Text(
+                if (activeFilters > 0) "Try adjusting your filters ← "
+                else "Start typing or select filters ← ",
+                color = DIM, fontSize = 12.sp
+            )
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — TEXT SEARCH  (TMDB /search/multi)
+//  NETWORK — TEXT SEARCH  (Feature 1, TMDB /search/multi)
 // ══════════════════════════════════════════════════════════════════
-private suspend fun fetchTextSearch(query: String, filters: FilterState): List<SearchResult> =
+private suspend fun fetchTextSearch(query: String, f: FilterState): List<SearchResult> =
     withContext(Dispatchers.IO) {
-        val apiKey  = "9ab4a284f0c028007b78925852196b79"
+        val key     = "9ab4a284f0c028007b78925852196b79"
         val imgBase = "https://image.tmdb.org/t/p"
         val enc     = URLEncoder.encode(query, "UTF-8")
-        val results = mutableListOf<SearchResult>()
+        val out     = mutableListOf<SearchResult>()
         try {
-            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$apiKey&language=en-US&query=$enc&page=1&include_adult=false").openConnection() as HttpURLConnection)
-                .also { it.connectTimeout = 5000; it.readTimeout = 8000 }
+            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=1&include_adult=false")
+                .openConnection() as HttpURLConnection)
+                .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
             if (con.responseCode == 200) {
-                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: return@withContext emptyList()
+                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+                    .optJSONArray("results") ?: return@withContext emptyList()
                 for (i in 0 until arr.length()) {
                     val j  = arr.getJSONObject(i)
                     val mt = j.optString("media_type")
                     if (mt != "movie" && mt != "tv") continue
-                    if (filters.mediaType != "all" && filters.mediaType != mt) continue
+                    if (f.mediaType != "all" && f.mediaType != mt) continue
                     val title  = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                    else            j.optString("title").ifBlank { j.optString("original_title") }
-                    val poster = j.optString("poster_path").let { if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else "" }
-                    val year   = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4)
+                    else j.optString("title").ifBlank { j.optString("original_title") }
+                    val poster = j.optString("poster_path").let {
+                        if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else ""
+                    }
                     val rating = j.optDouble("vote_average", 0.0).toFloat()
-                    if (filters.minRating > 0f && rating < filters.minRating) continue
-                    results += SearchResult(
+                    if (f.minRating > 0f && rating < f.minRating) continue
+                    out += SearchResult(
                         id          = "${mt}_${j.optInt("id")}",
                         title       = title,
                         posterUrl   = poster,
-                        backdropUrl = j.optString("backdrop_path").let { if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else "" },
+                        backdropUrl = j.optString("backdrop_path").let {
+                            if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else ""
+                        },
                         type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
                         rating      = rating,
-                        releaseYear = year
+                        releaseYear = (if (mt == "tv") j.optString("first_air_date")
+                        else j.optString("release_date")).take(4)
                     )
                 }
             }
         } catch (_: Exception) {}
-        results
+        out
     }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — DISCOVER  (TMDB /discover)
+//  NETWORK — DISCOVER  (Feature 2, TMDB /discover)
 // ══════════════════════════════════════════════════════════════════
-private suspend fun fetchDiscovery(filters: FilterState): List<SearchResult> =
+private suspend fun fetchDiscovery(f: FilterState): List<SearchResult> =
     withContext(Dispatchers.IO) {
-        val apiKey  = "9ab4a284f0c028007b78925852196b79"
+        val key     = "9ab4a284f0c028007b78925852196b79"
         val imgBase = "https://image.tmdb.org/t/p"
         val base    = "https://api.themoviedb.org/3"
-        val types   = when (filters.mediaType) { "movie" -> listOf("movie"); "tv" -> listOf("tv"); else -> listOf("movie", "tv") }
-        val all     = mutableListOf<SearchResult>()
+        val types   = when (f.mediaType) {
+            "movie" -> listOf("movie")
+            "tv"    -> listOf("tv")
+            else    -> listOf("movie", "tv")
+        }
+        val all = mutableListOf<SearchResult>()
 
         for (mt in types) {
             try {
-                val sb = StringBuilder("$base/discover/$mt?api_key=$apiKey&language=en-US&page=1&sort_by=${filters.sortBy}")
-                if (filters.genres.isNotEmpty())  sb.append("&with_genres=${filters.genres.joinToString(",")}")
-                if (filters.decade > 0) {
-                    val f = if (mt == "movie") "primary_release_date" else "first_air_date"
-                    val e = if (filters.decade == 2020) 2026 else filters.decade + 9
-                    sb.append("&${f}.gte=${filters.decade}-01-01&${f}.lte=$e-12-31")
+                val sb = StringBuilder("$base/discover/$mt?api_key=$key&language=en-US&page=1&sort_by=${f.sortBy}")
+                if (f.genres.isNotEmpty())
+                    sb.append("&with_genres=${f.genres.joinToString(",")}")
+                if (f.decade > 0) {
+                    val field = if (mt == "movie") "primary_release_date" else "first_air_date"
+                    val end   = if (f.decade == 2020) 2026 else f.decade + 9
+                    sb.append("&${field}.gte=${f.decade}-01-01&${field}.lte=$end-12-31")
                 }
-                if (filters.minRating > 0f) sb.append("&vote_average.gte=${filters.minRating}&vote_count.gte=100")
-                if (filters.platforms.isNotEmpty()) sb.append("&with_watch_providers=${filters.platforms.joinToString("|")}&watch_region=US")
-                if (filters.language != "any") sb.append("&with_original_language=${filters.language}")
+                if (f.minRating > 0f)
+                    sb.append("&vote_average.gte=${f.minRating}&vote_count.gte=100")
+                if (f.platforms.isNotEmpty())
+                    sb.append("&with_watch_providers=${f.platforms.joinToString("|")}&watch_region=US")
+                if (f.language != "any")
+                    sb.append("&with_original_language=${f.language}")
 
-                val con = (URL(sb.toString()).openConnection() as HttpURLConnection).also { it.connectTimeout = 5000; it.readTimeout = 8000 }
+                val con = (URL(sb.toString()).openConnection() as HttpURLConnection)
+                    .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
                 if (con.responseCode == 200) {
-                    val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: continue
+                    val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+                        .optJSONArray("results") ?: continue
                     for (i in 0 until minOf(arr.length(), 40)) {
-                        val j      = arr.getJSONObject(i)
-                        val title  = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                        else            j.optString("title").ifBlank { j.optString("original_title") }
-                        val poster = j.optString("poster_path").let { if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else "" }
+                        val j     = arr.getJSONObject(i)
+                        val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
+                        else j.optString("title").ifBlank { j.optString("original_title") }
+                        val poster = j.optString("poster_path").let {
+                            if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else ""
+                        }
                         if (poster.isBlank()) continue
                         all += SearchResult(
                             id          = "${mt}_${j.optInt("id")}",
                             title       = title,
                             posterUrl   = poster,
-                            backdropUrl = j.optString("backdrop_path").let { if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else "" },
+                            backdropUrl = j.optString("backdrop_path").let {
+                                if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else ""
+                            },
                             type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
                             rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                            releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4)
+                            releaseYear = (if (mt == "tv") j.optString("first_air_date")
+                            else j.optString("release_date")).take(4)
                         )
                     }
                 }

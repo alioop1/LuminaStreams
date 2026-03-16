@@ -66,8 +66,8 @@ import com.luminastreams.tv.presentation.settings.SettingsScreen
 import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
 
-private val RED   = Color(0xFFE50914)
-private val WHITE = Color(0xFFFFFFFF)
+private val RED       = Color(0xFFE50914)
+private val WHITE     = Color(0xFFFFFFFF)
 private val NAV_HOVER = Color(0x18FFFFFF)
 
 class MainActivity : ComponentActivity() {
@@ -82,8 +82,7 @@ class MainActivity : ComponentActivity() {
 fun LuminaAppShell() {
     val navController = rememberNavController()
     val repository    = remember { MediaRepositoryImpl() }
-    // HomeViewModel now manages its own OkHttp client — no repository needed
-    val homeViewModel: HomeViewModel = viewModel()
+    val homeViewModel : HomeViewModel = viewModel()
     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             AppNavHostContainer(navController, homeViewModel, repository)
@@ -93,16 +92,18 @@ fun LuminaAppShell() {
 
 @Composable
 fun AppNavHostContainer(
-    navController: NavHostController,
-    homeViewModel: HomeViewModel,
-    repository: MediaRepositoryImpl
+    navController : NavHostController,
+    homeViewModel : HomeViewModel,
+    repository    : MediaRepositoryImpl
 ) {
-    val context     = LocalContext.current
-    val application = context.applicationContext as Application
-    val backStack   by navController.currentBackStackEntryAsState()
+    val context      = LocalContext.current
+    val application  = context.applicationContext as Application
+    val backStack    by navController.currentBackStackEntryAsState()
     val currentRoute = backStack?.destination?.route ?: "home"
 
-    val showSharedHeader = currentRoute in listOf("search", "settings", "watchlist")
+    // "search" is intentionally NOT in this list — SearchScreen has its own
+    // full-screen header. Including it here would create a duplicate nav bar.
+    val showSharedHeader = currentRoute in listOf("settings", "watchlist")
 
     Box(Modifier.fillMaxSize()) {
         NavHost(navController = navController, startDestination = "home") {
@@ -134,7 +135,6 @@ fun AppNavHostContainer(
                     state                 = detailsViewModel.state.collectAsState().value,
                     onEvent               = detailsViewModel::onEvent,
                     onPlayDirectUrl       = { videoUrl, imdbId ->
-                        // ✅ FIXED: Navigate to internal player instead of external intent
                         val encodedUrl = android.net.Uri.encode(videoUrl)
                         val safeImdbId = imdbId.ifBlank { "_" }
                         navController.navigate("player/$encodedUrl/$safeImdbId")
@@ -144,9 +144,8 @@ fun AppNavHostContainer(
                 )
             }
 
-            // ✅ FIXED: Internal player screen route
             composable(
-                route = "player/{videoUrl}/{imdbId}",
+                route     = "player/{videoUrl}/{imdbId}",
                 arguments = listOf(
                     navArgument("videoUrl") { type = NavType.StringType },
                     navArgument("imdbId")   { type = NavType.StringType }
@@ -164,22 +163,23 @@ fun AppNavHostContainer(
                 }
             }
 
+            // SearchScreen is fully self-contained — no wrapper Box, no top padding.
             composable("search") {
-                val vm: SearchViewModel = viewModel(factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application))
-                Box(Modifier.fillMaxSize().background(Color(0xFF141414))) {
-                    Box(Modifier.fillMaxSize().padding(top = 68.dp)) {
-                        SearchScreen(
-                            state          = vm.state.collectAsState().value,
-                            onIntent       = vm::onIntent,
-                            onNavigateBack = { navController.popBackStack() },
-                            onResultClick  = { result -> navController.navigate("details/${result.id}") }
-                        )
-                    }
-                }
+                val vm: SearchViewModel = viewModel(
+                    factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+                )
+                SearchScreen(
+                    state          = vm.state.collectAsState().value,
+                    onIntent       = vm::onIntent,
+                    onNavigateBack = { navController.popBackStack() },
+                    onResultClick  = { result -> navController.navigate("details/${result.id}") }
+                )
             }
 
             composable("settings") {
-                val vm: SettingsViewModel = viewModel(factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application))
+                val vm: SettingsViewModel = viewModel(
+                    factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+                )
                 Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
                     Box(Modifier.fillMaxSize().padding(top = 68.dp)) {
                         SettingsScreen(
@@ -203,13 +203,13 @@ fun AppNavHostContainer(
 
         if (showSharedHeader) {
             LuminaSharedHeader(
-                currentRoute  = currentRoute,
-                modifier      = Modifier.align(Alignment.TopStart).fillMaxWidth().zIndex(20f),
-                onSearch      = { navController.navigate("search")    { launchSingleTop = true } },
-                onMovies      = { navController.navigate("home")       { launchSingleTop = true } },
-                onTV          = { navController.navigate("home")       { launchSingleTop = true } },
-                onWatchlist   = { navController.navigate("watchlist")  { launchSingleTop = true } },
-                onSettings    = { navController.navigate("settings")   { launchSingleTop = true } }
+                currentRoute = currentRoute,
+                modifier     = Modifier.align(Alignment.TopStart).fillMaxWidth().zIndex(20f),
+                onSearch     = { navController.navigate("search")    { launchSingleTop = true } },
+                onMovies     = { navController.navigate("home")       { launchSingleTop = true } },
+                onTV         = { navController.navigate("home")       { launchSingleTop = true } },
+                onWatchlist  = { navController.navigate("watchlist")  { launchSingleTop = true } },
+                onSettings   = { navController.navigate("settings")   { launchSingleTop = true } }
             )
         }
     }
@@ -217,13 +217,13 @@ fun AppNavHostContainer(
 
 @Composable
 fun LuminaSharedHeader(
-    currentRoute: String,
-    modifier: Modifier = Modifier,
-    onSearch: () -> Unit,
-    onMovies: () -> Unit,
-    onTV: () -> Unit,
-    onWatchlist: () -> Unit,
-    onSettings: () -> Unit
+    currentRoute : String,
+    modifier     : Modifier = Modifier,
+    onSearch     : () -> Unit,
+    onMovies     : () -> Unit,
+    onTV         : () -> Unit,
+    onWatchlist  : () -> Unit,
+    onSettings   : () -> Unit
 ) {
     val time = remember {
         val c = java.util.Calendar.getInstance()
@@ -236,22 +236,26 @@ fun LuminaSharedHeader(
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 48.dp),
-            verticalAlignment = Alignment.CenterVertically,
+            verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Column(horizontalAlignment = Alignment.Start, modifier = Modifier.padding(end = 16.dp)) {
-                Text(text = buildAnnotatedString {
-                    withStyle(SpanStyle(color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.5.sp)) { append("LUMINA") }
-                    withStyle(SpanStyle(color = RED,   fontSize = 11.sp, fontWeight = FontWeight.Bold,  letterSpacing = 1.5.sp)) { append("STREAMS") }
-                })
-                Box(Modifier.width(48.dp).height(2.dp).clip(RoundedCornerShape(1.dp))
-                    .background(Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f)))))
+                Text(
+                    text = buildAnnotatedString {
+                        withStyle(SpanStyle(color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.5.sp)) { append("LUMINA") }
+                        withStyle(SpanStyle(color = RED,   fontSize = 11.sp, fontWeight = FontWeight.Bold,  letterSpacing = 1.5.sp)) { append("STREAMS") }
+                    }
+                )
+                Box(
+                    Modifier.width(48.dp).height(2.dp).clip(RoundedCornerShape(1.dp))
+                        .background(Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f))))
+                )
             }
-            SharedNavPill("Search",    Icons.Default.Search,   currentRoute == "search",    onSearch)
-            SharedNavPill("Movies",    Icons.Default.Movie,    false,                        onMovies)
-            SharedNavPill("TV",        Icons.Default.LiveTv,   false,                        onTV)
-            SharedNavPill("Watchlist", Icons.Default.Bookmark, currentRoute == "watchlist",  onWatchlist)
-            SharedNavPill("Settings",  Icons.Default.Settings, currentRoute == "settings",   onSettings)
+            SharedNavPill("Search",    Icons.Default.Search,   currentRoute == "search",   onSearch)
+            SharedNavPill("Movies",    Icons.Default.Movie,    false,                       onMovies)
+            SharedNavPill("TV",        Icons.Default.LiveTv,   false,                       onTV)
+            SharedNavPill("Watchlist", Icons.Default.Bookmark, currentRoute == "watchlist", onWatchlist)
+            SharedNavPill("Settings",  Icons.Default.Settings, currentRoute == "settings",  onSettings)
             Spacer(Modifier.weight(1f))
             Text(time, color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
         }
@@ -260,10 +264,10 @@ fun LuminaSharedHeader(
 
 @Composable
 fun SharedNavPill(
-    label: String,
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    isSelected: Boolean,
-    onClick: () -> Unit
+    label      : String,
+    icon       : androidx.compose.ui.graphics.vector.ImageVector,
+    isSelected : Boolean,
+    onClick    : () -> Unit
 ) {
     val density = LocalDensity.current
     var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
@@ -276,7 +280,9 @@ fun SharedNavPill(
             pressedContainerColor = Color(0xFF1E1E1E)
         ),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        modifier = Modifier.height(44.dp).onSizeChanged { surfaceSize = it }
+        modifier = Modifier
+            .height(44.dp)
+            .onSizeChanged { surfaceSize = it }
             .drawWithCache {
                 onDrawWithContent {
                     drawContent()
@@ -289,10 +295,19 @@ fun SharedNavPill(
                         val top   = h - barH
                         val glowH = with(density) { 12.dp.toPx() }
                         drawRect(
-                            brush   = Brush.verticalGradient(listOf(Color.Transparent, RED.copy(alpha = 0.45f)), startY = top - glowH, endY = top),
-                            topLeft = Offset(padH, top - glowH), size = Size(barW, glowH)
+                            brush   = Brush.verticalGradient(
+                                listOf(Color.Transparent, RED.copy(0.45f)),
+                                startY = top - glowH, endY = top
+                            ),
+                            topLeft = Offset(padH, top - glowH),
+                            size    = Size(barW, glowH)
                         )
-                        drawRoundRect(color = RED, topLeft = Offset(padH, top), size = Size(barW, barH), cornerRadius = CornerRadius(barH / 2))
+                        drawRoundRect(
+                            color       = RED,
+                            topLeft     = Offset(padH, top),
+                            size        = Size(barW, barH),
+                            cornerRadius = CornerRadius(barH / 2)
+                        )
                     }
                 }
             }
@@ -302,8 +317,19 @@ fun SharedNavPill(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(16.dp), tint = if (isSelected) RED else WHITE.copy(alpha = 0.75f))
-            Text(text = label, color = if (isSelected) WHITE else WHITE.copy(alpha = 0.75f), fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, letterSpacing = 0.2.sp)
+            Icon(
+                imageVector        = icon,
+                contentDescription = null,
+                modifier           = Modifier.size(16.dp),
+                tint               = if (isSelected) RED else WHITE.copy(0.75f)
+            )
+            Text(
+                text       = label,
+                color      = if (isSelected) WHITE else WHITE.copy(0.75f),
+                fontSize   = 14.sp,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                letterSpacing = 0.2.sp
+            )
         }
     }
 }
