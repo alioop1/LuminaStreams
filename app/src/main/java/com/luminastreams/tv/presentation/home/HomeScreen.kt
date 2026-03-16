@@ -53,9 +53,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  PALETTE
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 private val BG          = Color(0xFF080808)
 private val RED         = Color(0xFFE50914)
 private val RED2        = Color(0xFFB20710)
@@ -69,27 +69,31 @@ private val NETFLIX_RED = Color(0xFFE50914)
 private val APPLE_BG    = Color(0xFF1C1C1E)
 private val DISNEY_BLUE = Color(0xFF113CCF)
 
+// Nav bar total height = search row (60dp) + pills row (48dp) + bottom gap (4dp) = 112dp
+private val NAV_H = 112.dp
+
 private val leftScrim = Brush.horizontalGradient(colorStops = arrayOf(
     0.00f to Color(0xE0080808), 0.22f to Color(0xC0080808),
     0.40f to Color(0x80080808), 0.58f to Color(0x26080808), 0.72f to Color.Transparent))
 private val topScrim = Brush.verticalGradient(colorStops = arrayOf(
-    0.00f to Color(0xAA080808), 0.16f to Color(0x55080808), 0.32f to Color.Transparent))
+    0.00f to Color(0xFF050505), 0.10f to Color(0xE0050505),
+    0.20f to Color(0xA0050505), 0.38f to Color.Transparent))
 private val bottomScrim = Brush.verticalGradient(colorStops = arrayOf(
     0.00f to Color.Transparent, 0.44f to Color.Transparent,
     0.63f to Color(0x88080808), 0.80f to Color(0xCC080808), 1.00f to Color(0xF8080808)))
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  ROW TYPES
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY }
 sealed class RowDef {
     data class Regular(val title: String,      val movies: List<Movie>) : RowDef()
     data class Studio (val brand: StudioBrand, val movies: List<Movie>) : RowDef()
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  FOCUS STATE
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Stable
 class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused     by mutableStateOf(false)
@@ -104,9 +108,9 @@ class HomeFocusState(initialRow: Int = 0) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  HOME SCREEN
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 fun HomeScreen(
     state:         HomeState,
@@ -126,15 +130,15 @@ fun HomeScreen(
             if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi",                state.movieScifi))
             if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated of All Time", state.movieTopRated))
         } else buildList {
-            if (state.tvTrending.isNotEmpty())    add(RowDef.Regular("Trending Shows",         state.tvTrending))
-            if (state.tvNetflix.isNotEmpty())     add(RowDef.Studio(StudioBrand.NETFLIX,       state.tvNetflix))
-            if (state.tvPremieres.isNotEmpty())   add(RowDef.Regular("On The Air",             state.tvPremieres))
-            if (state.tvAppleTV.isNotEmpty())     add(RowDef.Studio(StudioBrand.APPLE_TV,      state.tvAppleTV))
-            if (state.tvDrama.isNotEmpty())       add(RowDef.Regular("Drama",                  state.tvDrama))
-            if (state.tvCrime.isNotEmpty())       add(RowDef.Regular("Crime & Thriller",       state.tvCrime))
-            if (state.tvDisney.isNotEmpty())      add(RowDef.Studio(StudioBrand.DISNEY,        state.tvDisney))
-            if (state.tvScifi.isNotEmpty())       add(RowDef.Regular("Sci-Fi & Fantasy",       state.tvScifi))
-            if (state.tvTopRated.isNotEmpty())    add(RowDef.Regular("Top Rated Shows",        state.tvTopRated))
+            if (state.tvTrending.isNotEmpty())   add(RowDef.Regular("Trending Shows",     state.tvTrending))
+            if (state.tvNetflix.isNotEmpty())    add(RowDef.Studio(StudioBrand.NETFLIX,   state.tvNetflix))
+            if (state.tvPremieres.isNotEmpty())  add(RowDef.Regular("On The Air",          state.tvPremieres))
+            if (state.tvAppleTV.isNotEmpty())    add(RowDef.Studio(StudioBrand.APPLE_TV,  state.tvAppleTV))
+            if (state.tvDrama.isNotEmpty())      add(RowDef.Regular("Drama",               state.tvDrama))
+            if (state.tvCrime.isNotEmpty())      add(RowDef.Regular("Crime & Thriller",    state.tvCrime))
+            if (state.tvDisney.isNotEmpty())     add(RowDef.Studio(StudioBrand.DISNEY,    state.tvDisney))
+            if (state.tvScifi.isNotEmpty())      add(RowDef.Regular("Sci-Fi & Fantasy",   state.tvScifi))
+            if (state.tvTopRated.isNotEmpty())   add(RowDef.Regular("Top Rated Shows",    state.tvTopRated))
         }
     }
 
@@ -145,20 +149,25 @@ fun HomeScreen(
         (config.screenHeightDp * 0.44f).dp.coerceIn(270.dp, 380.dp)
     }
 
+    // Update hero when row index changes (only if not nav-focused)
     LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
             delay(180L)
             val movies = when (val r = rows.getOrNull(ri)) {
-                is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; null -> emptyList()
+                is RowDef.Regular -> r.movies
+                is RowDef.Studio  -> r.movies
+                null              -> emptyList()
             }
             if (focusState.heroMovie == null) focusState.heroMovie = movies.firstOrNull()
         }
     }
+    // Set initial hero once data loads
     LaunchedEffect(state.isLoading, rows.size) {
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) {
             focusState.heroMovie = when (val r = rows[0]) {
-                is RowDef.Regular -> r.movies.firstOrNull(); is RowDef.Studio -> r.movies.firstOrNull()
+                is RowDef.Regular -> r.movies.firstOrNull()
+                is RowDef.Studio  -> r.movies.firstOrNull()
             }
         }
     }
@@ -173,10 +182,10 @@ fun HomeScreen(
         BackdropLayer(focusState.heroMovie)
         HeroOverlay(focusState.heroMovie, rowsViewH)
         ContentLayer(
-            rows        = rows,
-            focusState  = focusState,
-            activeTab   = state.selectedTab,
-            rowsViewH   = rowsViewH,
+            rows         = rows,
+            focusState   = focusState,
+            activeTab    = state.selectedTab,
+            rowsViewH    = rowsViewH,
             onMovieClick = onMovieClick,
             onHeroUpdate = { focusState.heroMovie = it },
             onSearch     = { navController.navigate("search") },
@@ -188,22 +197,26 @@ fun HomeScreen(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  BACKDROP
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
     val cfg = LocalConfiguration.current
     val dns = LocalDensity.current
     val (bwPx, bhPx) = remember(cfg, dns) {
-        with(dns) { cfg.screenWidthDp.dp.roundToPx().coerceIn(1, 3840) to cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 2160) }
+        with(dns) {
+            cfg.screenWidthDp.dp.roundToPx().coerceIn(1, 3840) to
+            cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 2160)
+        }
     }
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
         Crossfade(
             targetState   = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
-            animationSpec = tween(700, easing = FastOutSlowInEasing), label = "bd"
+            animationSpec = tween(700, easing = FastOutSlowInEasing),
+            label         = "bd"
         ) { url ->
             if (!url.isNullOrBlank()) {
                 AsyncImage(
@@ -219,30 +232,33 @@ private fun BackdropLayer(hero: Movie?) {
                 )
             }
         }
+        // topScrim covers the full nav height so pills always readable
         Box(Modifier.fillMaxSize().drawBehind {
-            drawRect(leftScrim); drawRect(topScrim); drawRect(bottomScrim)
+            drawRect(leftScrim)
+            drawRect(topScrim)
+            drawRect(bottomScrim)
         })
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  HERO OVERLAY
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
-    val bottomPad = rowsViewH + 24.dp
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         hero?.let { m ->
             key(m.id) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(start = 56.dp, end = 460.dp, bottom = bottomPad),
+                        .padding(start = 56.dp, end = 460.dp, bottom = rowsViewH + 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(
-                        m.title, color = WHITE, fontSize = 46.sp, fontWeight = FontWeight.Black,
-                        lineHeight = 52.sp, letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
+                        m.title, color = WHITE, fontSize = 46.sp,
+                        fontWeight = FontWeight.Black, lineHeight = 52.sp,
+                        letterSpacing = 0.sp, maxLines = 2, overflow = TextOverflow.Ellipsis
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (m.year > 0) {
@@ -276,9 +292,9 @@ private fun HeroOverlay(hero: Movie?, rowsViewH: Dp) {
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  CONTENT LAYER
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun ContentLayer(
     rows: List<RowDef>, focusState: HomeFocusState, activeTab: String, rowsViewH: Dp,
@@ -286,16 +302,29 @@ private fun ContentLayer(
     onSearch: () -> Unit, onMoviesTab: () -> Unit, onSeriesTab: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
-    // firstNavFR now points to the first pill (Home), not Search
-    val firstNavFR = remember { FocusRequester() }
-    val rowFRs     = remember(rows.size) { List(rows.size) { FocusRequester() } }
+    val firstNavFR  = remember { FocusRequester() }   // Home pill
+    val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
 
-    LaunchedEffect(Unit) { delay(300); runCatching { firstNavFR.requestFocus() } }
+    // FIX: initial focus goes to the FIRST CARD, NOT to nav bar
+    // This prevents the jump-to-nav-on-start behaviour.
+    var initialFocusDone by remember { mutableStateOf(false) }
+    LaunchedEffect(rows.size) {
+        if (!initialFocusDone && rows.isNotEmpty()) {
+            delay(350)
+            initialFocusDone = true
+            runCatching { firstCardFRs[0].requestFocus() }
+        }
+    }
+
+    // When isNavFocused flips to true → move to first pill
+    // When it flips to false → move to current row's first card
     LaunchedEffect(focusState.isNavFocused) {
-        if (focusState.isNavFocused) { delay(40); runCatching { firstNavFR.requestFocus() } }
-        else {
+        if (focusState.isNavFocused) {
+            delay(40)
+            runCatching { firstNavFR.requestFocus() }
+        } else if (initialFocusDone) {
             val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-            runCatching { rowFRs.getOrNull(idx)?.requestFocus() }
+            runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
         }
     }
 
@@ -317,8 +346,6 @@ private fun ContentLayer(
                     Key.DirectionDown -> {
                         if (focusState.isNavFocused) {
                             focusState.isNavFocused = false
-                            val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-                            runCatching { rowFRs.getOrNull(idx)?.requestFocus() }
                             true
                         } else if (focusState.currentRowIndex < rows.size - 1) {
                             focusState.currentRowIndex++
@@ -333,51 +360,54 @@ private fun ContentLayer(
                 }
             }
     ) {
+        // Nav bar — fixed height box, always on top, background baked into topScrim
         TopNavBar(
             activeTab   = activeTab,
             firstNavFR  = firstNavFR,
-            focusState  = focusState,
             onSearch    = onSearch,
             onMoviesTab = onMoviesTab,
             onSeriesTab = onSeriesTab,
             onWatchlist = onWatchlist,
             onSettings  = onSettings,
             onNavExit   = { focusState.isNavFocused = false },
-            modifier    = Modifier.fillMaxWidth().align(Alignment.TopStart).zIndex(10f)
+            modifier    = Modifier
+                .fillMaxWidth()
+                .height(NAV_H)
+                .align(Alignment.TopStart)
+                .zIndex(10f)
         )
         RowsLayer(
-            rows        = rows,
-            focusState  = focusState,
-            rowFRs      = rowFRs,
-            rowsViewH   = rowsViewH,
-            onItemFocus = onHeroUpdate,
-            onItemClick = onMovieClick
+            rows         = rows,
+            focusState   = focusState,
+            rowFRs       = firstCardFRs,
+            rowsViewH    = rowsViewH,
+            onItemFocus  = onHeroUpdate,
+            onItemClick  = onMovieClick
         )
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  TOP NAV BAR
 //
-//  Layout (top to bottom):
-//    Row 1 ─ 56dp ─ Logo | Search bar (full-width fake input) | Clock
-//    Row 2 ─ 48dp ─ Home pill | TV pill | Watchlist pill | Settings pill
+//  Fixed height = NAV_H (112dp)
+//  Row 1 (60dp): Logo | SearchBar | Clock
+//  Row 2 (48dp): Home | TV Shows | Watchlist | Settings
 //
-//  Search is a pill-shaped tappable bar that navigates to the search screen.
-//  No search icon pill inside the pills row.
-// ══════════════════════════════════════════════════════════════════════════════
+//  Background = transparent — the topScrim in BackdropLayer
+//  provides the dark overlay behind both rows.
+// ═══════════════════════════════════════════════════
 @Composable
 private fun TopNavBar(
-    activeTab: String,
-    firstNavFR: FocusRequester,
-    focusState: HomeFocusState,
-    onSearch: () -> Unit,
+    activeTab:   String,
+    firstNavFR:  FocusRequester,
+    onSearch:    () -> Unit,
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit,
     onWatchlist: () -> Unit,
-    onSettings: () -> Unit,
-    onNavExit: () -> Unit,
-    modifier: Modifier = Modifier
+    onSettings:  () -> Unit,
+    onNavExit:   () -> Unit,
+    modifier:    Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -391,15 +421,9 @@ private fun TopNavBar(
         }
     }
 
-    // Solid gradient so nav is always readable against any backdrop
-    Column(
-        modifier = modifier.background(
-            Brush.verticalGradient(
-                listOf(Color(0xFF050505), Color(0xE0050505), Color(0x99050505), Color.Transparent)
-            )
-        )
-    ) {
-        // ─── Row 1: Logo + Search bar + Clock ───────────────────────
+    Column(modifier = modifier) {
+
+        // ── Row 1: Logo + Search bar + Clock ──────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -409,21 +433,14 @@ private fun TopNavBar(
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             LuminaLogo()
-            // Search bar — takes remaining space between logo and clock
-            SearchBarButton(
-                modifier  = Modifier.weight(1f),
-                onClick   = onSearch
-            )
+            SearchBarButton(modifier = Modifier.weight(1f), onClick = onSearch)
             Text(
-                time,
-                color         = WHITE,
-                fontSize      = 17.sp,
-                fontWeight    = FontWeight.Bold,
-                letterSpacing = 1.sp
+                time, color = WHITE, fontSize = 17.sp,
+                fontWeight = FontWeight.Bold, letterSpacing = 1.sp
             )
         }
 
-        // ─── Row 2: Navigation pills (no Search) ────────────────────
+        // ── Row 2: Pills ───────────────────────────────────
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -437,54 +454,35 @@ private fun TopNavBar(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            NavPill(
-                label          = "Home",
-                icon           = Icons.Default.Home,
-                isSelected     = activeTab == "סרטים",
-                focusRequester = firstNavFR
-            ) { onMoviesTab() }
-            NavPill(
-                label      = "TV Shows",
-                icon       = Icons.Default.LiveTv,
-                isSelected = activeTab == "סדרות"
-            ) { onSeriesTab() }
-            NavPill(
-                label      = "Watchlist",
-                icon       = Icons.Default.Bookmark,
-                isSelected = false
-            ) { onWatchlist() }
-            NavPill(
-                label      = "Settings",
-                icon       = Icons.Default.Settings,
-                isSelected = false
-            ) { onSettings() }
+            NavPill("Home",      Icons.Default.Home,     activeTab == "סרטים", firstNavFR) { onMoviesTab() }
+            NavPill("TV Shows",  Icons.Default.LiveTv,   activeTab == "סדרות")            { onSeriesTab() }
+            NavPill("Watchlist", Icons.Default.Bookmark, false)                            { onWatchlist() }
+            NavPill("Settings",  Icons.Default.Settings, false)                            { onSettings() }
         }
-
-        Spacer(Modifier.height(4.dp))
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  SEARCH BAR BUTTON — fake input field look, click navigates to search screen
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
+//  SEARCH BAR BUTTON
+// ───────────────────────────────────────────────────
 @Composable
 private fun SearchBarButton(modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
-        onClick = onClick,
-        colors  = ClickableSurfaceDefaults.colors(
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(
             containerColor        = Color(0x33FFFFFF),
             focusedContainerColor = Color(0x55FFFFFF),
             pressedContainerColor = Color(0x44FFFFFF),
             contentColor          = DIM2,
             focusedContentColor   = WHITE
         ),
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        border = ClickableSurfaceDefaults.border(
-            border        = Border(androidx.compose.foundation.BorderStroke(1.dp, Color(0x22FFFFFF)), shape = RoundedCornerShape(50)),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+        border   = ClickableSurfaceDefaults.border(
+            border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   Color(0x22FFFFFF)), shape = RoundedCornerShape(50)),
             focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x88FFFFFF)), shape = RoundedCornerShape(50))
         ),
-        glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = modifier.height(38.dp)
     ) {
         Row(
@@ -492,68 +490,50 @@ private fun SearchBarButton(modifier: Modifier = Modifier, onClick: () -> Unit) 
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            Icon(
-                imageVector        = Icons.Default.Search,
-                contentDescription = null,
-                modifier           = Modifier.size(16.dp)
-            )
-            Text(
-                text       = "Search movies, shows...",
-                fontSize   = 13.sp,
-                fontWeight = FontWeight.Normal,
-                letterSpacing = 0.2.sp
-            )
+            Icon(Icons.Default.Search, null, Modifier.size(16.dp))
+            Text("Search movies, shows...", fontSize = 13.sp, fontWeight = FontWeight.Normal, letterSpacing = 0.2.sp)
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 //  LUMINA LOGO
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
 @Composable
 private fun LuminaLogo() {
-    Row(
-        verticalAlignment     = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        Box(
-            Modifier.size(34.dp).clip(RoundedCornerShape(7.dp)).background(RED),
-            Alignment.Center
-        ) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(Modifier.size(34.dp).clip(RoundedCornerShape(7.dp)).background(RED), Alignment.Center) {
             Text("L", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Black)
         }
         Column {
-            Text("LUMINA",  color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Black,  letterSpacing = 2.sp,  lineHeight = 14.sp)
-            Text("STREAMS", color = RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,   letterSpacing = 2.sp,  lineHeight = 9.sp)
+            Text("LUMINA",  color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
+            Text("STREAMS", color = RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 9.sp)
         }
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-//  NAV PILL — no Search, just Home / TV / Watchlist / Settings
-//  containerColor = 0x44 (27%) so always visible even on bright backdrops
-// ─────────────────────────────────────────────────────────────────────────────
+// ───────────────────────────────────────────────────
+//  NAV PILL
+// ───────────────────────────────────────────────────
 @Composable
 private fun NavPill(
-    label: String,
-    icon: ImageVector,
-    isSelected: Boolean,
+    label: String, icon: ImageVector, isSelected: Boolean,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     Surface(
-        onClick = onClick,
-        colors  = ClickableSurfaceDefaults.colors(
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(
             containerColor        = if (isSelected) WHITE else Color(0x44FFFFFF),
             focusedContainerColor = if (isSelected) WHITE else Color(0x77FFFFFF),
             pressedContainerColor = Color(0x33FFFFFF),
             contentColor          = if (isSelected) Color(0xFF0D0D0D) else WHITE,
             focusedContentColor   = if (isSelected) Color(0xFF0D0D0D) else WHITE
         ),
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        border = ClickableSurfaceDefaults.border(Border.None, Border.None),
-        glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border   = ClickableSurfaceDefaults.border(Border.None, Border.None),
+        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier
             .height(36.dp)
             .wrapContentWidth()
@@ -565,20 +545,15 @@ private fun NavPill(
             horizontalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             Icon(icon, null, Modifier.size(15.dp))
-            Text(
-                label,
-                fontSize   = 13.sp,
-                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                letterSpacing = 0.1.sp,
-                softWrap   = false
-            )
+            Text(label, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                letterSpacing = 0.1.sp, softWrap = false)
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  ROWS LAYER
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun RowsLayer(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
@@ -588,8 +563,10 @@ private fun RowsLayer(
 
     var isFast by remember { mutableStateOf(false) }
     LaunchedEffect(focusState.lastNavEventTime) {
-        val a = focusState.lastNavEventTime; isFast = true
-        delay(600L); if (focusState.lastNavEventTime == a) isFast = false
+        val snap = focusState.lastNavEventTime
+        isFast = true
+        delay(600L)
+        if (focusState.lastNavEventTime == snap) isFast = false
     }
 
     val listState = rememberLazyListState()
@@ -629,8 +606,8 @@ private fun RowsLayer(
                             .graphicsLayer { this.alpha = alpha }
                             .zIndex(if (!focusState.isNavFocused && index == curRow) 10f else index.toFloat())
                     ) {
-                        val isActive    = !focusState.isNavFocused && index == curRow
-                        val firstCardFR = rowFRs.getOrNull(index)
+                        val isActive = !focusState.isNavFocused && index == curRow
+                        val cardFR   = rowFRs.getOrNull(index)
                         val onFocus: (Movie) -> Unit = { m ->
                             focusState.currentRowIndex  = index
                             focusState.isNavFocused     = false
@@ -638,8 +615,8 @@ private fun RowsLayer(
                             onItemFocus(m)
                         }
                         when (rowDef) {
-                            is RowDef.Regular -> ContentRow(rowDef.title, rowDef.movies, isActive, firstCardFR, onFocus, onItemClick)
-                            is RowDef.Studio  -> StudioRow(rowDef.brand,  rowDef.movies, isActive, firstCardFR, onFocus, onItemClick)
+                            is RowDef.Regular -> ContentRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
+                            is RowDef.Studio  -> StudioRow(rowDef.brand,  rowDef.movies, isActive, cardFR, onFocus, onItemClick)
                         }
                     }
                 }
@@ -648,9 +625,9 @@ private fun RowsLayer(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  CONTENT ROW
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun ContentRow(
     title: String, movies: List<Movie>, isActiveRow: Boolean,
@@ -666,18 +643,18 @@ private fun ContentRow(
     }
     Column {
         Text(
-            text     = title,
-            color    = WHITE.copy(if (isActiveRow) 1f else 0.45f),
-            fontSize = 13.sp,
+            title,
+            color      = WHITE.copy(if (isActiveRow) 1f else 0.45f),
+            fontSize   = 13.sp,
             fontWeight    = if (isActiveRow) FontWeight.Bold else FontWeight.Normal,
             letterSpacing = 0.5.sp,
             modifier      = Modifier.padding(start = 52.dp, bottom = 8.dp)
         )
         LazyRow(
-            state                  = rowState,
-            contentPadding         = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
-            horizontalArrangement  = Arrangement.spacedBy(10.dp),
-            modifier               = Modifier.fillMaxWidth()
+            state                 = rowState,
+            contentPadding        = PaddingValues(horizontal = 52.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier              = Modifier.fillMaxWidth()
         ) {
             itemsIndexed(extMovies, key = { idx, m -> "${m.id}_$idx" }) { idx, movie ->
                 PosterCard(
@@ -691,9 +668,9 @@ private fun ContentRow(
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  STUDIO ROW
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 private fun StudioRow(
     brand: StudioBrand, movies: List<Movie>, isActiveRow: Boolean,
@@ -715,7 +692,7 @@ private fun StudioRow(
         ) {
             StudioLogo(brand, isActiveRow)
             Text(
-                text = when (brand) {
+                when (brand) {
                     StudioBrand.NETFLIX  -> "Netflix Originals"
                     StudioBrand.APPLE_TV -> "Apple TV+ Originals"
                     StudioBrand.DISNEY   -> "Disney+ Exclusives"
@@ -748,33 +725,31 @@ private fun StudioRow(
 private fun StudioLogo(brand: StudioBrand, isActive: Boolean) {
     val a = if (isActive) 1f else 0.4f
     when (brand) {
-        StudioBrand.NETFLIX  ->
+        StudioBrand.NETFLIX ->
             Box(Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(3.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center) {
                 Text("N", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
             }
         StudioBrand.APPLE_TV ->
             Box(
                 Modifier.height(22.dp).wrapContentWidth()
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(APPLE_BG.copy(a))
+                    .clip(RoundedCornerShape(11.dp)).background(APPLE_BG.copy(a))
                     .border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp))
                     .padding(horizontal = 9.dp),
                 Alignment.Center
             ) { Text("tv+", color = WHITE.copy(a), fontSize = 13.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic) }
-        StudioBrand.DISNEY   ->
+        StudioBrand.DISNEY ->
             Box(
                 Modifier.height(22.dp).wrapContentWidth()
-                    .clip(RoundedCornerShape(3.dp))
-                    .background(DISNEY_BLUE.copy(a))
+                    .clip(RoundedCornerShape(3.dp)).background(DISNEY_BLUE.copy(a))
                     .padding(horizontal = 8.dp),
                 Alignment.Center
             ) { Text("DISNEY+", color = WHITE.copy(a), fontSize = 8.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp) }
     }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  POSTER CARD  —  ContentScale.FillBounds → no bottom crop
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
+//  POSTER CARD
+// ═══════════════════════════════════════════════════
 @Composable
 fun PosterCard(
     movie:    Movie,
@@ -848,19 +823,14 @@ fun PosterCard(
             color      = if (focused) WHITE else DIM,
             fontSize   = 11.sp,
             fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines   = 1,
-            overflow   = TextOverflow.Ellipsis,
+            maxLines   = 1, overflow = TextOverflow.Ellipsis,
             modifier   = Modifier.width(cardW)
         )
-        Text(
-            if (movie.mediaType == "tv") "TV Show" else "Movie",
-            color    = DIM3,
-            fontSize = 10.sp
-        )
+        Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
     }
 }
 
-// Aliases for backward-compat
+// Aliases
 @Composable
 fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 200.dp, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
     PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
@@ -868,9 +838,9 @@ fun ArvioCard(movie: Movie, cardW: Dp = 130.dp, cardH: Dp = 200.dp, modifier: Mo
 fun NfCard(movie: Movie, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) =
     PosterCard(movie, modifier = modifier, onFocused = onFocused, onClick = onClick)
 
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 //  LOADING / ERROR
-// ══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════
 @Composable
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label = "sk")
@@ -880,23 +850,16 @@ fun HomeLoading() {
         start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f)
     )
     Box(Modifier.fillMaxSize().background(BG)) {
-        Column(
-            Modifier.fillMaxSize().padding(top = 80.dp, start = 52.dp, end = 52.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            // Skeleton search bar
+        Column(Modifier.fillMaxSize().padding(top = 16.dp, start = 52.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Box(Modifier.fillMaxWidth().height(38.dp).clip(RoundedCornerShape(50)).background(shimmer))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 repeat(4) { Box(Modifier.width(100.dp).height(36.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
             }
             Spacer(Modifier.height(20.dp))
             Box(Modifier.width(420.dp).height(56.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
-            Spacer(Modifier.height(4.dp))
             Box(Modifier.width(240.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-            Spacer(Modifier.height(6.dp))
             repeat(3) {
                 Box(Modifier.fillMaxWidth(0.48f).height(12.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-                Spacer(Modifier.height(5.dp))
             }
             Spacer(Modifier.weight(1f))
             repeat(2) {
@@ -914,10 +877,7 @@ fun HomeLoading() {
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Text("⚠", fontSize = 52.sp)
             Text(message, color = DIM, fontSize = 16.sp, maxLines = 2)
             Surface(
