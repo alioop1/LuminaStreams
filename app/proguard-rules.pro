@@ -11,7 +11,8 @@
 -keep class kotlin.** { *; }
 -keep class kotlin.Metadata { *; }
 -keepclassmembers class **$WhenMappings { <fields>; }
--keepclassmembers class kotlin.Lazy { **; }
+-keepclassmembers class kotlin.Lazy { *; }
+
 -dontwarn kotlin.**
 
 # ── Coroutines ────────────────────────────────────────────────────────
