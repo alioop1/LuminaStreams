@@ -485,7 +485,7 @@ private fun TwoRowNavBar(
         while (true) {
             val c = java.util.Calendar.getInstance()
             time = "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-            delay(30_000)
+            delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
 

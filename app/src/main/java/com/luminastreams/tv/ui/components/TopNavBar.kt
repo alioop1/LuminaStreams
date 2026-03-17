@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
 import androidx.tv.material3.IconButtonDefaults
+import androidx.tv.material3.Surface
+import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Text
 import java.text.SimpleDateFormat
 import java.util.*
@@ -67,12 +69,15 @@ fun TopNavBar(
     onProfileClick: () -> Unit,
     onDownPress: () -> Unit = {},
     onLeftEdge: () -> Unit = {},
-    modifier: Modifier = Modifier   // נוסף — מאפשר ל-HomeScreen לשלוט ב-zIndex
+    modifier: Modifier = Modifier
 ) {
     var currentTime by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
         val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
-        while (true) { currentTime = fmt.format(Date()); delay(60_000) }
+        while (true) {
+            currentTime = fmt.format(Date())
+            delay(60_000L - (System.currentTimeMillis() % 60_000L))
+        }
     }
 
     val micFR     = remember { FocusRequester() }
@@ -83,13 +88,6 @@ fun TopNavBar(
         if (kev.key == Key.DirectionDown && kev.type == KeyEventType.KeyDown) { onDownPress(); true }
         else false
     }
-
-    val iconColors = IconButtonDefaults.colors(
-        containerColor        = Color.Transparent,
-        contentColor          = Color.White,
-        focusedContainerColor = PureWhite,
-        focusedContentColor   = OledBlack
-    )
 
     Row(
         modifier = modifier
@@ -102,8 +100,19 @@ fun TopNavBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically
     ) {
+        // --- לוגו מעוצב (LUMINA STREAMS) + סטטוס ---
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("LUMINA", color = NetflixRed, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 6.sp)
+            // הלוגו החדש (תואם ל-HomeScreen ול-SearchScreen)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Box(Modifier.size(30.dp).clip(RoundedCornerShape(7.dp)).background(NetflixRed), Alignment.Center) {
+                    Text("L", color = PureWhite, fontSize = 16.sp, fontWeight = FontWeight.Black)
+                }
+                Column {
+                    Text("LUMINA",  color = PureWhite, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp, lineHeight = 12.sp)
+                    Text("STREAMS", color = NetflixRed, fontSize = 6.5.sp, fontWeight = FontWeight.Bold,  letterSpacing = 2.4.sp, lineHeight = 7.5.sp)
+                }
+            }
+
             Box(
                 modifier = Modifier.clip(RoundedCornerShape(50)).background(GlassWhite)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
@@ -116,13 +125,44 @@ fun TopNavBar(
             }
         }
 
+        // --- אזור ימני (חיפוש מתקדם + פעולות) ---
         Row(
             modifier              = Modifier.focusProperties {},
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment     = Alignment.CenterVertically
         ) {
             Text(currentTime, color = Color.White, fontSize = 16.sp,
                 fontWeight = FontWeight.Medium, modifier = Modifier.padding(end = 8.dp))
+
+            // כפתור חיפוש מעוצב (Pill) התואם ל-HomeScreen
+            Surface(
+                onClick  = onSearchClick,
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = Color(0x18FFFFFF),
+                    focusedContainerColor = Color(0x44FFFFFF),
+                    contentColor          = Color(0x44FFFFFF),
+                    focusedContentColor   = PureWhite
+                ),
+                shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                border = ClickableSurfaceDefaults.border(
+                    androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)), shape = RoundedCornerShape(50)),
+                    androidx.tv.material3.Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x70FFFFFF)), shape = RoundedCornerShape(50))
+                ),
+                modifier = Modifier
+                    .height(34.dp)
+                    .width(220.dp)
+                    .focusRequester(searchFR)
+                    .focusProperties { left = micFR; right = bellFR }
+                    .onPreviewKeyEvent(downHandler)
+            ) {
+                Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.Search, null, Modifier.size(13.dp))
+                    Text("Search movies, shows...", fontSize = 12.sp, letterSpacing = 0.sp)
+                }
+            }
+
+            val iconColors = IconButtonDefaults.colors(containerColor = Color.Transparent, contentColor = Color.White, focusedContainerColor = PureWhite, focusedContentColor = OledBlack)
 
             IconButton(
                 onClick  = onVoiceSearchClick,
@@ -139,15 +179,6 @@ fun TopNavBar(
                         }
                     }
             ) { Icon(CustomMicIcon, "Voice", modifier = Modifier.size(20.dp)) }
-
-            IconButton(
-                onClick  = onSearchClick,
-                colors   = iconColors,
-                modifier = Modifier
-                    .focusRequester(searchFR)
-                    .focusProperties { left = micFR; right = bellFR }
-                    .onPreviewKeyEvent(downHandler)
-            ) { Icon(Icons.Default.Search, "Search", modifier = Modifier.size(20.dp)) }
 
             Box {
                 IconButton(

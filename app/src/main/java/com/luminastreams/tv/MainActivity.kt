@@ -1,347 +1,324 @@
-@file:OptIn(
-    ExperimentalComposeUiApi::class,
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
-)
-package com.luminastreams.tv
+package com.luminastreams.tv.presentation.details
 
-import android.app.Application
-import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.drawWithCache
-import androidx.compose.ui.geometry.CornerRadius
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.IntSize
-import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import android.content.Context
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
-import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.navigation.NavHostController
-import androidx.navigation.NavType
-import androidx.navigation.compose.NavHost
-import androidx.navigation.compose.composable
-import androidx.navigation.compose.currentBackStackEntryAsState
-import androidx.navigation.compose.rememberNavController
-import androidx.navigation.navArgument
-import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.Icon
-import androidx.tv.material3.Surface
-import androidx.tv.material3.Text
-import com.luminastreams.tv.data.repository.MediaRepositoryImpl
+import androidx.lifecycle.viewModelScope
+import com.luminastreams.tv.data.local.WatchlistManager
+import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.usecase.GetMediaDetailsUseCase
-import com.luminastreams.tv.presentation.details.DetailsEvent
-import com.luminastreams.tv.presentation.details.DetailsScreen
-import com.luminastreams.tv.presentation.details.DetailsViewModel
-import com.luminastreams.tv.presentation.home.HomeScreen
-import com.luminastreams.tv.presentation.home.HomeViewModel
-import com.luminastreams.tv.presentation.player.PlayerScreen
-import com.luminastreams.tv.presentation.search.SearchScreen
-import com.luminastreams.tv.presentation.search.SearchViewModel
-import com.luminastreams.tv.presentation.settings.SettingsScreen
-import com.luminastreams.tv.presentation.settings.SettingsViewModel
-import com.luminastreams.tv.ui.theme.LuminaTheme
+import com.luminastreams.tv.domain.usecase.RealDebridManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
+import retrofit2.Retrofit
+import retrofit2.converter.gson.GsonConverterFactory
+import retrofit2.http.GET
+import retrofit2.http.Headers
+import retrofit2.http.Path
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.ConcurrentHashMap
 
-private val RED       = Color(0xFFE50914)
-private val WHITE     = Color(0xFFFFFFFF)
-private val NAV_HOVER = Color(0x18FFFFFF)
+data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
+data class TorrentioStream(val name: String? = null, val title: String? = null, val url: String? = null, val infoHash: String? = null)
 
-class MainActivity : ComponentActivity() {
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
-        setContent { LuminaTheme { LuminaAppShell() } }
-    }
+interface DynamicTorrentioApi {
+    @Headers("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
+    @GET("{config}/stream/{type}/{id}.json")
+    suspend fun getStreamsDynamic(
+        @Path("config", encoded = true) config: String,
+        @Path("type") type: String,
+        @Path("id") id: String
+    ): retrofit2.Response<TorrentioResponse>
 }
 
-@Composable
-fun LuminaAppShell() {
-    val navController = rememberNavController()
-    val repository    = remember { MediaRepositoryImpl() }
-    val homeViewModel : HomeViewModel = viewModel()
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
-        Box(Modifier.fillMaxSize().background(Color.Black)) {
-            AppNavHostContainer(navController, homeViewModel, repository)
+class DetailsViewModel(private val getMediaDetailsUseCase: GetMediaDetailsUseCase, private val context: Context) : ViewModel() {
+
+    private val _state = MutableStateFlow(DetailsScreenState())
+    val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
+
+    private val repository = getMediaDetailsUseCase.javaClass.getDeclaredField("repository").apply { isAccessible = true }.get(getMediaDetailsUseCase) as com.luminastreams.tv.domain.repository.MediaRepository
+    private val rdManager = RealDebridManager()
+    private val watchlistManager = WatchlistManager(context)
+    private val dynamicTorrentio = Retrofit.Builder().baseUrl("https://torrentio.strem.fun/").addConverterFactory(GsonConverterFactory.create()).build().create(DynamicTorrentioApi::class.java)
+
+    private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
+    private var scrapingJob: Job? = null
+
+    private val IMAGE_BASE_URL = "https://image.tmdb.org/t/p/w300"
+    private val IMAGE_BACKDROP = "https://image.tmdb.org/t/p/w1280"
+    private val IMAGE_POSTER = "https://image.tmdb.org/t/p/w780"
+
+    private fun getRdToken(): String {
+        return context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("rd_api_token", "")?.trim() ?: ""
+    }
+
+    fun onEvent(event: DetailsEvent) {
+        when (event) {
+            is DetailsEvent.LoadInitialData -> loadData(event.fullId)
+            is DetailsEvent.SelectSeason -> fetchEpisodesForSeason(event.seasonNumber)
+            is DetailsEvent.InitiateScraping -> startScrapingEngine(event.imdbId, event.season, event.episode)
+            is DetailsEvent.ResolveAndPlayStream -> processRealDebridLink(event.stream)
+            is DetailsEvent.ToggleFavorite -> handleToggleFavorite()
+            is DetailsEvent.ClearPlayUrl -> _state.update { it.copy(readyToPlayUrl = null) }
+            is DetailsEvent.CancelScraping -> cancelActiveScraping()
         }
     }
-}
 
-@Composable
-fun AppNavHostContainer(
-    navController : NavHostController,
-    homeViewModel : HomeViewModel,
-    repository    : MediaRepositoryImpl
-) {
-    val context      = LocalContext.current
-    val application  = context.applicationContext as Application
-    val backStack    by navController.currentBackStackEntryAsState()
-    val currentRoute = backStack?.destination?.route ?: "home"
+    private fun loadData(fullId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(isLoadingData = true, errorData = null) }
+            val type = fullId.substringBefore("_")
+            val realId = fullId.substringAfter("_")
+            try { if (type == "tv") loadTvShow(realId) else loadMovie(realId) } catch (e: Exception) { _state.update { it.copy(isLoadingData = false, errorData = "שגיאת רשת") } }
+        }
+    }
 
-    // "search" is intentionally NOT in this list — SearchScreen has its own
-    // full-screen header. Including it here would create a duplicate nav bar.
-    val showSharedHeader = currentRoute in listOf("settings", "watchlist")
+    private suspend fun loadMovie(id: String) {
+        repository.getMovieFullDetails(id).fold(
+            onSuccess = { dto ->
+                val rawImdb = dto.external_ids?.imdbId
+                val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
+                val studios = dto.credits?.crew?.filter { it.department == "Production" }?.map { it.name } ?: listOf("HBO ORIGINAL")
+                val castList = dto.credits?.cast?.take(15)?.mapNotNull {
+                    if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "$IMAGE_BASE_URL${it.profilePath}") else null
+                } ?: emptyList()
+                val genres = listOf("Action", "Sci-Fi", "Drama")
+                val directorName = dto.credits?.crew?.find { c -> c.job == "Director" }?.name ?: ""
+                val primaryGenre = genres.firstOrNull() ?: "Action"
 
-    Box(Modifier.fillMaxSize()) {
-        NavHost(navController = navController, startDestination = "home") {
+                val realRecommendations = fetchGenreRecommendations("movie", primaryGenre)
+                val realTrailerId = fetchRealTrailer(scrapeId, "movie")
 
-            composable("home") {
-                HomeScreen(
-                    state         = homeViewModel.state.collectAsState().value,
-                    viewModel     = homeViewModel,
-                    navController = navController,
-                    onMovieClick  = { id -> navController.navigate("details/$id") }
-                )
-            }
+                val isSaved = watchlistManager.isInWatchlist("movie_$id")
 
-            composable(
-                route     = "details/{fullId}",
-                arguments = listOf(navArgument("fullId") { type = NavType.StringType })
-            ) { backStackEntry ->
-                val fullId = backStackEntry.arguments?.getString("fullId") ?: return@composable
-                val detailsViewModel: DetailsViewModel = viewModel(
-                    key     = "details_$fullId",
-                    factory = object : ViewModelProvider.Factory {
-                        @Suppress("UNCHECKED_CAST")
-                        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                            DetailsViewModel(GetMediaDetailsUseCase(repository), context) as T
-                    }
-                )
-                LaunchedEffect(fullId) { detailsViewModel.onEvent(DetailsEvent.LoadInitialData(fullId)) }
-                DetailsScreen(
-                    state                 = detailsViewModel.state.collectAsState().value,
-                    onEvent               = detailsViewModel::onEvent,
-                    onPlayDirectUrl       = { videoUrl, imdbId ->
-                        val encodedUrl = android.net.Uri.encode(videoUrl)
-                        val safeImdbId = imdbId.ifBlank { "_" }
-                        navController.navigate("player/$encodedUrl/$safeImdbId")
-                    },
-                    onNavigateBack        = { navController.popBackStack() },
-                    onRecommendationClick = { id -> navController.navigate("details/$id") }
-                )
-            }
-
-            composable(
-                route     = "player/{videoUrl}/{imdbId}",
-                arguments = listOf(
-                    navArgument("videoUrl") { type = NavType.StringType },
-                    navArgument("imdbId")   { type = NavType.StringType }
-                )
-            ) { back ->
-                val encodedUrl = back.arguments?.getString("videoUrl") ?: return@composable
-                val imdbId     = back.arguments?.getString("imdbId") ?: ""
-                val videoUrl   = android.net.Uri.decode(encodedUrl)
-                if (videoUrl.isNotBlank()) {
-                    PlayerScreen(
-                        videoUrl       = videoUrl,
-                        imdbId         = if (imdbId == "_") "" else imdbId,
-                        onNavigateBack = { navController.popBackStack() }
+                _state.update { it.copy(
+                    isLoadingData = false,
+                    bestSourceHint = "4K HDR • RD+",
+                    mediaInfo = MediaDetailsInfo(
+                        id = "movie_${dto.id}", imdbId = scrapeId, title = dto.title, overview = dto.overview ?: "", posterUrl = "$IMAGE_POSTER${dto.posterPath}", backdropUrl = "$IMAGE_BACKDROP${dto.backdropPath}", logoUrl = null, isSeries = false, releaseDate = dto.releaseDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(), imdbRating = dto.voteAverage.toDouble() + 0.6, ageRating = "R", studios = studios, genres = genres, director = directorName, cast = castList, recommendations = realRecommendations, trailerUrl = realTrailerId,
+                        isFavorite = isSaved
                     )
-                }
-            }
-
-            // SearchScreen is fully self-contained — no wrapper Box, no top padding.
-            composable("search") {
-                val vm: SearchViewModel = viewModel(
-                    factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
-                )
-                SearchScreen(
-                    state          = vm.state.collectAsState().value,
-                    onIntent       = vm::onIntent,
-                    onNavigateBack = { navController.popBackStack() },
-                    onResultClick  = { result -> navController.navigate("details/${result.id}") }
-                )
-            }
-
-            composable("settings") {
-                val vm: SettingsViewModel = viewModel(
-                    factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
-                )
-                Box(Modifier.fillMaxSize().background(Color(0xFF050505))) {
-                    Box(Modifier.fillMaxSize().padding(top = 68.dp)) {
-                        SettingsScreen(
-                            state            = vm.state.collectAsState().value,
-                            viewModel        = vm,
-                            isRtl            = false,
-                            onNavigateBack = { navController.popBackStack() }, // <--- זו השורה שחסרה! היא אומרת לנווט אחורה כשלוחצים על הכפתור
-                            onToggleLanguage = {}
-                        )
-                    }
-                }
-            }
-
-            composable("watchlist") {
-                Box(Modifier.fillMaxSize().background(Color(0xFF080808))) {
-                    Box(Modifier.fillMaxSize().padding(top = 68.dp)) {
-                        WatchlistScreen(onNavigateBack = { navController.popBackStack() })
-                    }
-                }
-            }
-        }
-
-        if (showSharedHeader) {
-            LuminaSharedHeader(
-                currentRoute = currentRoute,
-                modifier     = Modifier.align(Alignment.TopStart).fillMaxWidth().zIndex(20f),
-                onSearch     = { navController.navigate("search")    { launchSingleTop = true } },
-                onMovies     = { navController.navigate("home")       { launchSingleTop = true } },
-                onTV         = { navController.navigate("home")       { launchSingleTop = true } },
-                onWatchlist  = { navController.navigate("watchlist")  { launchSingleTop = true } },
-                onSettings   = { navController.navigate("settings")   { launchSingleTop = true } }
-            )
-        }
-    }
-}
-
-@Composable
-fun LuminaSharedHeader(
-    currentRoute : String,
-    modifier     : Modifier = Modifier,
-    onSearch     : () -> Unit,
-    onMovies     : () -> Unit,
-    onTV         : () -> Unit,
-    onWatchlist  : () -> Unit,
-    onSettings   : () -> Unit
-) {
-    val time = remember {
-        val c = java.util.Calendar.getInstance()
-        "%02d:%02d".format(c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE))
-    }
-    Box(
-        modifier = modifier.background(
-            Brush.verticalGradient(listOf(Color(0xF0080808), Color(0xC0080808), Color.Transparent))
+                ) }
+            },
+            onFailure = { err -> _state.update { it.copy(isLoadingData = false, errorData = err.message) } }
         )
-    ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().height(68.dp).padding(horizontal = 48.dp),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Column(horizontalAlignment = Alignment.Start, modifier = Modifier.padding(end = 16.dp)) {
-                Text(
-                    text = buildAnnotatedString {
-                        withStyle(SpanStyle(color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.5.sp)) { append("LUMINA") }
-                        withStyle(SpanStyle(color = RED,   fontSize = 11.sp, fontWeight = FontWeight.Bold,  letterSpacing = 1.5.sp)) { append("STREAMS") }
-                    }
-                )
-                Box(
-                    Modifier.width(48.dp).height(2.dp).clip(RoundedCornerShape(1.dp))
-                        .background(Brush.horizontalGradient(listOf(RED, RED.copy(alpha = 0f))))
-                )
-            }
-            SharedNavPill("Search",    Icons.Default.Search,   currentRoute == "search",   onSearch)
-            SharedNavPill("Movies",    Icons.Default.Movie,    false,                       onMovies)
-            SharedNavPill("TV",        Icons.Default.LiveTv,   false,                       onTV)
-            SharedNavPill("Watchlist", Icons.Default.Bookmark, currentRoute == "watchlist", onWatchlist)
-            SharedNavPill("Settings",  Icons.Default.Settings, currentRoute == "settings",  onSettings)
-            Spacer(Modifier.weight(1f))
-            Text(time, color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+    }
+
+    private suspend fun loadTvShow(id: String) {
+        repository.getTvFullDetails(id).fold(
+            onSuccess = { dto ->
+                val rawImdb = dto.external_ids?.imdbId
+                val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
+                val castList = dto.credits?.cast?.take(15)?.mapNotNull {
+                    if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "$IMAGE_BASE_URL${it.profilePath}") else null
+                } ?: emptyList()
+                val genres = listOf("Drama", "Thriller")
+                val creatorName = dto.credits?.crew?.find { c -> c.job == "Creator" || c.department == "Writing" }?.name ?: ""
+                val primaryGenre = genres.firstOrNull() ?: "Drama"
+
+                val realRecommendations = fetchGenreRecommendations("series", primaryGenre)
+                val realTrailerId = fetchRealTrailer(scrapeId, "series")
+
+                val isSaved = watchlistManager.isInWatchlist("tv_$id")
+
+                _state.update { it.copy(
+                    isLoadingData = false,
+                    bestSourceHint = "1080p • RD+",
+                    mediaInfo = MediaDetailsInfo(
+                        id = "tv_${dto.id}", imdbId = scrapeId, title = dto.name, overview = dto.overview ?: "", posterUrl = "$IMAGE_POSTER${dto.posterPath}", backdropUrl = "$IMAGE_BACKDROP${dto.backdropPath}", logoUrl = null, isSeries = true, releaseDate = dto.firstAirDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(), imdbRating = dto.voteAverage.toDouble() + 0.4, ageRating = "TV-MA", studios = listOf("NETFLIX"), genres = genres, director = creatorName, cast = castList, recommendations = realRecommendations, totalSeasons = dto.numberOfSeasons, trailerUrl = realTrailerId,
+                        isFavorite = isSaved
+                    )
+                ) }
+                if (dto.numberOfSeasons > 0) onEvent(DetailsEvent.SelectSeason(1))
+            },
+            onFailure = { err -> _state.update { it.copy(isLoadingData = false, errorData = err.message) } }
+        )
+    }
+
+    private suspend fun fetchRealTrailer(imdbId: String, type: String): String? = withContext(Dispatchers.IO) {
+        withTimeoutOrNull(800) {
+            try {
+                val url = URL("https://v3-cinemeta.strem.io/meta/$type/$imdbId.json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 500
+                connection.readTimeout = 500
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = JSONObject(response)
+                    val trailerId = jsonObject.optJSONObject("meta")?.optString("trailer", "")
+                    if (!trailerId.isNullOrEmpty()) return@withTimeoutOrNull trailerId
+                }
+            } catch (e: Exception) { }
+            null
         }
     }
-}
 
-@Composable
-fun SharedNavPill(
-    label      : String,
-    icon       : androidx.compose.ui.graphics.vector.ImageVector,
-    isSelected : Boolean,
-    onClick    : () -> Unit
-) {
-    val density = LocalDensity.current
-    var surfaceSize by remember { mutableStateOf(IntSize.Zero) }
-    Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color.Transparent,
-            focusedContainerColor = NAV_HOVER,
-            pressedContainerColor = Color(0xFF1E1E1E)
-        ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        modifier = Modifier
-            .height(44.dp)
-            .onSizeChanged { surfaceSize = it }
-            .drawWithCache {
-                onDrawWithContent {
-                    drawContent()
-                    if (isSelected && surfaceSize != IntSize.Zero) {
-                        val barH  = with(density) { 3.dp.toPx() }
-                        val padH  = with(density) { 10.dp.toPx() }
-                        val w     = surfaceSize.width.toFloat()
-                        val h     = surfaceSize.height.toFloat()
-                        val barW  = (w - padH * 2f).coerceAtLeast(0f)
-                        val top   = h - barH
-                        val glowH = with(density) { 12.dp.toPx() }
-                        drawRect(
-                            brush   = Brush.verticalGradient(
-                                listOf(Color.Transparent, RED.copy(0.45f)),
-                                startY = top - glowH, endY = top
-                            ),
-                            topLeft = Offset(padH, top - glowH),
-                            size    = Size(barW, glowH)
-                        )
-                        drawRoundRect(
-                            color       = RED,
-                            topLeft     = Offset(padH, top),
-                            size        = Size(barW, barH),
-                            cornerRadius = CornerRadius(barH / 2)
-                        )
+    private suspend fun fetchGenreRecommendations(type: String, genre: String): List<Recommendation> = withContext(Dispatchers.IO) {
+        val recs = mutableListOf<Recommendation>()
+        withTimeoutOrNull(1000) {
+            try {
+                val url = URL("https://v3-cinemeta.strem.io/catalog/$type/top/genre=$genre.json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 600
+                connection.readTimeout = 600
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = JSONObject(response)
+                    val metas = jsonObject.optJSONArray("metas")
+                    if (metas != null) {
+                        for (i in 0 until minOf(metas.length(), 7)) {
+                            val meta = metas.getJSONObject(i)
+                            val poster = meta.optString("poster", "")
+                            if (poster.isNotEmpty()) {
+                                recs.add(Recommendation(id = meta.optString("id", ""), title = meta.optString("name", "Unknown"), posterUrl = poster.replace("http://", "https://")))
+                            }
+                        }
                     }
                 }
+            } catch (e: Exception) { }
+        }
+        return@withContext recs
+    }
+
+    private fun fetchEpisodesForSeason(seasonNum: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(isEpisodesLoading = true, selectedSeason = seasonNum) }
+            val imdbId = _state.value.mediaInfo.imdbId
+            val realEpisodes = fetchCinemetaEpisodes(imdbId, seasonNum)
+
+            if (realEpisodes.isNotEmpty()) {
+                _state.update { it.copy(isEpisodesLoading = false, episodes = realEpisodes) }
+            } else {
+                val fallbackEpisodes = (1..10).map { epNum ->
+                    Episode(id = "s${seasonNum}e$epNum", episodeNumber = epNum, seasonNumber = seasonNum, title = "פרק $epNum", overview = "", stillUrl = _state.value.mediaInfo.backdropUrl, progress = if (epNum == 1) 0.85f else 0f)
+                }
+                _state.update { it.copy(isEpisodesLoading = false, episodes = fallbackEpisodes) }
             }
-    ) {
-        Row(
-            Modifier.fillMaxSize().padding(horizontal = 14.dp),
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector        = icon,
-                contentDescription = null,
-                modifier           = Modifier.size(16.dp),
-                tint               = if (isSelected) RED else WHITE.copy(0.75f)
-            )
-            Text(
-                text       = label,
-                color      = if (isSelected) WHITE else WHITE.copy(0.75f),
-                fontSize   = 14.sp,
-                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                letterSpacing = 0.2.sp
-            )
         }
     }
-}
 
-@Composable
-fun WatchlistScreen(onNavigateBack: () -> Unit) {
-    androidx.activity.compose.BackHandler { onNavigateBack() }
-    Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Text("Watchlist — Coming Soon", color = WHITE, fontSize = 28.sp)
+    private suspend fun fetchCinemetaEpisodes(imdbId: String, targetSeason: Int): List<Episode> = withContext(Dispatchers.IO) {
+        val episodesList = mutableListOf<Episode>()
+        withTimeoutOrNull(1200) {
+            try {
+                val url = URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json")
+                val connection = url.openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 800
+                connection.readTimeout = 800
+                if (connection.responseCode == 200) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val jsonObject = JSONObject(response)
+                    val meta = jsonObject.optJSONObject("meta")
+                    val videos = meta?.optJSONArray("videos")
+                    if (videos != null) {
+                        for (i in 0 until videos.length()) {
+                            val vid = videos.getJSONObject(i)
+                            val season = vid.optInt("season", 0)
+                            if (season == targetSeason) {
+                                val epNum = vid.optInt("episode", 0)
+                                val title = vid.optString("title", "Episode $epNum")
+                                val overview = vid.optString("overview", "")
+                                val thumbnail = vid.optString("thumbnail", "")
+                                episodesList.add(Episode(
+                                    id = vid.optString("id", "s${season}e${epNum}"), episodeNumber = epNum, seasonNumber = season, title = title, overview = overview,
+                                    stillUrl = thumbnail.replace("http://", "https://"), progress = if (epNum == 1) 0.85f else 0f
+                                ))
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) { }
+        }
+        return@withContext episodesList.sortedBy { it.episodeNumber }
+    }
+
+    private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?) {
+        cancelActiveScraping()
+        val token = getRdToken()
+        if (token.isEmpty()) { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("נדרש חשבון Real-Debrid. אנא התחבר בהגדרות.")) }; return }
+
+        scrapingJob = viewModelScope.launch(Dispatchers.IO) {
+            val cacheKey = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
+            streamCache[cacheKey]?.let { cached -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached) }; return@launch }
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.Searching, availableStreams = emptyList()) }
+
+            try {
+                val queryType = if (season != null && episode != null) "series" else "movie"
+                val queryId = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
+                val config = "realdebrid=$token"
+                val response = dynamicTorrentio.getStreamsDynamic(config, queryType, queryId)
+
+                if (!response.isSuccessful || response.body()?.streams.isNullOrEmpty()) {
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("לא נמצאו מקורות פרימיום.")) }; return@launch
+                }
+
+                val mappedStreams = response.body()!!.streams!!.mapIndexedNotNull { index, s ->
+                    val titleSafe = s.title ?: return@mapIndexedNotNull null
+                    val nameSafe = s.name ?: "Unknown"
+                    val titleUpper = titleSafe.uppercase()
+                    val sizeMatch = Regex("([0-9.]+)\\s*(GB|MB)").find(titleUpper)
+                    val sizeBytes = if (sizeMatch != null) {
+                        val v = sizeMatch.groupValues[1].toDoubleOrNull() ?: 0.0
+                        if (sizeMatch.groupValues[2] == "GB") (v * 1024 * 1024 * 1024).toLong() else (v * 1024 * 1024).toLong()
+                    } else 0L
+
+                    AdvancedStreamSource(
+                        id = "str_$index", releaseGroup = nameSafe.replace("\n", " "), filename = titleSafe.substringBefore("\n"),
+                        infoHash = s.infoHash, directUrl = s.url, sizeBytes = sizeBytes,
+                        isCachedRd = nameSafe.contains("RD+"), quality = StreamQuality.fromString(titleUpper), videoCodec = VideoCodec.fromString(titleUpper)
+                    )
+                }.sortedByDescending { it.sortScore }
+
+                streamCache[cacheKey] = mappedStreams
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mappedStreams) }
+            } catch (e: Exception) { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאת מערכת: ${e.message}")) } }
+        }
+    }
+
+    private fun cancelActiveScraping() { scrapingJob?.cancel(); _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) } }
+
+    private fun processRealDebridLink(stream: AdvancedStreamSource) {
+        if (stream.directUrl?.startsWith("http") == true) { _state.update { it.copy(readyToPlayUrl = stream.directUrl) }; return }
+        if (stream.infoHash.isNullOrBlank()) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val token = getRdToken()
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
+            try {
+                rdManager.resolveMagnetToStream("magnet:?xt=urn:btih:${stream.infoHash}", token).fold(
+                    onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
+                    onFailure = { err -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאה בפענוח הקישור המאובטח")) } }
+                )
+            } catch (e: Exception) { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאת רשת בפענוח הלינק")) } }
+        }
+    }
+
+    private fun handleToggleFavorite() {
+        val info = _state.value.mediaInfo
+        val movie = Movie(
+            id = info.id,
+            title = info.title,
+            posterUrl = info.posterUrl ?: "",
+            backdropUrl = info.backdropUrl ?: "",
+            rating = info.tmdbRating.toFloat(),
+            mediaType = if (info.isSeries) "tv" else "movie",
+            overview = info.overview,
+            year = info.releaseDate.toIntOrNull() ?: 0,
+            genre = info.genres.firstOrNull() ?: ""
+        )
+        val isNowAdded = watchlistManager.toggleWatchlist(movie)
+        _state.update { it.copy(mediaInfo = info.copy(isFavorite = isNowAdded)) }
     }
 }
-
-private val Int.sp   get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)
-private val Float.sp get() = androidx.compose.ui.unit.TextUnit(this, androidx.compose.ui.unit.TextUnitType.Sp)

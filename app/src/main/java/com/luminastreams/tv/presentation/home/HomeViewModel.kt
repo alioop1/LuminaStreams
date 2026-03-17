@@ -141,7 +141,7 @@ class HomeViewModel : ViewModel() {
                     val rating   = j.optDouble("vote_average", 0.0).toFloat()
                     val genreId  = j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0
                     out += Movie(
-                        id = j.optInt("id").toString(), title = title,
+                        id = "${mt}_${j.optInt("id")}", title = title,
                         posterUrl = poster, backdropUrl = backdrop,
                         overview = j.optString("overview"),
                         year = year, genre = genreLabel(genreId, mt),

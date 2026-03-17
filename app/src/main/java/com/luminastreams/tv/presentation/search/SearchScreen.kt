@@ -8,7 +8,6 @@ package com.luminastreams.tv.presentation.search
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
@@ -53,6 +52,7 @@ import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.model.SearchResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,7 +62,7 @@ import java.net.URL
 import java.net.URLEncoder
 
 // ══════════════════════════════════════════════════════════════════
-//  PALETTE  (identical to HomeScreen)
+//  PALETTE
 // ══════════════════════════════════════════════════════════════════
 private val BG        = Color(0xFF070707)
 private val PANEL_BG  = Color(0xFF0C0C0C)
@@ -133,7 +133,7 @@ private val LANGUAGES = listOf(
     "ja"  to "🇯🇵 Japanese","ko" to "🇰🇷 Korean"
 )
 private val PLATFORMS = listOf(
-    "8"   to "https://images.ctfassets.net/y2ske730sjqp/4aEQ1zAUZF5pLSDtfviWjb/ba04f8d5bd01428f6e3803cc6effaf30/Netflix_N.png", // Netflix (Custom)
+    "8"   to "https://images.ctfassets.net/y2ske730sjqp/4aEQ1zAUZF5pLSDtfviWjb/ba04f8d5bd01428f6e3803cc6effaf30/Netflix_N.png", // Netflix
     "337" to "https://image.tmdb.org/t/p/w92/97yvRBw1GzX7fXprcF80er19ot.jpg", // Disney+
     "350" to "https://image.tmdb.org/t/p/w92/6uhKBfmtzFqOcLousHwZuzcrScK.jpg", // Apple TV+
     "384" to "https://image.tmdb.org/t/p/w92/6YZ2Qk212u4eZ4WzEBSYwQJntWz.jpg", // Max
@@ -165,11 +165,11 @@ fun SearchScreen(
     // ── State ──────────────────────────────────────────────────
     var query        by remember { mutableStateOf("") }
     var filters      by remember { mutableStateOf(FilterState()) }
-    var results       by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
-    var isLoading     by remember { mutableStateOf(false) }
-    var currentPage   by remember { mutableStateOf(1) }
-    var isFetching    by remember { mutableStateOf(false) }
-    var endReached    by remember { mutableStateOf(false) }
+    var results      by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
+    var isLoading    by remember { mutableStateOf(false) }
+    var currentPage  by remember { mutableStateOf(1) }
+    var isFetching   by remember { mutableStateOf(false) }
+    var endReached   by remember { mutableStateOf(false) }
     var searchHistory by remember { mutableStateOf<List<String>>(emptyList()) }
     var showHistory  by remember { mutableStateOf(false) }
     var lastFocusedResultIdx by remember { mutableStateOf(0) }
@@ -183,7 +183,6 @@ fun SearchScreen(
     val firstFilterFR= remember { FocusRequester() }
     val firstResultFR= remember { FocusRequester() }
 
-    // Feature 32: ESC clears query first, then navigates back
     BackHandler {
         when {
             query.isNotBlank() -> { query = ""; showHistory = true }
@@ -200,10 +199,16 @@ fun SearchScreen(
         searchJob?.cancel()
         searchJob = scope.launch {
             isLoading = true
-            currentPage = 2 // <--- התיקון הקריטי: אנחנו טוענים 2 עמודים, אז מתחילים מ-2
+            currentPage = 2
             endReached = false
-            val p1 = if (query.isNotBlank()) fetchTextSearch(query, filters, 1) else fetchDiscovery(filters, 1)
-            val p2 = if (query.isNotBlank()) fetchTextSearch(query, filters, 2) else fetchDiscovery(filters, 2)
+
+            // שימוש ב-async לביצוע 2 קריאות במקביל
+            val deferred1 = async { if (query.isNotBlank()) fetchTextSearch(query, filters, 1) else fetchDiscovery(filters, 1) }
+            val deferred2 = async { if (query.isNotBlank()) fetchTextSearch(query, filters, 2) else fetchDiscovery(filters, 2) }
+
+            val p1 = deferred1.await()
+            val p2 = deferred2.await()
+
             results = (p1 + p2).distinctBy { it.id }
             isLoading = false
             if (results.isNotEmpty()) {
@@ -218,10 +223,16 @@ fun SearchScreen(
         delay(180)
         runCatching { backFR.requestFocus() }
         isLoading = true
-        currentPage = 2 // <--- גם כאן מעדכנים ל-2
+        currentPage = 2
         endReached = false
-        val p1 = fetchDiscovery(filters, 1)
-        val p2 = fetchDiscovery(filters, 2)
+
+        // שימוש ב-async לביצוע 2 קריאות במקביל
+        val deferred1 = async { fetchDiscovery(filters, 1) }
+        val deferred2 = async { fetchDiscovery(filters, 2) }
+
+        val p1 = deferred1.await()
+        val p2 = deferred2.await()
+
         results = (p1 + p2).distinctBy { it.id }
         isLoading = false
     }
@@ -256,7 +267,7 @@ fun SearchScreen(
         // ── BODY: Left panel + Right grid ─────────────────────
         Row(Modifier.weight(1f).fillMaxWidth()) {
 
-            // ── LEFT FILTER PANEL (fixed 300dp) ───────────────
+            // ── LEFT FILTER PANEL ───────────────
             FilterPanel(
                 filters       = filters,
                 query         = query,
@@ -336,7 +347,6 @@ private fun DiscoverHeader(
         verticalAlignment     = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Feature 34: Identical LUMINA logo
         Surface(
             onClick  = onBack,
             shape    = ClickableSurfaceDefaults.shape(CircleShape),
@@ -354,7 +364,7 @@ private fun DiscoverHeader(
             }
         }
 
-        // Logo — pixel-perfect match to HomeScreen
+        // Logo
         Row(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -369,12 +379,10 @@ private fun DiscoverHeader(
             }
         }
 
-        // Divider
         Box(Modifier.width(1.dp).height(24.dp).background(DIM2))
 
         Text("Discover", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Black)
 
-        // Feature 25: Result count
         AnimatedContent(
             targetState = when {
                 isLoading        -> "Loading..."
@@ -387,7 +395,6 @@ private fun DiscoverHeader(
 
         Spacer(Modifier.weight(1f))
 
-        // Feature 15: Active filter count badge
         if (filters.activeCount > 0 || query.isNotBlank()) {
             Box(
                 Modifier
@@ -401,7 +408,6 @@ private fun DiscoverHeader(
             }
         }
 
-        // Reset All — clean pill, text centered
         AnimatedVisibility(
             visible = filters.activeCount > 0 || query.isNotBlank(),
             enter   = fadeIn() + scaleIn(initialScale = 0.88f),
@@ -437,7 +443,6 @@ private fun DiscoverHeader(
             }
         }
     }
-    // Red accent underline
     Box(
         Modifier.fillMaxWidth().height(1.dp)
             .background(Brush.horizontalGradient(listOf(RED.copy(0.7f), RED.copy(0.15f), Color.Transparent)))
@@ -446,9 +451,6 @@ private fun DiscoverHeader(
 
 // ══════════════════════════════════════════════════════════════════
 //  LEFT FILTER PANEL
-//  Uses Column + verticalScroll (NOT LazyColumn) so Android TV's
-//  D-pad focus traversal works correctly — no explicit FocusRequesters
-//  needed between sections; the system handles UP/DOWN naturally.
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun FilterPanel(
@@ -477,7 +479,6 @@ private fun FilterPanel(
                 shape = RoundedCornerShape(0.dp))
             .focusGroup()
     ) {
-        // ── Search bar ─────────────────────────────────────────
         PanelSearchBar(
             query         = query,
             onQuery       = onQuery,
@@ -487,7 +488,6 @@ private fun FilterPanel(
             firstFilterFR = firstFilterFR
         )
 
-        // ── Search history ─────────────────────────────────────
         AnimatedVisibility(
             visible = showHistory && searchHistory.isNotEmpty(),
             enter   = expandVertically(tween(200)) + fadeIn(tween(150)),
@@ -541,8 +541,6 @@ private fun FilterPanel(
             }
         }
 
-        // ── Scrollable filter body ─────────────────────────────
-        // Column + verticalScroll = TV D-pad navigates correctly
         Column(
             Modifier
                 .weight(1f)
@@ -551,7 +549,6 @@ private fun FilterPanel(
                 .padding(vertical = 8.dp)
         ) {
 
-            // ── Content Type ───────────────────────────────────
             FilterSectionHeader("Content Type", Icons.Default.MovieFilter)
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
@@ -564,7 +561,6 @@ private fun FilterPanel(
                             onClick  = { onFilterChange(filters.copy(mediaType = v, genres = emptySet())) },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
                             colors   = ClickableSurfaceDefaults.colors(
-                                // Selected = solid RED, not transparent tint
                                 containerColor        = if (isSel) RED    else IDLE_BG,
                                 focusedContainerColor = if (isSel) Color(0xFFFF2A2A) else Color(0x22FFFFFF),
                                 contentColor          = WHITE,
@@ -588,7 +584,6 @@ private fun FilterPanel(
                     }
             }
 
-            // ── Genre ──────────────────────────────────────────
             FilterSectionHeader(
                 "Genre${if (filters.genres.isNotEmpty()) " (${filters.genres.size})" else ""}",
                 Icons.Default.Category
@@ -603,7 +598,6 @@ private fun FilterPanel(
                 }
             )
 
-            // ── Sort By ────────────────────────────────────────
             FilterSectionDivider()
             FilterSectionHeader("Sort By", Icons.Default.Sort)
             SORT_OPTIONS.forEach { (v, l) ->
@@ -614,7 +608,6 @@ private fun FilterPanel(
                 )
             }
 
-            // ── Era ────────────────────────────────────────────
             FilterSectionDivider()
             FilterSectionHeader("Era", Icons.Default.CalendarToday)
             SimplePillRow(
@@ -623,7 +616,6 @@ private fun FilterPanel(
                 onSelect = { v -> onFilterChange(filters.copy(decade = v.toIntOrNull() ?: 0)) }
             )
 
-            // ── Min Rating ─────────────────────────────────────
             FilterSectionDivider()
             FilterSectionHeader("Min Rating", Icons.Default.Star)
             SimplePillRow(
@@ -632,7 +624,6 @@ private fun FilterPanel(
                 onSelect = { v -> onFilterChange(filters.copy(minRating = v.toFloatOrNull() ?: 0f)) }
             )
 
-            // ── Language ───────────────────────────────────────
             FilterSectionDivider()
             FilterSectionHeader("Language", Icons.Default.Language)
             SimplePillRow(
@@ -641,7 +632,6 @@ private fun FilterPanel(
                 onSelect = { v -> onFilterChange(filters.copy(language = v)) }
             )
 
-            // ── Platform ───────────────────────────────────────
             FilterSectionDivider()
             FilterSectionHeader(
                 "Platform${if (filters.platforms.isNotEmpty()) " (${filters.platforms.size})" else ""}",
@@ -661,7 +651,6 @@ private fun FilterPanel(
             Spacer(Modifier.height(14.dp))
         }
 
-        // ── Discover Now button ────────────────────────────────
         Box(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp)) {
             Surface(
                 onClick  = onSearch,
@@ -678,7 +667,6 @@ private fun FilterPanel(
                 ),
                 modifier = Modifier.fillMaxWidth().height(50.dp)
             ) {
-                // Gradient background drawn inside so it always fills correctly
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -708,11 +696,7 @@ private fun FilterPanel(
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  PANEL SEARCH BAR
-//  Single BasicTextField always present.
-//  On Android TV: D-pad moves focus to it (no keyboard yet).
-//  Pressing SELECT/OK on the remote → onPreviewKeyEvent catches
-//  DirectionCenter and explicitly calls keyboardController.show().
+//  PANEL SEARCH BAR (FIXED)
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun PanelSearchBar(
@@ -723,10 +707,13 @@ private fun PanelSearchBar(
     firstResultFR : FocusRequester,
     firstFilterFR : FocusRequester
 ) {
-    var isFocused    by remember { mutableStateOf(false) }
-    val keyboardCtrl  = LocalSoftwareKeyboardController.current
+    var isFocused by remember { mutableStateOf(false) }
 
-    // Animated placeholder cycling
+    // הפתרון המוחלט לקריסה: שימוש במנהל המקלדת המובנה של אנדרואיד במקום זה של Compose
+    val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val imm = remember { context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager }
+
     var hintIdx by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) { delay(3200); hintIdx = (hintIdx + 1) % SEARCH_HINTS.size }
@@ -761,12 +748,17 @@ private fun PanelSearchBar(
                 singleLine      = true,
                 textStyle       = TextStyle(color = WHITE, fontSize = 13.sp),
                 cursorBrush     = SolidColor(RED),
-                // KeyboardType.Text + no imeAction = TV shows its keyboard overlay
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
-                keyboardActions = KeyboardActions(onAny = {
-                    keyboardCtrl?.hide()
-                    onSearch()
-                }),
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Text,
+                    imeAction = ImeAction.Search
+                ),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        // העלמת המקלדת בצורה בטוחה דרך המערכת
+                        imm.hideSoftInputFromWindow(view.windowToken, 0)
+                        onSearch()
+                    }
+                ),
                 decorationBox   = { inner ->
                     Box(Modifier.weight(1f)) {
                         if (query.isEmpty() && !isFocused) {
@@ -790,20 +782,18 @@ private fun PanelSearchBar(
                     .onFocusChanged { isFocused = it.isFocused }
                     .onPreviewKeyEvent { ev ->
                         when {
-                            // SELECT/OK on remote → show the TV keyboard
                             ev.type == KeyEventType.KeyDown &&
                                     ev.key  == Key.DirectionCenter -> {
-                                keyboardCtrl?.show()
-                                true  // consume so it doesn't trigger Back
+                                // הקפצת המקלדת בצורה בטוחה בלי Compose
+                                imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                                true
                             }
-                            // D-pad RIGHT from empty field → jump to grid
                             ev.type == KeyEventType.KeyDown &&
                                     ev.key  == Key.DirectionRight &&
                                     query.isEmpty() -> {
                                 runCatching { firstResultFR.requestFocus() }
                                 true
                             }
-                            // D-pad DOWN → first filter button
                             ev.type == KeyEventType.KeyDown &&
                                     ev.key  == Key.DirectionDown -> {
                                 runCatching { firstFilterFR.requestFocus() }
@@ -814,7 +804,6 @@ private fun PanelSearchBar(
                     }
             )
 
-            // Clear button
             AnimatedVisibility(
                 query.isNotEmpty(),
                 enter = fadeIn(tween(100)) + scaleIn(initialScale = 0.85f),
@@ -870,7 +859,6 @@ private fun FilterSectionDivider() {
     Spacer(Modifier.height(6.dp))
 }
 
-// Feature 9: Genre 3-column grid
 @Composable
 private fun GenreGrid(
     genres  : List<Pair<String, String>>,
@@ -925,7 +913,6 @@ private fun GenreGrid(
     }
 }
 
-// Feature 10: Radio row for Sort
 @Composable
 private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
     Surface(
@@ -956,8 +943,6 @@ private fun RadioRow(label: String, selected: Boolean, onClick: () -> Unit) {
     }
 }
 
-// SimplePillRow — pill row, single or multi-select, verticalScroll handles UP/DOWN
-// focusRestorer() ensures D-pad always enters at item 0, never mid-row
 @Composable
 private fun SimplePillRow(
     items       : List<Pair<String, String>>,
@@ -973,15 +958,15 @@ private fun SimplePillRow(
     LazyRow(
         Modifier.fillMaxWidth().focusRestorer { firstFR },
         contentPadding        = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp) // ריווח מעט גדול יותר ללוגואים
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         itemsIndexed(items) { idx, (id, value) ->
             val isSel = if (multiSelect) id in selectedSet else id == selected
-            val isImageUrl = value.startsWith("http") // בדיקה אם זה קישור ללוגו
+            val isImageUrl = value.startsWith("http")
 
             Surface(
                 onClick  = { if (multiSelect) onToggle(id) else onSelect(id) },
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)), // צורה מעט יותר מרובעת ללוגו
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
                 colors   = ClickableSurfaceDefaults.colors(
                     containerColor        = if (isSel) SEL_BG else IDLE_BG,
                     focusedContainerColor = if (isSel) Color(0x38E50914) else Color(0x28FFFFFF),
@@ -994,7 +979,7 @@ private fun SimplePillRow(
                 ),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
                 modifier = Modifier
-                    .height(36.dp) // גובה קצת יותר משמעותי ללוגואים
+                    .height(36.dp)
                     .let { if (idx == 0) it.focusRequester(firstFR) else it }
             ) {
                 Box(
@@ -1012,7 +997,7 @@ private fun SimplePillRow(
                             contentDescription = null,
                             contentScale = ContentScale.Fit,
                             modifier = Modifier
-                                .size(24.dp) // גודל הלוגו בתוך הכפתור
+                                .size(24.dp)
                                 .clip(RoundedCornerShape(4.dp))
                         )
                     } else {
@@ -1028,7 +1013,6 @@ private fun SimplePillRow(
     }
 }
 
-// Reusable border helper
 @Composable
 private fun filterBorder(isSelected: Boolean) = ClickableSurfaceDefaults.border(
     border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSelected) SEL_BOR else IDLE_BOR), shape = RoundedCornerShape(7.dp)),
@@ -1036,7 +1020,7 @@ private fun filterBorder(isSelected: Boolean) = ClickableSurfaceDefaults.border(
 )
 
 // ══════════════════════════════════════════════════════════════════
-//  RESULTS GRID  (Features 18-23, 27-30, 33)
+//  RESULTS GRID
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun ResultsGrid(
@@ -1045,12 +1029,12 @@ private fun ResultsGrid(
     initialFocusIdx : Int,
     onFocusIdx      : (Int) -> Unit,
     onResultClick   : (SearchResult) -> Unit,
-    onLoadMore      : () -> Unit // <--- נוסף
+    onLoadMore      : () -> Unit
 ) {
     val gridState = rememberLazyGridState()
 
     LaunchedEffect(results.size) {
-        if (results.isNotEmpty() && results.size <= 40) { // פוקוס רק בטעינה ראשונית
+        if (results.isNotEmpty() && results.size <= 40) {
             delay(100)
             runCatching { firstResultFR.requestFocus() }
         }
@@ -1069,7 +1053,6 @@ private fun ResultsGrid(
             }
     ) {
         itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
-            // מזהה כשאנחנו 8 פריטים לפני הסוף וקורא לעוד
             if (idx >= results.size - 8) {
                 LaunchedEffect(idx) { onLoadMore() }
             }
@@ -1085,7 +1068,7 @@ private fun ResultsGrid(
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  DISCOVERY CARD  (Features 19-23)
+//  DISCOVERY CARD
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun DiscoveryCard(
@@ -1097,7 +1080,6 @@ private fun DiscoveryCard(
     val ctx     = LocalContext.current
     var focused by remember { mutableStateOf(false) }
 
-    // Feature 20: Smooth ease-in-out zoom — no bounce
     val zoom by animateFloatAsState(
         targetValue   = if (focused) 1.06f else 1f,
         animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
@@ -1108,14 +1090,12 @@ private fun DiscoveryCard(
         modifier            = modifier,
         horizontalAlignment = Alignment.Start
     ) {
-        // Fixed-size box — does NOT zoom, so title text is never overlapped
         Box(
             Modifier
                 .fillMaxWidth()
                 .aspectRatio(2f / 3f)
                 .zIndex(if (focused) 8f else 0f)
         ) {
-            // Feature 21: White border glow — zoom applied here only (inside the box)
             Surface(
                 onClick  = onClick,
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(9.dp)),
@@ -1145,7 +1125,6 @@ private fun DiscoveryCard(
                     }
                 }
 
-                // Feature 22: Year badge (top-left)
                 if (result.releaseYear.isNotBlank()) {
                     Box(
                         Modifier.align(Alignment.TopStart).padding(4.dp)
@@ -1154,7 +1133,6 @@ private fun DiscoveryCard(
                     ) { Text(result.releaseYear, color = DIM, fontSize = 8.sp) }
                 }
 
-                // Feature 22: Rating badge (top-right)
                 if (result.rating > 0f) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(4.dp)
@@ -1167,7 +1145,6 @@ private fun DiscoveryCard(
             }
         }
 
-        // Feature 23: Title + type below
         Spacer(Modifier.height(4.dp))
         Text(
             result.title,
@@ -1185,7 +1162,7 @@ private fun DiscoveryCard(
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  SHIMMER LOADING  (Feature 25)
+//  SHIMMER LOADING
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun ShimmerGrid() {
@@ -1218,7 +1195,7 @@ private fun ShimmerGrid() {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  EMPTY STATE  (Feature 24)
+//  EMPTY STATE
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun EmptyState(query: String, activeFilters: Int) {
@@ -1243,7 +1220,7 @@ private fun EmptyState(query: String, activeFilters: Int) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — TEXT SEARCH  (Feature 1, TMDB /search/multi)
+//  NETWORK — TEXT SEARCH
 // ══════════════════════════════════════════════════════════════════
 private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
@@ -1252,7 +1229,6 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
         val enc     = URLEncoder.encode(query, "UTF-8")
         val out     = mutableListOf<SearchResult>()
         try {
-            // התיקון כאן: שימוש ב page=$page במקום page=1
             val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection)
                 .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
@@ -1290,7 +1266,7 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
     }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — DISCOVER  (Feature 2, TMDB /discover)
+//  NETWORK — DISCOVER
 // ══════════════════════════════════════════════════════════════════
 private suspend fun fetchDiscovery(f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
@@ -1306,7 +1282,6 @@ private suspend fun fetchDiscovery(f: FilterState, page: Int = 1): List<SearchRe
 
         for (mt in types) {
             try {
-                // התיקון כאן: שימוש ב page=$page במקום page=1
                 val sb = StringBuilder("$base/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=${f.sortBy}")
                 if (f.genres.isNotEmpty())
                     sb.append("&with_genres=${f.genres.joinToString(",")}")

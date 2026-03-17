@@ -74,7 +74,7 @@ fun PremiumVideoSidebar(
         val dateFmt = SimpleDateFormat("EEEE • d 'במרץ, 2026'", Locale("he", "IL"))
         while (true) {
             val d = Date(); timeStr = timeFmt.format(d); dateStr = dateFmt.format(d)
-            delay(60_000)
+            delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
 

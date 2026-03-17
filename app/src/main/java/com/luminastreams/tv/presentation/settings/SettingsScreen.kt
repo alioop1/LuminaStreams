@@ -16,13 +16,13 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.*
@@ -34,29 +34,30 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 
 // ══════════════════════════════════════════════════════════════════
-//  PALETTE — Ultra Premium TV Design
+//  ULTRA PREMIUM PALETTE
 // ══════════════════════════════════════════════════════════════════
-private val BG          = Color(0xFF000000)
-private val RAIL_BG     = Color(0xFF0B0B0C)
-private val CARD_IDLE   = Color(0xFF141414)
-private val WHITE       = Color(0xFFFFFFFF)
-private val BLACK       = Color(0xFF000000)
-private val DIM         = Color(0xB3FFFFFF)
-private val DIM2        = Color(0x80FFFFFF)
-private val BORDER      = Color(0xFF262626)
-private val RED         = Color(0xFFE50914)
-private val PREMIUM     = Color(0xFFD4AF37) // Subtle Gold for Real-Debrid
+private val BG_DARK       = Color(0xFF040405)
+private val PANEL_BG      = Color(0xFF0A0A0C)
+private val CARD_IDLE     = Color(0xFF121215)
+private val CARD_FOCUSED  = Color(0xFF1E1E24)
+private val BORDER_IDLE   = Color(0xFF202025)
+private val BORDER_FOCUS  = Color(0xFFFFFFFF)
+private val TEXT_PRIMARY  = Color(0xFFFFFFFF)
+private val TEXT_MUTED    = Color(0xFF8A8A93)
+private val ACCENT_RED    = Color(0xFFE50914)
+private val ACCENT_GOLD   = Color(0xFFE5C07B) // Premium Real-Debrid Gold
+private val ACCENT_BLUE   = Color(0xFF4D90FE)
 
-private data class CatMeta(val cat: SettingsCategory, val icon: ImageVector)
+private data class CatMeta(val cat: SettingsCategory, val icon: ImageVector, val desc: String)
 private val CATS = listOf(
-    CatMeta(SettingsCategory.ACCOUNT,  Icons.Default.AccountCircle),
-    CatMeta(SettingsCategory.PLAYBACK, Icons.Default.PlayCircle),
-    CatMeta(SettingsCategory.PRIVACY,  Icons.Default.Shield),
-    CatMeta(SettingsCategory.SYSTEM,   Icons.Default.Tune),
+    CatMeta(SettingsCategory.ACCOUNT,  Icons.Default.VpnKey, "Real-Debrid & Network"),
+    CatMeta(SettingsCategory.PLAYBACK, Icons.Default.HighQuality, "HDR, Audio & Player"),
+    CatMeta(SettingsCategory.PRIVACY,  Icons.Default.Style, "Subtitles & Interface"),
+    CatMeta(SettingsCategory.SYSTEM,   Icons.Default.Memory, "Performance & Display")
 )
 
 // ══════════════════════════════════════════════════════════════════
-//  ROOT SCREEN
+//  ROOT DASHBOARD SCREEN
 // ══════════════════════════════════════════════════════════════════
 @Composable
 fun SettingsScreen(
@@ -66,467 +67,479 @@ fun SettingsScreen(
     onNavigateBack: () -> Unit,
     onToggleLanguage: () -> Unit
 ) {
-    val backFocusRequester = remember { FocusRequester() }
+    var isRailFocused by remember { mutableStateOf(false) }
+    val railFR = remember { FocusRequester() }
+    val contentFR = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        delay(50)
-        runCatching { backFocusRequester.requestFocus() }
+        delay(100)
+        runCatching { railFR.requestFocus() }
     }
 
-    Row(Modifier.fillMaxSize().background(BG)) {
-        // ── LEFT RAIL (Menu) ─────────────────────────────────────────────
-        Box(
-            Modifier.width(280.dp).fillMaxHeight()
-                .background(RAIL_BG)
-                .border(1.dp, BORDER, RoundedCornerShape(0.dp))
-        ) {
-            Column(Modifier.fillMaxSize().padding(vertical = 32.dp)) {
+    Box(Modifier.fillMaxSize().background(BG_DARK)) {
+        val glowColor by animateColorAsState(
+            targetValue = when (state.selectedCategory) {
+                SettingsCategory.ACCOUNT  -> ACCENT_GOLD.copy(alpha = 0.05f)
+                SettingsCategory.PLAYBACK -> ACCENT_BLUE.copy(alpha = 0.05f)
+                SettingsCategory.SYSTEM   -> ACCENT_RED.copy(alpha = 0.05f)
+                else                      -> Color.White.copy(alpha = 0.03f)
+            },
+            animationSpec = tween(800)
+        )
+        Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(glowColor, Color.Transparent), radius = 1500f)))
 
-                // Back Button
-                Box(Modifier.padding(horizontal = 24.dp)) {
-                    Surface(
-                        onClick = onNavigateBack,
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = Color.Transparent,
-                            focusedContainerColor = WHITE,
-                            contentColor = DIM,
-                            focusedContentColor = BLACK
-                        ),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-                        modifier = Modifier.height(48.dp).fillMaxWidth().focusRequester(backFocusRequester)
-                    ) {
-                        Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(20.dp))
-                            Text("Back to Home", fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        }
+        Row(Modifier.fillMaxSize()) {
+            // ── SMART COLLAPSING RAIL ──
+            val railWidth by animateDpAsState(if (isRailFocused) 280.dp else 80.dp, tween(300, easing = FastOutSlowInEasing), label = "railWidth")
+
+            Box(
+                Modifier.width(railWidth).fillMaxHeight().background(PANEL_BG)
+                    .border(1.dp, BORDER_IDLE, RoundedCornerShape(0.dp))
+                    .onFocusChanged { isRailFocused = it.hasFocus }
+                    .focusProperties { right = contentFR }
+            ) {
+                Column(Modifier.fillMaxSize().padding(vertical = 32.dp), horizontalAlignment = if (isRailFocused) Alignment.Start else Alignment.CenterHorizontally) {
+
+                    LuminaLogo(isExpanded = isRailFocused)
+                    Spacer(Modifier.height(48.dp))
+
+                    Box(Modifier.padding(horizontal = if (isRailFocused) 24.dp else 0.dp)) {
+                        IconButton(
+                            onClick = onNavigateBack,
+                            modifier = Modifier.size(48.dp).focusRequester(railFR),
+                            colors = IconButtonDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = TEXT_PRIMARY, contentColor = TEXT_MUTED, focusedContentColor = BG_DARK)
+                        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp)) }
+                    }
+
+                    Spacer(Modifier.height(48.dp))
+
+                    CATS.forEach { meta ->
+                        SmartRailItem(
+                            meta = meta,
+                            isSelected = state.selectedCategory == meta.cat,
+                            isExpanded = isRailFocused,
+                            onClick = { viewModel.setCategory(meta.cat) }
+                        )
+                        Spacer(Modifier.height(8.dp))
                     }
                 }
+            }
 
-                Spacer(Modifier.height(40.dp))
-
-                CATS.forEach { meta ->
-                    RailItem(
-                        meta       = meta,
-                        isSelected = state.selectedCategory == meta.cat,
-                        onClick    = { viewModel.setCategory(meta.cat) }
-                    )
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                // Branding
-                Row(
-                    Modifier.padding(horizontal = 32.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Box(Modifier.size(24.dp).background(RED, RoundedCornerShape(6.dp)), Alignment.Center) {
-                        Text("L", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
-                    }
-                    Column {
-                        Text("LUMINA STREAMS", color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                        Text("Version 1.0.0", color = DIM2, fontSize = 9.sp)
+            // ── CONTENT DASHBOARD ──
+            Box(Modifier.weight(1f).fillMaxHeight().focusRequester(contentFR).focusProperties { left = railFR }) {
+                AnimatedContent(
+                    targetState = state.selectedCategory,
+                    transitionSpec = {
+                        fadeIn(tween(400, easing = LinearOutSlowInEasing)) togetherWith
+                                fadeOut(tween(200, easing = FastOutLinearInEasing))
+                    },
+                    label = "content",
+                    modifier = Modifier.fillMaxSize()
+                ) { cat ->
+                    key(cat.name) {
+                        val meta = CATS.first { it.cat == cat }
+                        DashboardContent(cat, meta, state, viewModel, onToggleLanguage)
                     }
                 }
             }
         }
-
-        // ── RIGHT CONTENT PANE ──────────────────────────────────────────
-        Crossfade(
-            targetState = state.selectedCategory,
-            animationSpec = tween(250),
-            label = "content",
-            modifier = Modifier.weight(1f).fillMaxHeight()
-        ) { cat ->
-            val meta = CATS.first { it.cat == cat }
-            ContentPane(cat, meta, state, viewModel, onToggleLanguage)
-        }
     }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  RAIL ITEM
-// ══════════════════════════════════════════════════════════════════
 @Composable
-private fun RailItem(meta: CatMeta, isSelected: Boolean, onClick: () -> Unit) {
+private fun SmartRailItem(meta: CatMeta, isSelected: Boolean, isExpanded: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-
-    val bgColor = when {
-        focused -> WHITE
-        isSelected -> Color(0xFF1A1A1A)
-        else -> Color.Transparent
-    }
-    val contentColor = when {
-        focused -> BLACK
-        isSelected -> WHITE
-        else -> DIM2
-    }
+    val bg = if (focused) TEXT_PRIMARY else if (isSelected) CARD_IDLE else Color.Transparent
+    val tint = if (focused) BG_DARK else if (isSelected) TEXT_PRIMARY else TEXT_MUTED
 
     Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = WHITE
-        ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(64.dp)
-            .padding(horizontal = 16.dp, vertical = 4.dp)
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f), // ביטול קפיצה
+        modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = if (isExpanded) 16.dp else 12.dp)
             .onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            Modifier.fillMaxSize().background(bgColor).padding(horizontal = 16.dp),
+            Modifier.fillMaxSize().background(bg, RoundedCornerShape(12.dp)).padding(horizontal = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            horizontalArrangement = if (isExpanded) Arrangement.spacedBy(16.dp) else Arrangement.Center
         ) {
-            Icon(meta.icon, null, Modifier.size(20.dp), tint = contentColor)
-            Text(meta.cat.titleEn, color = contentColor, fontSize = 15.sp, fontWeight = if (isSelected || focused) FontWeight.Bold else FontWeight.Medium)
-
-            Spacer(Modifier.weight(1f))
-            if (isSelected && !focused) {
-                Box(Modifier.width(3.dp).height(16.dp).background(WHITE, CircleShape))
+            Icon(meta.icon, null, Modifier.size(24.dp), tint = tint)
+            if (isExpanded) {
+                Text(meta.cat.titleEn, color = tint, fontSize = 16.sp, fontWeight = if (isSelected || focused) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
             }
         }
     }
 }
 
-// ══════════════════════════════════════════════════════════════════
-//  CONTENT PANE (LazyColumn for perfect D-Pad scrolling)
-// ══════════════════════════════════════════════════════════════════
 @Composable
-private fun ContentPane(
+private fun DashboardContent(
     cat: SettingsCategory, meta: CatMeta,
     state: SettingsState, viewModel: SettingsViewModel, onToggleLang: () -> Unit
 ) {
     LazyColumn(
-        contentPadding = PaddingValues(horizontal = 64.dp, vertical = 48.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier = Modifier.fillMaxSize()
+        // הוגדל הרווח בתחתית ל-120dp כדי שכרטיס ה-RD לא ייחתך
+        contentPadding = PaddingValues(start = 56.dp, end = 80.dp, top = 48.dp, bottom = 120.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp), // צמצום קל של הרווחים בין הכרטיסיות
+        modifier = Modifier.fillMaxSize().focusProperties {
+            up = FocusRequester.Cancel
+            down = FocusRequester.Cancel
+        }
     ) {
         item {
-            Row(Modifier.padding(bottom = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Icon(meta.icon, null, Modifier.size(32.dp), tint = WHITE)
-                Text(meta.cat.titleEn, color = WHITE, fontSize = 32.sp, fontWeight = FontWeight.Black)
+            Column(Modifier.padding(bottom = 24.dp)) {
+                Text(meta.cat.titleEn, color = TEXT_PRIMARY, fontSize = 38.sp, fontWeight = FontWeight.Black)
+                Text(meta.desc, color = TEXT_MUTED, fontSize = 16.sp, modifier = Modifier.padding(top = 4.dp))
             }
         }
 
         when (cat) {
-            SettingsCategory.ACCOUNT  -> accountItems(state, viewModel)
-            SettingsCategory.PLAYBACK -> playbackItems(state, viewModel)
-            SettingsCategory.PRIVACY  -> privacyItems(state, viewModel)
-            SettingsCategory.SYSTEM   -> systemItems(state, viewModel, onToggleLang)
+            SettingsCategory.ACCOUNT  -> buildAccountDashboard(state, viewModel)
+            SettingsCategory.PLAYBACK -> buildPlaybackDashboard(state, viewModel)
+            SettingsCategory.PRIVACY  -> buildPersonalizationDashboard(state, viewModel)
+            SettingsCategory.SYSTEM   -> buildSystemDashboard(state, viewModel, onToggleLang)
         }
-
-        item { Spacer(Modifier.height(60.dp)) }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  ACCOUNT ITEMS
+//  1. ACCOUNT & NETWORK DASHBOARD
 // ══════════════════════════════════════════════════════════════════
-private fun androidx.compose.foundation.lazy.LazyListScope.accountItems(state: SettingsState, viewModel: SettingsViewModel) {
+private fun androidx.compose.foundation.lazy.LazyListScope.buildAccountDashboard(state: SettingsState, viewModel: SettingsViewModel) {
     item {
         if (state.rdToken.isNotEmpty()) {
-            RdConnectedCard(state, viewModel)
+            RdConnectedPremiumCard(state, viewModel)
         } else {
             when (val a = state.authStatus) {
                 is SettingsAuthStatus.WaitingForUser -> RdAuthCard(a)
                 is SettingsAuthStatus.Loading        -> RdLoadingCard()
-                is SettingsAuthStatus.Error          -> {
-                    RdErrorCard(a.message)
-                    Spacer(Modifier.height(16.dp))
-                    RdConnectCard(viewModel)
-                }
+                is SettingsAuthStatus.Error          -> { RdErrorCard(a.message); Spacer(Modifier.height(16.dp)); RdConnectCard(viewModel) }
                 else -> RdConnectCard(viewModel)
             }
         }
     }
+    item { Spacer(Modifier.height(24.dp)) }
+    item { SectionTitle("DIAGNOSTICS") }
+    item {
+        DashboardActionCard(
+            title = "RD Server Speed Test",
+            desc = "Ping Real-Debrid servers to diagnose buffering issues",
+            icon = Icons.Default.NetworkCheck,
+            value = "Run Test"
+        ) { /* הפעלת בדיקת מהירות */ }
+    }
 }
 
 @Composable
-private fun RdConnectedCard(state: SettingsState, viewModel: SettingsViewModel) {
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(CARD_IDLE).border(1.dp, BORDER, RoundedCornerShape(16.dp)).padding(32.dp)
+private fun RdConnectedPremiumCard(state: SettingsState, viewModel: SettingsViewModel) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = { viewModel.logoutRealDebrid() },
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
+        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
+        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
+        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
     ) {
-        Column {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Icon(Icons.Default.WorkspacePremium, null, Modifier.size(18.dp), tint = PREMIUM)
-                Text("REAL-DEBRID PREMIUM", color = PREMIUM, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
+        Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(CARD_IDLE, Color(0xFF1F1A0F)))).padding(24.dp)) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.WorkspacePremium, null, tint = ACCENT_GOLD, modifier = Modifier.size(20.dp))
+                    Text("PREMIUM ACTIVE", color = ACCENT_GOLD, fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                }
+                Spacer(Modifier.height(16.dp))
+                Text("Real-Debrid Account Linked", color = TEXT_PRIMARY, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(6.dp))
+                Text("Token: ${state.rdToken.take(5)}••••••••${state.rdToken.takeLast(4)}", color = TEXT_MUTED, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+                Spacer(Modifier.height(20.dp))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Icon(Icons.Default.LinkOff, null, tint = if (focused) ACCENT_RED else TEXT_MUTED, modifier = Modifier.size(18.dp))
+                    Text("Press OK to Disconnect Device", color = if (focused) ACCENT_RED else TEXT_MUTED, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                }
             }
-            Spacer(Modifier.height(16.dp))
-            Text("High-Speed Streaming Active", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(8.dp))
-            Text("Token: ${state.rdToken.take(6)}••••••••${state.rdToken.takeLast(4)}", color = DIM2, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
-
-            Spacer(Modifier.height(32.dp))
-            ActionRow("Disconnect Account", "Remove this device from your Real-Debrid account", Icons.Default.LinkOff, "", danger = true) { viewModel.logoutRealDebrid() }
         }
     }
 }
 
 @Composable
 private fun RdConnectCard(viewModel: SettingsViewModel) {
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(CARD_IDLE).border(1.dp, BORDER, RoundedCornerShape(16.dp)).padding(32.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(32.dp)) {
-            Box(
-                Modifier.size(80.dp).background(Color(0xFF1A1A1A), CircleShape).border(1.dp, BORDER, CircleShape),
-                Alignment.Center
-            ) { Icon(Icons.Default.Speed, null, Modifier.size(36.dp), tint = WHITE) }
-
-            Column(Modifier.weight(1f)) {
-                Text("Unlock Premium Speeds", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                Text("Connect your Real-Debrid account for instant 4K buffering-free playback from cached torrents.", color = DIM2, fontSize = 14.sp, lineHeight = 20.sp)
-                Spacer(Modifier.height(24.dp))
-
-                ActionRow("Link Real-Debrid Account", "Generates a code to link your device", Icons.Default.VpnKey, "", danger = false) { viewModel.startRealDebridAuth() }
-            }
-        }
-    }
+    DashboardActionCard(
+        title = "Unlock Premium Streaming",
+        desc = "Connect Real-Debrid for 4K zero-buffering playback from cached torrents.",
+        icon = Icons.Default.VpnKey,
+        value = "Link Account",
+        highlight = ACCENT_GOLD
+    ) { viewModel.startRealDebridAuth() }
 }
 
 @Composable
 private fun RdAuthCard(auth: SettingsAuthStatus.WaitingForUser) {
-    Box(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .background(CARD_IDLE).border(1.dp, PREMIUM.copy(0.5f), RoundedCornerShape(16.dp)).padding(36.dp)
-    ) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CARD_IDLE).border(1.dp, ACCENT_GOLD, RoundedCornerShape(20.dp)).padding(28.dp)) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text("Link Your Device", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+            Text("Device Authorization Required", color = TEXT_PRIMARY, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(24.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(40.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("1. Visit this link on your phone or PC", color = DIM, fontSize = 14.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text(auth.url, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                }
+            Text("1. Go to this URL on your phone or PC", color = TEXT_MUTED, fontSize = 15.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(auth.url, color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
 
-                Box(Modifier.width(1.dp).height(60.dp).background(BORDER))
+            Spacer(Modifier.height(24.dp))
+            Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(BORDER_IDLE))
+            Spacer(Modifier.height(24.dp))
 
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("2. Enter this code", color = DIM, fontSize = 14.sp)
-                    Spacer(Modifier.height(12.dp))
-                    Text(auth.userCode, color = PREMIUM, fontSize = 28.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, letterSpacing = 4.sp)
-                }
-            }
+            Text("2. Enter this Code", color = TEXT_MUTED, fontSize = 15.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(auth.userCode, color = ACCENT_GOLD, fontSize = 38.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, letterSpacing = 8.sp)
         }
     }
 }
 
 @Composable
 private fun RdLoadingCard() {
-    Box(Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(16.dp)).background(CARD_IDLE).border(1.dp, BORDER, RoundedCornerShape(16.dp)), Alignment.Center) {
-        Text("Communicating with Real-Debrid...", color = DIM, fontSize = 16.sp)
+    Box(Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(20.dp)).background(CARD_IDLE).border(1.dp, BORDER_IDLE, RoundedCornerShape(20.dp)), Alignment.Center) {
+        androidx.compose.material3.CircularProgressIndicator(color = ACCENT_GOLD, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
     }
 }
 
 @Composable
-private fun RdErrorCard(message: String) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xFF260D0D)).border(1.dp, RED, RoundedCornerShape(16.dp)).padding(24.dp)) {
+private fun RdErrorCard(msg: String) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF2E0C0C)).padding(20.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(Icons.Default.ErrorOutline, null, tint = WHITE)
-            Text(message, color = WHITE, fontSize = 15.sp)
+            Icon(Icons.Default.ErrorOutline, null, tint = ACCENT_RED)
+            Text(msg, color = TEXT_PRIMARY, fontSize = 14.sp)
         }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  PLAYBACK ITEMS
+//  2. PLAYBACK & HOME THEATER DASHBOARD
 // ══════════════════════════════════════════════════════════════════
-private fun androidx.compose.foundation.lazy.LazyListScope.playbackItems(state: SettingsState, viewModel: SettingsViewModel) {
-    item { SectionLabel("VIDEO PREFERENCES") }
+private fun androidx.compose.foundation.lazy.LazyListScope.buildPlaybackDashboard(state: SettingsState, viewModel: SettingsViewModel) {
+    item { SectionTitle("HOME THEATER AUDIO") }
+    item {
+        DashboardToggleCard(
+            title = "Audio Passthrough (Bitstream)",
+            desc = "Send raw audio (Dolby Atmos, TrueHD, DTS-HD MA) directly to your AV Receiver or Soundbar.",
+            icon = Icons.Default.SurroundSound,
+            isChecked = state.audioPassthrough
+        ) { viewModel.updateToggleSetting("audio_passthrough", !state.audioPassthrough) }
+    }
+
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("CINEMATIC VIDEO") }
+    item {
+        DashboardToggleCard(
+            title = "Force Dolby Vision / HDR10+",
+            desc = "Prioritize high dynamic range formats when scraping Torrentio sources.",
+            icon = Icons.Default.HdrOn,
+            isChecked = state.forceHdr
+        ) { viewModel.updateToggleSetting("force_hdr", !state.forceHdr) }
+    }
+    item {
+        DashboardToggleCard(
+            title = "Auto Frame Rate (AFR)",
+            desc = "Automatically switch TV refresh rate (e.g., to 24Hz) to match movie frame rate and eliminate judder.",
+            icon = Icons.Default.Monitor,
+            isChecked = state.autoFrameRate
+        ) { viewModel.updateToggleSetting("afr", !state.autoFrameRate) }
+    }
+
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("PLAYER BEHAVIOR") }
+    item {
+        DashboardToggleCard(
+            title = "Auto-Play Next Episode",
+            desc = "Seamlessly start the next episode during TV show binges.",
+            icon = Icons.Default.SkipNext,
+            isChecked = state.autoPlayNext
+        ) { viewModel.updateToggleSetting("auto_play", !state.autoPlayNext) }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  3. PERSONALIZATION & SUBTITLES DASHBOARD
+// ══════════════════════════════════════════════════════════════════
+private fun androidx.compose.foundation.lazy.LazyListScope.buildPersonalizationDashboard(state: SettingsState, viewModel: SettingsViewModel) {
+    item { SectionTitle("SUBTITLE PREFERENCES") }
     item {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            listOf("4K" to "Ultra HD HDR", "1080p" to "Full HD", "720p" to "HD Ready").forEach { (q, sub) ->
-                QualityCard(q, sub, state.maxResolution == q, Modifier.weight(1f)) { viewModel.updateStringSetting("max_res", q) }
-            }
+            DashboardRadioCard("Hebrew", "עברית", state.defaultSubtitles == "Hebrew", Modifier.weight(1f)) { viewModel.updateStringSetting("def_subs", "Hebrew") }
+            DashboardRadioCard("English", "English", state.defaultSubtitles == "English", Modifier.weight(1f)) { viewModel.updateStringSetting("def_subs", "English") }
+            DashboardRadioCard("None", "Off", state.defaultSubtitles == "None", Modifier.weight(1f)) { viewModel.updateStringSetting("def_subs", "None") }
         }
     }
-    item { Spacer(Modifier.height(16.dp)) }
-    item { SectionLabel("PLAYER SETTINGS") }
-    item { ToggleRow("Auto-Play Next Episode", "Start the next episode automatically", Icons.Default.SkipNext, state.autoPlayNext) { viewModel.updateToggleSetting("auto_play", !state.autoPlayNext) } }
-    item { ToggleRow("Hardware Acceleration", "Use device decoder for smooth playback", Icons.Default.Speed, state.hwAcceleration) { viewModel.updateToggleSetting("hw_accel", !state.hwAcceleration) } }
-    item { Spacer(Modifier.height(16.dp)) }
-    item { SectionLabel("SUBTITLES") }
-    item { RadioRow("Hebrew", "עברית", Icons.Default.ClosedCaption, state.defaultSubtitles == "Hebrew") { viewModel.updateStringSetting("def_subs", "Hebrew") } }
-    item { RadioRow("English", "English", Icons.Default.ClosedCaption, state.defaultSubtitles == "English") { viewModel.updateStringSetting("def_subs", "English") } }
-    item { RadioRow("None", "Disabled", Icons.Default.Block, state.defaultSubtitles == "None") { viewModel.updateStringSetting("def_subs", "None") } }
-}
-
-@Composable
-private fun QualityCard(label: String, sub: String, selected: Boolean, modifier: Modifier, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-
-    val borderColor = when {
-        focused -> WHITE
-        selected -> WHITE.copy(0.5f)
-        else -> BORDER
-    }
-
-    Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor = if (selected) Color(0xFF262626) else CARD_IDLE,
-            focusedContainerColor = Color(0xFF333333)
-        ),
-        border   = ClickableSurfaceDefaults.border(Border(border = BorderStroke(if (focused) 3.dp else 1.dp, borderColor), shape = RoundedCornerShape(12.dp))),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        modifier = modifier.height(100.dp).onFocusChanged { focused = it.isFocused }
-    ) {
-        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text(label, color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black)
-                if (selected) Icon(Icons.Default.CheckCircle, null, Modifier.size(20.dp), tint = WHITE)
-            }
-            Text(sub, color = DIM2, fontSize = 12.sp)
-        }
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  PRIVACY ITEMS
-// ══════════════════════════════════════════════════════════════════
-private fun androidx.compose.foundation.lazy.LazyListScope.privacyItems(state: SettingsState, viewModel: SettingsViewModel) {
-    item { SectionLabel("CONTENT") }
-    item { ToggleRow("Safe Search", "Hide explicit titles from search results", Icons.Default.FamilyRestroom, state.safeSearch) { viewModel.updateToggleSetting("safe_search", !state.safeSearch) } }
-    item { Spacer(Modifier.height(16.dp)) }
-    item { SectionLabel("HISTORY MANAGEMENT") }
-    item { ToggleRow("Save Search History", "Keep recent queries for quick access", Icons.AutoMirrored.Filled.ManageSearch, state.saveSearchHistory) { viewModel.updateToggleSetting("save_history", !state.saveSearchHistory) } }
-    item { ActionRow("Clear Search History", "Delete all previous searches", Icons.Default.DeleteSweep, state.searchHistoryStatus, danger = true) { viewModel.clearSearchHistory() } }
-    item { ActionRow("Clear Watch History", "Remove titles from 'Continue Watching'", Icons.Default.History, state.watchHistoryStatus, danger = true) { viewModel.clearWatchHistory() } }
-}
-
-// ══════════════════════════════════════════════════════════════════
-//  SYSTEM ITEMS
-// ══════════════════════════════════════════════════════════════════
-private fun androidx.compose.foundation.lazy.LazyListScope.systemItems(state: SettingsState, viewModel: SettingsViewModel, onToggleLang: () -> Unit) {
-    item { SectionLabel("PREFERENCES") }
     item {
-        ActionRow("App Language", "Change interface language", Icons.Default.Translate, if (state.isHebrew) "עברית" else "English", danger = false) {
-            viewModel.updateToggleSetting("is_hebrew", !state.isHebrew); onToggleLang()
-        }
+        DashboardToggleCard(
+            title = "Yellow Subtitles",
+            desc = "Use classic cinematic yellow text instead of white for better readability on bright scenes.",
+            icon = Icons.Default.FormatColorText,
+            isChecked = state.yellowSubtitles
+        ) { viewModel.updateToggleSetting("yellow_subs", !state.yellowSubtitles) }
     }
-    item { Spacer(Modifier.height(16.dp)) }
-    item { SectionLabel("DEVICE STORAGE") }
-    item { ActionRow("Clear Image Cache", "Free up space used by posters (${state.cacheSizeStr})", Icons.Default.Storage, "Clear", danger = false) { viewModel.clearCache() } }
-    item { Spacer(Modifier.height(16.dp)) }
-    item { SectionLabel("ABOUT") }
+
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("CONTENT FILTERING") }
     item {
-        Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(CARD_IDLE).border(1.dp, BORDER, RoundedCornerShape(12.dp)).padding(24.dp)) {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                InfoRow("Version", "1.0.0-Lumina (Build 2026)")
-                InfoRow("Media Engine", "ExoPlayer / Media3 1.5.0")
-                InfoRow("Data Provider", "TMDB API v3")
-            }
-        }
-    }
-}
-
-@Composable
-private fun InfoRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = DIM2, fontSize = 14.sp)
-        Text(value, color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        DashboardToggleCard(
+            title = "Safe Search",
+            desc = "Filter out adult and explicit titles from TMDB discovery and search results.",
+            icon = Icons.Default.FamilyRestroom,
+            isChecked = state.safeSearch
+        ) { viewModel.updateToggleSetting("safe_search", !state.safeSearch) }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  SHARED UI COMPONENTS (TV Optimized)
+//  4. SYSTEM, OLED & PERFORMANCE DASHBOARD
+// ══════════════════════════════════════════════════════════════════
+private fun androidx.compose.foundation.lazy.LazyListScope.buildSystemDashboard(state: SettingsState, viewModel: SettingsViewModel, onToggleLang: () -> Unit) {
+    item { SectionTitle("OLED PROTECTION") }
+    item {
+        DashboardToggleCard(
+            title = "Dim UI on Inactivity",
+            desc = "Reduce screen brightness by 80% after 2 minutes of inactivity to prevent OLED burn-in.",
+            icon = Icons.Default.Brightness4,
+            isChecked = state.dimUi
+        ) { viewModel.updateToggleSetting("dim_ui", !state.dimUi) }
+    }
+
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("PERFORMANCE (2GB RAM OPTIMIZED)") }
+    item {
+        DashboardToggleCard(
+            title = "Lite UI Mode",
+            desc = "Disable heavy background blurs and crossfades to ensure 60FPS UI navigation.",
+            icon = Icons.Default.Speed,
+            isChecked = state.liteUiMode
+        ) { viewModel.updateToggleSetting("lite_ui", !state.liteUiMode) }
+    }
+    item {
+        DashboardToggleCard(
+            title = "Pre-allocate Video Buffer",
+            desc = "Reserve RAM specifically for ExoPlayer before playback to prevent 'Out of Memory' crashes.",
+            icon = Icons.Default.Memory,
+            isChecked = state.preAllocateBuffer
+        ) { viewModel.updateToggleSetting("pre_buffer", !state.preAllocateBuffer) }
+    }
+
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("STORAGE") }
+    item {
+        DashboardActionCard(
+            title = "Clear Image Cache",
+            desc = "Free up device storage. Currently using: ${state.cacheSizeStr}",
+            icon = Icons.Default.Storage,
+            value = "Clear Now"
+        ) { viewModel.clearCache() }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  REUSABLE DASHBOARD COMPONENTS
 // ══════════════════════════════════════════════════════════════════
 @Composable
-private fun ToggleRow(label: String, sub: String, icon: ImageVector, enabled: Boolean, onToggle: () -> Unit) {
+private fun SectionTitle(title: String) {
+    Text(title, color = TEXT_MUTED, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(start = 4.dp, bottom = 0.dp))
+}
+
+@Composable
+private fun DashboardToggleCard(title: String, desc: String, icon: ImageVector, isChecked: Boolean, onToggle: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
-        onClick  = onToggle,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = Color(0xFF262626)),
-        border   = ClickableSurfaceDefaults.border(Border(border = BorderStroke(if (focused) 3.dp else 1.dp, if (focused) WHITE else BORDER), shape = RoundedCornerShape(12.dp))),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth().height(80.dp).onFocusChanged { focused = it.isFocused }
+        onClick = onToggle,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
+        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
+        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
+        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
     ) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Icon(icon, null, Modifier.size(24.dp), tint = if (focused) WHITE else DIM)
-            Column(Modifier.weight(1f)) {
-                Text(label, color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(sub, color = DIM2, fontSize = 13.sp)
+        Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(42.dp).background(if (focused) TEXT_PRIMARY else BORDER_IDLE, CircleShape), Alignment.Center) {
+                Icon(icon, null, tint = if (focused) BG_DARK else TEXT_PRIMARY, modifier = Modifier.size(20.dp))
             }
-
-            // Switch
-            val thumbPos by animateFloatAsState(if (enabled) 1f else 0f, tween(200), label = "tp")
-            val trackBg  by animateColorAsState(if (enabled) WHITE else Color(0xFF333333), tween(200), label = "tb")
-            Box(Modifier.width(48.dp).height(26.dp).clip(RoundedCornerShape(13.dp)).background(trackBg)) {
-                Box(Modifier.padding(3.dp).size(20.dp).offset(x = (thumbPos * 22).dp).background(if (enabled) BLACK else DIM, CircleShape))
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, color = TEXT_PRIMARY, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(desc, color = TEXT_MUTED, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.width(16.dp))
+            // Custom Switch
+            val thumbPos by animateFloatAsState(if (isChecked) 1f else 0f, tween(250))
+            val trackColor by animateColorAsState(if (isChecked) ACCENT_BLUE else BORDER_IDLE)
+            Box(Modifier.width(48.dp).height(24.dp).clip(RoundedCornerShape(12.dp)).background(trackColor)) {
+                Box(Modifier.padding(3.dp).size(18.dp).offset(x = (thumbPos * 24).dp).background(if (isChecked) BG_DARK else TEXT_MUTED, CircleShape))
             }
         }
     }
 }
 
 @Composable
-private fun RadioRow(label: String, sub: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun DashboardActionCard(title: String, desc: String, icon: ImageVector, value: String, highlight: Color? = null, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
     Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors   = ClickableSurfaceDefaults.colors(containerColor = if (selected) Color(0xFF1A1A1A) else CARD_IDLE, focusedContainerColor = Color(0xFF262626)),
-        border   = ClickableSurfaceDefaults.border(Border(border = BorderStroke(if (focused) 3.dp else 1.dp, if (focused) WHITE else BORDER), shape = RoundedCornerShape(12.dp))),        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth().height(80.dp).onFocusChanged { focused = it.isFocused }
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
+        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, highlight ?: BORDER_FOCUS))),
+        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
+        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
     ) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Icon(icon, null, Modifier.size(24.dp), tint = if (focused) WHITE else DIM)
-            Column(Modifier.weight(1f)) {
-                Text(label, color = WHITE, fontSize = 16.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
-                Text(sub, color = DIM2, fontSize = 13.sp)
+        Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(42.dp).background(if (focused) highlight ?: TEXT_PRIMARY else BORDER_IDLE, CircleShape), Alignment.Center) {
+                Icon(icon, null, tint = if (focused) BG_DARK else highlight ?: TEXT_PRIMARY, modifier = Modifier.size(20.dp))
             }
-            Box(Modifier.size(24.dp).border(2.dp, if (selected || focused) WHITE else DIM, CircleShape), Alignment.Center) {
-                if (selected) Box(Modifier.size(12.dp).background(WHITE, CircleShape))
-            }
-        }
-    }
-}
-
-@Composable
-private fun ActionRow(label: String, sub: String, icon: ImageVector, value: String, danger: Boolean, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val textColor = if (danger) RED else WHITE
-
-    Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor = if (danger && focused) Color(0xFF260D0D) else CARD_IDLE,
-            focusedContainerColor = if (danger) Color(0xFF3D1515) else Color(0xFF262626)
-        ),
-        border   = ClickableSurfaceDefaults.border(Border(border = BorderStroke(if (focused) 3.dp else 1.dp, if (focused) (if(danger) RED else WHITE) else BORDER), shape = RoundedCornerShape(12.dp))),        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth().height(80.dp).onFocusChanged { focused = it.isFocused }
-    ) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            Icon(icon, null, Modifier.size(24.dp), tint = if (focused) textColor else DIM)
+            Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(label, color = if (focused) textColor else WHITE, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                if (sub.isNotBlank()) Text(sub, color = DIM2, fontSize = 13.sp)
+                Text(title, color = TEXT_PRIMARY, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(desc, color = TEXT_MUTED, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
             if (value.isNotBlank()) {
-                Text(value, color = if (value.contains("ing") || value.contains("ed!")) PREMIUM else textColor, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(16.dp))
+                Box(Modifier.background(if (focused) highlight ?: TEXT_PRIMARY else BORDER_IDLE, RoundedCornerShape(8.dp)).padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    Text(value, color = if (focused) BG_DARK else TEXT_PRIMARY, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
     }
 }
 
 @Composable
-private fun SectionLabel(text: String) {
-    Text(text, color = DIM2, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 8.dp, top = 8.dp))
+private fun DashboardRadioCard(label: String, sub: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSelected) BORDER_IDLE else CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
+        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
+        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
+        modifier = modifier.height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
+    ) {
+        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(label, color = TEXT_PRIMARY, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Medium)
+                if (isSelected) Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = ACCENT_BLUE)
+            }
+            Text(sub, color = TEXT_MUTED, fontSize = 12.sp)
+        }
+    }
 }
 
 @Composable
-fun PremiumSettingItem(title: String, value: String, onClick: () -> Unit) {
-    ActionRow(title, "", Icons.Default.Tune, value, danger = false, onClick = onClick)
+private fun LuminaLogo(isExpanded: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.padding(horizontal = if (isExpanded) 24.dp else 0.dp)
+    ) {
+        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(ACCENT_RED), Alignment.Center) {
+            Text("L", color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
+        }
+        if (isExpanded) {
+            Column {
+                Text("LUMINA",  color = TEXT_PRIMARY, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
+                Text("STREAMS", color = ACCENT_RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 10.sp)
+            }
+        }
+    }
 }
