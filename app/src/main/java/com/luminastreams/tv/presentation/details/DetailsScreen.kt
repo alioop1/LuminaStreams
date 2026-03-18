@@ -186,12 +186,12 @@ fun DetailsScreen(
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationY = -(scrollState.firstVisibleItemScrollOffset * 0.12f).coerceIn(0f, 70f)
         }) {
-            if (media.backdropUrl?.isNotEmpty() == true) {
+            if (media.backdropUrl.isNotEmpty()) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(true).memoryCachePolicy(CachePolicy.ENABLED).build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
-            } else if (media.posterUrl?.isNotEmpty() == true) {
+            } else if (media.posterUrl.isNotEmpty() == true) {
                 AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.5f)
             }
         }
