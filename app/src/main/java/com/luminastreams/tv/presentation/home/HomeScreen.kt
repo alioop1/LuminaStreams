@@ -5,6 +5,7 @@
 )
 package com.luminastreams.tv.presentation.home
 
+import androidx.compose.foundation.focusGroup
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
@@ -51,6 +52,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
+
 // ═══════════════════════════════════════════════════════════════════
 //  PALETTE
 // ═══════════════════════════════════════════════════════════════════
@@ -71,30 +73,23 @@ private val NAV_FOCUS   = Color(0x30FFFFFF)
 
 // ═══════════════════════════════════════════════════════════════════
 //  LAYOUT
-//  NAV: two rows — search row (52dp) + pills row (44dp) = 96dp
-//  LANDSCAPE card (first row): 16:9 → 280×158dp
-//  PORTRAIT card (other rows): 2:3 → 148×222dp
-//  ROW_LANDSCAPE_H: label(20) + pad(8) + card(158) + pad(8) = 194dp
-//  ROW_PORTRAIT_H:  label(20) + pad(8) + card(222) + pad(8) = 258dp
 // ═══════════════════════════════════════════════════════════════════
 private val NAV_SEARCH_H   = 24.dp
-private val NAV_PILLS_H    = 34.dp // גובה אזור הפילס כולו
-private val NAV_PILL_H     = 28.dp // גובה הפיל הבודד עצמו - נוסף עבור האינדיקטור
+private val NAV_PILLS_H    = 34.dp
+private val NAV_PILL_H     = 28.dp
 private val NAV_GAP        = 12.dp
 private val NAV_H          = NAV_SEARCH_H + NAV_PILLS_H + NAV_GAP
 
 private val LAND_W = 280.dp
-private val LAND_H = 158.dp   // 16:9
+private val LAND_H = 158.dp
 private val PORT_W = 148.dp
-private val PORT_H = 222.dp   // 2:3
+private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
 
 // ═══════════════════════════════════════════════════════════════════
 //  GRADIENT SCRIMS
 // ═══════════════════════════════════════════════════════════════════
-// Full-screen hero: keep the backdrop fully visible through the rows
-// The rows sit ON TOP of the backdrop with a semi-transparent layer
 private val heroScrimLeft = Brush.horizontalGradient(
     colorStops = arrayOf(
         0.00f to Color(0xD0070707),
@@ -111,7 +106,6 @@ private val heroScrimTop = Brush.verticalGradient(
         0.50f to Color.Transparent
     )
 )
-// Bottom: rows sit here — a glass-dark overlay lets the backdrop bleed through
 private val rowsOverlay = Brush.verticalGradient(
     colorStops = arrayOf(
         0.00f to Color.Transparent,
@@ -161,7 +155,6 @@ fun HomeScreen(
     val rows: List<RowDef> = remember(state.selectedTab, state) {
         when (state.selectedTab) {
             "ראשי" -> buildList {
-                // תמהיל למסך הבית (Home) - מערבב סרטים וסדרות
                 if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Movies",       state.movieTrending))
                 if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("Popular Shows",         state.tvTrending))
                 if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
@@ -169,7 +162,6 @@ fun HomeScreen(
                 if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio(StudioBrand.APPLE_TV,     state.tvAppleTV))
             }
             "סרטים" -> buildList {
-                // רק סרטים (Movies)
                 if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
                 if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
                 if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
@@ -181,7 +173,6 @@ fun HomeScreen(
                 if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated",             state.movieTopRated))
             }
             "סדרות" -> buildList {
-                // רק סדרות (TV Shows)
                 if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("Trending Shows",    state.tvTrending))
                 if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,  state.tvNetflix))
                 if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("On The Air",        state.tvPremieres))
@@ -192,19 +183,23 @@ fun HomeScreen(
                 if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi & Fantasy",  state.tvScifi))
                 if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated Shows",   state.tvTopRated))
             }
+            "Fuzer" -> buildList {
+                // מציג את התוכן של Fuzer ברגע שהוא נטען מה-ViewModel
+                if (state.fuzerItems.isNotEmpty()) {
+                    add(RowDef.Regular("Fuzer Releases (Hebrew)", state.fuzerItems))
+                }
+            }
             else -> emptyList()
         }
     }
 
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
-    // rowH per index — row 0 is landscape, rest portrait
     fun rowHeightFor(i: Int) = if (i == 0) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
 
-    // Panel height = show current row fully + tiny peek of next one
     val panelH = remember(rows.size) {
         if (rows.isEmpty()) ROW_PORTRAIT_H
-        else ROW_PORTRAIT_H + 16.dp  // one full portrait row + breathing room
+        else ROW_PORTRAIT_H + 16.dp
     }
 
     LaunchedEffect(Unit) {
@@ -232,36 +227,40 @@ fun HomeScreen(
             state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
         }
 
-        // ── Full-screen backdrop ───────────────────────────────────────
         BackdropLayer(focusState.heroMovie)
-
-        // ── Rows overlay (bottom half of screen gets darkened glass) ───
         Box(Modifier.fillMaxSize().drawBehind { drawRect(rowsOverlay) })
-
-        // ── Hero text ─────────────────────────────────────────────────
         HeroOverlay(focusState.heroMovie, panelH)
 
-        // ── Nav + rows ────────────────────────────────────────────────
         ContentLayer(
             rows         = rows,
             focusState   = focusState,
             activeTab    = state.selectedTab,
             panelH       = panelH,
-            rowHeightFor = ::rowHeightFor,
-            onMovieClick = onMovieClick,
+            rowHeightFor = { i -> rowHeightFor(i) },
+            // התיקון הקריטי למניעת קריסת הניווט כשה-ID הוא לינק!
+            onMovieClick = { id ->
+                val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                onMovieClick(safeId)
+            },
             onHeroUpdate = { focusState.heroMovie = it },
             onSearch     = { navController.navigate("search") },
-            onHomeTab    = { viewModel.selectTab("ראשי") }, // <-- הטאב הראשי
+            onHomeTab    = { viewModel.selectTab("ראשי") },
             onMoviesTab  = { viewModel.selectTab("סרטים") },
             onSeriesTab  = { viewModel.selectTab("סדרות") },
             onWatchlist  = { navController.navigate("watchlist") },
-            onSettings   = { navController.navigate("settings") }
+            onSettings   = { navController.navigate("settings") },
+            onFuzer      = {
+                viewModel.selectTab("Fuzer")
+                if (state.fuzerItems.isEmpty()) {
+                    viewModel.loadFuzerContent()
+                }
+            }
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  BACKDROP — full-screen, always rendered behind everything
+//  BACKDROP
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
@@ -290,7 +289,6 @@ private fun BackdropLayer(hero: Movie?) {
                 )
             }
         }
-        // left and top scrims only — bottom handled by rowsOverlay separately
         Box(Modifier.fillMaxSize().drawBehind { drawRect(heroScrimLeft); drawRect(heroScrimTop) })
     }
 }
@@ -305,17 +303,10 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
             key(m.id) {
                 Column(
                     modifier = Modifier
-                        // מפתח הקסם: מעגנים למטה כדי לא לעלות על הפוסטרים
                         .align(Alignment.BottomStart)
-                        .padding(
-                            start  = 60.dp,
-                            end    = 400.dp,
-                            // מוחקים את ה-top לגמרי! ככה הקופסה לא נמחצת ויכולה לגדול כלפי מעלה
-                            bottom = panelH + 16.dp // שומר על מרווח אוויר מושלם של 32 פיקסלים מעל הפוסטרים
-                        ),
+                        .padding(start = 60.dp, end = 400.dp, bottom = panelH + 16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    // ── Title ──────────────────────────────────────────
                     val tsz = when {
                         m.title.length > 26 -> 28.sp
                         m.title.length > 16 -> 34.sp
@@ -332,7 +323,6 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                         overflow      = TextOverflow.Ellipsis
                     )
 
-                    // ── Meta row ───────────────────────────────────────
                     Row(
                         verticalAlignment     = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(0.dp)
@@ -362,14 +352,13 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                         }
                     }
 
-                    // ── Overview ───────────────────────────────────────
                     if (m.overview.isNotBlank()) {
                         Text(
                             text       = m.overview,
                             color      = DIM2,
                             fontSize   = 13.sp,
                             lineHeight = 20.sp,
-                            maxLines   = 4, // 4 שורות זה האיזון המושלם למסך טלוויזיה
+                            maxLines   = 4,
                             overflow   = TextOverflow.Ellipsis,
                             modifier   = Modifier.widthIn(max = 640.dp)
                         )
@@ -390,67 +379,99 @@ private fun ContentLayer(
     panelH: Dp, rowHeightFor: (Int) -> Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
     onSearch: () -> Unit,
-    onHomeTab: () -> Unit, // <-- נוסף
+    onHomeTab: () -> Unit,
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit,
-    onWatchlist: () -> Unit, onSettings: () -> Unit
+    onWatchlist: () -> Unit, onSettings: () -> Unit,
+    onFuzer: () -> Unit
 ) {
     val firstNavFR   = remember { FocusRequester() }
     val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
 
     var initialFocusDone by remember { mutableStateOf(false) }
-    LaunchedEffect(rows.size) {
-        if (!initialFocusDone && rows.isNotEmpty()) {
-            delay(380); initialFocusDone = true
-            runCatching { firstCardFRs[0].requestFocus() }
-        }
-    }
-    LaunchedEffect(focusState.isNavFocused) {
+
+    // 1. שיקום פוקוס כשחוזרים ממסך אחר (הנגן או מסך הפרטים)
+    LaunchedEffect(Unit) {
+        delay(150)
         if (focusState.isNavFocused) {
-            delay(40); runCatching { firstNavFR.requestFocus() }
-        } else if (initialFocusDone) {
+            runCatching { firstNavFR.requestFocus() }
+        } else if (rows.isNotEmpty()) {
             val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
             runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
         }
     }
 
-    Box(
-        Modifier.fillMaxSize().onPreviewKeyEvent { ev ->
-            if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-            when (ev.key) {
-                Key.DirectionUp -> {
-                    if (focusState.isNavFocused) return@onPreviewKeyEvent true
-                    if (focusState.currentRowIndex > 0) {
-                        focusState.currentRowIndex--; focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                    } else focusState.isNavFocused = true
-                    true
-                }
-                Key.DirectionDown -> {
-                    if (focusState.isNavFocused) { focusState.isNavFocused = false; true }
-                    else if (focusState.currentRowIndex < rows.size - 1) {
-                        focusState.currentRowIndex++; focusState.lastNavEventTime = SystemClock.elapsedRealtime(); true
-                    } else false
-                }
-                Key.Back, Key.Escape -> { if (focusState.isNavFocused) { focusState.isNavFocused = false; true } else false }
-                else -> false
+    // 2. פוקוס ראשוני בטעינה הראשונה של השורות
+    LaunchedEffect(rows.size) {
+        if (!initialFocusDone && rows.isNotEmpty()) {
+            delay(380); initialFocusDone = true
+            if (!focusState.isNavFocused) {
+                val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
+                runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
             }
         }
+    }
+
+    Box(
+        Modifier
+            .fillMaxSize()
+            .focusGroup()
+            .onPreviewKeyEvent { ev ->
+                if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                when (ev.key) {
+                    Key.DirectionUp -> {
+                        if (focusState.isNavFocused) {
+                            return@onPreviewKeyEvent true // חוסם יציאה מהאפליקציה למעלה
+                        }
+                        if (focusState.currentRowIndex <= 0) {
+                            focusState.isNavFocused = true
+                            // התיקון: מחזירים false! תן לקומפוז לעלות לפיליס (Pills) באופן טבעי
+                            false
+                        } else {
+                            focusState.currentRowIndex--
+                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                            false // תן לקומפוז לעלות שורה באופן טבעי
+                        }
+                    }
+                    Key.DirectionDown -> {
+                        if (focusState.isNavFocused) {
+                            focusState.isNavFocused = false
+                            focusState.currentRowIndex = 0
+                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                            // התיקון הקריטי: מחזירים false! ככה הפוקוס נופל בול לפוסטר שמוצג עכשיו על המסך!
+                            false
+                        } else {
+                            if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
+                                focusState.currentRowIndex++
+                            }
+                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
+                            // תן לקומפוז לנווט למטה (בין אם זו שורה ובין אם זה פיוזר)
+                            false
+                        }
+                    }
+                    Key.Back, Key.Escape -> {
+                        if (focusState.isNavFocused) {
+                            focusState.isNavFocused = false; true
+                        } else false
+                    }
+                    else -> false
+                }
+            }
     ) {
-        // ── Two-row nav bar ──────────────────────────────────────────
         TwoRowNavBar(
             activeTab   = activeTab,
             firstNavFR  = firstNavFR,
             onSearch    = onSearch,
-            onHomeTab   = onHomeTab, // <-- מעבירים פנימה
+            onHomeTab   = onHomeTab,
             onMoviesTab = onMoviesTab,
             onSeriesTab = onSeriesTab,
             onWatchlist = onWatchlist,
             onSettings  = onSettings,
+            onFuzer     = onFuzer,
             onNavExit   = { focusState.isNavFocused = false },
             modifier    = Modifier.fillMaxWidth().height(NAV_H).align(Alignment.TopStart).zIndex(10f)
         )
 
-        // ── Rows panel — pinned to bottom of the Box ─────────────────
         Box(
             Modifier
                 .fillMaxWidth()
@@ -462,22 +483,22 @@ private fun ContentLayer(
                 focusState   = focusState,
                 rowFRs       = firstCardFRs,
                 panelH       = panelH,
-                rowHeightFor = rowHeightFor,
+                rowHeightFor = { i -> rowHeightFor(i) },
                 onItemFocus  = onHeroUpdate,
                 onItemClick  = onMovieClick
             )
         }
     }
 }
-
 // ═══════════════════════════════════════════════════════════════════
-//  TWO-ROW NAV BAR (עם אינדיקטור מחליק חלק מתוקן סופית)
+//  TWO-ROW NAV BAR
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun TwoRowNavBar(
     activeTab: String, firstNavFR: FocusRequester,
     onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit,
+    onFuzer: () -> Unit,
     onNavExit: () -> Unit, modifier: Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
@@ -489,12 +510,10 @@ private fun TwoRowNavBar(
         }
     }
 
-    // --- לוגיקת אינדיקטור מחליק ---
     val density = LocalDensity.current
     val tabPositions = remember { mutableStateMapOf<String, Offset>() }
     val tabWidths = remember { mutableStateMapOf<String, Dp>() }
 
-    // התיקון הקריטי: קריאה ישירה מהמפה בלי remember כדי שזה יתעדכן בזמן אמת!
     val targetX = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
@@ -510,7 +529,7 @@ private fun TwoRowNavBar(
     )
 
     Column(modifier = modifier) {
-        // ── Row 1: Logo + Clock ──────────────────────────────────────
+        // ── Row 1: Logo + Clock ──────────────────────────────────
         Row(
             modifier = Modifier.fillMaxWidth().height(NAV_SEARCH_H).padding(horizontal = 52.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -522,12 +541,11 @@ private fun TwoRowNavBar(
 
         Spacer(Modifier.height(NAV_GAP))
 
-        // ── Row 2: Pills + Search (עם אינדיקטור) ─────────────────────
+        // ── Row 2: Pills + Search ─────────────────────
         Box(
             modifier = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp),
             contentAlignment = Alignment.CenterStart
         ) {
-            // האנימציה - המלבן הלבן מאחור (יוצג רק אחרי שהרוחב חושב)
             if (animatedWidth > 0.dp) {
                 androidx.compose.material3.Surface(
                     modifier = Modifier
@@ -560,11 +578,22 @@ private fun TwoRowNavBar(
                     tabPositions["סדרות"] = offset
                     tabWidths["סדרות"] = width
                 }
-                NavPill("Watchlist", Icons.Default.Bookmark, false, null, onWatchlist) { offset, width ->
+                NavPill("Watchlist", Icons.Default.Bookmark, activeTab == "Watchlist", null, onWatchlist) { offset, width ->
                     tabPositions["Watchlist"] = offset
                     tabWidths["Watchlist"] = width
                 }
-                NavPill("Settings", Icons.Default.Settings, false, null, onSettings) { offset, width ->
+                // ── Fuzer pill ──
+                NavPill(
+                    label           = "Fuzer",
+                    icon            = Icons.Default.CloudDownload,
+                    isSelected      = activeTab == "Fuzer", // יסומן כשהטאב פעיל
+                    focusRequester  = null,
+                    onClick         = onFuzer
+                ) { offset, width ->
+                    tabPositions["Fuzer"] = offset
+                    tabWidths["Fuzer"] = width
+                }
+                NavPill("Settings", Icons.Default.Settings, activeTab == "Settings", null, onSettings) { offset, width ->
                     tabPositions["Settings"] = offset
                     tabWidths["Settings"] = width
                 }
@@ -624,7 +653,7 @@ private fun NavPill(
     label: String, icon: ImageVector, isSelected: Boolean,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit,
-    onTabPositioned: (Offset, Dp) -> Unit // השם שונה למניעת התנגשויות
+    onTabPositioned: (Offset, Dp) -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val density = LocalDensity.current
@@ -653,7 +682,6 @@ private fun NavPill(
         modifier = Modifier
             .height(NAV_PILL_H)
             .wrapContentWidth()
-            // התיקון: קריאה תקינה ל-Modifier יחד עם השם החדש של הפרמטר
             .onGloballyPositioned { coords ->
                 onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
             }
@@ -684,9 +712,6 @@ private fun NavPill(
 
 // ═══════════════════════════════════════════════════════════════════
 //  ROWS PANEL
-//  Pinned to the bottom of the screen.
-//  Uses spring-animated Y offset to slide rows in/out smoothly.
-//  ✅ No LazyColumn nesting — pure Box + offset.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsPanel(
@@ -697,7 +722,6 @@ private fun RowsPanel(
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
-    // Compute cumulative Y offset to the current row
     val targetYOffset: Dp = remember(curRow, rows.size) {
         var acc = 0.dp
         for (i in 0 until curRow) acc += rowHeightFor(i)
@@ -715,7 +739,6 @@ private fun RowsPanel(
             .height(panelH)
             .clipToBounds()
     ) {
-        // render rows from index 0 upwards — clipping handles visibility
         Box(Modifier.fillMaxWidth().offset(y = animatedY)) {
             var yAccum = 0.dp
             rows.forEachIndexed { i, rowDef ->
@@ -743,7 +766,6 @@ private fun RowsPanel(
                         onItemFocus(m)
                     }
                     if (isLand) {
-                        // First row — landscape cards
                         when (rowDef) {
                             is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
                             is RowDef.Studio  -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
@@ -762,7 +784,7 @@ private fun RowsPanel(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  LANDSCAPE ROW  (row index 0, 16:9 cards)
+//  LANDSCAPE ROW
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeRow(
@@ -818,7 +840,7 @@ private fun LandscapeStudioRow(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  PORTRAIT ROW  (rows 1+, 2:3 cards)
+//  PORTRAIT ROW
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun PortraitRow(
@@ -869,7 +891,6 @@ private fun studioLabel(b: StudioBrand) = when (b) {
     StudioBrand.DISNEY   -> "Disney+ Exclusives"
 }
 
-// ── Row label helper ─────────────────────────────────────────────────────────
 @Composable
 private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
     Text(
@@ -882,7 +903,6 @@ private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modi
     )
 }
 
-// ── Studio badge chips ────────────────────────────────────────────────────────
 @Composable
 private fun StudioBadge(brand: StudioBrand, isActive: Boolean) {
     val a = if (isActive) 1f else 0.4f
@@ -903,8 +923,7 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  LANDSCAPE CARD  (row 0 only — 280×158dp, 16:9)
-//  Shows title + type overlay on focus. No label below.
+//  LANDSCAPE CARD
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
@@ -959,7 +978,6 @@ private fun LandscapeCard(
                 }
             }
 
-            // Bottom info overlay — always a subtle gradient + title
             Box(
                 Modifier.fillMaxSize().background(
                     Brush.verticalGradient(
@@ -982,8 +1000,7 @@ private fun LandscapeCard(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  POSTER CARD  (portrait 2:3, rows 1+)
-//  ✅ zoom on outer Box, Surface scale = 1f always
+//  POSTER CARD
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
@@ -1060,26 +1077,22 @@ fun HomeLoading() {
     )
     Box(Modifier.fillMaxSize().background(BG)) {
         Column(Modifier.fillMaxSize().padding(top = 14.dp, start = 52.dp, end = 52.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            // nav row 1
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
                 Box(Modifier.width(60.dp).height(14.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
                 Spacer(Modifier.weight(1f))
                 Box(Modifier.width(56.dp).height(18.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             }
-            // nav row 2
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 repeat(4) { Box(Modifier.width(100.dp).height(34.dp).clip(RoundedCornerShape(50)).background(shimmer)) }
                 Spacer(Modifier.weight(1f))
                 Box(Modifier.width(260.dp).height(34.dp).clip(RoundedCornerShape(50)).background(shimmer))
             }
             Spacer(Modifier.height(40.dp))
-            // hero text
             Box(Modifier.width(380.dp).height(48.dp).clip(RoundedCornerShape(8.dp)).background(shimmer))
             Box(Modifier.width(240.dp).height(16.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             repeat(2) { Box(Modifier.fillMaxWidth(0.42f).height(13.dp).clip(RoundedCornerShape(4.dp)).background(shimmer)) }
             Spacer(Modifier.weight(1f))
-            // landscape row
             Box(Modifier.width(110.dp).height(14.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
             Spacer(Modifier.height(8.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {

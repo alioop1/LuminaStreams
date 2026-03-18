@@ -11,6 +11,7 @@ data class HomeState(
     val selectedTab:    String       = "ראשי",
     // ── Movies ──────────────────────────────────────────────────────────────
     val movieTrending:  List<Movie>  = emptyList(),
+    val fuzerItems: List<Movie> = emptyList(),
     val moviePremieres: List<Movie>  = emptyList(),
     val movieAction:    List<Movie>  = emptyList(),
     val movieDrama:     List<Movie>  = emptyList(),

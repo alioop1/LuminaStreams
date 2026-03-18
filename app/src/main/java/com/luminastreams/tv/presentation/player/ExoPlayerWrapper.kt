@@ -6,9 +6,13 @@ import android.content.Context
 import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -16,6 +20,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * ExoPlayerWrapper — חוסם Dolby Vision אחרי גילוי הטראקים.
+ *
+ * למה לא DefaultTrackSelector subclass?
+ * ─────────────────────────────────────
+ * selectTracks() הוא final ב-Media3 ולא ניתן לעקוף.
+ *
+ * הפתרון הנכון (Media3 public API):
+ *   1. onTracksChanged() — מופעל אחרי שExoPlayer בנה את רשימת הטראקים
+ *   2. מחפשים קבוצות טראק שכל הפורמטים בהן הם Dolby Vision
+ *   3. מוסיפים TrackSelectionOverride עם רשימה ריקה → ExoPlayer מבטל אותן
+ *   4. ExoPlayer בוחר אוטומטית את קבוצת HEVC/H264 הבאה
+ *
+ * התוצאה: אותה הגנה מה-crash, ללא override של methods final.
+ *
+ * Path: app/src/main/java/com/luminastreams/tv/presentation/player/ExoPlayerWrapper.kt
+ */
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
@@ -49,66 +70,139 @@ class ExoPlayerWrapper(context: Context) {
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
                 .build(),
-            /* handleAudioFocus = */ true
+            true
         )
         .setHandleAudioBecomingNoisy(true)
-        // ✅ FIXED: setPlayWhenReady() does NOT exist on ExoPlayer.Builder in Media3.
-        // Set playWhenReady on the player instance after building (see prepareStream below).
         .build()
 
-    private val _isPlaying = MutableStateFlow(false)
+    private val _isPlaying   = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
+
+    private val _playerError = MutableStateFlow<String?>(null)
+    val playerError: StateFlow<String?> = _playerError.asStateFlow()
 
     init {
         player.addListener(object : Player.Listener {
+
+            /**
+             * ✅ הפתרון הנכון לחסימת Dolby Vision.
+             *
+             * Media3 קורא onTracksChanged() לאחר שהוא בנה את רשימת הטראקים
+             * אך לפני שהקודק מקבל את הפורמט ומנסה לפתוח אותו.
+             * כאן אנחנו מוצאים קבוצות DV ומוסיפים Override ריק עליהן.
+             */
+            override fun onTracksChanged(tracks: Tracks) {
+                var foundDolbyVision = false
+                val paramsBuilder = player.trackSelectionParameters.buildUpon()
+
+                for (group in tracks.groups) {
+                    // בדוק אם כל הפורמטים בקבוצה הם Dolby Vision
+                    val groupIsDv = (0 until group.length).all { i ->
+                        isDolbyVision(group.getTrackFormat(i))
+                    }
+
+                    if (groupIsDv) {
+                        // Override ריק = "אל תבחר שום טראק מקבוצה זו"
+                        paramsBuilder.addOverride(
+                            TrackSelectionOverride(group.mediaTrackGroup, emptyList())
+                        )
+                        foundDolbyVision = true
+                    }
+                }
+
+                if (foundDolbyVision) {
+                    // ✅ עדכון synchronous — ExoPlayer יבחר מחדש לפני שהקודק מתחיל
+                    player.trackSelectionParameters = paramsBuilder.build()
+                }
+            }
+
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 _isPlaying.value = isPlayingNow
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                val message = when (error.errorCode) {
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED ->
+                        "Decoder initialization failed. Try a different source."
+                    PlaybackException.ERROR_CODE_DECODING_FAILED ->
+                        "Decoding error. Try a different source."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ->
+                        "Network connection failed."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
+                        "Connection timed out."
+                    PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
+                        player.seekToDefaultPosition()
+                        player.prepare()
+                        return
+                    }
+                    else -> "Playback error (${error.errorCode})"
+                }
+                _playerError.value = message
+                _isPlaying.value   = false
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_ENDED) _isPlaying.value = false
             }
         })
     }
 
+    // ── Public API ────────────────────────────────────────────────────────────
+
     fun prepareStream(videoUrl: String) {
         try {
-            val mediaItem = MediaItem.Builder()
-                .setUri(Uri.parse(videoUrl))
-                .build()
-            player.setMediaItem(mediaItem)
+            _playerError.value = null
+            player.setMediaItem(MediaItem.Builder().setUri(Uri.parse(videoUrl)).build())
             player.prepare()
-            // ✅ Set playWhenReady HERE — on the instance, not the builder
             player.playWhenReady = true
         } catch (e: Exception) {
-            e.printStackTrace()
+            _playerError.value = "Failed to prepare stream: ${e.message}"
         }
     }
 
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
         try {
-            val currentMediaItem = player.currentMediaItem ?: return
-            val mimeType = if (isVtt || subtitleUrl.endsWith(".vtt")) {
-                MimeTypes.TEXT_VTT
-            } else {
-                MimeTypes.APPLICATION_SUBRIP
-            }
-            val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
-                .setMimeType(mimeType)
+            val current = player.currentMediaItem ?: return
+            val mime    = if (isVtt || subtitleUrl.endsWith(".vtt"))
+                MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+            val conf    = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
+                .setMimeType(mime)
                 .setLanguage(lang)
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
-            val newMediaItem = currentMediaItem.buildUpon()
-                .setSubtitleConfigurations(listOf(subtitleConfig))
-                .build()
-            player.replaceMediaItem(player.currentMediaItemIndex, newMediaItem)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+            player.replaceMediaItem(
+                player.currentMediaItemIndex,
+                current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
+            )
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     fun play()  { player.play() }
     fun pause() { player.pause() }
 
-    fun seekTo(position: Long) {
-        player.seekTo(position.coerceIn(0, player.duration.coerceAtLeast(0)))
+    fun seekTo(pos: Long) {
+        try { player.seekTo(pos.coerceIn(0, player.duration.coerceAtLeast(0))) }
+        catch (e: Exception) { e.printStackTrace() }
     }
 
-    fun release() { player.release() }
+    fun clearError() { _playerError.value = null }
+
+    fun release() {
+        try { player.release() } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private fun isDolbyVision(format: Format): Boolean {
+        // בדיקה לפי MIME type
+        if (format.sampleMimeType.equals(MimeTypes.VIDEO_DOLBY_VISION, ignoreCase = true))
+            return true
+        // בדיקה לפי codec string
+        val codecs = format.codecs ?: return false
+        return codecs.startsWith("dvhe", ignoreCase = true) ||
+                codecs.startsWith("dvh1", ignoreCase = true) ||
+                codecs.startsWith("dovi", ignoreCase = true) ||
+                // hev1.08.xx = Dolby Vision profile 8 (HEVC-based)
+                Regex("^hev1\\.0[0-9]\\.", RegexOption.IGNORE_CASE).containsMatchIn(codecs)
+    }
 }

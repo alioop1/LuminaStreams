@@ -1220,7 +1220,7 @@ private fun EmptyState(query: String, activeFilters: Int) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — TEXT SEARCH
+//  NETWORK — TEXT SEARCH (משולב עם פיוזר!)
 // ══════════════════════════════════════════════════════════════════
 private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
@@ -1228,13 +1228,38 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
         val imgBase = "https://image.tmdb.org/t/p"
         val enc     = URLEncoder.encode(query, "UTF-8")
         val out     = mutableListOf<SearchResult>()
+
+        // 1. חיפוש ב-Fuzer (עושים את זה רק בטעינת העמוד הראשון כדי לא לשכפל בגלגול)
+        if (page == 1) {
+            try {
+                val fuzerEngine = com.luminastreams.tv.data.remote.FuzerEngine()
+                val fuzerMovies = fuzerEngine.search(query).getOrElse { emptyList() }
+
+                val fuzerResults = fuzerMovies.map { m ->
+                    SearchResult(
+                        id          = m.id, // זה לינק ההורדה - קומפוז יקודד אותו בזכות התיקון הקודם שעשינו!
+                        title       = "🔥 " + m.title, // סמיילי כדי שתדע שזה ישיר מפיוזר
+                        posterUrl   = m.posterUrl,
+                        backdropUrl = m.backdropUrl,
+                        type        = if (m.mediaType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                        rating      = m.rating,
+                        releaseYear = if (m.year > 0) m.year.toString() else ""
+                    )
+                }
+                out.addAll(fuzerResults) // מכניס אותם ראשונים!
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        // 2. חיפוש רגיל ב-TMDB (הקוד המקורי שלך)
         try {
             val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection)
                 .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
             if (con.responseCode == 200) {
                 val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
-                    .optJSONArray("results") ?: return@withContext emptyList()
+                    .optJSONArray("results") ?: return@withContext out
                 for (i in 0 until arr.length()) {
                     val j  = arr.getJSONObject(i)
                     val mt = j.optString("media_type")
@@ -1262,7 +1287,9 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
                 }
             }
         } catch (_: Exception) {}
-        out
+
+        // מחזיר את הרשימה המאוחדת
+        out.distinctBy { it.id }
     }
 
 // ══════════════════════════════════════════════════════════════════

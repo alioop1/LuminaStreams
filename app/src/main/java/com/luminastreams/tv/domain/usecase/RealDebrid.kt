@@ -13,6 +13,12 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 
+// --- הוספות חובה עבור תמיכה בקבצי Torrent ---
+import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+
 // ── Auth API interface ─────────────────────────────────────────────────────
 interface RealDebridAuthApi {
     @GET("oauth/v2/device/code")
@@ -107,6 +113,7 @@ class RealDebridManager {
         .build()
         .create(RealDebridApi::class.java)
 
+    // הפונקציה המקורית - טיפול בלינקים מסוג Magnet (למשל מ-Torrentio)
     suspend fun resolveMagnetToStream(magnetUri: String, apiToken: String): Result<String> =
         withContext(Dispatchers.IO) {
             try {
@@ -140,4 +147,83 @@ class RealDebridManager {
                 Result.failure(e)
             }
         }
+
+    // --- הפונקציה המשודרגת: תמיכה חכמה בעונות, פרקים וזמן הורדה בזמן אמת ---
+    suspend fun resolveTorrentFileToStream(
+        torrentBytes: ByteArray,
+        apiToken: String,
+        season: Int? = null,
+        episode: Int? = null,
+        onProgress: (Float) -> Unit = {} // פונקציית קולבק לעדכון אחוזים
+    ): Result<String> = withContext(Dispatchers.IO) {
+        try {
+            if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר!")
+
+            // 1. העלאת קובץ הטורנט (PUT) בסינטקס החדש של OkHttp
+            val client = okhttp3.OkHttpClient()
+            val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
+            val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
+
+            val request = okhttp3.Request.Builder()
+                .url("https://api.real-debrid.com/rest/1.0/torrents/addTorrent")
+                .header("Authorization", "Bearer $apiToken")
+                .put(reqBody)
+                .build()
+
+            val response = client.newCall(request).execute()
+            val json = org.json.JSONObject(response.body?.string() ?: "{}")
+            val torrentId = json.optString("id")
+            if (torrentId.isEmpty()) throw Exception("שגיאה בהעלאת הטורנט ל-RD")
+
+            val authHeader = "Bearer $apiToken"
+            val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
+
+            val videoFiles = torrentInfo.files.filter {
+                (it.path.endsWith(".mkv", true) || it.path.endsWith(".mp4", true) || it.path.endsWith(".avi", true)) &&
+                        it.bytes > 20_000_000
+            }
+            if (videoFiles.isEmpty()) throw Exception("לא נמצאו קבצי וידאו בטורנט (אולי ארכיון RAR?)")
+
+            val targetIndex = if (season != null && episode != null) {
+                val epString1 = String.format("s%02de%02d", season, episode)
+                val epString2 = String.format("%dx%02d", season, episode)
+                val idx = videoFiles.indexOfFirst {
+                    it.path.lowercase().contains(epString1) || it.path.lowercase().contains(epString2)
+                }
+                if (idx != -1) idx else videoFiles.indexOf(videoFiles.maxByOrNull { it.bytes })
+            } else {
+                videoFiles.indexOf(videoFiles.maxByOrNull { it.bytes })
+            }
+
+            val fileIds = videoFiles.joinToString(",") { it.id.toString() }
+            api.selectFiles(authHeader, torrentId, fileIds)
+
+            // 4. בדיקת סטטוס חכמה ודיווח ל-UI
+            var readyInfo = api.getTorrentInfo(authHeader, torrentId)
+            var attempts = 0
+
+            while (readyInfo.links.isEmpty() && attempts < 60) {
+                kotlinx.coroutines.delay(2000)
+                readyInfo = api.getTorrentInfo(authHeader, torrentId)
+                attempts++
+
+                if (readyInfo.status == "downloading") {
+                    // תיקון: ממירים את ה-Int שחוזר מ-RD ל-Float כדי שה-UI לא יקרוס
+                    onProgress(readyInfo.progress.toFloat())
+                } else if (readyInfo.status == "error" || readyInfo.status == "dead") {
+                    throw Exception("שגיאה בהורדת הטורנט בשרתי Real Debrid.")
+                }
+            }
+
+            if (readyInfo.links.isEmpty()) throw Exception("זמן ההמתנה ל-Real-Debrid פג. ההורדה איטית מדי.")
+
+            val targetLink = readyInfo.links.getOrNull(targetIndex) ?: readyInfo.links.first()
+            val unrestrictResponse = api.unrestrictLink(authHeader, targetLink)
+
+            Result.success(unrestrictResponse.download)
+
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 }

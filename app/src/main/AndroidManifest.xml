@@ -4,10 +4,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- TV: מסך מגע לא נדרש -->
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
+    <!-- TV Launcher -->
     <uses-feature
         android:name="android.software.leanback"
         android:required="true" />
@@ -23,13 +25,15 @@
         android:banner="@mipmap/ic_launcher"
         android:largeHeap="true"
         android:hardwareAccelerated="true"
+        android:enableOnBackInvokedCallback="true"
         tools:targetApi="34">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="keyboard|keyboardHidden|navigation"
+            android:configChanges="keyboard|keyboardHidden|navigation|screenSize|screenLayout"
             android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustNothing"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

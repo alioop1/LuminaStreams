@@ -1,42 +1,37 @@
 package com.luminastreams.tv.core
 
 import android.app.Application
-import android.graphics.Bitmap
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import okhttp3.OkHttpClient
-import java.util.concurrent.TimeUnit
+import coil.request.CachePolicy
 
 class LuminaApp : Application(), ImageLoaderFactory {
+    override fun onCreate() {
+        super.onCreate()
+    }
 
     override fun newImageLoader(): ImageLoader {
-        // OkHttp משותף עם connection pool
-        val okhttp = OkHttpClient.Builder()
-            .connectTimeout(8,  TimeUnit.SECONDS)
-            .readTimeout(12,    TimeUnit.SECONDS)
-            .build()
-
         return ImageLoader.Builder(this)
-            // ARGB_8888 חובה ל-TV — RGB_565 שובר hardware acceleration
-            .bitmapConfig(Bitmap.Config.ARGB_8888)
-            .okHttpClient(okhttp)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    // 25% מה-heap — מספיק ל-TV 4K עם largeHeap
-                    .maxSizePercent(0.25)
+                    // מקצה רק 10% מהזיכרון במקום 25%, קריטי ל-TV!
+                    .maxSizePercent(0.10)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
-                    .directory(cacheDir.resolve("image_cache"))
-                    // 150MB disk cache — תמונות לא נטענות שוב
-                    .maxSizeBytes(150L * 1024 * 1024)
+                    .directory(this.cacheDir.resolve("image_cache"))
+                    .maxSizePercent(0.02)
                     .build()
             }
-            // כבה crossfade גלובלי — מורכבות compositing מיותרת
-            .crossfade(false)
+            // אל תשמור תמונות גדולות מדי בזיכרון הפעיל!
+            .memoryCachePolicy(CachePolicy.DISABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            // מוריד את איכות פענוח הצבע ל-RGB_565 (חוסך 50% בזיכרון של כל פוסטר!!)
+            .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+            .crossfade(true)
             .build()
     }
 }
