@@ -3,9 +3,10 @@
     ExperimentalComposeUiApi::class,
     ExperimentalFoundationApi::class
 )
+@file:Suppress("ASSIGNED_BUT_NEVER_READ_REFERENCE", "UNUSED_VARIABLE", "UNUSED_VALUE")
+
 package com.luminastreams.tv.presentation.home
 
-import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
@@ -866,9 +867,9 @@ private fun LandscapeCard(
     val wPx = remember(density) { with(density) { (LAND_W.roundToPx() * 2).coerceIn(1, 1920) } }
     val hPx = remember(density) { with(density) { (LAND_H.roundToPx() * 2).coerceIn(1, 1080) } }
 
-    var focused by remember { mutableStateOf(false) }
+    val focusState = remember { mutableStateOf(false) }
     val zoom by animateFloatAsState(
-        targetValue   = if (focused) 1.06f else 1f,
+        targetValue   = if (focusState.value) 1.06f else 1f,
         animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing),
         label         = "lzoom"
     )
@@ -877,7 +878,7 @@ private fun LandscapeCard(
         modifier
             .width(LAND_W).height(LAND_H)
             .graphicsLayer { scaleX = zoom; scaleY = zoom }
-            .zIndex(if (focused) 8f else 0f)
+            .zIndex(if (focusState.value) 8f else 0f)
     ) {
         Surface(
             onClick  = onClick,
@@ -886,7 +887,7 @@ private fun LandscapeCard(
             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
             border   = ClickableSurfaceDefaults.border(Border.None, Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(10.dp))),
             glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.18f), 18.dp)),
-            modifier = Modifier.fillMaxSize().onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
+            modifier = Modifier.fillMaxSize().onFocusChanged { fs -> focusState.value = fs.isFocused; if (fs.isFocused) onFocused() }
         ) {
             val url = movie.backdropUrl.ifBlank { movie.posterUrl }
             if (url.isNotBlank()) {
@@ -957,15 +958,15 @@ fun PosterCard(
     val wPx = remember(cardW, density) { with(density) { (cardW.roundToPx() * 2).coerceIn(1, 1920) } }
     val hPx = remember(cardH, density) { with(density) { (cardH.roundToPx() * 2).coerceIn(1, 1080) } }
 
-    var focused by remember { mutableStateOf(false) }
+    val focusState = remember { mutableStateOf(false) }
     val zoom by animateFloatAsState(
-        targetValue   = if (focused) 1.08f else 1f,
+        targetValue   = if (focusState.value) 1.08f else 1f,
         animationSpec = tween(durationMillis = 250, easing = FastOutSlowInEasing),
         label         = "pzoom"
     )
 
     Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
-        Box(Modifier.width(cardW).height(cardH).graphicsLayer { scaleX = zoom; scaleY = zoom }.zIndex(if (focused) 9f else 0f)) {
+        Box(Modifier.width(cardW).height(cardH).graphicsLayer { scaleX = zoom; scaleY = zoom }.zIndex(if (focusState.value) 9f else 0f)) {
             Surface(
                 onClick  = onClick,
                 colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
@@ -973,7 +974,7 @@ fun PosterCard(
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(Border.None, Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(10.dp))),
                 glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.18f), 18.dp)),
-                modifier = Modifier.fillMaxSize().onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
+                modifier = Modifier.fillMaxSize().onFocusChanged { fs -> focusState.value = fs.isFocused; if (fs.isFocused) onFocused() }
             ) {
                 val url = movie.posterUrl.ifBlank { movie.backdropUrl }
                 if (url.isNotBlank()) {
@@ -1020,7 +1021,7 @@ fun PosterCard(
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(movie.title, color = if (focused) WHITE else DIM, fontSize = 11.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(cardW))
+        Text(movie.title, color = if (focusState.value) WHITE else DIM, fontSize = 11.sp, fontWeight = if (focusState.value) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(cardW))
         Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
     }
 }

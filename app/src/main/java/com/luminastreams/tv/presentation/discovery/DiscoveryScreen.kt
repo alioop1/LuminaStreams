@@ -1,9 +1,14 @@
 @file:OptIn(
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class,
-    androidx.compose.ui.ExperimentalComposeUiApi::class
+    ExperimentalTvMaterial3Api::class,
+    ExperimentalFoundationApi::class,
+    ExperimentalComposeUiApi::class
 )
+
 package com.luminastreams.tv.presentation.discovery
+
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.ExperimentalComposeUiApi
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -42,6 +47,7 @@ private val C_RED = Color(0xFFE50914)
 private val C_WH  = Color(0xFFFFFFFF)
 private val C_DIM = Color(0xAAFFFFFF)
 
+@Suppress("unused")
 @Composable
 fun DiscoveryScreen(
     state: HomeState,
