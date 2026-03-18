@@ -1,8 +1,10 @@
 @file:OptIn(
     ExperimentalComposeUiApi::class,
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
+    ExperimentalTvMaterial3Api::class,
+    ExperimentalFoundationApi::class
 )
+@file:Suppress("UsePropertyAccessSyntax")
+
 package com.luminastreams.tv.presentation.details
 
 import android.content.Intent
@@ -57,6 +59,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.net.toUri
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
@@ -64,6 +67,7 @@ import coil.request.ImageRequest
 import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
+import androidx.compose.foundation.ExperimentalFoundationApi
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -74,20 +78,19 @@ private val WH  = Color(0xFFFFFFFF)
 private val BR  = Color(0xFFE50914)
 private val GLD = Color(0xFFFFC107)
 private val TMR = Color(0xFFF44336)
-private val CARD_BG = Color(0xFF0F0F0F)
 
 private fun launchTrailer(context: android.content.Context, trailerIdOrUrl: String?, fallbackTitle: String) {
     val appCtx = context.applicationContext
     if (!trailerIdOrUrl.isNullOrBlank()) {
-        val ytAppIntent = Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$trailerIdOrUrl")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        val ytAppIntent = Intent(Intent.ACTION_VIEW, "vnd.youtube:$trailerIdOrUrl".toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         if (appCtx.packageManager.resolveActivity(ytAppIntent, 0) != null) {
             try { appCtx.startActivity(ytAppIntent); return } catch (_: Exception) {}
         }
         val watchUrl = if (trailerIdOrUrl.startsWith("http")) trailerIdOrUrl else "https://www.youtube.com/watch?v=$trailerIdOrUrl"
-        try { appCtx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(watchUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {}
+        try { appCtx.startActivity(Intent(Intent.ACTION_VIEW, watchUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {}
     }
     try {
-        appCtx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/results?search_query=${Uri.encode("$fallbackTitle official trailer")}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        appCtx.startActivity(Intent(Intent.ACTION_VIEW, "https://www.youtube.com/results?search_query=${Uri.encode("$fallbackTitle official trailer")}".toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (_: Exception) {}
 }
 
@@ -112,6 +115,8 @@ fun DetailsScreen(
                 if (activity != null) {
                     val homeVm = androidx.lifecycle.ViewModelProvider(activity)[com.luminastreams.tv.presentation.home.HomeViewModel::class.java]
                     val homeState = homeVm.state.value
+
+                    @Suppress("UNCHECKED_CAST")
                     val fuzerItems = homeState::class.java.getMethod("getFuzerItems").invoke(homeState) as? List<com.luminastreams.tv.domain.model.Movie>
                     val matched = fuzerItems?.find { it.id == state.mediaInfo.id }
 
@@ -126,7 +131,7 @@ fun DetailsScreen(
                         )
                     }
                 }
-            } catch (e: Exception) {}
+            } catch (_: Exception) {}
         } else {
             media = state.mediaInfo
         }
@@ -181,12 +186,12 @@ fun DetailsScreen(
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationY = -(scrollState.firstVisibleItemScrollOffset * 0.12f).coerceIn(0f, 70f)
         }) {
-            if (!media.backdropUrl.isNullOrEmpty()) {
+            if (media.backdropUrl?.isNotEmpty() == true) {
                 AsyncImage(
                     model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(true).memoryCachePolicy(CachePolicy.ENABLED).build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
-            } else if (!media.posterUrl.isNullOrEmpty()) {
+            } else if (media.posterUrl?.isNotEmpty() == true) {
                 AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.5f)
             }
         }
@@ -498,7 +503,6 @@ fun DetailsScreen(
 
 @Composable
 private fun ActionPill(label: String, icon: ImageVector, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
     Surface(
         onClick  = onClick,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -513,7 +517,7 @@ private fun ActionPill(label: String, icon: ImageVector, onClick: () -> Unit) {
             border        = Border(BorderStroke(1.dp, Color(0x33FFFFFF))),
             focusedBorder = Border.None
         ),
-        modifier = Modifier.wrapContentWidth().onFocusChanged { focused = it.isFocused }
+        modifier = Modifier.wrapContentWidth()
     ) {
         Row(modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(15.dp))
@@ -532,6 +536,7 @@ private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     }
 }
 
+@Suppress("ASSIGNED_BUT_NEVER_READ_REFERENCE", "UNUSED_VARIABLE")
 @Composable
 private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -564,6 +569,7 @@ private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) 
     }
 }
 
+@Suppress("ASSIGNED_BUT_NEVER_READ_REFERENCE", "UNUSED_VARIABLE")
 @Composable
 private fun CastMemberCard(actor: CastMember, isLast: Boolean) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl

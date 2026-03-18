@@ -1,8 +1,10 @@
 @file:OptIn(
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
-    androidx.compose.ui.ExperimentalComposeUiApi::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
+    ExperimentalTvMaterial3Api::class,
+    ExperimentalComposeUiApi::class,
+    ExperimentalFoundationApi::class
 )
+@file:Suppress("UnusedImport")
+
 package com.luminastreams.tv.presentation.search
 
 import androidx.activity.compose.BackHandler
@@ -23,9 +25,12 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Sort
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.*
@@ -59,6 +64,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import androidx.compose.foundation.ExperimentalFoundationApi
 
 // ══════════════════════════════════════════════════════════════════
 //  PALETTE
@@ -156,8 +162,8 @@ private val SEARCH_HINTS = listOf(
 // ══════════════════════════════════════════════════════════════════
 @Composable
 fun SearchScreen(
-    state          : SearchState,
-    onIntent       : (SearchIntent) -> Unit,
+    @Suppress("UNUSED_PARAMETER") state: SearchState,
+    @Suppress("UNUSED_PARAMETER") onIntent: (SearchIntent) -> Unit,
     onNavigateBack : () -> Unit,
     onResultClick  : (SearchResult) -> Unit
 ) {
@@ -288,7 +294,6 @@ fun SearchScreen(
                     else                   -> ResultsGrid(
                         results          = results,
                         firstResultFR    = firstResultFR,
-                        initialFocusIdx  = lastFocusedResultIdx,
                         onFocusIdx       = { lastFocusedResultIdx = it },
                         onResultClick    = onResultClick,
                         onLoadMore       = {
@@ -347,7 +352,7 @@ private fun DiscoverHeader(
             modifier = Modifier.size(38.dp).focusRequester(backFR)
         ) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
-                Icon(Icons.Default.ArrowBack, null, Modifier.size(16.dp))
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp))
             }
         }
 
@@ -587,7 +592,7 @@ private fun FilterPanel(
             )
 
             FilterSectionDivider()
-            FilterSectionHeader("Sort By", Icons.Default.Sort)
+            FilterSectionHeader("Sort By", Icons.AutoMirrored.Filled.Sort)
             SORT_OPTIONS.forEach { (v, l) ->
                 RadioRow(
                     label    = l,
@@ -1010,7 +1015,6 @@ private fun filterBorder(isSelected: Boolean) = ClickableSurfaceDefaults.border(
 private fun ResultsGrid(
     results         : List<SearchResult>,
     firstResultFR   : FocusRequester,
-    initialFocusIdx : Int,
     onFocusIdx      : (Int) -> Unit,
     onResultClick   : (SearchResult) -> Unit,
     onLoadMore      : () -> Unit
@@ -1255,18 +1259,18 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
         try {
             val key     = "9ab4a284f0c028007b78925852196b79"
             val imgBase = "https://image.tmdb.org/t/p"
-            val enc     = java.net.URLEncoder.encode(query, "UTF-8")
+            val enc     = URLEncoder.encode(query, "UTF-8")
 
             // זיהוי אוטומטי של שפה כדי שחיפוש בעברית ב-TMDB יעבוד!
             val isHebrew = query.any { it in '\u0590'..'\u05FF' }
             val lang = if (isHebrew) "he-IL" else "en-US"
 
-            val con = (java.net.URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
+            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection)
                 .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
 
             if (con.responseCode == 200) {
-                val arr = org.json.JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results")
+                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results")
 
                 // התיקון: ביטלנו את ה-return המהיר שיצר קריסות והחלפנו ב-if נקי
                 if (arr != null) {

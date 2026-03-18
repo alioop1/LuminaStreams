@@ -1,6 +1,7 @@
 package com.luminastreams.tv.domain.usecase
 
 import android.content.Context
+import androidx.core.content.edit
 import com.google.gson.annotations.SerializedName
 import com.luminastreams.tv.data.api.RealDebridApi
 import kotlinx.coroutines.Dispatchers
@@ -17,6 +18,7 @@ import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
+import java.util.Locale
 
 // ── Auth API interface ─────────────────────────────────────────────────────
 interface RealDebridAuthApi {
@@ -94,10 +96,11 @@ class RealDebridAuthManager(private val context: Context) {
             }
 
             val tokenResponse = api.getToken(clientIdToUse, clientSecretToUse, codeResponse.device_code)
-            context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-                .edit().putString("rd_api_token", tokenResponse.access_token).apply()
+            context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).edit {
+                putString("rd_api_token", tokenResponse.access_token)
+            }
             emit(AuthResult.Success)
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             emit(AuthResult.Error("אין חיבור רשת — שרת RD נכשל"))
         }
     }.flowOn(Dispatchers.IO)
@@ -158,7 +161,7 @@ class RealDebridManager {
         try {
             if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר!")
 
-// 1. העלאת הקובץ ל-Real Debrid
+            // 1. העלאת הקובץ ל-Real Debrid
             val client = OkHttpClient()
             val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
             val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
@@ -172,7 +175,7 @@ class RealDebridManager {
             val response = client.newCall(request).execute()
             val responseBodyString = response.body?.string() ?: "{}"
 
-            // התיקון: תפיסה חכמה של ניתוק ממשתמש
+            // תפיסה חכמה של ניתוק ממשתמש
             if (response.code == 401 || response.code == 403 || responseBodyString.contains("bad_token", true)) {
                 throw Exception("החיבור ל-Real Debrid התנתק או פג תוקף. אנא התחבר מחדש במסך ההגדרות.")
             }
@@ -181,7 +184,7 @@ class RealDebridManager {
                 throw Exception("שגיאת שרת RD: ${response.code}")
             }
 
-            val json = org.json.JSONObject(responseBodyString)
+            val json = JSONObject(responseBodyString)
             val torrentId = json.optString("id")
             if (torrentId.isEmpty()) {
                 throw Exception("שגיאה: הקובץ הועלה אך RD לא החזיר מזהה.")
@@ -197,8 +200,8 @@ class RealDebridManager {
             if (videoFiles.isEmpty()) throw Exception("לא נמצאו קבצי וידאו בטורנט (אולי ארכיון RAR?)")
 
             val targetIndex = if (season != null && episode != null) {
-                val epString1 = String.format("s%02de%02d", season, episode)
-                val epString2 = String.format("%dx%02d", season, episode)
+                val epString1 = String.format(Locale.US, "s%02de%02d", season, episode)
+                val epString2 = String.format(Locale.US, "%dx%02d", season, episode)
                 val idx = videoFiles.indexOfFirst {
                     it.path.lowercase().contains(epString1) || it.path.lowercase().contains(epString2)
                 }

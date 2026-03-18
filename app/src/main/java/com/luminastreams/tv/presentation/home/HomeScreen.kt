@@ -1,7 +1,7 @@
 @file:OptIn(
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
-    androidx.compose.ui.ExperimentalComposeUiApi::class,
-    androidx.compose.foundation.ExperimentalFoundationApi::class
+    ExperimentalTvMaterial3Api::class,
+    ExperimentalComposeUiApi::class,
+    ExperimentalFoundationApi::class
 )
 package com.luminastreams.tv.presentation.home
 
@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -45,6 +46,7 @@ import androidx.compose.ui.unit.*
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
 import androidx.tv.material3.*
+import androidx.compose.foundation.ExperimentalFoundationApi
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
@@ -133,7 +135,7 @@ class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused     by mutableStateOf(false)
     var currentRowIndex  by mutableIntStateOf(initialRow)
     var heroMovie        by mutableStateOf<Movie?>(null)
-    var lastNavEventTime by mutableLongStateOf(0L)
+
     companion object {
         val Saver: Saver<HomeFocusState, Int> = Saver(
             save    = { it.currentRowIndex },
@@ -185,6 +187,7 @@ fun HomeScreen(
             }
             "Fuzer" -> buildList {
                 try {
+                    @Suppress("UNCHECKED_CAST")
                     val fuzerItems = state::class.java.getMethod("getFuzerItems").invoke(state) as? List<Movie> ?: emptyList()
                     if (fuzerItems.isNotEmpty()) {
                         val kids = fuzerItems.filter { it.title.contains("מדובב") }
@@ -205,7 +208,7 @@ fun HomeScreen(
                         if (kidsMovies.isNotEmpty()) add(RowDef.Regular("🧸 סרטים מדובבים לילדים", kidsMovies))
                         if (kidsTv.isNotEmpty()) add(RowDef.Regular("🎈 סדרות מדובבות לילדים", kidsTv))
                     }
-                } catch (e: Exception) {}
+                } catch (_: Exception) {}
             }
             else -> emptyList()
         }
@@ -267,7 +270,7 @@ fun HomeScreen(
                 try {
                     val m = viewModel::class.java.getMethod("loadFuzerContent")
                     m.invoke(viewModel)
-                } catch(e: Exception){}
+                } catch(_: Exception){}
             },
             onWatchlist  = { navController.navigate("watchlist") },
             onSettings   = { navController.navigate("settings") }
@@ -428,7 +431,6 @@ private fun ContentLayer(
                             false
                         } else {
                             focusState.currentRowIndex--
-                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             false
                         }
                     }
@@ -436,13 +438,11 @@ private fun ContentLayer(
                         if (focusState.isNavFocused) {
                             focusState.isNavFocused = false
                             focusState.currentRowIndex = 0
-                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             false
                         } else {
                             if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
                                 focusState.currentRowIndex++
                             }
-                            focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                             false
                         }
                     }
@@ -616,7 +616,6 @@ private fun NavPill(
     onClick: () -> Unit,
     onTabPositioned: (Offset, Dp) -> Unit
 ) {
-    var isFocused by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
 
@@ -642,7 +641,6 @@ private fun NavPill(
             .onGloballyPositioned { coords ->
                 onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
             }
-            .onFocusChanged { isFocused = it.isFocused }
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
         Box(Modifier.fillMaxHeight().wrapContentWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
@@ -698,7 +696,6 @@ private fun RowsPanel(
                     val onFocus: (Movie) -> Unit = { m ->
                         focusState.currentRowIndex  = i
                         focusState.isNavFocused     = false
-                        focusState.lastNavEventTime = SystemClock.elapsedRealtime()
                         onItemFocus(m)
                     }
                     if (isLand) {
@@ -789,7 +786,7 @@ private fun PortraitRow(
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
-                PosterCard(movie = movie, cardW = PORT_W, cardH = PORT_H, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
+                PosterCard(movie = movie, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, cardW = PORT_W, cardH = PORT_H, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
             }
         }
     }
@@ -811,7 +808,7 @@ private fun PortraitStudioRow(
         }
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
-                PosterCard(movie = movie, cardW = PORT_W, cardH = PORT_H, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
+                PosterCard(movie = movie, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, cardW = PORT_W, cardH = PORT_H, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
             }
         }
     }
@@ -948,8 +945,12 @@ private fun LandscapeCard(
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
-    movie: Movie, cardW: Dp = PORT_W, cardH: Dp = PORT_H,
-    modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit
+    movie: Movie,
+    modifier: Modifier = Modifier,
+    cardW: Dp = PORT_W,
+    cardH: Dp = PORT_H,
+    onFocused: () -> Unit = {},
+    onClick: () -> Unit
 ) {
     val ctx     = LocalContext.current
     val density = LocalDensity.current
@@ -1024,9 +1025,6 @@ fun PosterCard(
     }
 }
 
-@Composable fun ArvioCard(movie: Movie, cardW: Dp = PORT_W, cardH: Dp = PORT_H, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) = PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
-@Composable fun NfCard(movie: Movie, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) = PosterCard(movie, modifier = modifier, onFocused = onFocused, onClick = onClick)
-
 // ═══════════════════════════════════════════════════════════════════
 //  LOADING SKELETON
 // ═══════════════════════════════════════════════════════════════════
@@ -1086,9 +1084,3 @@ fun HomeError(message: String, onRetry: () -> Unit) {
         }
     }
 }
-
-// Legacy stubs
-@Composable fun NfLoadingSkeleton() = HomeLoading()
-@Composable fun NfErrorScreen(msg: String, onRetry: () -> Unit) = HomeError(msg, onRetry)
-@Composable fun LuminaSidebar(open: Boolean, activeTab: String, onClose: () -> Unit, onMoviesClick: () -> Unit, onSeriesClick: () -> Unit, onSearchClick: () -> Unit) {}
-@Composable fun NfSidebar(open: Boolean, activeId: String, sidebarFirstFR: FocusRequester, onFocusLanded: () -> Unit, onClose: () -> Unit, onNavSelect: (String) -> Unit) {}

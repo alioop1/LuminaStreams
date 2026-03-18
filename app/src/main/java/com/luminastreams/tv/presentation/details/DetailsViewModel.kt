@@ -1,5 +1,6 @@
 package com.luminastreams.tv.presentation.details
 
+import android.annotation.SuppressLint
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -31,20 +32,9 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * DetailsViewModel — ניהול מצב מסך הפרטים.
- *
- * תיקונים לעומת הגרסה הקודמת:
- * 1. הבנאי מקבל MediaRepository ישירות — אין יותר Reflection שבירי
- * 2. ז'אנרים ממשיים מה-DTO במקום hardcoded
- * 3. סטודיו/רשת ממשיים מה-DTO במקום hardcoded
- * 4. imdbRating = tmdbRating (לא מומצא)
- * 5. קודי ה-API דרך Constants
- * 6. TorrentioResponse/TorrentioStream מוגדרים כאן ולא מוכפלים ב-TmdbApi
- * 7. תמיכה ישירה בהזרמת תוכן מפיוזר דרך Real-Debrid
- *
- * Path: app/src/main/java/com/luminastreams/tv/presentation/details/DetailsViewModel.kt
  */
 
-// ── Torrentio models (הוגדרו כאן בלבד – הוסרו מ-TmdbApi.kt) ────────────────
+// ── Torrentio models ────────────────
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(
     val name: String?     = null,
@@ -63,21 +53,8 @@ interface DynamicTorrentioApi {
     ): retrofit2.Response<TorrentioResponse>
 }
 
-// ── Genre ID → name (ממשית מ-TMDB) ──────────────────────────────────────────
-private val GENRE_ID_MAP = mapOf(
-    28 to "Action",          12 to "Adventure",    16 to "Animation",
-    35 to "Comedy",          80 to "Crime",         99 to "Documentary",
-    18 to "Drama",        10751 to "Family",        14 to "Fantasy",
-    36 to "History",         27 to "Horror",     10402 to "Music",
-    9648 to "Mystery",    10749 to "Romance",      878 to "Sci-Fi",
-    10770 to "TV Movie",     53 to "Thriller",   10752 to "War",
-    37 to "Western",      10759 to "Action & Adventure",
-    10762 to "Kids",      10763 to "News",        10764 to "Reality",
-    10765 to "Sci-Fi & Fantasy", 10766 to "Soap", 10767 to "Talk",
-    10768 to "War & Politics"
-)
-
 // ────────────────────────────────────────────────────────────────────────────
+@SuppressLint("StaticFieldLeak")
 class DetailsViewModel(
     private val repository: MediaRepository,
     private val context: Context
@@ -122,11 +99,10 @@ class DetailsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoadingData = true, errorData = null) }
 
-            // --- בדיקה חדשה: האם זה לינק מפיוזר? ---
+            // --- בדיקה: האם זה לינק מפיוזר? ---
             try {
                 val decodedId = URLDecoder.decode(fullId, "UTF-8")
                 if (decodedId.startsWith("http")) {
-                    // זה לינק פיוזר! טוענים מסך פרטים מדומה בלי לפנות ל-TMDB
                     _state.update {
                         it.copy(
                             isLoadingData = false,
@@ -136,7 +112,7 @@ class DetailsViewModel(
                                 imdbId          = decodedId,
                                 title           = "Fuzer Release",
                                 overview        = "Press Play to instantly stream this file via Real-Debrid.",
-                                posterUrl       = "", // <--- מחקנו את ה-URL שהקריס את ה-UI!
+                                posterUrl       = "",
                                 backdropUrl     = "",
                                 isSeries        = false,
                                 tmdbRating      = 10.0,
@@ -149,8 +125,8 @@ class DetailsViewModel(
                     }
                     return@launch
                 }
-            } catch (e: Exception) {
-                // מתעלם וממשיך ללוגיקה הרגילה של TMDB
+            } catch (_: Exception) {
+                // מתעלם וממשיך ללוגיקה הרגילה
             }
 
             // --- הלוגיקה הרגילה של TMDB ---
@@ -434,7 +410,6 @@ class DetailsViewModel(
                     val torrentBytes = fuzerEngine.downloadTorrentFile(scrapeId).getOrThrow()
                     val rdToken = getRdToken()
 
-                    // התיקון: קוראים לפונקציה המיוחדת של קבצי טורנט, ושולחים את הקובץ עם אחוזים חכמים!
                     val directLink = rdManager.resolveTorrentFileToStream(
                         torrentBytes = torrentBytes,
                         apiToken = rdToken,
@@ -554,8 +529,8 @@ class DetailsViewModel(
         val movie = Movie(
             id        = info.id,
             title     = info.title,
-            posterUrl = info.posterUrl ?: "",
-            backdropUrl = info.backdropUrl ?: "",
+            posterUrl = info.posterUrl,
+            backdropUrl = info.backdropUrl,
             rating    = info.tmdbRating.toFloat(),
             mediaType = if (info.isSeries) "tv" else "movie",
             overview  = info.overview,

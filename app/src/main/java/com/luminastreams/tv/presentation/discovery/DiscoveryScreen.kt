@@ -24,7 +24,6 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.*
-import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -34,10 +33,9 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
-import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.presentation.home.HomeState
 import com.luminastreams.tv.presentation.home.HomeViewModel
-import com.luminastreams.tv.presentation.home.NfCard
+import com.luminastreams.tv.presentation.home.PosterCard
 
 private val C_BG  = Color(0xFF000000)
 private val C_RED = Color(0xFFE50914)
@@ -70,11 +68,9 @@ fun DiscoveryScreen(
     )
     val genres = if (mediaType == "tv") tvGenres else movieGenres
 
-    // ✅ FIXED: was state.sFilterComplete (typo) → state.isFilterComplete
     BackHandler(enabled = state.isFilterComplete) { viewModel.clearGenre() }
 
     Box(Modifier.fillMaxSize().background(C_BG)) {
-        // ✅ FIXED: was state.isFilterComplete (correct) and state.focusedItem (correct)
         if (state.isFilterComplete && state.focusedItem != null) {
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
@@ -183,8 +179,6 @@ private fun GenreCard(name: String, onClick: () -> Unit) {
 // ─── Results ──────────────────────────────────────────────────────────────────
 @Composable
 private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (String) -> Unit) {
-    var focusedIdx by remember { mutableIntStateOf(0) }
-
     Column(Modifier.fillMaxSize().padding(top = 80.dp, start = 56.dp)) {
         Text(
             text = "תוצאות: ${state.selectedGenreName}",
@@ -195,13 +189,10 @@ private fun DiscResults(state: HomeState, viewModel: HomeViewModel, onClick: (St
             contentPadding        = PaddingValues(end = 56.dp, top = 10.dp, bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            itemsIndexed(state.discoveryResults, key = { _, m -> m.id }) { idx, movie ->
-                NfCard(
-                    movie             = movie,
-                    isFocusedOverride = idx == focusedIdx,
-                    onFocused         = {
-                        focusedIdx = idx
-                        // ✅ FIXED: removed extra boolean param (was updateFocusedItem(movie, name, true))
+            itemsIndexed(state.discoveryResults, key = { _, m -> m.id }) { _, movie ->
+                PosterCard(
+                    movie     = movie,
+                    onFocused = {
                         viewModel.updateFocusedItem(movie, state.selectedGenreName)
                     },
                     onClick = { onClick(movie.id) }
