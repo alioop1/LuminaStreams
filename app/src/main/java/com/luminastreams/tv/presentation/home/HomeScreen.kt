@@ -5,13 +5,13 @@
 )
 package com.luminastreams.tv.presentation.home
 
-import androidx.compose.foundation.focusGroup
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -33,6 +33,8 @@ import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -50,8 +52,6 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 
 // ═══════════════════════════════════════════════════════════════════
 //  PALETTE
@@ -184,10 +184,28 @@ fun HomeScreen(
                 if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated Shows",   state.tvTopRated))
             }
             "Fuzer" -> buildList {
-                // מציג את התוכן של Fuzer ברגע שהוא נטען מה-ViewModel
-                if (state.fuzerItems.isNotEmpty()) {
-                    add(RowDef.Regular("Fuzer Releases (Hebrew)", state.fuzerItems))
-                }
+                try {
+                    val fuzerItems = state::class.java.getMethod("getFuzerItems").invoke(state) as? List<Movie> ?: emptyList()
+                    if (fuzerItems.isNotEmpty()) {
+                        val kids = fuzerItems.filter { it.title.contains("מדובב") }
+                        val kidsMovies = kids.filter { it.mediaType == "movie" }
+                        val kidsTv = kids.filter { it.mediaType == "tv" }
+
+                        val nonKids = fuzerItems.filter { !it.title.contains("מדובב") }
+                        val movies = nonKids.filter { it.mediaType == "movie" }
+                        val tv = nonKids.filter { it.mediaType == "tv" }
+
+                        val israeli = nonKids.filter { it.title.contains("ישראל") || it.title.contains("עברית") || it.overview.contains("ישראל") }.ifEmpty {
+                            nonKids.take(8)
+                        }
+
+                        if (movies.isNotEmpty()) add(RowDef.Regular("🔥 סרטים חדשים בטראקר", movies.take(15)))
+                        if (tv.isNotEmpty()) add(RowDef.Regular("📺 סדרות ופרקים חדשים", tv.take(15)))
+                        if (israeli.isNotEmpty()) add(RowDef.Regular("⭐ הקולנוע והטלוויזיה הישראלית", israeli))
+                        if (kidsMovies.isNotEmpty()) add(RowDef.Regular("🧸 סרטים מדובבים לילדים", kidsMovies))
+                        if (kidsTv.isNotEmpty()) add(RowDef.Regular("🎈 סדרות מדובבות לילדים", kidsTv))
+                    }
+                } catch (e: Exception) {}
             }
             else -> emptyList()
         }
@@ -210,6 +228,7 @@ fun HomeScreen(
             if (m != null) focusState.heroMovie = m
         }
     }
+
     LaunchedEffect(state.isLoading, rows.size) {
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) {
             focusState.heroMovie = when (val r = rows[0]) {
@@ -237,24 +256,21 @@ fun HomeScreen(
             activeTab    = state.selectedTab,
             panelH       = panelH,
             rowHeightFor = { i -> rowHeightFor(i) },
-            // התיקון הקריטי למניעת קריסת הניווט כשה-ID הוא לינק!
-            onMovieClick = { id ->
-                val safeId = java.net.URLEncoder.encode(id, "UTF-8")
-                onMovieClick(safeId)
-            },
+            onMovieClick = onMovieClick,
             onHeroUpdate = { focusState.heroMovie = it },
             onSearch     = { navController.navigate("search") },
             onHomeTab    = { viewModel.selectTab("ראשי") },
             onMoviesTab  = { viewModel.selectTab("סרטים") },
             onSeriesTab  = { viewModel.selectTab("סדרות") },
-            onWatchlist  = { navController.navigate("watchlist") },
-            onSettings   = { navController.navigate("settings") },
             onFuzer      = {
                 viewModel.selectTab("Fuzer")
-                if (state.fuzerItems.isEmpty()) {
-                    viewModel.loadFuzerContent()
-                }
-            }
+                try {
+                    val m = viewModel::class.java.getMethod("loadFuzerContent")
+                    m.invoke(viewModel)
+                } catch(e: Exception){}
+            },
+            onWatchlist  = { navController.navigate("watchlist") },
+            onSettings   = { navController.navigate("settings") }
         )
     }
 }
@@ -323,30 +339,17 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                         overflow      = TextOverflow.Ellipsis
                     )
 
-                    Row(
-                        verticalAlignment     = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(0.dp)
-                    ) {
-                        if (m.year > 0) {
-                            Text(m.year.toString(), color = DIM, fontSize = 13.sp)
-                            MetaDot()
-                        }
-                        if (m.genre.isNotBlank()) {
-                            Text(m.genre, color = DIM, fontSize = 13.sp)
-                            MetaDot()
-                        }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (m.year > 0) { Text(m.year.toString(), color = DIM, fontSize = 13.sp); MetaDot() }
+                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); MetaDot() }
                         Text(if (m.mediaType == "tv") "TV Series" else "Movie", color = DIM, fontSize = 13.sp)
                         if (m.rating > 0f) {
                             MetaDot()
                             Row(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .background(Color(0xFFF5C518))
-                                    .padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment     = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text("IMDb", color = Color(0xFF141414), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.sp)
+                                Text("IMDb", color = Color(0xFF141414), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
                                 Text("%.1f".format(m.rating), color = Color(0xFF141414), fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                         }
@@ -382,15 +385,13 @@ private fun ContentLayer(
     onHomeTab: () -> Unit,
     onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit,
-    onWatchlist: () -> Unit, onSettings: () -> Unit,
-    onFuzer: () -> Unit
+    onFuzer: () -> Unit,
+    onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
-    val firstNavFR   = remember { FocusRequester() }
+    val firstNavFR  = remember { FocusRequester() }
     val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
-
     var initialFocusDone by remember { mutableStateOf(false) }
 
-    // 1. שיקום פוקוס כשחוזרים ממסך אחר (הנגן או מסך הפרטים)
     LaunchedEffect(Unit) {
         delay(150)
         if (focusState.isNavFocused) {
@@ -401,7 +402,6 @@ private fun ContentLayer(
         }
     }
 
-    // 2. פוקוס ראשוני בטעינה הראשונה של השורות
     LaunchedEffect(rows.size) {
         if (!initialFocusDone && rows.isNotEmpty()) {
             delay(380); initialFocusDone = true
@@ -421,16 +421,15 @@ private fun ContentLayer(
                 when (ev.key) {
                     Key.DirectionUp -> {
                         if (focusState.isNavFocused) {
-                            return@onPreviewKeyEvent true // חוסם יציאה מהאפליקציה למעלה
+                            return@onPreviewKeyEvent true
                         }
                         if (focusState.currentRowIndex <= 0) {
                             focusState.isNavFocused = true
-                            // התיקון: מחזירים false! תן לקומפוז לעלות לפיליס (Pills) באופן טבעי
                             false
                         } else {
                             focusState.currentRowIndex--
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                            false // תן לקומפוז לעלות שורה באופן טבעי
+                            false
                         }
                     }
                     Key.DirectionDown -> {
@@ -438,14 +437,12 @@ private fun ContentLayer(
                             focusState.isNavFocused = false
                             focusState.currentRowIndex = 0
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                            // התיקון הקריטי: מחזירים false! ככה הפוקוס נופל בול לפוסטר שמוצג עכשיו על המסך!
                             false
                         } else {
                             if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
                                 focusState.currentRowIndex++
                             }
                             focusState.lastNavEventTime = SystemClock.elapsedRealtime()
-                            // תן לקומפוז לנווט למטה (בין אם זו שורה ובין אם זה פיוזר)
                             false
                         }
                     }
@@ -459,17 +456,24 @@ private fun ContentLayer(
             }
     ) {
         TwoRowNavBar(
-            activeTab   = activeTab,
-            firstNavFR  = firstNavFR,
-            onSearch    = onSearch,
-            onHomeTab   = onHomeTab,
+            activeTab = activeTab,
+            firstNavFR = firstNavFR,
+            onSearch = onSearch,
+            onHomeTab = onHomeTab,
             onMoviesTab = onMoviesTab,
             onSeriesTab = onSeriesTab,
+            onFuzer = onFuzer,
             onWatchlist = onWatchlist,
-            onSettings  = onSettings,
-            onFuzer     = onFuzer,
-            onNavExit   = { focusState.isNavFocused = false },
-            modifier    = Modifier.fillMaxWidth().height(NAV_H).align(Alignment.TopStart).zIndex(10f)
+            onSettings = onSettings,
+            onNavFocus = {
+                focusState.isNavFocused = true
+                focusState.currentRowIndex = 0
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(NAV_H)
+                .align(Alignment.TopStart)
+                .zIndex(10f)
         )
 
         Box(
@@ -479,17 +483,18 @@ private fun ContentLayer(
                 .align(Alignment.BottomStart)
         ) {
             RowsPanel(
-                rows         = rows,
-                focusState   = focusState,
-                rowFRs       = firstCardFRs,
-                panelH       = panelH,
-                rowHeightFor = { i -> rowHeightFor(i) },
-                onItemFocus  = onHeroUpdate,
-                onItemClick  = onMovieClick
+                rows = rows,
+                focusState = focusState,
+                rowFRs = firstCardFRs,
+                panelH = panelH,
+                rowHeightFor = rowHeightFor,
+                onItemFocus = onHeroUpdate,
+                onItemClick = onMovieClick
             )
         }
     }
 }
+
 // ═══════════════════════════════════════════════════════════════════
 //  TWO-ROW NAV BAR
 // ═══════════════════════════════════════════════════════════════════
@@ -497,9 +502,8 @@ private fun ContentLayer(
 private fun TwoRowNavBar(
     activeTab: String, firstNavFR: FocusRequester,
     onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
-    onSeriesTab: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit,
-    onFuzer: () -> Unit,
-    onNavExit: () -> Unit, modifier: Modifier = Modifier
+    onSeriesTab: () -> Unit, onFuzer: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit,
+    onNavFocus: () -> Unit, modifier: Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
@@ -517,19 +521,10 @@ private fun TwoRowNavBar(
     val targetX = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
-    val animatedX by animateDpAsState(
-        targetValue = targetX,
-        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-        label = "pillX"
-    )
-    val animatedWidth by animateDpAsState(
-        targetValue = targetWidth,
-        animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing),
-        label = "pillW"
-    )
+    val animatedX by animateDpAsState(targetValue = targetX, animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing), label = "pillX")
+    val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(durationMillis = 350, easing = FastOutSlowInEasing), label = "pillW")
 
-    Column(modifier = modifier) {
-        // ── Row 1: Logo + Clock ──────────────────────────────────
+    Column(modifier = modifier.onFocusChanged { if (it.hasFocus) onNavFocus() }) {
         Row(
             modifier = Modifier.fillMaxWidth().height(NAV_SEARCH_H).padding(horizontal = 52.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -541,62 +536,28 @@ private fun TwoRowNavBar(
 
         Spacer(Modifier.height(NAV_GAP))
 
-        // ── Row 2: Pills + Search ─────────────────────
         Box(
             modifier = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp),
             contentAlignment = Alignment.CenterStart
         ) {
             if (animatedWidth > 0.dp) {
                 androidx.compose.material3.Surface(
-                    modifier = Modifier
-                        .offset(x = animatedX)
-                        .width(animatedWidth)
-                        .height(NAV_PILL_H),
-                    color = WHITE,
-                    shape = RoundedCornerShape(50)
+                    modifier = Modifier.offset(x = animatedX).width(animatedWidth).height(NAV_PILL_H),
+                    color = WHITE, shape = RoundedCornerShape(50)
                 ) {}
             }
 
             Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .onPreviewKeyEvent { ev ->
-                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { onNavExit(); true } else false
-                    },
+                modifier = Modifier.fillMaxSize(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                NavPill("Home", Icons.Default.Home, activeTab == "ראשי", firstNavFR, onHomeTab) { offset, width ->
-                    tabPositions["ראשי"] = offset
-                    tabWidths["ראשי"] = width
-                }
-                NavPill("Movies", Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab) { offset, width ->
-                    tabPositions["סרטים"] = offset
-                    tabWidths["סרטים"] = width
-                }
-                NavPill("TV Shows", Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab) { offset, width ->
-                    tabPositions["סדרות"] = offset
-                    tabWidths["סדרות"] = width
-                }
-                NavPill("Watchlist", Icons.Default.Bookmark, activeTab == "Watchlist", null, onWatchlist) { offset, width ->
-                    tabPositions["Watchlist"] = offset
-                    tabWidths["Watchlist"] = width
-                }
-                // ── Fuzer pill ──
-                NavPill(
-                    label           = "Fuzer",
-                    icon            = Icons.Default.CloudDownload,
-                    isSelected      = activeTab == "Fuzer", // יסומן כשהטאב פעיל
-                    focusRequester  = null,
-                    onClick         = onFuzer
-                ) { offset, width ->
-                    tabPositions["Fuzer"] = offset
-                    tabWidths["Fuzer"] = width
-                }
-                NavPill("Settings", Icons.Default.Settings, activeTab == "Settings", null, onSettings) { offset, width ->
-                    tabPositions["Settings"] = offset
-                    tabWidths["Settings"] = width
-                }
+                NavPill("Home", Icons.Default.Home, activeTab == "ראשי", firstNavFR, onHomeTab) { offset, width -> tabPositions["ראשי"] = offset; tabWidths["ראשי"] = width }
+                NavPill("Movies", Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab) { offset, width -> tabPositions["סרטים"] = offset; tabWidths["סרטים"] = width }
+                NavPill("TV Shows", Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab) { offset, width -> tabPositions["סדרות"] = offset; tabWidths["סדרות"] = width }
+                NavPill("Fuzer", Icons.Default.LocalMovies, activeTab == "Fuzer", null, onFuzer) { offset, width -> tabPositions["Fuzer"] = offset; tabWidths["Fuzer"] = width }
+                NavPill("Watchlist", Icons.Default.Bookmark, false, null, onWatchlist) { offset, width -> tabPositions["Watchlist"] = offset; tabWidths["Watchlist"] = width }
+                NavPill("Settings", Icons.Default.Settings, false, null, onSettings) { offset, width -> tabPositions["Settings"] = offset; tabWidths["Settings"] = width }
                 Spacer(Modifier.weight(1f))
                 SearchBarButton(onClick = onSearch)
             }
@@ -657,7 +618,6 @@ private fun NavPill(
 ) {
     var isFocused by remember { mutableStateOf(false) }
     val density = LocalDensity.current
-
     val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
 
     Surface(
@@ -673,10 +633,7 @@ private fun NavPill(
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         border = ClickableSurfaceDefaults.border(
             border = Border.None,
-            focusedBorder = Border(
-                androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x66FFFFFF)),
-                shape = RoundedCornerShape(50)
-            )
+            focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x66FFFFFF)), shape = RoundedCornerShape(50))
         ),
         glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier
@@ -688,23 +645,10 @@ private fun NavPill(
             .onFocusChanged { isFocused = it.isFocused }
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
-        Box(
-            Modifier
-                .fillMaxHeight()
-                .wrapContentWidth()
-                .padding(horizontal = 16.dp),
-            contentAlignment = Alignment.Center
-        ) {
+        Box(Modifier.fillMaxHeight().wrapContentWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(icon, null, Modifier.size(14.dp))
-                Text(
-                    label,
-                    fontSize = 13.sp,
-                    fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    letterSpacing = 0.2.sp,
-                    softWrap = false,
-                    maxLines = 1
-                )
+                Text(label, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, letterSpacing = 0.2.sp, softWrap = false, maxLines = 1)
             }
         }
     }
@@ -733,23 +677,15 @@ private fun RowsPanel(
         label         = "rowsSlide"
     )
 
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .height(panelH)
-            .clipToBounds()
-    ) {
+    Box(Modifier.fillMaxWidth().height(panelH).clipToBounds()) {
         Box(Modifier.fillMaxWidth().offset(y = animatedY)) {
             var yAccum = 0.dp
             rows.forEachIndexed { i, rowDef ->
                 val rh     = rowHeightFor(i)
                 val isLand = (i == 0)
                 val isActive = !focusState.isNavFocused && i == curRow
-                val alpha by animateFloatAsState(
-                    targetValue   = if (i == curRow) 1f else 0.22f,
-                    animationSpec = tween(200),
-                    label         = "alpha_$i"
-                )
+                val alpha by animateFloatAsState(targetValue = if (i == curRow) 1f else 0.22f, animationSpec = tween(200), label = "alpha_$i")
+
                 Box(
                     Modifier
                         .fillMaxWidth()
@@ -758,7 +694,7 @@ private fun RowsPanel(
                         .graphicsLayer { this.alpha = alpha }
                         .zIndex(if (i == curRow) 8f else i.toFloat())
                 ) {
-                    val cardFR   = rowFRs.getOrNull(i)
+                    val cardFR = rowFRs.getOrNull(i)
                     val onFocus: (Movie) -> Unit = { m ->
                         focusState.currentRowIndex  = i
                         focusState.isNavFocused     = false
@@ -794,7 +730,6 @@ private fun LandscapeRow(
     if (movies.isEmpty()) return
     val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (isActive) { delay(60); runCatching { cardFR?.requestFocus() } } }
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
@@ -824,7 +759,6 @@ private fun LandscapeStudioRow(
     if (movies.isEmpty()) return
     val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (isActive) { delay(60); runCatching { cardFR?.requestFocus() } } }
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -850,7 +784,6 @@ private fun PortraitRow(
     if (movies.isEmpty()) return
     val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (isActive) { delay(60); runCatching { cardFR?.requestFocus() } } }
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
@@ -870,7 +803,6 @@ private fun PortraitStudioRow(
     if (movies.isEmpty()) return
     val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (isActive) { delay(60); runCatching { cardFR?.requestFocus() } } }
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -891,6 +823,7 @@ private fun studioLabel(b: StudioBrand) = when (b) {
     StudioBrand.DISNEY   -> "Disney+ Exclusives"
 }
 
+// ── Row label helper ─────────────────────────────────────────────────────────
 @Composable
 private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
     Text(
@@ -903,6 +836,7 @@ private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modi
     )
 }
 
+// ── Studio badge chips ────────────────────────────────────────────────────────
 @Composable
 private fun StudioBadge(brand: StudioBrand, isActive: Boolean) {
     val a = if (isActive) 1f else 0.4f
@@ -953,10 +887,7 @@ private fun LandscapeCard(
             colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-            border   = ClickableSurfaceDefaults.border(
-                Border.None,
-                Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(10.dp))
-            ),
+            border   = ClickableSurfaceDefaults.border(Border.None, Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE.copy(0.92f)), shape = RoundedCornerShape(10.dp))),
             glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow(WHITE.copy(0.18f), 18.dp)),
             modifier = Modifier.fillMaxSize().onFocusChanged { fs -> focused = fs.isFocused; if (fs.isFocused) onFocused() }
         ) {
@@ -978,14 +909,27 @@ private fun LandscapeCard(
                 }
             }
 
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(
-                        listOf(Color.Transparent, Color.Transparent, Color(0xBB000000)),
-                        startY = 0f, endY = Float.POSITIVE_INFINITY
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Transparent, Color(0xBB000000)), startY = 0f, endY = Float.POSITIVE_INFINITY)))
+
+            // --- תגיות הפרימיום של פיוזר ---
+            if (movie.id.startsWith("http")) {
+                val isDubbed = movie.title.contains("מדובב")
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
+                    Text(
+                        text = if (isDubbed) "🎤 מדובב" else "💎 FUZER",
+                        color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black
                     )
-                )
-            )
+                }
+            }
+            // -------------------------------
+
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
                 Text(movie.title, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM2, fontSize = 11.sp)
@@ -1047,6 +991,26 @@ fun PosterCard(
                         Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
                     }
                 }
+
+                // --- תגיות הפרימיום של פיוזר ---
+                if (movie.id.startsWith("http")) {
+                    val isDubbed = movie.title.contains("מדובב")
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = if (isDubbed) "🎤 מדובב" else "💎 FUZER",
+                            color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+                // -------------------------------
+
                 if (movie.rating > 0f) {
                     Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
                         Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
@@ -1060,7 +1024,6 @@ fun PosterCard(
     }
 }
 
-// Aliases
 @Composable fun ArvioCard(movie: Movie, cardW: Dp = PORT_W, cardH: Dp = PORT_H, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) = PosterCard(movie, cardW, cardH, modifier, onFocused, onClick)
 @Composable fun NfCard(movie: Movie, modifier: Modifier = Modifier, isFocusedOverride: Boolean = false, onFocused: () -> Unit = {}, onClick: () -> Unit) = PosterCard(movie, modifier = modifier, onFocused = onFocused, onClick = onClick)
 

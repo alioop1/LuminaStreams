@@ -434,13 +434,13 @@ class DetailsViewModel(
                     val torrentBytes = fuzerEngine.downloadTorrentFile(scrapeId).getOrThrow()
                     val rdToken = getRdToken()
 
+                    // התיקון: קוראים לפונקציה המיוחדת של קבצי טורנט, ושולחים את הקובץ עם אחוזים חכמים!
                     val directLink = rdManager.resolveTorrentFileToStream(
                         torrentBytes = torrentBytes,
                         apiToken = rdToken,
                         season = season,
                         episode = episode
                     ) { progress ->
-                        // כאן אנחנו מעדכנים את ה-State באחוזים שרצים בזמן אמת!
                         _state.update {
                             it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מוריד ל-RD: ${progress.toInt()}%"))
                         }

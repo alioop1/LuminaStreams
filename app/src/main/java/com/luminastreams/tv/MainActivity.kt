@@ -110,18 +110,22 @@ fun AppNavHostContainer(
                 state         = homeViewModel.state.collectAsState().value,
                 viewModel     = homeViewModel,
                 navController = navController,
-                onMovieClick  = { id -> navController.navigate("details/$id") }
+                onMovieClick  = { id ->
+                    // התיקון: קידוד בטוח ושימוש ב-Query Parameter!
+                    val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                    navController.navigate("details?fullId=$safeId")
+                }
             )
         }
 
-        // ── Details ───────────────────────────────────────────────────────────
+        // ── Details (עודכן ל-Query Parameter כדי לא לקרוס מלינקים) ───────────
         composable(
-            route     = "details/{fullId}",
-            arguments = listOf(navArgument("fullId") { type = NavType.StringType })
+            route     = "details?fullId={fullId}",
+            arguments = listOf(navArgument("fullId") { type = NavType.StringType; defaultValue = "" })
         ) { backStackEntry ->
-            val fullId = backStackEntry.arguments?.getString("fullId") ?: return@composable
+            val fullId = backStackEntry.arguments?.getString("fullId") ?: ""
+            if (fullId.isBlank()) return@composable
 
-            // ✅ Factory לא משתמש ב-Reflection ולא ב-GetMediaDetailsUseCase
             val detailsViewModel: DetailsViewModel = viewModel(
                 key     = "details_$fullId",
                 factory = object : ViewModelProvider.Factory {
@@ -139,18 +143,19 @@ fun AppNavHostContainer(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId ->
-                    // התיקון לקריסת Mutex: קידוד בטוח ושימוש ב-Query Parameter!
                     val safeUrl = java.net.URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb = if (imdbId.isBlank()) "_" else imdbId
-                    // שים לב לשינוי בפורמט הראוט כאן:
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb")
                 },
                 onNavigateBack        = { navController.popBackStack() },
-                onRecommendationClick = { id -> navController.navigate("details/$id") }
+                onRecommendationClick = { id ->
+                    val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                    navController.navigate("details?fullId=$safeId")
+                }
             )
         }
 
-// ── Player (מעודכן לעבוד עם Query Parameters למניעת קריסת קידוד) ──────────
+        // ── Player ────────────────────────────────────────────────────────────
         composable(
             route     = "player?videoUrl={videoUrl}&imdbId={imdbId}",
             arguments = listOf(
@@ -161,7 +166,6 @@ fun AppNavHostContainer(
             val encodedUrl = back.arguments?.getString("videoUrl") ?: ""
             val imdbId     = back.arguments?.getString("imdbId")   ?: "_"
 
-            // פריקת הלינק בבטחה
             val videoUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
 
             if (videoUrl.isNotBlank()) {
@@ -182,7 +186,10 @@ fun AppNavHostContainer(
                 state          = vm.state.collectAsState().value,
                 onIntent       = vm::onIntent,
                 onNavigateBack = { navController.popBackStack() },
-                onResultClick  = { result -> navController.navigate("details/${result.id}") }
+                onResultClick  = { result ->
+                    val safeId = java.net.URLEncoder.encode(result.id, "UTF-8")
+                    navController.navigate("details?fullId=$safeId")
+                }
             )
         }
 
@@ -211,7 +218,10 @@ fun AppNavHostContainer(
                 WatchlistScreen(
                     viewModel      = vm,
                     onNavigateBack = { navController.popBackStack() },
-                    onMovieClick   = { id -> navController.navigate("details/$id") }
+                    onMovieClick   = { id ->
+                        val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                        navController.navigate("details?fullId=$safeId")
+                    }
                 )
             }
         }

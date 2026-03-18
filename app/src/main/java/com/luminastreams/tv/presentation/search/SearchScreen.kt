@@ -36,7 +36,6 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -91,7 +90,7 @@ data class FilterState(
     val platforms : Set<String> = emptySet()
 ) {
     val activeCount: Int get() = listOf(
-        mediaType != "all",
+        mediaType != "all" && mediaType != "fuzer", // פיוזר לא נספר כ"פילטר נוסף"
         genres.isNotEmpty(),
         sortBy != "popularity.desc",
         decade != 0,
@@ -133,17 +132,17 @@ private val LANGUAGES = listOf(
     "ja"  to "🇯🇵 Japanese","ko" to "🇰🇷 Korean"
 )
 private val PLATFORMS = listOf(
-    "8"   to "https://images.ctfassets.net/y2ske730sjqp/4aEQ1zAUZF5pLSDtfviWjb/ba04f8d5bd01428f6e3803cc6effaf30/Netflix_N.png", // Netflix
-    "337" to "https://image.tmdb.org/t/p/w92/97yvRBw1GzX7fXprcF80er19ot.jpg", // Disney+
-    "350" to "https://image.tmdb.org/t/p/w92/6uhKBfmtzFqOcLousHwZuzcrScK.jpg", // Apple TV+
-    "384" to "https://image.tmdb.org/t/p/w92/6YZ2Qk212u4eZ4WzEBSYwQJntWz.jpg", // Max
-    "387" to "https://image.tmdb.org/t/p/w92/aS2zvJWn9mwiCOeaa8hFhnwNCB5.jpg", // HBO Max
-    "386" to "https://image.tmdb.org/t/p/w92/xTHq2oDheY2p9W8e4j2iI0Zt2L8.jpg", // Peacock
-    "10"  to "https://image.tmdb.org/t/p/w92/68MNrwlkpF7WnmNPXLah69CR5cb.jpg", // Amazon Prime
-    "15"  to "https://image.tmdb.org/t/p/w92/giwM8XX4V2AQb9vsoN7yti82tKK.jpg", // Hulu
-    "531" to "https://image.tmdb.org/t/p/w92/fi83B1bZV9GpnwO1XkS1aOOEQH3.jpg", // Paramount+
-    "257" to "https://image.tmdb.org/t/p/w92/2wjcjwXoW2R0I5k0j4k0w1B2lVw.jpg", // Fubo
-    "190" to "https://image.tmdb.org/t/p/w92/2fF80l9HnI1aP5BvV0R8G8XpY0n.jpg"  // Discovery+
+    "8"   to "https://images.ctfassets.net/y2ske730sjqp/4aEQ1zAUZF5pLSDtfviWjb/ba04f8d5bd01428f6e3803cc6effaf30/Netflix_N.png",
+    "337" to "https://image.tmdb.org/t/p/w92/97yvRBw1GzX7fXprcF80er19ot.jpg",
+    "350" to "https://image.tmdb.org/t/p/w92/6uhKBfmtzFqOcLousHwZuzcrScK.jpg",
+    "384" to "https://image.tmdb.org/t/p/w92/6YZ2Qk212u4eZ4WzEBSYwQJntWz.jpg",
+    "387" to "https://image.tmdb.org/t/p/w92/aS2zvJWn9mwiCOeaa8hFhnwNCB5.jpg",
+    "386" to "https://image.tmdb.org/t/p/w92/xTHq2oDheY2p9W8e4j2iI0Zt2L8.jpg",
+    "10"  to "https://image.tmdb.org/t/p/w92/68MNrwlkpF7WnmNPXLah69CR5cb.jpg",
+    "15"  to "https://image.tmdb.org/t/p/w92/giwM8XX4V2AQb9vsoN7yti82tKK.jpg",
+    "531" to "https://image.tmdb.org/t/p/w92/fi83B1bZV9GpnwO1XkS1aOOEQH3.jpg",
+    "257" to "https://image.tmdb.org/t/p/w92/2wjcjwXoW2R0I5k0j4k0w1B2lVw.jpg",
+    "190" to "https://image.tmdb.org/t/p/w92/2fF80l9HnI1aP5BvV0R8G8XpY0n.jpg"
 )
 private val SEARCH_HINTS = listOf(
     "Search movies, series, actors...",
@@ -162,7 +161,6 @@ fun SearchScreen(
     onNavigateBack : () -> Unit,
     onResultClick  : (SearchResult) -> Unit
 ) {
-    // ── State ──────────────────────────────────────────────────
     var query        by remember { mutableStateOf("") }
     var filters      by remember { mutableStateOf(FilterState()) }
     var results      by remember { mutableStateOf<List<SearchResult>>(emptyList()) }
@@ -177,7 +175,6 @@ fun SearchScreen(
     val scope     = rememberCoroutineScope()
     var searchJob : Job? by remember { mutableStateOf(null) }
 
-    // ── Focus requesters ────────────────────────────────────────
     val backFR       = remember { FocusRequester() }
     val inputFR      = remember { FocusRequester() }
     val firstFilterFR= remember { FocusRequester() }
@@ -190,7 +187,6 @@ fun SearchScreen(
         }
     }
 
-    // Trigger for Discover Now button
     fun triggerSearch() {
         showHistory = false
         if (query.isNotBlank()) {
@@ -202,7 +198,6 @@ fun SearchScreen(
             currentPage = 2
             endReached = false
 
-            // שימוש ב-async לביצוע 2 קריאות במקביל
             val deferred1 = async { if (query.isNotBlank()) fetchTextSearch(query, filters, 1) else fetchDiscovery(filters, 1) }
             val deferred2 = async { if (query.isNotBlank()) fetchTextSearch(query, filters, 2) else fetchDiscovery(filters, 2) }
 
@@ -218,7 +213,6 @@ fun SearchScreen(
         }
     }
 
-    // Initial load on first open
     LaunchedEffect(Unit) {
         delay(180)
         runCatching { backFR.requestFocus() }
@@ -226,7 +220,6 @@ fun SearchScreen(
         currentPage = 2
         endReached = false
 
-        // שימוש ב-async לביצוע 2 קריאות במקביל
         val deferred1 = async { fetchDiscovery(filters, 1) }
         val deferred2 = async { fetchDiscovery(filters, 2) }
 
@@ -237,7 +230,6 @@ fun SearchScreen(
         isLoading = false
     }
 
-    // ── Root layout ─────────────────────────────────────────────
     Column(
         Modifier
             .fillMaxSize()
@@ -253,7 +245,6 @@ fun SearchScreen(
                 } else false
             }
     ) {
-        // ── HEADER ────────────────────────────────────────────
         DiscoverHeader(
             query        = query,
             filters      = filters,
@@ -264,10 +255,7 @@ fun SearchScreen(
             onReset      = { filters = FilterState(); query = "" }
         )
 
-        // ── BODY: Left panel + Right grid ─────────────────────
         Row(Modifier.weight(1f).fillMaxWidth()) {
-
-            // ── LEFT FILTER PANEL ───────────────
             FilterPanel(
                 filters       = filters,
                 query         = query,
@@ -288,7 +276,6 @@ fun SearchScreen(
                 onFilterChange  = { filters = it }
             )
 
-            // ── RIGHT RESULTS PANEL ───────────────────────────
             Box(
                 Modifier
                     .weight(1f)
@@ -554,7 +541,8 @@ private fun FilterPanel(
                 Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 6.dp),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("all" to "🌐 All", "movie" to "🎬 Movies", "tv" to "📺 Series")
+                // הוספת פיוזר כקטגוריה נפרדת בחיפוש!
+                listOf("all" to "🌐 All", "movie" to "🎬 Movies", "tv" to "📺 Series", "fuzer" to "💎 Fuzer")
                     .forEachIndexed { idx, (v, l) ->
                         val isSel = filters.mediaType == v
                         Surface(
@@ -708,8 +696,6 @@ private fun PanelSearchBar(
     firstFilterFR : FocusRequester
 ) {
     var isFocused by remember { mutableStateOf(false) }
-
-    // הפתרון המוחלט לקריסה: שימוש במנהל המקלדת המובנה של אנדרואיד במקום זה של Compose
     val context = LocalContext.current
     val view = androidx.compose.ui.platform.LocalView.current
     val imm = remember { context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager }
@@ -754,7 +740,6 @@ private fun PanelSearchBar(
                 ),
                 keyboardActions = KeyboardActions(
                     onSearch = {
-                        // העלמת המקלדת בצורה בטוחה דרך המערכת
                         imm.hideSoftInputFromWindow(view.windowToken, 0)
                         onSearch()
                     }
@@ -784,7 +769,6 @@ private fun PanelSearchBar(
                         when {
                             ev.type == KeyEventType.KeyDown &&
                                     ev.key  == Key.DirectionCenter -> {
-                                // הקפצת המקלדת בצורה בטוחה בלי Compose
                                 imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
                                 true
                             }
@@ -1125,6 +1109,20 @@ private fun DiscoveryCard(
                     }
                 }
 
+                // ── תגית הפרימיום של פיוזר בחיפוש ──
+                if (result.id.startsWith("http")) {
+                    val isDubbed = result.title.contains("מדובב")
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(4.dp)
+                            .clip(RoundedCornerShape(3.dp))
+                            .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
+                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                    ) {
+                        Text(if (isDubbed) "🎤" else "💎", fontSize = 8.sp)
+                    }
+                }
+                // ────────────────────────────────
+
                 if (result.releaseYear.isNotBlank()) {
                     Box(
                         Modifier.align(Alignment.TopStart).padding(4.dp)
@@ -1220,75 +1218,94 @@ private fun EmptyState(query: String, activeFilters: Int) {
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  NETWORK — TEXT SEARCH (משולב עם פיוזר!)
+//  NETWORK — TEXT SEARCH (הפרדה מלאה בין TMDB לפיוזר)
 // ══════════════════════════════════════════════════════════════════
 private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
-        val key     = "9ab4a284f0c028007b78925852196b79"
-        val imgBase = "https://image.tmdb.org/t/p"
-        val enc     = URLEncoder.encode(query, "UTF-8")
-        val out     = mutableListOf<SearchResult>()
+        val out = mutableListOf<SearchResult>()
 
-        // 1. חיפוש ב-Fuzer (עושים את זה רק בטעינת העמוד הראשון כדי לא לשכפל בגלגול)
-        if (page == 1) {
-            try {
-                val fuzerEngine = com.luminastreams.tv.data.remote.FuzerEngine()
-                val fuzerMovies = fuzerEngine.search(query).getOrElse { emptyList() }
+        // 1. אם בחרת פיוזר, מחפשים רק בפיוזר ועוצרים כאן!
+        if (f.mediaType == "fuzer") {
+            if (page == 1) { // פיוזר מביא הכל במכה, אין דפים
+                try {
+                    val fuzerEngine = com.luminastreams.tv.data.remote.FuzerEngine()
+                    val rawFuzerMovies = fuzerEngine.search(query).getOrElse { emptyList() }
 
-                val fuzerResults = fuzerMovies.map { m ->
-                    SearchResult(
-                        id          = m.id, // זה לינק ההורדה - קומפוז יקודד אותו בזכות התיקון הקודם שעשינו!
-                        title       = "🔥 " + m.title, // סמיילי כדי שתדע שזה ישיר מפיוזר
-                        posterUrl   = m.posterUrl,
-                        backdropUrl = m.backdropUrl,
-                        type        = if (m.mediaType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
-                        rating      = m.rating,
-                        releaseYear = if (m.year > 0) m.year.toString() else ""
-                    )
-                }
-                out.addAll(fuzerResults) // מכניס אותם ראשונים!
-            } catch (e: Exception) {
-                e.printStackTrace()
+                    // סינון מקומי - מוודא שהתוצאות שחזרו מפיוזר באמת קשורות למה שהקלדת
+                    val fuzerMovies = rawFuzerMovies.filter { it.title.contains(query, ignoreCase = true) }
+
+                    out.addAll(fuzerMovies.map { m ->
+                        SearchResult(
+                            id          = m.id,
+                            title       = m.title,
+                            posterUrl   = m.posterUrl,
+                            backdropUrl = m.backdropUrl,
+                            type        = if (m.mediaType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                            rating      = m.rating,
+                            releaseYear = if (m.year > 0) m.year.toString() else ""
+                        )
+                    })
+                } catch (e: Exception) { e.printStackTrace() }
             }
+            // מונע מ-TMDB לרוץ אם אנחנו על קטגוריית פיוזר
+            return@withContext out.distinctBy { it.id }
         }
 
-        // 2. חיפוש רגיל ב-TMDB (הקוד המקורי שלך)
+        // 2. חיפוש רגיל ב-TMDB (יקרה רק אם לא בחרת פיוזר)
         try {
-            val con = (URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=en-US&query=$enc&page=$page&include_adult=false")
+            val key     = "9ab4a284f0c028007b78925852196b79"
+            val imgBase = "https://image.tmdb.org/t/p"
+            val enc     = java.net.URLEncoder.encode(query, "UTF-8")
+
+            // זיהוי אוטומטי של שפה כדי שחיפוש בעברית ב-TMDB יעבוד!
+            val isHebrew = query.any { it in '\u0590'..'\u05FF' }
+            val lang = if (isHebrew) "he-IL" else "en-US"
+
+            val con = (java.net.URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection)
                 .also { it.connectTimeout = 6000; it.readTimeout = 9000 }
+
             if (con.responseCode == 200) {
-                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
-                    .optJSONArray("results") ?: return@withContext out
-                for (i in 0 until arr.length()) {
-                    val j  = arr.getJSONObject(i)
-                    val mt = j.optString("media_type")
-                    if (mt != "movie" && mt != "tv") continue
-                    if (f.mediaType != "all" && f.mediaType != mt) continue
-                    val title  = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                    else j.optString("title").ifBlank { j.optString("original_title") }
-                    val poster = j.optString("poster_path").let {
-                        if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else ""
+                val arr = org.json.JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results")
+
+                // התיקון: ביטלנו את ה-return המהיר שיצר קריסות והחלפנו ב-if נקי
+                if (arr != null) {
+                    for (i in 0 until arr.length()) {
+                        val j  = arr.getJSONObject(i)
+                        val mt = j.optString("media_type")
+
+                        // מסננים תוצאות לא רלוונטיות (כמו שחקנים או קטגוריות שלא בחרנו)
+                        if (mt != "movie" && mt != "tv") continue
+                        if (f.mediaType != "all" && f.mediaType != mt) continue
+
+                        val title  = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
+                        else j.optString("title").ifBlank { j.optString("original_title") }
+
+                        val poster = j.optString("poster_path").let {
+                            if (it.isNotBlank() && it != "null") "$imgBase/w342$it" else ""
+                        }
+
+                        val rating = j.optDouble("vote_average", 0.0).toFloat()
+                        if (f.minRating > 0f && rating < f.minRating) continue
+
+                        out += SearchResult(
+                            id          = "${mt}_${j.optInt("id")}",
+                            title       = title,
+                            posterUrl   = poster,
+                            backdropUrl = j.optString("backdrop_path").let {
+                                if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else ""
+                            },
+                            type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                            rating      = rating,
+                            releaseYear = (if (mt == "tv") j.optString("first_air_date")
+                            else j.optString("release_date")).take(4)
+                        )
                     }
-                    val rating = j.optDouble("vote_average", 0.0).toFloat()
-                    if (f.minRating > 0f && rating < f.minRating) continue
-                    out += SearchResult(
-                        id          = "${mt}_${j.optInt("id")}",
-                        title       = title,
-                        posterUrl   = poster,
-                        backdropUrl = j.optString("backdrop_path").let {
-                            if (it.isNotBlank() && it != "null") "$imgBase/w780$it" else ""
-                        },
-                        type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
-                        rating      = rating,
-                        releaseYear = (if (mt == "tv") j.optString("first_air_date")
-                        else j.optString("release_date")).take(4)
-                    )
                 }
             }
         } catch (_: Exception) {}
 
-        // מחזיר את הרשימה המאוחדת
+        // מחזיר את הרשימה המאוחדת והנקייה מכפילויות
         out.distinctBy { it.id }
     }
 
@@ -1297,6 +1314,31 @@ private suspend fun fetchTextSearch(query: String, f: FilterState, page: Int = 1
 // ══════════════════════════════════════════════════════════════════
 private suspend fun fetchDiscovery(f: FilterState, page: Int = 1): List<SearchResult> =
     withContext(Dispatchers.IO) {
+
+        // אם בחרת פיוזר ואתה רק בדף גילוי (ללא טקסט)
+        if (f.mediaType == "fuzer") {
+            val out = mutableListOf<SearchResult>()
+            if (page == 1) {
+                try {
+                    val fuzerEngine = com.luminastreams.tv.data.remote.FuzerEngine()
+                    val rawFuzerMovies = fuzerEngine.search("").getOrElse { emptyList() } // חיפוש ריק מביא הכל
+                    out.addAll(rawFuzerMovies.map { m ->
+                        SearchResult(
+                            id          = m.id,
+                            title       = m.title,
+                            posterUrl   = m.posterUrl,
+                            backdropUrl = m.backdropUrl,
+                            type        = if (m.mediaType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                            rating      = m.rating,
+                            releaseYear = if (m.year > 0) m.year.toString() else ""
+                        )
+                    })
+                } catch (e: Exception) { e.printStackTrace() }
+            }
+            return@withContext out.distinctBy { it.id }
+        }
+
+        // גילוי רגיל ב-TMDB
         val key     = "9ab4a284f0c028007b78925852196b79"
         val imgBase = "https://image.tmdb.org/t/p"
         val base    = "https://api.themoviedb.org/3"

@@ -12,6 +12,7 @@ import retrofit2.http.*
  * 2. נוספו GenreDto, ProductionCompanyDto, NetworkDto
  * 3. TmdbMovieDetailsDto קיבל genres + productionCompanies
  * 4. TmdbTvDetailsDto קיבל genres + networks
+ * 5. תוקן progress ב-RdTorrentInfoResponse ל-Double כדי למנוע קריסות
  *
  * Path: app/src/main/java/com/luminastreams/tv/data/api/TmdbApi.kt
  */
@@ -119,7 +120,7 @@ data class RdTorrentInfoResponse(
     val id: String,
     val filename: String,
     val status: String,
-    val progress: Int,
+    val progress: Double, // <--- התיקון: שונה ל-Double כדי שלא יקרוס כש-RD מחזיר שברים עשרוניים
     val links: List<String>,
     val files: List<RdTorrentFile>
 )

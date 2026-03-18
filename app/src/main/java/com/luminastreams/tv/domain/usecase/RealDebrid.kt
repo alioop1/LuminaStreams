@@ -9,15 +9,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
-
-// --- הוספות חובה עבור תמיכה בקבצי Torrent ---
-import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
 
 // ── Auth API interface ─────────────────────────────────────────────────────
 interface RealDebridAuthApi {
@@ -113,7 +112,7 @@ class RealDebridManager {
         .build()
         .create(RealDebridApi::class.java)
 
-    // הפונקציה המקורית - טיפול בלינקים מסוג Magnet (למשל מ-Torrentio)
+    // 1. טיפול במגנטים (Torrentio וכדומה)
     suspend fun resolveMagnetToStream(magnetUri: String, apiToken: String): Result<String> =
         withContext(Dispatchers.IO) {
             try {
@@ -125,7 +124,7 @@ class RealDebridManager {
 
                 val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
                 val videoFiles = torrentInfo.files.filter {
-                    it.path.endsWith(".mkv", true) || it.path.endsWith(".mp4", true)
+                    it.path.endsWith(".mkv", true) || it.path.endsWith(".mp4", true) || it.path.endsWith(".avi", true)
                 }
                 if (videoFiles.isEmpty()) throw Exception("לא נמצאו קבצי וידאו בטורנט")
                 val mainVideoFile = videoFiles.maxByOrNull { it.bytes }!!
@@ -134,8 +133,8 @@ class RealDebridManager {
 
                 var readyInfo = api.getTorrentInfo(authHeader, torrentId)
                 var attempts = 0
-                while (readyInfo.links.isEmpty() && attempts < 10) {
-                    delay(1000)
+                while (readyInfo.links.isEmpty() && attempts < 15) {
+                    delay(1500)
                     readyInfo = api.getTorrentInfo(authHeader, torrentId)
                     attempts++
                 }
@@ -148,32 +147,45 @@ class RealDebridManager {
             }
         }
 
-    // --- הפונקציה המשודרגת: תמיכה חכמה בעונות, פרקים וזמן הורדה בזמן אמת ---
+    // 2. הפונקציה החסרה לפיוזר: טיפול בהעלאת קובץ .torrent ישירות ל-RD
     suspend fun resolveTorrentFileToStream(
         torrentBytes: ByteArray,
         apiToken: String,
         season: Int? = null,
         episode: Int? = null,
-        onProgress: (Float) -> Unit = {} // פונקציית קולבק לעדכון אחוזים
+        onProgress: (Float) -> Unit = {}
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
             if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר!")
 
-            // 1. העלאת קובץ הטורנט (PUT) בסינטקס החדש של OkHttp
-            val client = okhttp3.OkHttpClient()
+// 1. העלאת הקובץ ל-Real Debrid
+            val client = OkHttpClient()
             val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
             val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
 
-            val request = okhttp3.Request.Builder()
+            val request = Request.Builder()
                 .url("https://api.real-debrid.com/rest/1.0/torrents/addTorrent")
                 .header("Authorization", "Bearer $apiToken")
                 .put(reqBody)
                 .build()
 
             val response = client.newCall(request).execute()
-            val json = org.json.JSONObject(response.body?.string() ?: "{}")
+            val responseBodyString = response.body?.string() ?: "{}"
+
+            // התיקון: תפיסה חכמה של ניתוק ממשתמש
+            if (response.code == 401 || response.code == 403 || responseBodyString.contains("bad_token", true)) {
+                throw Exception("החיבור ל-Real Debrid התנתק או פג תוקף. אנא התחבר מחדש במסך ההגדרות.")
+            }
+
+            if (!response.isSuccessful) {
+                throw Exception("שגיאת שרת RD: ${response.code}")
+            }
+
+            val json = org.json.JSONObject(responseBodyString)
             val torrentId = json.optString("id")
-            if (torrentId.isEmpty()) throw Exception("שגיאה בהעלאת הטורנט ל-RD")
+            if (torrentId.isEmpty()) {
+                throw Exception("שגיאה: הקובץ הועלה אך RD לא החזיר מזהה.")
+            }
 
             val authHeader = "Bearer $apiToken"
             val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
@@ -198,17 +210,15 @@ class RealDebridManager {
             val fileIds = videoFiles.joinToString(",") { it.id.toString() }
             api.selectFiles(authHeader, torrentId, fileIds)
 
-            // 4. בדיקת סטטוס חכמה ודיווח ל-UI
             var readyInfo = api.getTorrentInfo(authHeader, torrentId)
             var attempts = 0
 
             while (readyInfo.links.isEmpty() && attempts < 60) {
-                kotlinx.coroutines.delay(2000)
+                delay(2000)
                 readyInfo = api.getTorrentInfo(authHeader, torrentId)
                 attempts++
 
                 if (readyInfo.status == "downloading") {
-                    // תיקון: ממירים את ה-Int שחוזר מ-RD ל-Float כדי שה-UI לא יקרוס
                     onProgress(readyInfo.progress.toFloat())
                 } else if (readyInfo.status == "error" || readyInfo.status == "dead") {
                     throw Exception("שגיאה בהורדת הטורנט בשרתי Real Debrid.")
