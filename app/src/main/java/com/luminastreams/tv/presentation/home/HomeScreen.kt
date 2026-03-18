@@ -120,15 +120,6 @@ private val rowsOverlay = Brush.verticalGradient(
 )
 
 // ═══════════════════════════════════════════════════════════════════
-//  ROW TYPES
-// ═══════════════════════════════════════════════════════════════════
-enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY }
-sealed class RowDef {
-    data class Regular(val title: String,      val movies: List<Movie>) : RowDef()
-    data class Studio (val brand: StudioBrand, val movies: List<Movie>) : RowDef()
-}
-
-// ═══════════════════════════════════════════════════════════════════
 //  FOCUS STATE
 // ═══════════════════════════════════════════════════════════════════
 @Stable
@@ -155,36 +146,55 @@ fun HomeScreen(
     navController: NavController,
     onMovieClick:  (String) -> Unit
 ) {
-    val rows: List<RowDef> = remember(state.selectedTab, state) {
+    val rows: List<RowDef> = remember(state.selectedTab, state.selectedStudioFilter, state) {
+        val filter = state.selectedStudioFilter
         when (state.selectedTab) {
             "ראשי" -> buildList {
-                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Movies",       state.movieTrending))
-                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("Popular Shows",         state.tvTrending))
-                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
-                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
-                if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio(StudioBrand.APPLE_TV,     state.tvAppleTV))
+                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", "Trending Movies",       state.movieTrending))
+                if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,         state.movieHBO))
+                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",    "Popular Shows",         state.tvTrending))
+                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,     state.movieNetflix))
+                if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,      state.movieAmazon))
+                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres","New in Theaters",       state.moviePremieres))
+                if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio("tvAppleTV",      StudioBrand.APPLE_TV,    state.tvAppleTV))
             }
             "סרטים" -> buildList {
-                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("Trending Now",          state.movieTrending))
-                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,      state.movieNetflix))
-                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("New in Theaters",       state.moviePremieres))
-                if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV,     state.movieAppleTV))
-                if (state.movieAction.isNotEmpty())    add(RowDef.Regular("Action & Adventure",    state.movieAction))
-                if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("Drama",                 state.movieDrama))
-                if (state.movieDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,       state.movieDisney))
-                if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi",                state.movieScifi))
-                if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated",             state.movieTopRated))
+                add(RowDef.StudioRibbon)
+                if (filter == null || filter == "HBO")       if (state.movieHBO.isNotEmpty()) add(RowDef.Studio("movieHBO", StudioBrand.HBO, state.movieHBO))
+                if (filter == null || filter == "AMAZON")    if (state.movieAmazon.isNotEmpty()) add(RowDef.Studio("movieAmazon", StudioBrand.AMAZON, state.movieAmazon))
+                if (filter == null || filter == "PARAMOUNT") if (state.movieParamount.isNotEmpty()) add(RowDef.Studio("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount))
+                if (filter == null || filter == "HULU")      if (state.movieHulu.isNotEmpty()) add(RowDef.Studio("movieHulu", StudioBrand.HULU, state.movieHulu))
+                if (filter == null || filter == "NETFLIX")   if (state.movieNetflix.isNotEmpty()) add(RowDef.Studio("movieNetflix", StudioBrand.NETFLIX, state.movieNetflix))
+                if (filter == null || filter == "APPLE_TV")  if (state.movieAppleTV.isNotEmpty()) add(RowDef.Studio("movieAppleTV", StudioBrand.APPLE_TV, state.movieAppleTV))
+                if (filter == null || filter == "DISNEY")    if (state.movieDisney.isNotEmpty()) add(RowDef.Studio("movieDisney", StudioBrand.DISNEY, state.movieDisney))
+
+                if (filter == null) {
+                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", "Trending Now", state.movieTrending))
+                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres","New in Theaters", state.moviePremieres))
+                    if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",   "Action & Adventure", state.movieAction))
+                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",    "Drama", state.movieDrama))
+                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",    "Sci-Fi", state.movieScifi))
+                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated", "Top Rated", state.movieTopRated))
+                }
             }
             "סדרות" -> buildList {
-                if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("Trending Shows",    state.tvTrending))
-                if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio(StudioBrand.NETFLIX,  state.tvNetflix))
-                if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("On The Air",        state.tvPremieres))
-                if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio(StudioBrand.APPLE_TV, state.tvAppleTV))
-                if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("Drama",             state.tvDrama))
-                if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("Crime & Thriller",  state.tvCrime))
-                if (state.tvDisney.isNotEmpty())    add(RowDef.Studio(StudioBrand.DISNEY,   state.tvDisney))
-                if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("Sci-Fi & Fantasy",  state.tvScifi))
-                if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("Top Rated Shows",   state.tvTopRated))
+                add(RowDef.StudioRibbon)
+                if (filter == null || filter == "HBO")       if (state.tvHBO.isNotEmpty()) add(RowDef.Studio("tvHBO", StudioBrand.HBO, state.tvHBO))
+                if (filter == null || filter == "AMAZON")    if (state.tvAmazon.isNotEmpty()) add(RowDef.Studio("tvAmazon", StudioBrand.AMAZON, state.tvAmazon))
+                if (filter == null || filter == "PARAMOUNT") if (state.tvParamount.isNotEmpty()) add(RowDef.Studio("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount))
+                if (filter == null || filter == "HULU")      if (state.tvHulu.isNotEmpty()) add(RowDef.Studio("tvHulu", StudioBrand.HULU, state.tvHulu))
+                if (filter == null || filter == "NETFLIX")   if (state.tvNetflix.isNotEmpty()) add(RowDef.Studio("tvNetflix", StudioBrand.NETFLIX, state.tvNetflix))
+                if (filter == null || filter == "APPLE_TV")  if (state.tvAppleTV.isNotEmpty()) add(RowDef.Studio("tvAppleTV", StudioBrand.APPLE_TV, state.tvAppleTV))
+                if (filter == null || filter == "DISNEY")    if (state.tvDisney.isNotEmpty()) add(RowDef.Studio("tvDisney", StudioBrand.DISNEY, state.tvDisney))
+
+                if (filter == null) {
+                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  "Trending Shows", state.tvTrending))
+                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", "On The Air", state.tvPremieres))
+                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     "Drama", state.tvDrama))
+                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     "Crime & Thriller", state.tvCrime))
+                    if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     "Sci-Fi & Fantasy", state.tvScifi))
+                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  "Top Rated Shows", state.tvTopRated))
+                }
             }
             "Fuzer" -> buildList {
                 try {
@@ -203,11 +213,11 @@ fun HomeScreen(
                             nonKids.take(8)
                         }
 
-                        if (movies.isNotEmpty()) add(RowDef.Regular("🔥 סרטים חדשים בטראקר", movies.take(15)))
-                        if (tv.isNotEmpty()) add(RowDef.Regular("📺 סדרות ופרקים חדשים", tv.take(15)))
-                        if (israeli.isNotEmpty()) add(RowDef.Regular("⭐ הקולנוע והטלוויזיה הישראלית", israeli))
-                        if (kidsMovies.isNotEmpty()) add(RowDef.Regular("🧸 סרטים מדובבים לילדים", kidsMovies))
-                        if (kidsTv.isNotEmpty()) add(RowDef.Regular("🎈 סדרות מדובבות לילדים", kidsTv))
+                        if (movies.isNotEmpty()) add(RowDef.Regular("fuzer_m", "🔥 סרטים חדשים בטראקר", movies.take(15)))
+                        if (tv.isNotEmpty()) add(RowDef.Regular("fuzer_tv", "📺 סדרות ופרקים חדשים", tv.take(15)))
+                        if (israeli.isNotEmpty()) add(RowDef.Regular("fuzer_il", "⭐ הקולנוע והטלוויזיה הישראלית", israeli))
+                        if (kidsMovies.isNotEmpty()) add(RowDef.Regular("fuzer_km", "🧸 סרטים מדובבים לילדים", kidsMovies))
+                        if (kidsTv.isNotEmpty()) add(RowDef.Regular("fuzer_kt", "🎈 סדרות מדובבות לילדים", kidsTv))
                     }
                 } catch (_: Exception) {}
             }
@@ -217,7 +227,10 @@ fun HomeScreen(
 
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
-    fun rowHeightFor(i: Int) = if (i == 0) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
+    fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) {
+        is RowDef.StudioRibbon -> 110.dp
+        else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
+    }
 
     val panelH = remember(rows.size) {
         if (rows.isEmpty()) ROW_PORTRAIT_H
@@ -228,7 +241,13 @@ fun HomeScreen(
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
             delay(140L)
-            val m = rows.getOrNull(ri)?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies } }?.firstOrNull()
+            val m = rows.getOrNull(ri)?.let { r ->
+                when (r) {
+                    is RowDef.Regular -> r.movies
+                    is RowDef.Studio -> r.movies
+                    is RowDef.StudioRibbon -> emptyList()
+                }
+            }?.firstOrNull()
             if (m != null) focusState.heroMovie = m
         }
     }
@@ -238,6 +257,7 @@ fun HomeScreen(
             focusState.heroMovie = when (val r = rows[0]) {
                 is RowDef.Regular -> r.movies.firstOrNull()
                 is RowDef.Studio  -> r.movies.firstOrNull()
+                is RowDef.StudioRibbon -> null
             }
         }
     }
@@ -258,14 +278,20 @@ fun HomeScreen(
             rows         = rows,
             focusState   = focusState,
             activeTab    = state.selectedTab,
+            activeFilter = state.selectedStudioFilter,
             panelH       = panelH,
             rowHeightFor = { i -> rowHeightFor(i) },
             onMovieClick = onMovieClick,
             onHeroUpdate = { focusState.heroMovie = it },
+            onStudioFilterClick = { filter ->
+                if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null)
+                else viewModel.setStudioFilter(filter)
+            },
+            onLoadMore   = { id -> viewModel.loadMore(id) },
             onSearch     = { navController.navigate("search") },
-            onHomeTab    = { viewModel.selectTab("ראשי") },
-            onMoviesTab  = { viewModel.selectTab("סרטים") },
-            onSeriesTab  = { viewModel.selectTab("סדרות") },
+            onHomeTab    = { viewModel.selectTab("ראשי"); viewModel.setStudioFilter(null) },
+            onMoviesTab  = { viewModel.selectTab("סרטים"); viewModel.setStudioFilter(null) },
+            onSeriesTab  = { viewModel.selectTab("סדרות"); viewModel.setStudioFilter(null) },
             onFuzer      = {
                 viewModel.selectTab("Fuzer")
                 try {
@@ -383,8 +409,11 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
 @Composable
 private fun ContentLayer(
     rows: List<RowDef>, focusState: HomeFocusState, activeTab: String,
+    activeFilter: String?,
     panelH: Dp, rowHeightFor: (Int) -> Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
+    onStudioFilterClick: (String?) -> Unit,
+    onLoadMore: (String) -> Unit,
     onSearch: () -> Unit,
     onHomeTab: () -> Unit,
     onMoviesTab: () -> Unit,
@@ -429,27 +458,33 @@ private fun ContentLayer(
                         }
                         if (focusState.currentRowIndex <= 0) {
                             focusState.isNavFocused = true
-                            false
+                            runCatching { firstNavFR.requestFocus() }
+                            true
                         } else {
                             focusState.currentRowIndex--
-                            false
+                            runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
+                            true
                         }
                     }
                     Key.DirectionDown -> {
                         if (focusState.isNavFocused) {
                             focusState.isNavFocused = false
                             focusState.currentRowIndex = 0
-                            false
+                            runCatching { firstCardFRs.getOrNull(0)?.requestFocus() }
+                            true
                         } else {
                             if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
                                 focusState.currentRowIndex++
-                            }
-                            false
+                                runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
+                                true
+                            } else true
                         }
                     }
                     Key.Back, Key.Escape -> {
                         if (focusState.isNavFocused) {
-                            focusState.isNavFocused = false; true
+                            focusState.isNavFocused = false
+                            runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
+                            true
                         } else false
                     }
                     else -> false
@@ -489,6 +524,9 @@ private fun ContentLayer(
                 rowFRs = firstCardFRs,
                 panelH = panelH,
                 rowHeightFor = rowHeightFor,
+                activeFilter = activeFilter,
+                onStudioFilterClick = onStudioFilterClick,
+                onLoadMore = onLoadMore,
                 onItemFocus = onHeroUpdate,
                 onItemClick = onMovieClick
             )
@@ -594,8 +632,8 @@ private fun SearchBarButton(onClick: () -> Unit) {
         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         border = ClickableSurfaceDefaults.border(
-            Border(androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)), shape = RoundedCornerShape(50)),
-            Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x70FFFFFF)), shape = RoundedCornerShape(50))
+            border = Border(androidx.compose.foundation.BorderStroke(1.dp, Color(0x25FFFFFF)), shape = RoundedCornerShape(50)),
+            focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, Color(0x70FFFFFF)), shape = RoundedCornerShape(50))
         ),
         glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = Modifier.height(34.dp).width(260.dp)
@@ -660,6 +698,9 @@ private fun NavPill(
 private fun RowsPanel(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
     panelH: Dp, rowHeightFor: (Int) -> Dp,
+    activeFilter: String?,
+    onStudioFilterClick: (String?) -> Unit,
+    onLoadMore: (String) -> Unit,
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (rows.isEmpty()) return
@@ -699,15 +740,20 @@ private fun RowsPanel(
                         focusState.isNavFocused     = false
                         onItemFocus(m)
                     }
-                    if (isLand) {
+
+                    if (rowDef is RowDef.StudioRibbon) {
+                        StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
+                    } else if (isLand) {
                         when (rowDef) {
-                            is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
-                            is RowDef.Studio  -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
+                            is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                            is RowDef.Studio  -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                            else -> {}
                         }
                     } else {
                         when (rowDef) {
-                            is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
-                            is RowDef.Studio  -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick)
+                            is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                            is RowDef.Studio  -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                            else -> {}
                         }
                     }
                 }
@@ -723,11 +769,25 @@ private fun RowsPanel(
 @Composable
 private fun LandscapeRow(
     title: String, movies: List<Movie>, isActive: Boolean,
-    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit
+    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
+    onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
-    val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
+
+    LaunchedEffect(isActive) {
+        if (!isActive) rowState.scrollToItem(0)
+    }
+
+    val isAtEnd by remember {
+        derivedStateOf {
+            val layoutInfo = rowState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisible >= totalItems - 4
+        }
+    }
+    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
@@ -737,7 +797,7 @@ private fun LandscapeRow(
             horizontalArrangement = Arrangement.spacedBy(14.dp),
             modifier = Modifier.fillMaxWidth()
         ) {
-            itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
+            itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 LandscapeCard(
                     movie     = movie,
                     modifier  = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier,
@@ -752,11 +812,25 @@ private fun LandscapeRow(
 @Composable
 private fun LandscapeStudioRow(
     brand: StudioBrand, movies: List<Movie>, isActive: Boolean,
-    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit
+    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
+    onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
-    val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
+
+    LaunchedEffect(isActive) {
+        if (!isActive) rowState.scrollToItem(0)
+    }
+
+    val isAtEnd by remember {
+        derivedStateOf {
+            val layoutInfo = rowState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisible >= totalItems - 4
+        }
+    }
+    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -764,7 +838,7 @@ private fun LandscapeStudioRow(
             Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal)
         }
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
+            itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 LandscapeCard(movie = movie, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
             }
         }
@@ -777,16 +851,30 @@ private fun LandscapeStudioRow(
 @Composable
 private fun PortraitRow(
     title: String, movies: List<Movie>, isActive: Boolean,
-    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit
+    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
+    onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
-    val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
+
+    LaunchedEffect(isActive) {
+        if (!isActive) rowState.scrollToItem(0)
+    }
+
+    val isAtEnd by remember {
+        derivedStateOf {
+            val layoutInfo = rowState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisible >= totalItems - 4
+        }
+    }
+    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
+            itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 PosterCard(movie = movie, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, cardW = PORT_W, cardH = PORT_H, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
             }
         }
@@ -796,11 +884,25 @@ private fun PortraitRow(
 @Composable
 private fun PortraitStudioRow(
     brand: StudioBrand, movies: List<Movie>, isActive: Boolean,
-    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit
+    cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
+    onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
-    val tripled  = remember(movies) { if (movies.size < 2) movies else movies + movies + movies }
     val rowState = rememberLazyListState()
+
+    LaunchedEffect(isActive) {
+        if (!isActive) rowState.scrollToItem(0)
+    }
+
+    val isAtEnd by remember {
+        derivedStateOf {
+            val layoutInfo = rowState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            val lastVisible = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            totalItems > 0 && lastVisible >= totalItems - 4
+        }
+    }
+    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -808,7 +910,7 @@ private fun PortraitStudioRow(
             Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal)
         }
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(tripled, key = { i, m -> "${m.id}_$i" }) { i, movie ->
+            itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 PosterCard(movie = movie, modifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, cardW = PORT_W, cardH = PORT_H, onFocused = { onFocus(movie) }, onClick = { onClick(movie.id) })
             }
         }
@@ -816,9 +918,13 @@ private fun PortraitStudioRow(
 }
 
 private fun studioLabel(b: StudioBrand) = when (b) {
-    StudioBrand.NETFLIX  -> "Netflix Originals"
-    StudioBrand.APPLE_TV -> "Apple TV+ Originals"
-    StudioBrand.DISNEY   -> "Disney+ Exclusives"
+    StudioBrand.NETFLIX   -> "Netflix Originals"
+    StudioBrand.APPLE_TV  -> "Apple TV+ Originals"
+    StudioBrand.DISNEY    -> "Disney+ Exclusives"
+    StudioBrand.HBO       -> "HBO Max Exclusives"
+    StudioBrand.AMAZON    -> "Amazon Originals"
+    StudioBrand.PARAMOUNT -> "Paramount+ Exclusives"
+    StudioBrand.HULU      -> "Hulu Originals"
 }
 
 // ── Row label helper ─────────────────────────────────────────────────────────
@@ -836,21 +942,34 @@ private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modi
 
 // ── Studio badge chips ────────────────────────────────────────────────────────
 @Composable
-private fun StudioBadge(brand: StudioBrand, isActive: Boolean) {
+private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false, darkText: Boolean = false) {
     val a = if (isActive) 1f else 0.4f
+    val txtColor = if (darkText) Color(0xFF141414) else WHITE.copy(a)
+
     when (brand) {
         StudioBrand.NETFLIX ->
-            Box(Modifier.height(22.dp).width(28.dp).clip(RoundedCornerShape(4.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center) {
-                Text("N", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
+            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).width(if(isLarge) 40.dp else 28.dp).clip(RoundedCornerShape(4.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center) {
+                Text("N", color = WHITE, fontSize = if(isLarge) 20.sp else 14.sp, fontWeight = FontWeight.Black)
             }
         StudioBrand.APPLE_TV ->
-            Box(Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(11.dp)).background(APPLE_BG.copy(a)).border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp)).padding(horizontal = 9.dp), Alignment.Center) {
-                Text("tv+", color = WHITE.copy(a), fontSize = 12.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
+            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).wrapContentWidth().clip(RoundedCornerShape(11.dp)).background(APPLE_BG.copy(a)).border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp)).padding(horizontal = if(isLarge) 12.dp else 9.dp), Alignment.Center) {
+                Text("tv+", color = WHITE.copy(a), fontSize = if(isLarge) 16.sp else 12.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
             }
         StudioBrand.DISNEY ->
-            Box(Modifier.height(22.dp).wrapContentWidth().clip(RoundedCornerShape(4.dp)).background(DISNEY_BLUE.copy(a)).padding(horizontal = 8.dp), Alignment.Center) {
-                Text("DISNEY+", color = WHITE.copy(a), fontSize = 7.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
+            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).wrapContentWidth().clip(RoundedCornerShape(4.dp)).background(DISNEY_BLUE.copy(a)).padding(horizontal = if(isLarge) 12.dp else 8.dp), Alignment.Center) {
+                Text("DISNEY+", color = WHITE.copy(a), fontSize = if(isLarge) 11.sp else 7.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
             }
+        StudioBrand.HBO ->
+            Text("MAX", color = txtColor, fontSize = if(isLarge) 24.sp else 14.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic)
+        StudioBrand.AMAZON ->
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("prime", color = txtColor, fontSize = if(isLarge) 18.sp else 12.sp, fontWeight = FontWeight.Bold)
+                Box(Modifier.width(if(isLarge) 28.dp else 20.dp).height(2.dp).background(Color(0xFF00A8E1).copy(a)))
+            }
+        StudioBrand.PARAMOUNT ->
+            Text("Paramount+", color = txtColor, fontSize = if(isLarge) 14.sp else 10.sp, fontWeight = FontWeight.ExtraBold)
+        StudioBrand.HULU ->
+            Text("hulu", color = Color(0xFF1CE783).copy(a), fontSize = if(isLarge) 22.sp else 14.sp, fontWeight = FontWeight.Black)
     }
 }
 
@@ -1023,6 +1142,64 @@ fun PosterCard(
         Spacer(Modifier.height(6.dp))
         Text(movie.title, color = if (focusState.value) WHITE else DIM, fontSize = 11.sp, fontWeight = if (focusState.value) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(cardW))
         Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  STUDIO RIBBON (NEW)
+// ═══════════════════════════════════════════════════════════════════
+@Composable
+private fun StudioRibbonRow(
+    isActive: Boolean, cardFR: FocusRequester?,
+    activeFilter: String?, onStudioFilterClick: (String?) -> Unit
+) {
+    val brands = listOf(StudioBrand.HBO, StudioBrand.NETFLIX, StudioBrand.AMAZON, StudioBrand.DISNEY, StudioBrand.APPLE_TV, StudioBrand.PARAMOUNT, StudioBrand.HULU)
+    val rowState = rememberLazyListState()
+
+    Column(Modifier.padding(vertical = 10.dp)) {
+        Text("Browse by Studio", color = WHITE.copy(if (isActive) 1f else 0.4f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.padding(start = 52.dp, bottom = 12.dp))
+        LazyRow(
+            state = rowState,
+            contentPadding = PaddingValues(horizontal = 52.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(brands) { i, brand ->
+                val isSelected = activeFilter == brand.name
+                val frModifier = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier
+
+                StudioLogoButton(
+                    brand = brand,
+                    isSelected = isSelected,
+                    modifier = frModifier,
+                    onClick = { onStudioFilterClick(brand.name) }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val focusState = remember { mutableStateOf(false) }
+
+    val containerCol = if (isSelected) WHITE.copy(0.15f) else CARD_BG
+    val borderCol = if (isSelected) WHITE else Color.Transparent
+
+    Surface(
+        onClick = onClick,
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        colors = ClickableSurfaceDefaults.colors(containerColor = containerCol, focusedContainerColor = WHITE),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(androidx.compose.foundation.BorderStroke(1.5.dp, borderCol), shape = RoundedCornerShape(12.dp)),
+            focusedBorder = Border(androidx.compose.foundation.BorderStroke(2.5.dp, WHITE), shape = RoundedCornerShape(12.dp))
+        ),
+        modifier = modifier.width(130.dp).height(65.dp).onFocusChanged { focusState.value = it.isFocused }
+    ) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            StudioBadge(brand = brand, isActive = true, isLarge = true, darkText = focusState.value)
+        }
     }
 }
 
