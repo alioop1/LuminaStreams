@@ -9,48 +9,105 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocalMovies
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.focus.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.*
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
-import androidx.tv.material3.*
-import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Glow
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Surface
+import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import com.luminastreams.tv.R
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -68,9 +125,6 @@ private val DIM2        = Color(0x99FFFFFF)
 private val DIM3        = Color(0x33FFFFFF)
 private val GOLD        = Color(0xFFFFD700)
 private val CARD_BG     = Color(0xFF1C1C1C)
-private val NETFLIX_RED = Color(0xFFE50914)
-private val APPLE_BG    = Color(0xFF1C1C1E)
-private val DISNEY_BLUE = Color(0xFF113CCF)
 private val NAV_GLASS   = Color(0x18FFFFFF)
 private val NAV_FOCUS   = Color(0x30FFFFFF)
 
@@ -940,36 +994,43 @@ private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modi
     )
 }
 
-// ── Studio badge chips ────────────────────────────────────────────────────────
-@Composable
-private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false, darkText: Boolean = false) {
-    val a = if (isActive) 1f else 0.4f
-    val txtColor = if (darkText) Color(0xFF141414) else WHITE.copy(a)
 
-    when (brand) {
-        StudioBrand.NETFLIX ->
-            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).width(if(isLarge) 40.dp else 28.dp).clip(RoundedCornerShape(4.dp)).background(NETFLIX_RED.copy(a)), Alignment.Center) {
-                Text("N", color = WHITE, fontSize = if(isLarge) 20.sp else 14.sp, fontWeight = FontWeight.Black)
-            }
-        StudioBrand.APPLE_TV ->
-            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).wrapContentWidth().clip(RoundedCornerShape(11.dp)).background(APPLE_BG.copy(a)).border(0.5.dp, Color(0x88FFFFFF).copy(a), RoundedCornerShape(11.dp)).padding(horizontal = if(isLarge) 12.dp else 9.dp), Alignment.Center) {
-                Text("tv+", color = WHITE.copy(a), fontSize = if(isLarge) 16.sp else 12.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)
-            }
-        StudioBrand.DISNEY ->
-            Box(Modifier.height(if(isLarge) 32.dp else 22.dp).wrapContentWidth().clip(RoundedCornerShape(4.dp)).background(DISNEY_BLUE.copy(a)).padding(horizontal = if(isLarge) 12.dp else 8.dp), Alignment.Center) {
-                Text("DISNEY+", color = WHITE.copy(a), fontSize = if(isLarge) 11.sp else 7.5.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.2.sp)
-            }
-        StudioBrand.HBO ->
-            Text("MAX", color = txtColor, fontSize = if(isLarge) 24.sp else 14.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic)
-        StudioBrand.AMAZON ->
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("prime", color = txtColor, fontSize = if(isLarge) 18.sp else 12.sp, fontWeight = FontWeight.Bold)
-                Box(Modifier.width(if(isLarge) 28.dp else 20.dp).height(2.dp).background(Color(0xFF00A8E1).copy(a)))
-            }
-        StudioBrand.PARAMOUNT ->
-            Text("Paramount+", color = txtColor, fontSize = if(isLarge) 14.sp else 10.sp, fontWeight = FontWeight.ExtraBold)
-        StudioBrand.HULU ->
-            Text("hulu", color = Color(0xFF1CE783).copy(a), fontSize = if(isLarge) 22.sp else 14.sp, fontWeight = FontWeight.Black)
+// ── Studio badge chips (Real Images) ──────────────────────────────────────────
+@Composable
+private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false) {
+    val a = if (isActive) 1f else 0.4f
+
+    // בוחר את התמונה המתאימה מתיקיית ה-drawable
+    val imageRes = when (brand) {
+        StudioBrand.NETFLIX   -> R.drawable.logo_netflix
+        StudioBrand.APPLE_TV  -> R.drawable.logo_appletv
+        StudioBrand.DISNEY    -> R.drawable.logo_disney
+        StudioBrand.HBO       -> R.drawable.logo_hbo
+        StudioBrand.AMAZON    -> R.drawable.logo_amazon
+        StudioBrand.PARAMOUNT -> R.drawable.logo_paramount
+        StudioBrand.HULU      -> R.drawable.logo_hulu
+    }
+
+    // אופציונלי: אם הלוגואים שהורדת שחורים ואתה רוצה לצבוע אותם ללבן
+    // (ולשחור כשהכפתור בפוקוס), השתמש ב-ColorFilter:
+    // val filter = if (darkText) ColorFilter.tint(Color(0xFF141414)) else ColorFilter.tint(WHITE.copy(a))
+    // אם הלוגואים צבעוניים ויפים כמו שהם, פשוט תשאיר את ה-colorFilter על null.
+    val filter = null
+
+    Box(
+        modifier = Modifier
+            .height(if (isLarge) 32.dp else 22.dp)
+            .width(if (isLarge) 80.dp else 50.dp) // התאמתי את הרוחב כדי שהלוגואים לא ייחתכו
+            .graphicsLayer { this.alpha = a },
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(id = imageRes),
+            contentDescription = brand.name,
+            contentScale = ContentScale.Fit, // שומר על הפרופורציות המקוריות של הלוגו
+            colorFilter = filter,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
@@ -1198,7 +1259,7 @@ private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: 
         modifier = modifier.width(130.dp).height(65.dp).onFocusChanged { focusState.value = it.isFocused }
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
-            StudioBadge(brand = brand, isActive = true, isLarge = true, darkText = focusState.value)
+            StudioBadge(brand = brand, isActive = true, isLarge = true)
         }
     }
 }
