@@ -58,6 +58,11 @@ android {
         jvmToolchain(21)
     }
 
+    // ✅ FIX 3: opt-in גלובלי ל-UnstableApi — מסיר את כל שגיאות הקומפייל
+    kotlinOptions {
+        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
+    }
+
     // ✅ stabilityConfigurationFiles (plural) — correct API for Compose compiler plugin
     composeCompiler {
         stabilityConfigurationFiles.add(
@@ -108,25 +113,18 @@ dependencies {
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
 
-    // ✅ FIXED: catalog alias instead of bare string (ensures version = 1.7.6)
-    // was: implementation("androidx.compose.material:material-icons-extended")
-    //      ↑ no version = Unresolved reference / version conflict
     implementation(libs.androidx.compose.material.icons.extended)
 
     // ── Media3 / ExoPlayer — full TV 4K suite ─────────────────────────────
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
-    implementation(libs.androidx.media3.exoplayer.hls)          // HLS streams
-    implementation(libs.androidx.media3.exoplayer.dash)         // DASH (Real-Debrid links)
-    implementation(libs.androidx.media3.datasource.okhttp)      // OkHttp transport layer
-    implementation(libs.androidx.media3.common)                 // subtitle / track types
-    implementation(libs.androidx.media3.decoder)                // software decoder fallback
+    implementation(libs.androidx.media3.exoplayer.hls)
+    implementation(libs.androidx.media3.exoplayer.dash)
+    implementation(libs.androidx.media3.datasource.okhttp)
+    implementation(libs.androidx.media3.common)
+    implementation(libs.androidx.media3.decoder)
 
     // ── Coil 2 image loading ──────────────────────────────────────────────
-    // ✅ DO NOT upgrade to Coil 3 — entire codebase uses coil.* packages:
-    //    LuminaApp.kt  → coil.ImageLoader, coil.memory.MemoryCache, coil.disk.DiskCache
-    //    LocalStorage.kt → coil.imageLoader extension
-    // Coil 3 moved all of this to coil3.* = compile errors throughout
     implementation(libs.coil.compose)
 
     // ── Palette / Security ─────────────────────────────────────────────────

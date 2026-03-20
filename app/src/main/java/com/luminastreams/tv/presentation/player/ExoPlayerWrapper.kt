@@ -26,8 +26,11 @@ class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
 
+    // ✅ FIX 1: שינוי מ-EXTENSION_RENDERER_MODE_PREFER ל-EXTENSION_RENDERER_MODE_OFF
+    // PREFER גרם ל-ExoPlayer לנסות decoder extensions שלא קיימים/תקינים,
+    // מה שגרם לכשל של ה-video renderer בלבד בזמן שה-audio renderer המשיך לפעול.
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
-        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
         setEnableDecoderFallback(true)
     }
 
@@ -35,16 +38,17 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(
             buildUponParameters()
                 .setPreferredVideoMimeTypes(
-                    MimeTypes.VIDEO_AV1,
                     MimeTypes.VIDEO_H265,
-                    MimeTypes.VIDEO_H264
+                    MimeTypes.VIDEO_H264,
+                    MimeTypes.VIDEO_AV1
                 )
                 .setPreferredAudioMimeTypes(
                     MimeTypes.AUDIO_AC3,
                     MimeTypes.AUDIO_E_AC3,
                     MimeTypes.AUDIO_AAC
                 )
-                .setTunnelingEnabled(false)
+                // ✅ FIX 2: הפעלת tunneling — חיוני ב-Android TV boxes לרינדור וידאו תקין
+                .setTunnelingEnabled(true)
         )
     }
 
@@ -81,11 +85,9 @@ class ExoPlayerWrapper(context: Context) {
         player.addListener(object : Player.Listener {
 
             /**
-             * ✅ הפתרון הנכון לחסימת Dolby Vision.
-             *
+             * ✅ חסימת Dolby Vision — מונע crash על מכשירים שלא תומכים ב-DV.
              * Media3 קורא onTracksChanged() לאחר שהוא בנה את רשימת הטראקים
              * אך לפני שהקודק מקבל את הפורמט ומנסה לפתוח אותו.
-             * כאן אנחנו מוצאים קבוצות DV ומוסיפים Override ריק עליהן.
              */
             override fun onTracksChanged(tracks: Tracks) {
                 var foundDolbyVision = false
