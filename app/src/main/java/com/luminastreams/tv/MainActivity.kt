@@ -6,6 +6,8 @@
 package com.luminastreams.tv
 
 import android.app.Application
+import android.content.pm.ActivityInfo
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -56,6 +58,7 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
  * 2. DetailsViewModel נוצר עם MediaRepository ישירות (ללא GetMediaDetailsUseCase)
  * 3. הוסרה תלות מיותרת ב-GetMediaDetailsUseCase
  * 4. תיקון קריטי לניווט הנגן - קידוד URLEncoder מאובטח שמונע קריסות של לינקי Real Debrid
+ * 5. תיקון colorMode ל-Mali GPU של Mecool — מונע "Unknown dataspace 0"
  *
  * Path: app/src/main/java/com/luminastreams/tv/MainActivity.kt
  */
@@ -63,6 +66,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
+
+        // ✅ תיקון Mali GPU — מונע "Unknown dataspace 0" + "Unable to match swap behavior"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
+        }
+
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
@@ -111,14 +120,13 @@ fun AppNavHostContainer(
                 viewModel     = homeViewModel,
                 navController = navController,
                 onMovieClick  = { id ->
-                    // התיקון: קידוד בטוח ושימוש ב-Query Parameter!
                     val safeId = java.net.URLEncoder.encode(id, "UTF-8")
                     navController.navigate("details?fullId=$safeId")
                 }
             )
         }
 
-        // ── Details (עודכן ל-Query Parameter כדי לא לקרוס מלינקים) ───────────
+        // ── Details ───────────────────────────────────────────────────────────
         composable(
             route     = "details?fullId={fullId}",
             arguments = listOf(navArgument("fullId") { type = NavType.StringType; defaultValue = "" })
@@ -143,7 +151,7 @@ fun AppNavHostContainer(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId ->
-                    val safeUrl = java.net.URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeUrl  = java.net.URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb = if (imdbId.isBlank()) "_" else imdbId
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb")
                 },
@@ -165,8 +173,7 @@ fun AppNavHostContainer(
         ) { back ->
             val encodedUrl = back.arguments?.getString("videoUrl") ?: ""
             val imdbId     = back.arguments?.getString("imdbId")   ?: "_"
-
-            val videoUrl = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+            val videoUrl   = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(

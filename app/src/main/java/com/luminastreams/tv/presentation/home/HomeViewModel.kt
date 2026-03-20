@@ -8,6 +8,7 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -27,40 +28,35 @@ class HomeViewModel : ViewModel() {
     private val pageMap = mutableMapOf<String, Int>()
     private val loadingSet = mutableSetOf<String>()
 
-    // ── Fuzer Engine ───────────────────────────────────────────────────────────
     private val fuzerEngine = FuzerEngine()
 
     private val imgBase = "https://image.tmdb.org/t/p"
-    private val base    = "https://api.themoviedb.org/3"
+    private val base = "https://api.themoviedb.org/3"
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
         .build()
 
     init { loadAll() }
 
     fun selectTab(tab: String) = _state.update { it.copy(selectedTab = tab) }
 
-    fun setStudioFilter(studio: String?) {
+    fun setStudioFilter(studio: String?) =
         _state.update { it.copy(selectedStudioFilter = studio) }
-    }
 
     fun retry() {
-        if (_state.value.selectedTab == "Fuzer") {
-            loadFuzerContent()
-        } else {
-            loadAll()
-        }
+        if (_state.value.selectedTab == "Fuzer") loadFuzerContent()
+        else loadAll()
     }
 
-    // ── Endless Scroll Pagination ──────────────────────────────────────────────
+    // ── Endless Scroll Pagination ──────────────────────────────────
     fun loadMore(id: String) {
         if (id == "ribbon" || id.startsWith("fuzer") || loadingSet.contains(id)) return
         loadingSet.add(id)
-
-        val currentPage = pageMap[id] ?: 1
-        val nextPage = currentPage + 1
+        val nextPage = (pageMap[id] ?: 1) + 1
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -83,20 +79,19 @@ class HomeViewModel : ViewModel() {
                     "movieAmazon"    -> { url = "$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieParamount" -> { url = "$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieHulu"      -> { url = "$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-
-                    "tvTrending"  -> { url = "$base/trending/tv/week?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvPremieres" -> { url = "$base/tv/on_the_air?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvDrama"     -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvCrime"     -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvScifi"     -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvTopRated"  -> { url = "$base/tv/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvNetflix"   -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvAppleTV"   -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvDisney"    -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvHBO"       -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=1899&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvAmazon"    -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvParamount" -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvHulu"      -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvTrending"     -> { url = "$base/trending/tv/week?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                    "tvPremieres"    -> { url = "$base/tv/on_the_air?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                    "tvDrama"        -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvCrime"        -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvScifi"        -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvTopRated"     -> { url = "$base/tv/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                    "tvNetflix"      -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvAppleTV"      -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvDisney"       -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvHBO"          -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=1899&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvAmazon"       -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvParamount"    -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    "tvHulu"         -> { url = "$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                 }
 
                 if (url.isNotEmpty()) {
@@ -105,33 +100,32 @@ class HomeViewModel : ViewModel() {
                         pageMap[id] = nextPage
                         _state.update { s ->
                             when (id) {
-                                "movieTrending" -> s.copy(movieTrending = s.movieTrending + newItems)
+                                "movieTrending"  -> s.copy(movieTrending = s.movieTrending + newItems)
                                 "moviePremieres" -> s.copy(moviePremieres = s.moviePremieres + newItems)
-                                "movieAction" -> s.copy(movieAction = s.movieAction + newItems)
-                                "movieDrama" -> s.copy(movieDrama = s.movieDrama + newItems)
-                                "movieScifi" -> s.copy(movieScifi = s.movieScifi + newItems)
-                                "movieTopRated" -> s.copy(movieTopRated = s.movieTopRated + newItems)
-                                "movieNetflix" -> s.copy(movieNetflix = s.movieNetflix + newItems)
-                                "movieAppleTV" -> s.copy(movieAppleTV = s.movieAppleTV + newItems)
-                                "movieDisney" -> s.copy(movieDisney = s.movieDisney + newItems)
-                                "movieHBO" -> s.copy(movieHBO = s.movieHBO + newItems)
-                                "movieAmazon" -> s.copy(movieAmazon = s.movieAmazon + newItems)
+                                "movieAction"    -> s.copy(movieAction = s.movieAction + newItems)
+                                "movieDrama"     -> s.copy(movieDrama = s.movieDrama + newItems)
+                                "movieScifi"     -> s.copy(movieScifi = s.movieScifi + newItems)
+                                "movieTopRated"  -> s.copy(movieTopRated = s.movieTopRated + newItems)
+                                "movieNetflix"   -> s.copy(movieNetflix = s.movieNetflix + newItems)
+                                "movieAppleTV"   -> s.copy(movieAppleTV = s.movieAppleTV + newItems)
+                                "movieDisney"    -> s.copy(movieDisney = s.movieDisney + newItems)
+                                "movieHBO"       -> s.copy(movieHBO = s.movieHBO + newItems)
+                                "movieAmazon"    -> s.copy(movieAmazon = s.movieAmazon + newItems)
                                 "movieParamount" -> s.copy(movieParamount = s.movieParamount + newItems)
-                                "movieHulu" -> s.copy(movieHulu = s.movieHulu + newItems)
-
-                                "tvTrending" -> s.copy(tvTrending = s.tvTrending + newItems)
-                                "tvPremieres" -> s.copy(tvPremieres = s.tvPremieres + newItems)
-                                "tvDrama" -> s.copy(tvDrama = s.tvDrama + newItems)
-                                "tvCrime" -> s.copy(tvCrime = s.tvCrime + newItems)
-                                "tvScifi" -> s.copy(tvScifi = s.tvScifi + newItems)
-                                "tvTopRated" -> s.copy(tvTopRated = s.tvTopRated + newItems)
-                                "tvNetflix" -> s.copy(tvNetflix = s.tvNetflix + newItems)
-                                "tvAppleTV" -> s.copy(tvAppleTV = s.tvAppleTV + newItems)
-                                "tvDisney" -> s.copy(tvDisney = s.tvDisney + newItems)
-                                "tvHBO" -> s.copy(tvHBO = s.tvHBO + newItems)
-                                "tvAmazon" -> s.copy(tvAmazon = s.tvAmazon + newItems)
-                                "tvParamount" -> s.copy(tvParamount = s.tvParamount + newItems)
-                                "tvHulu" -> s.copy(tvHulu = s.tvHulu + newItems)
+                                "movieHulu"      -> s.copy(movieHulu = s.movieHulu + newItems)
+                                "tvTrending"     -> s.copy(tvTrending = s.tvTrending + newItems)
+                                "tvPremieres"    -> s.copy(tvPremieres = s.tvPremieres + newItems)
+                                "tvDrama"        -> s.copy(tvDrama = s.tvDrama + newItems)
+                                "tvCrime"        -> s.copy(tvCrime = s.tvCrime + newItems)
+                                "tvScifi"        -> s.copy(tvScifi = s.tvScifi + newItems)
+                                "tvTopRated"     -> s.copy(tvTopRated = s.tvTopRated + newItems)
+                                "tvNetflix"      -> s.copy(tvNetflix = s.tvNetflix + newItems)
+                                "tvAppleTV"      -> s.copy(tvAppleTV = s.tvAppleTV + newItems)
+                                "tvDisney"       -> s.copy(tvDisney = s.tvDisney + newItems)
+                                "tvHBO"          -> s.copy(tvHBO = s.tvHBO + newItems)
+                                "tvAmazon"       -> s.copy(tvAmazon = s.tvAmazon + newItems)
+                                "tvParamount"    -> s.copy(tvParamount = s.tvParamount + newItems)
+                                "tvHulu"         -> s.copy(tvHulu = s.tvHulu + newItems)
                                 else -> s
                             }
                         }
@@ -143,95 +137,103 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Fuzer Loading ──────────────────────────────────────────────────────────
+    // ── Fuzer Loading ──────────────────────────────────────────────
     fun loadFuzerContent() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoading = true, error = null) }
-            val result = fuzerEngine.getCategoryPage(catId = 1, page = 1)
-
-            result.onSuccess { items ->
-                _state.update {
-                    it.copy(
-                        fuzerItems = items,
-                        isLoading = false
-                    )
-                }
-            }.onFailure { error ->
-                _state.update {
-                    it.copy(
-                        isLoading = false,
-                        error = "Error loading Fuzer: ${error.message}"
-                    )
-                }
-            }
+            fuzerEngine.getCategoryPage(catId = 1, page = 1)
+                .onSuccess { items -> _state.update { it.copy(fuzerItems = items, isLoading = false) } }
+                .onFailure { e -> _state.update { it.copy(isLoading = false, error = "Error loading Fuzer: ${e.message}") } }
         }
     }
 
-    // ── Load all rows ─────────────────────────────────────────────────────────
+    // ── Load all rows ──────────────────────────────────────────────
     private fun loadAll() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoading = true, error = null) }
             try {
-                coroutineScope {
-                    val k = Constants.TMDB_API_KEY
-                    val region = "US"
+                val k = Constants.TMDB_API_KEY
+                val region = "US"
 
-                    val mTrend     = async { fetch("$base/trending/movie/week?api_key=$k&language=en-US", "movie") }
-                    val mNow       = async { fetch("$base/movie/now_playing?api_key=$k&language=en-US", "movie") }
+                // ════ גל 1: מה שנראה מיד על המסך ════
+                coroutineScope {
+                    val mTrend  = async { fetch("$base/trending/movie/week?api_key=$k&language=en-US", "movie") }
+                    val tvTrend = async { fetch("$base/trending/tv/week?api_key=$k&language=en-US", "tv") }
+                    val mNow    = async { fetch("$base/movie/now_playing?api_key=$k&language=en-US", "movie") }
+                    val mNflx   = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc", "movie") }
+
+                    _state.update { s -> s.copy(
+                        isLoading     = false,
+                        movieTrending = mTrend.await(),
+                        tvTrending    = tvTrend.await(),
+                        moviePremieres = mNow.await(),
+                        movieNetflix  = mNflx.await()
+                    )}
+                }
+
+                // ════ גל 2: שאר הנתונים — עדכון מפוצל כדי לא לחנוק את ה-Main Thread ════
+                coroutineScope {
                     val mAction    = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc", "movie") }
                     val mDrama     = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc", "movie") }
                     val mScifi     = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc", "movie") }
                     val mTop       = async { fetch("$base/movie/top_rated?api_key=$k&language=en-US", "movie") }
-                    val mNflx      = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc", "movie") }
-                    val mApple     = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc", "movie") }
-                    val mDisney    = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc", "movie") }
+
                     val mHBO       = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899&watch_region=$region&sort_by=popularity.desc", "movie") }
                     val mAmazon    = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc", "movie") }
+                    val mApple     = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc", "movie") }
+                    val mDisney    = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc", "movie") }
                     val mParamount = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc", "movie") }
                     val mHulu      = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc", "movie") }
 
-                    val tvTrend     = async { fetch("$base/trending/tv/week?api_key=$k&language=en-US", "tv") }
-                    val tvAir       = async { fetch("$base/tv/on_the_air?api_key=$k&language=en-US", "tv") }
-                    val tvDrama     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc", "tv") }
-                    val tvCrime     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc", "tv") }
-                    val tvScifi     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc", "tv") }
-                    val tvTop       = async { fetch("$base/tv/top_rated?api_key=$k&language=en-US", "tv") }
-                    val tvNflx      = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc", "tv") }
-                    val tvApple     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc", "tv") }
-                    val tvDisney    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc", "tv") }
-                    val tvHBO       = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=1899&watch_region=$region&sort_by=popularity.desc", "tv") }
-                    val tvAmazon    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvAir      = async { fetch("$base/tv/on_the_air?api_key=$k&language=en-US", "tv") }
+                    val tvDrama    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc", "tv") }
+                    val tvCrime    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc", "tv") }
+                    val tvScifi    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc", "tv") }
+                    val tvTop      = async { fetch("$base/tv/top_rated?api_key=$k&language=en-US", "tv") }
+                    val tvNflx     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvApple    = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvDisney   = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=337&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvHBO      = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=1899&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvAmazon   = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc", "tv") }
                     val tvParamount = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc", "tv") }
-                    val tvHulu      = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc", "tv") }
+                    val tvHulu     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc", "tv") }
+
+                    // ✅ עדכון מפוצל — 4-6 שדות כל פעם, עם delay ביניהם
+                    _state.update { s -> s.copy(
+                        movieAction   = mAction.await(),
+                        movieDrama    = mDrama.await(),
+                        movieScifi    = mScifi.await(),
+                        movieTopRated = mTop.await()
+                    )}
+                    delay(100)
 
                     _state.update { s -> s.copy(
-                        isLoading       = false,
-                        movieTrending   = mTrend.await(),
-                        moviePremieres  = mNow.await(),
-                        movieAction     = mAction.await(),
-                        movieDrama      = mDrama.await(),
-                        movieScifi      = mScifi.await(),
-                        movieTopRated   = mTop.await(),
-                        movieNetflix    = mNflx.await(),
-                        movieAppleTV    = mApple.await(),
-                        movieDisney     = mDisney.await(),
-                        movieHBO        = mHBO.await(),
-                        movieAmazon     = mAmazon.await(),
-                        movieParamount  = mParamount.await(),
-                        movieHulu       = mHulu.await(),
-                        tvTrending      = tvTrend.await(),
-                        tvPremieres     = tvAir.await(),
-                        tvDrama         = tvDrama.await(),
-                        tvCrime         = tvCrime.await(),
-                        tvScifi         = tvScifi.await(),
-                        tvTopRated      = tvTop.await(),
-                        tvNetflix       = tvNflx.await(),
-                        tvAppleTV       = tvApple.await(),
-                        tvDisney        = tvDisney.await(),
-                        tvHBO           = tvHBO.await(),
-                        tvAmazon        = tvAmazon.await(),
-                        tvParamount     = tvParamount.await(),
-                        tvHulu          = tvHulu.await()
+                        movieHBO       = mHBO.await(),
+                        movieAmazon    = mAmazon.await(),
+                        movieAppleTV   = mApple.await(),
+                        movieDisney    = mDisney.await(),
+                        movieParamount = mParamount.await(),
+                        movieHulu      = mHulu.await()
+                    )}
+                    delay(100)
+
+                    _state.update { s -> s.copy(
+                        tvPremieres = tvAir.await(),
+                        tvDrama     = tvDrama.await(),
+                        tvCrime     = tvCrime.await(),
+                        tvScifi     = tvScifi.await(),
+                        tvTopRated  = tvTop.await()
+                    )}
+                    delay(100)
+
+                    _state.update { s -> s.copy(
+                        tvNetflix   = tvNflx.await(),
+                        tvAppleTV   = tvApple.await(),
+                        tvDisney    = tvDisney.await(),
+                        tvHBO       = tvHBO.await(),
+                        tvAmazon    = tvAmazon.await(),
+                        tvParamount = tvParamount.await(),
+                        tvHulu      = tvHulu.await()
                     )}
                 }
             } catch (e: Exception) {
@@ -240,42 +242,45 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Fetch helper ──────────────────────────────────────────────────────────
+    // ── Fetch helper ───────────────────────────────────────────────
     private suspend fun fetch(url: String, mediaType: String): List<Movie> =
         withContext(Dispatchers.IO) {
             try {
                 val body = http.newCall(Request.Builder().url(url).build())
                     .execute().use { it.body?.string() } ?: return@withContext emptyList()
-                val arr  = JSONObject(body).optJSONArray("results")
+                val arr = JSONObject(body).optJSONArray("results")
                     ?: return@withContext emptyList()
 
                 val out = mutableListOf<Movie>()
                 for (i in 0 until arr.length()) {
-                    val j  = arr.getJSONObject(i)
+                    val j = arr.getJSONObject(i)
                     val mt = j.optString("media_type").ifBlank { mediaType }
 
                     val backdropRaw = j.optString("backdrop_path")
                     if (backdropRaw.isBlank() || backdropRaw == "null") continue
 
-                    val title    = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                    else j.optString("title").ifBlank { j.optString("original_title") }
-                    val date     = if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")
-                    val poster   = j.optString("poster_path").let {
+                    val title = if (mt == "tv")
+                        j.optString("name").ifBlank { j.optString("original_name") }
+                    else
+                        j.optString("title").ifBlank { j.optString("original_title") }
+
+                    val date = if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")
+                    val poster = j.optString("poster_path").let {
                         if (it.isNotBlank() && it != "null") "$imgBase/w500$it" else ""
                     }
                     if (poster.isBlank()) continue
 
                     out += Movie(
-                        id          = "${mt}_${j.optInt("id")}",
-                        title       = title,
-                        posterUrl   = poster,
-                        backdropUrl = "$imgBase/w1280$backdropRaw",
-                        overview    = j.optString("overview"),
-                        year        = date.take(4).toIntOrNull() ?: 0,
-                        genre       = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
-                        rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                        mediaType   = mt,
-                        resolutionBadge = ""
+                        id               = "${mt}_${j.optInt("id")}",
+                        title            = title,
+                        posterUrl        = poster,
+                        backdropUrl      = "$imgBase/w1280$backdropRaw",
+                        overview         = j.optString("overview"),
+                        year             = date.take(4).toIntOrNull() ?: 0,
+                        genre            = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
+                        rating           = j.optDouble("vote_average", 0.0).toFloat(),
+                        mediaType        = mt,
+                        resolutionBadge  = ""
                     )
                 }
                 out
@@ -283,14 +288,14 @@ class HomeViewModel : ViewModel() {
         }
 
     private fun genreLabel(id: Int, mt: String): String = when (id) {
-        28 -> "Action";     12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
-        80 -> "Crime";      99 -> "Documentary"; 18 -> "Drama";  10751 -> "Family"
-        14 -> "Fantasy";    36 -> "History";   27 -> "Horror"; 10402 -> "Music"
+        28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
+        80 -> "Crime"; 99 -> "Documentary"; 18 -> "Drama"; 10751 -> "Family"
+        14 -> "Fantasy"; 36 -> "History"; 27 -> "Horror"; 10402 -> "Music"
         9648 -> "Mystery"; 10749 -> "Romance"; 878 -> "Sci-Fi"; 10770 -> "TV Movie"
-        53 -> "Thriller"; 10752 -> "War";       37 -> "Western"
-        10759 -> "Action & Adventure"; 10762 -> "Kids";   10763 -> "News"
+        53 -> "Thriller"; 10752 -> "War"; 37 -> "Western"
+        10759 -> "Action & Adventure"; 10762 -> "Kids"; 10763 -> "News"
         10764 -> "Reality"; 10765 -> "Sci-Fi & Fantasy"; 10766 -> "Soap"
-        10767 -> "Talk";   10768 -> "War & Politics"
+        10767 -> "Talk"; 10768 -> "War & Politics"
         else -> if (mt == "tv") "TV Show" else "Movie"
     }
 }

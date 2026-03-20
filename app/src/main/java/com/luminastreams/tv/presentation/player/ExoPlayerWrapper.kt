@@ -13,6 +13,7 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
@@ -20,23 +21,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-/**
- * ExoPlayerWrapper — חוסם Dolby Vision אחרי גילוי הטראקים.
- *
- * למה לא DefaultTrackSelector subclass?
- * ─────────────────────────────────────
- * selectTracks() הוא final ב-Media3 ולא ניתן לעקוף.
- *
- * הפתרון הנכון (Media3 public API):
- *   1. onTracksChanged() — מופעל אחרי שExoPlayer בנה את רשימת הטראקים
- *   2. מחפשים קבוצות טראק שכל הפורמטים בהן הם Dolby Vision
- *   3. מוסיפים TrackSelectionOverride עם רשימה ריקה → ExoPlayer מבטל אותן
- *   4. ExoPlayer בוחר אוטומטית את קבוצת HEVC/H264 הבאה
- *
- * התוצאה: אותה הגנה מה-crash, ללא override של methods final.
- *
- * Path: app/src/main/java/com/luminastreams/tv/presentation/player/ExoPlayerWrapper.kt
- */
+
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
@@ -59,12 +44,23 @@ class ExoPlayerWrapper(context: Context) {
                     MimeTypes.AUDIO_E_AC3,
                     MimeTypes.AUDIO_AAC
                 )
-                .setTunnelingEnabled(true)
+                .setTunnelingEnabled(false)
         )
     }
 
+    // LoadControl מותאם ל-TV box — מתחיל השמעה מהר יותר, buffer סביר
+    private val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            15_000,   // minBufferMs
+            50_000,   // maxBufferMs
+            2_500,    // bufferForPlaybackMs — מתחיל לנגן אחרי 2.5 שניות בלבד
+            5_000     // bufferForPlaybackAfterRebufferMs
+        )
+        .build()
+
     val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
         .setTrackSelector(trackSelector)
+        .setLoadControl(loadControl)
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -96,13 +92,11 @@ class ExoPlayerWrapper(context: Context) {
                 val paramsBuilder = player.trackSelectionParameters.buildUpon()
 
                 for (group in tracks.groups) {
-                    // בדוק אם כל הפורמטים בקבוצה הם Dolby Vision
                     val groupIsDv = (0 until group.length).all { i ->
                         isDolbyVision(group.getTrackFormat(i))
                     }
 
                     if (groupIsDv) {
-                        // Override ריק = "אל תבחר שום טראק מקבוצה זו"
                         paramsBuilder.addOverride(
                             TrackSelectionOverride(group.mediaTrackGroup, emptyList())
                         )
@@ -111,7 +105,6 @@ class ExoPlayerWrapper(context: Context) {
                 }
 
                 if (foundDolbyVision) {
-                    // ✅ עדכון synchronous — ExoPlayer יבחר מחדש לפני שהקודק מתחיל
                     player.trackSelectionParameters = paramsBuilder.build()
                 }
             }
@@ -194,15 +187,12 @@ class ExoPlayerWrapper(context: Context) {
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private fun isDolbyVision(format: Format): Boolean {
-        // בדיקה לפי MIME type
         if (format.sampleMimeType.equals(MimeTypes.VIDEO_DOLBY_VISION, ignoreCase = true))
             return true
-        // בדיקה לפי codec string
         val codecs = format.codecs ?: return false
         return codecs.startsWith("dvhe", ignoreCase = true) ||
                 codecs.startsWith("dvh1", ignoreCase = true) ||
                 codecs.startsWith("dovi", ignoreCase = true) ||
-                // hev1.08.xx = Dolby Vision profile 8 (HEVC-based)
                 Regex("^hev1\\.0[0-9]\\.", RegexOption.IGNORE_CASE).containsMatchIn(codecs)
     }
 }

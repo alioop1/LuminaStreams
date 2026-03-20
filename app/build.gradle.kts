@@ -21,6 +21,15 @@ android {
         compose = true
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile     = file("keystore.jks")
+            storePassword = "lumina123"
+            keyAlias      = "lumina"
+            keyPassword   = "lumina123"
+        }
+    }
+
     buildTypes {
         getByName("debug") {
             isDebuggable      = true
@@ -31,6 +40,8 @@ android {
             isDebuggable      = false
             isMinifyEnabled   = true
             isShrinkResources = true
+            isProfileable     = true
+            signingConfig     = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -68,10 +79,7 @@ android {
 
     splits {
         abi {
-            isEnable       = true
-            reset()
-            include("armeabi-v7a", "arm64-v8a", "x86_64")
-            isUniversalApk = true
+            isEnable       = false  // APK אחד שעובד על כל הארכיטקטורות
         }
     }
 

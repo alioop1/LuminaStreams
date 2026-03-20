@@ -1,6 +1,7 @@
-package com.luminastreams.tv.core
+package com.luminastreams.tv.core  // ✅ תוקן
 
 import android.app.Application
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 
@@ -9,7 +10,8 @@ class LuminaApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // מאותחל פעם אחת בלבד כשהאפליקציה עולה
         repository = MediaRepositoryImpl()
+        DeviceProfile.init(this)
+        android.util.Log.d("DeviceProfile", DeviceProfile.debugInfo())
     }
 }
