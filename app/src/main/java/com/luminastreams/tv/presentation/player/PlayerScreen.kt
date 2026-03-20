@@ -3,6 +3,8 @@
 package com.luminastreams.tv.presentation.player
 
 import android.view.KeyEvent
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -106,6 +108,9 @@ fun PlayerScreen(
     val isPlaying by exo.isPlaying.collectAsState()
     val error     by exo.playerError.collectAsState()
 
+    // ✅ FIX: surfaceReady flag — ה-player יתחיל רק אחרי שה-PlayerView attached וה-Surface קיים
+    var surfaceReady by remember { mutableStateOf(false) }
+
     var showControls by remember { mutableStateOf(true) }
     var showSubMenu  by remember { mutableStateOf(false) }
     var activityTick by remember { mutableIntStateOf(0) }
@@ -115,11 +120,18 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val firstSubFR  = remember { FocusRequester() }
 
+    // ✅ FIX: רק טוען סוב-titles + metadata, לא מפעיל עדיין את ה-player
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
-        exo.prepareStream(videoUrl)
-        delay(3000)
-        if (isPlaying) showControls = false
+    }
+
+    // ✅ FIX: מפעיל את ה-player רק אחרי שה-Surface מוכן
+    LaunchedEffect(surfaceReady, videoUrl) {
+        if (surfaceReady) {
+            exo.prepareStream(videoUrl)
+            delay(3000)
+            if (isPlaying) showControls = false
+        }
     }
 
     LaunchedEffect(state.availableSubtitles) {
@@ -144,7 +156,6 @@ fun PlayerScreen(
 
     DisposableEffect(Unit) { onDispose { exo.release() } }
 
-    // ✅ BackHandler — תמיד פעיל, כולל כשהמסגרת ממוקדת
     BackHandler {
         when {
             showSubMenu  -> { showSubMenu = false }
@@ -157,12 +168,10 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
-            // ✅ focusTarget במקום focusable — מקבל פוקוס בלי לאכול BACK
             .focusTarget()
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
-                    // ✅ BACK מועבר ל-BackHandler — לא נתפס כאן
                     KeyEvent.KEYCODE_BACK,
                     KeyEvent.KEYCODE_ESCAPE -> false
 
@@ -194,7 +203,8 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video surface ────────────────────────────────────────────────────
+        // ── Video surface ───────────────────────────────────────────────────────────
+        // ✅ FIX: PlayerView.onAttachedToWindow מסמן שה-Surface מוכן לפני הפעלת ה-player
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -208,12 +218,21 @@ fun PlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     keepScreenOn = true
+                    // ✅ זה נקרא אחרי שה-View נוסף ל-window וה-Surface holder מוכן
+                    addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(v: android.view.View) {
+                            surfaceReady = true
+                        }
+                        override fun onViewDetachedFromWindow(v: android.view.View) {
+                            surfaceReady = false
+                        }
+                    })
                 }
             },
             update = { pv -> if (pv.player != exo.player) pv.player = exo.player }
         )
 
-        // ── Error overlay ────────────────────────────────────────────────────
+        // ── Error overlay ────────────────────────────────────────────────────────────
         if (error != null) {
             Box(
                 modifier          = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)),
@@ -258,7 +277,7 @@ fun PlayerScreen(
             return@Box
         }
 
-        // ── Controls overlay ─────────────────────────────────────────────────
+        // ── Controls overlay ───────────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls,
             enter    = fadeIn(tween(200)),
@@ -271,7 +290,6 @@ fun PlayerScreen(
                     Color.Transparent, CTRL_BG.copy(0.85f)
                 ))
             )) {
-                // Paused bubble
                 AnimatedVisibility(
                     visible  = !isPlaying,
                     enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
@@ -287,7 +305,6 @@ fun PlayerScreen(
                     }
                 }
 
-                // ── Top bar ───────────────────────────────────────────────────
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart).fillMaxWidth()
@@ -320,7 +337,6 @@ fun PlayerScreen(
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
 
-                // ── Bottom: progress + pills ──────────────────────────────────
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomCenter).fillMaxWidth()
@@ -387,7 +403,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Subtitle panel ───────────────────────────────────────────────────
+        // ── Subtitle panel ───────────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showSubMenu,
             enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) +
@@ -469,7 +485,7 @@ fun PlayerScreen(
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────────────────────
 private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
     "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"
