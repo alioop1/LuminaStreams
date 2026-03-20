@@ -1,7 +1,6 @@
-package com.luminastreams.tv.core  // ✅ תוקן
+package com.luminastreams.tv.core
 
 import android.app.Application
-import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 

@@ -1,9 +1,7 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
-
 package com.luminastreams.tv.presentation.player
 
 import android.content.Context
-import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.Format
@@ -13,22 +11,21 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.core.net.toUri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-
+@OptIn(UnstableApi::class)
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
 
-    // ✅ FIX 1: שינוי מ-EXTENSION_RENDERER_MODE_PREFER ל-EXTENSION_RENDERER_MODE_OFF
-    // PREFER גרם ל-ExoPlayer לנסות decoder extensions שלא קיימים/תקינים,
-    // מה שגרם לכשל של ה-video renderer בלבד בזמן שה-audio renderer המשיך לפעול.
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF)
         setEnableDecoderFallback(true)
@@ -37,6 +34,8 @@ class ExoPlayerWrapper(context: Context) {
     val trackSelector = DefaultTrackSelector(appContext).apply {
         setParameters(
             buildUponParameters()
+                // ✅ DV fix: לא כולל VIDEO_DOLBY_VISION ברשימת ה-preferred —
+                // ExoPlayer לא יבחר DV track כ-primary אלא יעדיף H265/H264
                 .setPreferredVideoMimeTypes(
                     MimeTypes.VIDEO_H265,
                     MimeTypes.VIDEO_H264,
@@ -47,18 +46,16 @@ class ExoPlayerWrapper(context: Context) {
                     MimeTypes.AUDIO_E_AC3,
                     MimeTypes.AUDIO_AAC
                 )
-                // ✅ FIX 2: הפעלת tunneling — חיוני ב-Android TV boxes לרינדור וידאו תקין
                 .setTunnelingEnabled(true)
         )
     }
 
-    // LoadControl מותאם ל-TV box — מתחיל השמעה מהר יותר, buffer סביר
     private val loadControl = DefaultLoadControl.Builder()
         .setBufferDurationsMs(
-            15_000,   // minBufferMs
-            50_000,   // maxBufferMs
-            2_500,    // bufferForPlaybackMs — מתחיל לנגן אחרי 2.5 שניות בלבד
-            5_000     // bufferForPlaybackAfterRebufferMs
+            15_000,
+            50_000,
+            2_500,
+            5_000
         )
         .build()
 
@@ -85,29 +82,44 @@ class ExoPlayerWrapper(context: Context) {
         player.addListener(object : Player.Listener {
 
             /**
-             * ✅ חסימת Dolby Vision — מונע crash על מכשירים שלא תומכים ב-DV.
-             * Media3 קורא onTracksChanged() לאחר שהוא בנה את רשימת הטראקים
-             * אך לפני שהקודק מקבל את הפורמט ומנסה לפתוח אותו.
+             * ✅ DV fix — שיטה כפולה:
+             * 1. trackSelector כבר לא בוחר DV כ-preferred
+             * 2. כאן אנחנו מוסיפים override ריק על כל group שהיא DV-בלבד,
+             *    כך שגם אם המקור מכיל רק DV — ExoPlayer יעדיף fallback
+             *    ל-HDR10/SDR track מ-group אחרת אם קיימת, ולא יקרוס.
+             * 3. אם אין שום video track חלופי — הנגן ירוץ עם שמע בלבד
+             *    ויציג error ידידותי.
              */
             override fun onTracksChanged(tracks: Tracks) {
-                var foundDolbyVision = false
                 val paramsBuilder = player.trackSelectionParameters.buildUpon()
+                var dvGroupsFound = 0
+                var totalVideoGroups = 0
 
                 for (group in tracks.groups) {
-                    val groupIsDv = (0 until group.length).all { i ->
+                    if (group.type != C.TRACK_TYPE_VIDEO) continue
+                    totalVideoGroups++
+
+                    val allDv = (0 until group.length).all { i ->
                         isDolbyVision(group.getTrackFormat(i))
                     }
-
-                    if (groupIsDv) {
+                    if (allDv) {
+                        // override ריק = חסום group זו לחלוטין
                         paramsBuilder.addOverride(
                             TrackSelectionOverride(group.mediaTrackGroup, emptyList())
                         )
-                        foundDolbyVision = true
+                        dvGroupsFound++
                     }
                 }
 
-                if (foundDolbyVision) {
+                if (dvGroupsFound > 0) {
                     player.trackSelectionParameters = paramsBuilder.build()
+
+                    // אם כל ה-video groups הן DV — אין תמונה בכלל, הצג error
+                    if (dvGroupsFound == totalVideoGroups) {
+                        _playerError.value =
+                            "This source is Dolby Vision only and is not supported on this device. Please choose a different source."
+                        _isPlaying.value = false
+                    }
                 }
             }
 
@@ -147,7 +159,7 @@ class ExoPlayerWrapper(context: Context) {
     fun prepareStream(videoUrl: String) {
         try {
             _playerError.value = null
-            player.setMediaItem(MediaItem.Builder().setUri(Uri.parse(videoUrl)).build())
+            player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
             player.playWhenReady = true
         } catch (e: Exception) {
@@ -160,7 +172,7 @@ class ExoPlayerWrapper(context: Context) {
             val current = player.currentMediaItem ?: return
             val mime    = if (isVtt || subtitleUrl.endsWith(".vtt"))
                 MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-            val conf    = MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitleUrl))
+            val conf    = MediaItem.SubtitleConfiguration.Builder(subtitleUrl.toUri())
                 .setMimeType(mime)
                 .setLanguage(lang)
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)

@@ -7,7 +7,6 @@ package com.luminastreams.tv
 
 import android.app.Application
 import android.content.pm.ActivityInfo
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -50,27 +49,13 @@ import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
 
-/**
- * MainActivity — single-activity entry point.
- *
- * תיקונים לעומת הגרסה הקודמת:
- * 1. הקובץ מכיל עכשיו את התוכן הנכון (MainActivity + Navigation)
- * 2. DetailsViewModel נוצר עם MediaRepository ישירות (ללא GetMediaDetailsUseCase)
- * 3. הוסרה תלות מיותרת ב-GetMediaDetailsUseCase
- * 4. תיקון קריטי לניווט הנגן - קידוד URLEncoder מאובטח שמונע קריסות של לינקי Real Debrid
- * 5. תיקון colorMode ל-Mali GPU של Mecool — מונע "Unknown dataspace 0"
- *
- * Path: app/src/main/java/com/luminastreams/tv/MainActivity.kt
- */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        // ✅ תיקון Mali GPU — מונע "Unknown dataspace 0" + "Unable to match swap behavior"
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
-        }
+        // ✅ תיקון: הוסר בדיקת SDK_INT (minSdk=26 = O כבר, הבדיקה מיותרת)
+        window.colorMode = ActivityInfo.COLOR_MODE_DEFAULT
 
         setContent {
             LuminaTheme { LuminaAppShell() }
@@ -113,7 +98,6 @@ fun AppNavHostContainer(
         popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
 
-        // ── Home ──────────────────────────────────────────────────────────────
         composable("home") {
             HomeScreen(
                 state         = homeViewModel.state.collectAsState().value,
@@ -126,7 +110,6 @@ fun AppNavHostContainer(
             )
         }
 
-        // ── Details ───────────────────────────────────────────────────────────
         composable(
             route     = "details?fullId={fullId}",
             arguments = listOf(navArgument("fullId") { type = NavType.StringType; defaultValue = "" })
@@ -163,7 +146,6 @@ fun AppNavHostContainer(
             )
         }
 
-        // ── Player ────────────────────────────────────────────────────────────
         composable(
             route     = "player?videoUrl={videoUrl}&imdbId={imdbId}",
             arguments = listOf(
@@ -184,7 +166,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── Search ────────────────────────────────────────────────────────────
         composable("search") {
             val vm: SearchViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
@@ -200,7 +181,6 @@ fun AppNavHostContainer(
             )
         }
 
-        // ── Settings ──────────────────────────────────────────────────────────
         composable("settings") {
             val vm: SettingsViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
@@ -216,7 +196,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── Watchlist ─────────────────────────────────────────────────────────
         composable("watchlist") {
             val vm: WatchlistViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
