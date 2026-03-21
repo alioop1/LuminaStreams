@@ -1,27 +1,23 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.luminastreams.tv.presentation.player
 
 import android.content.Context
-import androidx.annotation.OptIn
+import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.Tracks
-import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
-import androidx.core.net.toUri
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-@OptIn(UnstableApi::class)
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
@@ -34,16 +30,16 @@ class ExoPlayerWrapper(context: Context) {
     val trackSelector = DefaultTrackSelector(appContext).apply {
         setParameters(
             buildUponParameters()
-                // ✅ DV fix: לא כולל VIDEO_DOLBY_VISION ברשימת ה-preferred —
-                // ExoPlayer לא יבחר DV track כ-primary אלא יעדיף H265/H264
                 .setPreferredVideoMimeTypes(
+                    MimeTypes.VIDEO_DOLBY_VISION,
                     MimeTypes.VIDEO_H265,
                     MimeTypes.VIDEO_H264,
                     MimeTypes.VIDEO_AV1
                 )
                 .setPreferredAudioMimeTypes(
-                    MimeTypes.AUDIO_AC3,
+                    MimeTypes.AUDIO_E_AC3_JOC,
                     MimeTypes.AUDIO_E_AC3,
+                    MimeTypes.AUDIO_AC3,
                     MimeTypes.AUDIO_AAC
                 )
                 .setTunnelingEnabled(true)
@@ -51,12 +47,7 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     private val loadControl = DefaultLoadControl.Builder()
-        .setBufferDurationsMs(
-            15_000,
-            50_000,
-            2_500,
-            5_000
-        )
+        .setBufferDurationsMs(15_000, 50_000, 2_500, 5_000)
         .build()
 
     val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
@@ -80,48 +71,6 @@ class ExoPlayerWrapper(context: Context) {
 
     init {
         player.addListener(object : Player.Listener {
-
-            /**
-             * ✅ DV fix — שיטה כפולה:
-             * 1. trackSelector כבר לא בוחר DV כ-preferred
-             * 2. כאן אנחנו מוסיפים override ריק על כל group שהיא DV-בלבד,
-             *    כך שגם אם המקור מכיל רק DV — ExoPlayer יעדיף fallback
-             *    ל-HDR10/SDR track מ-group אחרת אם קיימת, ולא יקרוס.
-             * 3. אם אין שום video track חלופי — הנגן ירוץ עם שמע בלבד
-             *    ויציג error ידידותי.
-             */
-            override fun onTracksChanged(tracks: Tracks) {
-                val paramsBuilder = player.trackSelectionParameters.buildUpon()
-                var dvGroupsFound = 0
-                var totalVideoGroups = 0
-
-                for (group in tracks.groups) {
-                    if (group.type != C.TRACK_TYPE_VIDEO) continue
-                    totalVideoGroups++
-
-                    val allDv = (0 until group.length).all { i ->
-                        isDolbyVision(group.getTrackFormat(i))
-                    }
-                    if (allDv) {
-                        // override ריק = חסום group זו לחלוטין
-                        paramsBuilder.addOverride(
-                            TrackSelectionOverride(group.mediaTrackGroup, emptyList())
-                        )
-                        dvGroupsFound++
-                    }
-                }
-
-                if (dvGroupsFound > 0) {
-                    player.trackSelectionParameters = paramsBuilder.build()
-
-                    // אם כל ה-video groups הן DV — אין תמונה בכלל, הצג error
-                    if (dvGroupsFound == totalVideoGroups) {
-                        _playerError.value =
-                            "This source is Dolby Vision only and is not supported on this device. Please choose a different source."
-                        _isPlaying.value = false
-                    }
-                }
-            }
 
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 _isPlaying.value = isPlayingNow
@@ -154,8 +103,6 @@ class ExoPlayerWrapper(context: Context) {
         })
     }
 
-    // ── Public API ────────────────────────────────────────────────────────────
-
     fun prepareStream(videoUrl: String) {
         try {
             _playerError.value = null
@@ -181,7 +128,7 @@ class ExoPlayerWrapper(context: Context) {
                 player.currentMediaItemIndex,
                 current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
             )
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (_: Exception) {}
     }
 
     fun play()  { player.play() }
@@ -189,24 +136,12 @@ class ExoPlayerWrapper(context: Context) {
 
     fun seekTo(pos: Long) {
         try { player.seekTo(pos.coerceIn(0, player.duration.coerceAtLeast(0))) }
-        catch (e: Exception) { e.printStackTrace() }
+        catch (_: Exception) {}
     }
 
     fun clearError() { _playerError.value = null }
 
     fun release() {
-        try { player.release() } catch (e: Exception) { e.printStackTrace() }
-    }
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    private fun isDolbyVision(format: Format): Boolean {
-        if (format.sampleMimeType.equals(MimeTypes.VIDEO_DOLBY_VISION, ignoreCase = true))
-            return true
-        val codecs = format.codecs ?: return false
-        return codecs.startsWith("dvhe", ignoreCase = true) ||
-                codecs.startsWith("dvh1", ignoreCase = true) ||
-                codecs.startsWith("dovi", ignoreCase = true) ||
-                Regex("^hev1\\.0[0-9]\\.", RegexOption.IGNORE_CASE).containsMatchIn(codecs)
+        try { player.release() } catch (_: Exception) {}
     }
 }

@@ -1,9 +1,8 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 
 package com.luminastreams.tv.presentation.player
 
 import android.view.KeyEvent
-import android.view.SurfaceHolder
 import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.FrameLayout
@@ -23,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,7 +37,6 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -49,19 +48,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
-import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
-
-val CustomPauseIcon: ImageVector
-    get() = ImageVector.Builder("Pause", 24.dp, 24.dp, 24f, 24f).apply {
-        path(fill = SolidColor(Color.White)) {
-            moveTo(6f, 19f); lineTo(10f, 19f); lineTo(10f, 5f); lineTo(6f, 5f); close()
-            moveTo(14f, 19f); lineTo(18f, 19f); lineTo(18f, 5f); lineTo(14f, 5f); close()
-        }
-    }.build()
 
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
@@ -108,9 +97,8 @@ fun PlayerScreen(
     val isPlaying by exo.isPlaying.collectAsState()
     val error     by exo.playerError.collectAsState()
 
-    // ✅ FIX: surfaceReady flag — ה-player יתחיל רק אחרי שה-PlayerView attached וה-Surface קיים
     var surfaceReady by remember { mutableStateOf(false) }
-
+    var prepared     by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var showSubMenu  by remember { mutableStateOf(false) }
     var activityTick by remember { mutableIntStateOf(0) }
@@ -120,14 +108,13 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val firstSubFR  = remember { FocusRequester() }
 
-    // ✅ FIX: רק טוען סוב-titles + metadata, לא מפעיל עדיין את ה-player
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
     }
 
-    // ✅ FIX: מפעיל את ה-player רק אחרי שה-Surface מוכן
-    LaunchedEffect(surfaceReady, videoUrl) {
-        if (surfaceReady) {
+    LaunchedEffect(surfaceReady) {
+        if (surfaceReady && !prepared) {
+            prepared = true
             exo.prepareStream(videoUrl)
             delay(3000)
             if (isPlaying) showControls = false
@@ -158,8 +145,8 @@ fun PlayerScreen(
 
     BackHandler {
         when {
-            showSubMenu  -> { showSubMenu = false }
-            showControls -> { showControls = false }
+            showSubMenu  -> showSubMenu = false
+            showControls -> showControls = false
             else         -> { exo.pause(); onNavigateBack() }
         }
     }
@@ -203,56 +190,48 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video surface ───────────────────────────────────────────────────────────
-        // ✅ FIX: PlayerView.onAttachedToWindow מסמן שה-Surface מוכן לפני הפעלת ה-player
+        // ── Video surface ──────────────────────────────────────────────────────
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
-                PlayerView(ctx).apply {
-                    player        = exo.player
-                    useController = false
-                    resizeMode    = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                    setBackgroundColor(android.graphics.Color.BLACK)
-                    layoutParams  = FrameLayout.LayoutParams(
+                SurfaceView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     keepScreenOn = true
-                    // ✅ זה נקרא אחרי שה-View נוסף ל-window וה-Surface holder מוכן
                     addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                         override fun onViewAttachedToWindow(v: android.view.View) {
+                            exo.player.setVideoSurfaceView(this@apply)
                             surfaceReady = true
                         }
                         override fun onViewDetachedFromWindow(v: android.view.View) {
                             surfaceReady = false
+                            exo.player.clearVideoSurface()
                         }
                     })
                 }
             },
-            update = { pv -> if (pv.player != exo.player) pv.player = exo.player }
+            update = { sv -> exo.player.setVideoSurfaceView(sv) }
         )
 
-        // ── Error overlay ────────────────────────────────────────────────────────────
+        // ── Error overlay ──────────────────────────────────────────────────────
         if (error != null) {
             Box(
-                modifier          = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)),
-                contentAlignment  = Alignment.Center
+                modifier         = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)),
+                contentAlignment = Alignment.Center
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(20.dp),
                     modifier = Modifier.padding(48.dp)
                 ) {
-                    Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape),
-                        Alignment.Center) {
-                        Icon(Icons.Default.Warning, null, tint = RED,
-                            modifier = Modifier.size(40.dp))
+                    Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape), Alignment.Center) {
+                        Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
                     }
-                    Text("Playback Error", color = WHITE, fontSize = 28.sp,
-                        fontWeight = FontWeight.Black)
+                    Text("Playback Error", color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black)
                     Text(error!!, color = DIM, fontSize = 16.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.widthIn(max = 560.dp))
+                        textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
                     Spacer(Modifier.height(8.dp))
                     Surface(
                         onClick = { exo.clearError(); onNavigateBack() },
@@ -266,9 +245,9 @@ fun PlayerScreen(
                         modifier = Modifier.height(52.dp)
                     ) {
                         Row(Modifier.padding(horizontal = 32.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                            verticalAlignment     = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Icon(Icons.Default.ArrowBack, null, Modifier.size(18.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
                             Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
                     }
@@ -277,7 +256,7 @@ fun PlayerScreen(
             return@Box
         }
 
-        // ── Controls overlay ───────────────────────────────────────────────────────────
+        // ── Controls overlay ───────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls,
             enter    = fadeIn(tween(200)),
@@ -287,7 +266,7 @@ fun PlayerScreen(
             Box(Modifier.fillMaxSize().background(
                 Brush.verticalGradient(listOf(
                     CTRL_BG.copy(0.7f), Color.Transparent,
-                    Color.Transparent, CTRL_BG.copy(0.85f)
+                    Color.Transparent,  CTRL_BG.copy(0.85f)
                 ))
             )) {
                 AnimatedVisibility(
@@ -296,12 +275,13 @@ fun PlayerScreen(
                     exit     = scaleOut(tween(100)) + fadeOut(tween(100)),
                     modifier = Modifier.align(Alignment.Center)
                 ) {
-                    Box(Modifier.size(80.dp)
-                        .background(Color.Black.copy(0.6f), CircleShape)
-                        .border(2.dp, WHITE.copy(0.7f), CircleShape),
-                        Alignment.Center) {
-                        Icon(Icons.Default.PlayArrow, null, tint = WHITE,
-                            modifier = Modifier.size(44.dp))
+                    Box(
+                        Modifier.size(80.dp)
+                            .background(Color.Black.copy(0.6f), CircleShape)
+                            .border(2.dp, WHITE.copy(0.7f), CircleShape),
+                        Alignment.Center
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
                     }
                 }
 
@@ -310,8 +290,7 @@ fun PlayerScreen(
                         .align(Alignment.TopStart).fillMaxWidth()
                         .padding(horizontal = 64.dp, vertical = 32.dp)
                         .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown &&
-                                ev.key == Key.DirectionDown) {
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
                                 runCatching { seekBarFR.requestFocus() }; true
                             } else false
                         },
@@ -330,7 +309,7 @@ fun PlayerScreen(
                         modifier = Modifier.size(48.dp).focusRequester(backBtnFR)
                     ) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
-                            Icon(Icons.Default.ArrowBack, null, Modifier.size(22.dp))
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp))
                         }
                     }
                     Spacer(Modifier.width(16.dp))
@@ -353,8 +332,7 @@ fun PlayerScreen(
                     Spacer(Modifier.height(20.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown &&
-                                ev.key == Key.DirectionUp) {
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
                                 runCatching { seekBarFR.requestFocus() }; true
                             } else false
                         },
@@ -362,12 +340,10 @@ fun PlayerScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ControlPill(CustomAudioIcon, "Audio",
-                                Modifier.focusRequester(firstPillFR)) {
+                            ControlPill(CustomAudioIcon, "Audio", Modifier.focusRequester(firstPillFR)) {
                                 try {
                                     TrackSelectionDialogBuilder(
-                                        ContextThemeWrapper(context,
-                                            androidx.appcompat.R.style.Theme_AppCompat_Dialog),
+                                        ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat_Dialog),
                                         "Select Audio Track", exo.player, C.TRACK_TYPE_AUDIO
                                     ).build().show()
                                 } catch (_: Exception) {}
@@ -376,8 +352,7 @@ fun PlayerScreen(
                             ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
                                 try {
                                     TrackSelectionDialogBuilder(
-                                        ContextThemeWrapper(context,
-                                            androidx.appcompat.R.style.Theme_AppCompat_Dialog),
+                                        ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat_Dialog),
                                         "Select Subtitles", exo.player, C.TRACK_TYPE_TEXT
                                     ).build().show()
                                 } catch (_: Exception) {}
@@ -403,20 +378,16 @@ fun PlayerScreen(
             }
         }
 
-        // ── Subtitle panel ───────────────────────────────────────────────────────────
+        // ── Subtitle panel ─────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showSubMenu,
-            enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) +
-                    fadeIn(tween(250)),
-            exit     = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(250)) +
-                    fadeOut(tween(200)),
+            enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) + fadeIn(tween(250)),
+            exit     = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(250)) + fadeOut(tween(200)),
             modifier = Modifier.fillMaxSize()
         ) {
             Box(
                 Modifier.fillMaxSize().background(Color.Black.copy(0.7f))
-                    .clickable(remember { MutableInteractionSource() }, null) {
-                        showSubMenu = false
-                    },
+                    .clickable(remember { MutableInteractionSource() }, null) { showSubMenu = false },
                 contentAlignment = Alignment.CenterEnd
             ) {
                 Column(
@@ -434,11 +405,9 @@ fun PlayerScreen(
                         }
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(28.dp)
-                            .background(RED, RoundedCornerShape(2.dp)))
+                        Box(Modifier.width(4.dp).height(28.dp).background(RED, RoundedCornerShape(2.dp)))
                         Spacer(Modifier.width(12.dp))
-                        Text("Subtitles", color = WHITE, fontSize = 24.sp,
-                            fontWeight = FontWeight.Black)
+                        Text("Subtitles", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Black)
                     }
                     Spacer(Modifier.height(24.dp))
 
@@ -468,7 +437,7 @@ fun PlayerScreen(
                                 ) {
                                     Row(
                                         Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
+                                        verticalAlignment     = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Text("${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
@@ -485,7 +454,6 @@ fun PlayerScreen(
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
     "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"
@@ -525,12 +493,9 @@ fun PlayerProgressControls(
 
     Column {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp,
-                fontWeight = FontWeight.Bold)
-            Text("-${formatTime((videoDuration - currentPosition).coerceAtLeast(0L))}",
-                color = DIM, fontSize = 13.sp)
-            Text(formatTime(videoDuration), color = WHITE, fontSize = 14.sp,
-                fontWeight = FontWeight.Bold)
+            Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            Text("-${formatTime((videoDuration - currentPosition).coerceAtLeast(0L))}", color = DIM, fontSize = 13.sp)
+            Text(formatTime(videoDuration), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
         }
         Spacer(Modifier.height(10.dp))
         Box(
