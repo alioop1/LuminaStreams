@@ -66,20 +66,23 @@ data class HomeState(
     val focusedItem:       Movie?       = null,
 )
 
-// כל קטגוריות Fuzer עם ID וכותרת
-enum class FuzerCategory(val catId: Int, val displayName: String) {
-    MOVIES          (1,  "סרטים"),
-    SERIES          (2,  "סדרות"),
-    MOVIES_HD       (41, "סרטים HD"),
-    SERIES_HD       (42, "סדרות HD"),
-    MOVIES_4K       (65, "סרטים 4K"),
-    SERIES_4K       (66, "סדרות 4K"),
-    DUBBED_MOVIES   (83, "סרטים מדובבים"),
-    DUBBED_SERIES   (84, "סדרות מדובבות"),
-    ANIMATION       (14, "אנימציה"),
-    DOCUMENTARY     (33, "דוקומנטרי"),
-    KIDS            (31, "ילדים"),
-    ISRAELI         (49, "ישראלי"),
-    FOREIGN         (6,  "זר"),
-    SPORTS          (54, "ספורט"),
+/**
+ * Fuzer category IDs — used by HomeViewModel.loadFuzerContent().
+ * Each entry maps a human-readable name to the numeric cat ID on fuzer.xyz.
+ */
+object FuzerCats {
+    const val MOVIES         = 1
+    const val SERIES         = 2
+    const val MOVIES_HD      = 41
+    const val SERIES_HD      = 42
+    const val MOVIES_4K      = 65
+    const val SERIES_4K      = 66
+    const val DUBBED_MOVIES  = 83
+    const val DUBBED_SERIES  = 84
+    const val ANIMATION      = 14
+    const val DOCUMENTARY    = 33
+    const val KIDS           = 31
+    const val ISRAELI        = 49
+    const val FOREIGN        = 6
+    const val SPORTS         = 54
 }

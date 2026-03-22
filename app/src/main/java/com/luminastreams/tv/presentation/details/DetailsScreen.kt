@@ -21,7 +21,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -114,8 +113,7 @@ fun DetailsScreen(
                 if (activity != null) {
                     val homeVm = androidx.lifecycle.ViewModelProvider(activity)[com.luminastreams.tv.presentation.home.HomeViewModel::class.java]
                     val homeState = homeVm.state.value
-                    @Suppress("UNCHECKED_CAST")
-                    val fuzerItems = homeState::class.java.getMethod("getFuzerItems").invoke(homeState) as? List<com.luminastreams.tv.domain.model.Movie>
+                    val fuzerItems = homeState.fuzerItems   // ← direct property, no reflection
                     val matched = fuzerItems?.find { it.id == state.mediaInfo.id }
                     if (matched != null) {
                         media = state.mediaInfo.copy(

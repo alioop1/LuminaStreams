@@ -142,16 +142,16 @@ class HomeViewModel : ViewModel() {
             _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
             try {
                 coroutineScope {
-                    val movies       = async { fuzerEngine.getCategoryPage(1,  1).getOrElse { emptyList() } }
-                    val series       = async { fuzerEngine.getCategoryPage(2,  1).getOrElse { emptyList() } }
-                    val moviesHd     = async { fuzerEngine.getCategoryPage(41, 1).getOrElse { emptyList() } }
-                    val seriesHd     = async { fuzerEngine.getCategoryPage(42, 1).getOrElse { emptyList() } }
-                    val movies4k     = async { fuzerEngine.getCategoryPage(65, 1).getOrElse { emptyList() } }
-                    val series4k     = async { fuzerEngine.getCategoryPage(66, 1).getOrElse { emptyList() } }
-                    val dubbedMovies = async { fuzerEngine.getCategoryPage(83, 1).getOrElse { emptyList() } }
-                    val dubbedSeries = async { fuzerEngine.getCategoryPage(84, 1).getOrElse { emptyList() } }
+                    // Use FuzerCats constants instead of magic numbers
+                    val movies       = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES,        1).getOrElse { emptyList() } }
+                    val series       = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES,        1).getOrElse { emptyList() } }
+                    val moviesHd     = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD,     1).getOrElse { emptyList() } }
+                    val seriesHd     = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES_HD,     1).getOrElse { emptyList() } }
+                    val movies4k     = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K,     1).getOrElse { emptyList() } }
+                    val series4k     = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES_4K,     1).getOrElse { emptyList() } }
+                    val dubbedMovies = async { fuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
+                    val dubbedSeries = async { fuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
 
-                    // await פעם אחת כל אחד ושמור בval
                     val moviesR       = movies.await()
                     val seriesR       = series.await()
                     val moviesHdR     = moviesHd.await()
@@ -180,23 +180,6 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Fuzer: pagination לקטגוריה ספציפית ────────────────────────
-    fun loadFuzerCategoryPage(catId: Int, page: Int, onResult: (List<Movie>) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            fuzerEngine.getCategoryPage(catId, page)
-                .onSuccess { onResult(it) }
-        }
-    }
-
-    // ── Fuzer: חיפוש ───────────────────────────────────────────────
-    fun searchFuzer(query: String, onResult: (List<Movie>) -> Unit) {
-        viewModelScope.launch(Dispatchers.IO) {
-            fuzerEngine.search(query)
-                .onSuccess { onResult(it) }
-                .onFailure { onResult(emptyList()) }
-        }
-    }
-
     // ── Load all rows ──────────────────────────────────────────────
     private fun loadAll() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -213,15 +196,15 @@ class HomeViewModel : ViewModel() {
                     val mNflx   = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc", "movie") }
 
                     _state.update { s -> s.copy(
-                        isLoading     = false,
-                        movieTrending = mTrend.await(),
-                        tvTrending    = tvTrend.await(),
+                        isLoading      = false,
+                        movieTrending  = mTrend.await(),
+                        tvTrending     = tvTrend.await(),
                         moviePremieres = mNow.await(),
-                        movieNetflix  = mNflx.await()
+                        movieNetflix   = mNflx.await()
                     )}
                 }
 
-                // ════ גל 2: שאר הנתונים — עדכון מפוצל כדי לא לחנוק את ה-Main Thread ════
+                // ════ גל 2: שאר הנתונים ════
                 coroutineScope {
                     val mAction    = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc", "movie") }
                     val mDrama     = async { fetch("$base/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc", "movie") }
@@ -248,7 +231,6 @@ class HomeViewModel : ViewModel() {
                     val tvParamount = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=531&watch_region=$region&sort_by=popularity.desc", "tv") }
                     val tvHulu     = async { fetch("$base/discover/tv?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc", "tv") }
 
-                    // ✅ עדכון מפוצל — 4-6 שדות כל פעם, עם delay ביניהם
                     _state.update { s -> s.copy(
                         movieAction   = mAction.await(),
                         movieDrama    = mDrama.await(),

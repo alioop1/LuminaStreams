@@ -4,8 +4,6 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.RequestBody.Companion.toRequestBody
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.Charset
@@ -35,9 +33,6 @@ class FuzerEngine {
         .build()
 
     private var isLoggedIn = false
-    private var currentToken = "guest"
-
-    // המרה למודל Movie החדש של המערכת
 
     suspend fun getCategoryPage(catId: Int, page: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
@@ -51,7 +46,7 @@ class FuzerEngine {
             val bytes = client.newCall(request).execute().body?.bytes() ?: return@withContext Result.success(emptyList())
             val html = String(bytes, Charset.forName("windows-1255"))
             Result.success(parseHtmlToMovies(html))
-        } catch (e: Exception) { Result.failure(e) }
+        } catch (_: Exception) { Result.failure(Exception("Fuzer getCategoryPage failed")) }
     }
 
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
@@ -67,7 +62,7 @@ class FuzerEngine {
             val bytes = client.newCall(request).execute().body?.bytes() ?: return@withContext Result.success(emptyList())
             val html = String(bytes, Charset.forName("windows-1255"))
             Result.success(parseHtmlToMovies(html))
-        } catch (e: Exception) { Result.failure(e) }
+        } catch (_: Exception) { Result.failure(Exception("Fuzer search failed")) }
     }
 
     suspend fun downloadTorrentFile(url: String): Result<ByteArray> = withContext(Dispatchers.IO) {
@@ -104,7 +99,7 @@ class FuzerEngine {
                 val row = titleLink.parents().firstOrNull { it.tagName() == "tr" } ?: titleLink.parent()
                 val rawTitle = titleLink.text()
                 var posterUrl = titleLink.attr("imgsrc")
-                if (posterUrl.isEmpty()) posterUrl = "" // מחקנו את ה-Placeholder הבעייתי
+                if (posterUrl.isEmpty()) posterUrl = ""
 
                 val downloadLink = row?.select("a[href*=attachment.php]")?.first() ?: titleLink
                 val rawHref = downloadLink.attr("href").replace("&amp;", "&")
@@ -124,12 +119,10 @@ class FuzerEngine {
                     .replace(Regex("(?i)(HebDub|Dubbed|Remux|KNiVES|SPARKS|BluRay|WEB-DL)"), "")
                     .replace(Regex("[^\\p{L}\\p{N}\\s\u0590-\u05FF]"), "").replace(Regex("\\s+"), " ").trim()
 
-                // זיהוי עונה ופרק כדי לקבוע אם זה סרט או סדרה
                 val isTv = seasonEpRegex.matcher(rawTitle).find() || rawTitle.contains("עונה", true)
 
-                // ממפים למודל ה-Movie החדש שלך
                 movies.add(Movie(
-                    id = dlUrl, // ה-ID פה הוא לינק ההורדה
+                    id = dlUrl,
                     title = cleanTitle,
                     backdropUrl = posterUrl,
                     posterUrl = posterUrl,
@@ -140,15 +133,15 @@ class FuzerEngine {
                     resolutionBadge = quality,
                     is4K = quality == "4K"
                 ))
-            } catch (e: Exception) { continue }
+            } catch (_: Exception) { continue }
         }
         return movies
     }
 
-    private fun md5(s: String): String = try {
-        val bytes = MessageDigest.getInstance("MD5").digest(s.toByteArray())
+    private fun md5(input: String): String = try {
+        val bytes = MessageDigest.getInstance("MD5").digest(input.toByteArray())
         bytes.joinToString("") { "%02x".format(it) }
-    } catch (e: Exception) { "" }
+    } catch (_: Exception) { "" }
 
     private fun loginIfNeeded(): Boolean {
         if (isLoggedIn) return true
@@ -163,7 +156,7 @@ class FuzerEngine {
             if (resp.body?.string()?.contains("Thank you") == true || cookieJar.loadForRequest(resp.request.url).isNotEmpty()) {
                 isLoggedIn = true; return true
             }
-        } catch (e: Exception) { }
+        } catch (_: Exception) { }
         return false
     }
 }

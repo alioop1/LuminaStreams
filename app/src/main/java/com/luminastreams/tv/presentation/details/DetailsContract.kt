@@ -32,8 +32,9 @@ enum class StreamQuality(val priority: Int, val displayName: String) {
     }
 }
 
-enum class VideoCodec(val displayName: String) {
-    HEVC("HEVC"), AVC("AVC"), AV1("AV1"), UNKNOWN("Unknown");
+// displayName removed — only .name is needed; add back if UI ever shows codec label
+enum class VideoCodec {
+    HEVC, AVC, AV1, UNKNOWN;
     companion object {
         fun fromString(title: String): VideoCodec {
             val t = title.uppercase()
