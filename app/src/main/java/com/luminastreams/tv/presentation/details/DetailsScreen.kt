@@ -21,6 +21,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -93,6 +94,159 @@ private fun launchTrailer(context: android.content.Context, trailerIdOrUrl: Stri
     } catch (_: Exception) {}
 }
 
+// ── Stream metadata parser ────────────────────────────────────────────────────
+
+private data class StreamMeta(
+    val videoCodecLabel: String,
+    val videoCodecColor: Color,
+    val hdrBadges: List<Pair<String, Color>>,
+    val audioBadges: List<Pair<String, Color>>,
+    val langBadges: List<Pair<String, Color>>,
+    val subtitleBadges: List<Pair<String, Color>>,
+    val releaseType: String,
+    val releaseTypeColor: Color,
+    val provider: String,
+    val seeders: Int,
+    val isRemux: Boolean,
+    val isCam: Boolean
+)
+
+private fun parseStreamMeta(filename: String, name: String): StreamMeta {
+    val upper = filename.uppercase()
+    val nameUpper = name.uppercase()
+    val combined = "$upper $nameUpper"
+
+    // ── Video Codec ──
+    val (codecLabel, codecColor) = when {
+        combined.contains("AV1")                                       -> "AV1"  to Color(0xFF00C853)
+        combined.contains("HEVC") || combined.contains("X265") ||
+                combined.contains("H.265") || combined.contains("H265")       -> "HEVC" to Color(0xFF0091EA)
+        combined.contains("AVC")  || combined.contains("X264") ||
+                combined.contains("H.264") || combined.contains("H264")       -> "AVC"  to Color(0xFF546E7A)
+        else                                                           -> "—"    to Color(0xFF424242)
+    }
+
+    // ── HDR ──
+    val hdrBadges = buildList {
+        if (combined.contains("DOLBY VISION") || combined.contains("DV") ||
+            combined.contains("DV.") || combined.contains(".DV."))    add("Dolby Vision" to Color(0xFF7B1FA2))
+        if (combined.contains("HDR10+"))                               add("HDR10+"       to Color(0xFF4527A0))
+        if (combined.contains("HDR10"))                                add("HDR10"        to Color(0xFF283593))
+        if (combined.contains("HDR") && isEmpty())                     add("HDR"          to Color(0xFF283593))
+        if (combined.contains("HLG"))                                  add("HLG"          to Color(0xFF00695C))
+        if (combined.contains("SDR") && none { it.first.contains("HDR") || it.first.contains("Dolby") })
+            add("SDR"          to Color(0xFF424242))
+    }
+
+    // ── Audio ──
+    val audioBadges = buildList {
+        if (combined.contains("ATMOS"))                                add("Atmos"      to Color(0xFF00796B))
+        if (combined.contains("DTS:X") || combined.contains("DTSX"))  add("DTS:X"      to Color(0xFF00897B))
+        if (combined.contains("DTS-HD") || combined.contains("DTSHD"))add("DTS-HD MA" to Color(0xFF00838F))
+        if (combined.contains("TRUEHD"))                               add("TrueHD"    to Color(0xFF0277BD))
+        if (combined.contains("EAC3") || combined.contains("E-AC3") ||
+            combined.contains("DD+") || combined.contains("DDPLUS"))   add("DD+"       to Color(0xFF1565C0))
+        if (combined.contains("DD5.1") || combined.contains("AC3") ||
+            (combined.contains("DD") && none { it.first == "DD+" }))  add("DD"        to Color(0xFF37474F))
+        if (combined.contains("AAC"))                                  add("AAC"       to Color(0xFF4E342E))
+        if (combined.contains("FLAC"))                                 add("FLAC"      to Color(0xFF558B2F))
+    }
+
+    // ── Language ──
+    val langBadges = buildList {
+        if (combined.contains("HEBREW") || combined.contains("HEB") ||
+            combined.contains("עברית"))                                add("עברית 🇮🇱"  to Color(0xFF1B5E20))
+        if (combined.contains("ENGLISH") || combined.contains(" ENG") ||
+            combined.contains(".ENG."))                                add("English 🇺🇸" to Color(0xFF1A237E))
+        if (combined.contains("ARABIC") || combined.contains("ARA"))  add("עربي 🇸🇦"   to Color(0xFF4E342E))
+        if (combined.contains("FRENCH") || combined.contains("FRE") ||
+            combined.contains(".FR."))                                 add("French 🇫🇷"  to Color(0xFF311B92))
+        if (combined.contains("GERMAN") || combined.contains("GER") ||
+            combined.contains(".DE."))                                 add("Deutsch 🇩🇪" to Color(0xFF37474F))
+        if (combined.contains("SPANISH") || combined.contains("SPA") ||
+            combined.contains(".ES."))                                 add("Español 🇪🇸" to Color(0xFF880E4F))
+        if (combined.contains("MULTI") || combined.contains("DUAL"))  add("Multi 🌍"   to Color(0xFF4A148C))
+        if (combined.contains("HEBDUB") || combined.contains("HEBREW DUB") ||
+            combined.contains("מדובב"))                               add("מדובב 🎤"    to Color(0xFFE65100))
+    }
+
+    // ── Subtitles ──
+    val subtitleBadges = buildList {
+        if (combined.contains("HEBREW SUB") || combined.contains("HEBSUB") ||
+            combined.contains("HEBSUBS") || combined.contains("SUB.HEB") ||
+            combined.contains("כתוביות"))                             add("כתוביות עב׳" to Color(0xFF2E7D32))
+        if (combined.contains("MULTI.SUB") || combined.contains("MULTISUB") ||
+            combined.contains("MULTI SUB"))                            add("Multi Subs"  to Color(0xFF1B5E20))
+        if (combined.contains("SUBBED"))                               add("Subbed"      to Color(0xFF33691E))
+        if (combined.contains("HARDCODED") || combined.contains("HARDSUB"))
+            add("Hardcoded"   to Color(0xFFBF360C))
+    }
+
+    // ── Release Type ──
+    val (releaseType, releaseTypeColor) = when {
+        combined.contains("REMUX")                                  -> "REMUX"       to Color(0xFF37474F)
+        combined.contains("BLURAY") || combined.contains("BLU-RAY") ||
+                combined.contains("BD")                                     -> "BluRay"      to Color(0xFF0D47A1)
+        combined.contains("WEB-DL") || combined.contains("WEBDL")  -> "WEB-DL"      to Color(0xFF1565C0)
+        combined.contains("WEBRIP") || combined.contains("WEB-RIP")-> "WEBRip"      to Color(0xFF283593)
+        combined.contains("HDTV")                                   -> "HDTV"        to Color(0xFF37474F)
+        combined.contains("DVDRIP") || combined.contains("DVD")    -> "DVDRip"      to Color(0xFF4E342E)
+        combined.contains("CAM") || combined.contains("HDCAM") ||
+                combined.contains("TS.") || combined.contains(".TS.")       -> "CAM"         to Color(0xFFB71C1C)
+        else                                                        -> "WEB"         to Color(0xFF1E3A5F)
+    }
+
+    // ── Provider ──
+    val provider = when {
+        combined.contains("YTS") || combined.contains("YIFY")      -> "YTS"
+        combined.contains("RARBG")                                  -> "RARBG"
+        combined.contains("EZTV")                                   -> "EZTV"
+        combined.contains("1337X")                                  -> "1337x"
+        combined.contains("SPARKS")                                 -> "SPARKS"
+        combined.contains("YIFY")                                   -> "YIFY"
+        combined.contains("FLUX")                                   -> "FLuX"
+        combined.contains("CMRG")                                   -> "CMRG"
+        combined.contains("DSNP") || combined.contains("DISNEY")   -> "Disney+"
+        combined.contains("NF") || combined.contains("NETFLIX")    -> "Netflix"
+        combined.contains("AMZN") || combined.contains("AMAZON")   -> "Amazon"
+        combined.contains("HMAX") || combined.contains("HBO")      -> "HBO Max"
+        combined.contains("ATVP") || combined.contains("APPLE")    -> "Apple TV+"
+        else                                                        -> "Torrentio"
+    }
+
+    // ── Seeders (parse from title like "👤 1234" or "S: 1234") ──
+    val seeders = Regex("(?:👤|S:|seeders:)\\s*(\\d+)", RegexOption.IGNORE_CASE)
+        .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
+
+    val isRemux = combined.contains("REMUX")
+    val isCam   = combined.contains("CAM") || combined.contains("HDCAM") ||
+            (combined.contains(".TS.") || combined.contains(" TS "))
+
+    return StreamMeta(
+        videoCodecLabel  = codecLabel,
+        videoCodecColor  = codecColor,
+        hdrBadges        = hdrBadges,
+        audioBadges      = audioBadges,
+        langBadges       = langBadges,
+        subtitleBadges   = subtitleBadges,
+        releaseType      = releaseType,
+        releaseTypeColor = releaseTypeColor,
+        provider         = provider,
+        seeders          = seeders,
+        isRemux          = isRemux,
+        isCam            = isCam
+    )
+}
+
+// ── Seed-health color ─────────────────────────────────────────────────────────
+private fun seederColor(seeders: Int) = when {
+    seeders <= 0  -> Color(0xFF546E7A)
+    seeders < 5   -> Color(0xFFB71C1C)
+    seeders < 20  -> Color(0xFFE65100)
+    seeders < 100 -> Color(0xFF2E7D32)
+    else          -> Color(0xFF1B5E20)
+}
+
 @Composable
 fun DetailsScreen(
     state: DetailsScreenState,
@@ -112,9 +266,7 @@ fun DetailsScreen(
                 val activity = context as? androidx.activity.ComponentActivity
                 if (activity != null) {
                     val homeVm = androidx.lifecycle.ViewModelProvider(activity)[com.luminastreams.tv.presentation.home.HomeViewModel::class.java]
-                    val homeState = homeVm.state.value
-                    val fuzerItems = homeState.fuzerItems   // ← direct property, no reflection
-                    val matched = fuzerItems?.find { it.id == state.mediaInfo.id }
+                    val matched = homeVm.state.value.fuzerItems.find { it.id == state.mediaInfo.id }
                     if (matched != null) {
                         media = state.mediaInfo.copy(
                             title       = matched.title,
@@ -139,7 +291,6 @@ fun DetailsScreen(
     var showSources   by remember { mutableStateOf(false) }
     val focusManager  = LocalFocusManager.current
 
-    // ── כשהתוכן הוא Fuzer — הפעל ישירות ואל תציג Sources panel
     LaunchedEffect(state.mediaInfo.id) {
         if (state.mediaInfo.id.startsWith("http")) {
             showSources = false
@@ -265,9 +416,7 @@ fun DetailsScreen(
                             verticalAlignment     = Alignment.CenterVertically,
                             modifier              = Modifier.focusGroup().focusProperties { up = backBtnFR }
                         ) {
-                            // ── כפתור Play / סטטוס Fuzer ──
                             if (state.isFuzerDirect) {
-                                // Fuzer — מציג סטטוס במקום כפתור
                                 when (val st = state.scrapingStatus) {
                                     is ScrapingStatus.ResolvingDebrid -> {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -288,7 +437,6 @@ fun DetailsScreen(
                                         }
                                     }
                                     else -> {
-                                        // Idle / Searching — spinner כללי
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             LoadingIndicator()
                                             Text("מתחבר ל-Real-Debrid...", color = DM, fontSize = 15.sp)
@@ -296,7 +444,6 @@ fun DetailsScreen(
                                     }
                                 }
                             } else {
-                                // ── תוכן רגיל TMDB ──
                                 Surface(
                                     onClick = {
                                         showSources = true
@@ -342,7 +489,7 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Seasons + Episodes (TMDB בלבד) ────────────────────────────────
+            // ── Seasons + Episodes ─────────────────────────────────────────────
             if (!state.isFuzerDirect && media.isSeries && media.totalSeasons > 0) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
@@ -387,7 +534,7 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Cast ──────────────────────────────────────────────────────────
+            // ── Cast ───────────────────────────────────────────────────────────
             if (!state.isFuzerDirect && media.cast.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
@@ -400,7 +547,7 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Recommendations ───────────────────────────────────────────────
+            // ── Recommendations ────────────────────────────────────────────────
             if (!state.isFuzerDirect && media.recommendations.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
@@ -432,7 +579,7 @@ fun DetailsScreen(
             }
         }
 
-        // ── Sources Side Panel (TMDB בלבד) ────────────────────────────────────
+        // ── Sources Side Panel ─────────────────────────────────────────────────
         if (!state.isFuzerDirect) {
             AnimatedVisibility(
                 visible  = showSources,
@@ -442,7 +589,7 @@ fun DetailsScreen(
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize()
-                        .background(BK.copy(alpha = 0.8f))
+                        .background(BK.copy(alpha = 0.85f))
                         .focusGroup()
                         .onPreviewKeyEvent { event ->
                             if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK ||
@@ -460,23 +607,42 @@ fun DetailsScreen(
                 ) {
                     Column(
                         modifier = Modifier
-                            .fillMaxHeight().width(580.dp)
-                            .background(Color(0xF0080808))
-                            .border(1.dp, Color(0x1AFFFFFF))
-                            .padding(horizontal = 44.dp, vertical = 52.dp)
+                            .fillMaxHeight()
+                            // עיצוב ה-Popup כפאנל מרחף ואלגנטי בסגנון Apple TV
+                            .padding(vertical = 24.dp)
+                            .padding(start = if (isRtl) 24.dp else 0.dp, end = if (isRtl) 0.dp else 24.dp)
+                            .width(660.dp)
+                            .clip(RoundedCornerShape(28.dp)) // פינות עגולות גדולות
+                            .background(Color(0xFF0F0F13).copy(alpha = 0.98f)) // צבע אפל-כמו כהה ועמוק
+                            .padding(horizontal = 36.dp, vertical = 44.dp)
                             .clickable(remember { MutableInteractionSource() }, null) {}
                     ) {
+                        // ── Panel header ──
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(4.dp).height(32.dp).background(BR, RoundedCornerShape(2.dp)))
-                            Spacer(Modifier.width(12.dp))
+                            Box(Modifier.width(4.dp).height(36.dp).background(BR, RoundedCornerShape(2.dp)))
+                            Spacer(Modifier.width(14.dp))
                             Column {
-                                Text("Available Sources", color = WH, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                                Text("Available Sources", color = WH, fontSize = 26.sp, fontWeight = FontWeight.Black)
                                 if (state.availableStreams.isNotEmpty()) {
-                                    Text("${state.availableStreams.size} premium sources found", color = DM, fontSize = 14.sp)
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Text("${state.availableStreams.size} sources found", color = DM, fontSize = 13.sp)
+                                        val rdCount = state.availableStreams.count { it.isCachedRd }
+                                        if (rdCount > 0) {
+                                            Box(
+                                                Modifier.clip(RoundedCornerShape(4.dp))
+                                                    .background(Color(0xFF1B5E20).copy(0.8f))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text("$rdCount RD+ cached", color = WH, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }
-                        Spacer(Modifier.height(28.dp))
+                        Spacer(Modifier.height(8.dp))
+                        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(BR.copy(0.6f), Color(0x08FFFFFF)))))
+                        Spacer(Modifier.height(20.dp))
 
                         when (val st = state.scrapingStatus) {
                             is ScrapingStatus.Error -> {
@@ -501,7 +667,8 @@ fun DetailsScreen(
                                 Box(Modifier.fillMaxSize(), Alignment.Center) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                         LoadingIndicator()
-                                        val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") || st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
+                                        val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") ||
+                                            st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
                                             st.streamId else "Resolving via Real-Debrid..."
                                         Text(msg, color = WH, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                     }
@@ -516,6 +683,7 @@ fun DetailsScreen(
                                     itemsIndexed(state.availableStreams) { index, stream ->
                                         StreamSourceCard(
                                             source   = stream,
+                                            rank     = index + 1,
                                             modifier = if (index == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
                                             onClick  = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
                                         )
@@ -530,7 +698,226 @@ fun DetailsScreen(
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── StreamSourceCard — Fixed smooth transitions (No Flash) ───────────────────
+@Composable
+private fun StreamSourceCard(
+    source: AdvancedStreamSource,
+    rank: Int,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val meta = remember(source.filename, source.releaseGroup) {
+        parseStreamMeta(source.filename, source.releaseGroup)
+    }
+
+    // ניהול המדינה הממוקדת באופן מקומי רק עבור שינויי צבע טקסט עדינים פנימיים
+    val focusedState = remember { mutableStateOf(false) }
+    val isFocused by focusedState
+
+    // אנימציה חלקה לטקסט משקל הקובץ
+    val fileSizeColor by animateColorAsState(
+        targetValue = if (isFocused) WH else DM,
+        animationSpec = tween(150),
+        label = "fileSizeAnim"
+    )
+
+    Surface(
+        onClick = onClick,
+        // אסטרטגיית תיקון הפלאש: ניהול צבעי הרקע ישירות על ידי ה-Surface
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0x0CFFFFFF), // צבע לא ממוקד (חצי שקוף)
+            focusedContainerColor = Color(0xFF282832), // צבע ממוקד (אטום בסגנון Apple)
+            contentColor = WH,
+            focusedContentColor = WH
+        ),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f), // גדילה קלה ויוקרתית
+        glow = ClickableSurfaceDefaults.glow(
+            // צל עמוק ומרשים המדגיש את האלמנט הממוקד
+            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 25.dp)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            // עדכון המדינה הממוקדת
+            .onFocusChanged { focusedState.value = it.isFocused }
+    ) {
+        // התוכן הראשי ללא Box או Background ידני נוסף
+        Column(Modifier.fillMaxWidth().padding(24.dp)) {
+
+            // ═══════════════════════════════════════
+            // שורה 1: דירוג, ספק, סידרים, ומשקל הקובץ
+            // ═══════════════════════════════════════
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // דירוג
+                Text(
+                    text = "#$rank",
+                    color = WH.copy(alpha = 0.5f),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Spacer(Modifier.width(12.dp))
+
+                // ספק
+                Text(
+                    text = meta.provider.uppercase(),
+                    color = if (source.isCachedRd) Color(0xFF43A047) else Color(0xFF29B6F6),
+                    fontWeight = FontWeight.Black,
+                    fontSize = 14.sp,
+                    letterSpacing = 1.sp
+                )
+
+                Spacer(Modifier.weight(1f))
+
+                // סידרים (עם אייקון FontAwesome)
+                if (meta.seeders > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "\uf0c0", // FontAwesome: fa-users
+                            color = seederColor(meta.seeders),
+                            fontSize = 12.sp
+                            // fontFamily = yourFontAwesomeFamily
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "${meta.seeders}",
+                            color = seederColor(meta.seeders),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                    Spacer(Modifier.width(16.dp))
+                }
+
+                // משקל הקובץ - משתמש באנימציה חלקה לצבע
+                Text(
+                    text = source.formattedSize,
+                    color = fileSizeColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // ═══════════════════════════════════════
+            // שורה 2: כותרת / שם קבוצת השחרור (מודגש)
+            // ═══════════════════════════════════════
+            Text(
+                text = source.releaseGroup.ifEmpty { "UNKNOWN RELEASE" }.uppercase(),
+                color = WH,
+                fontWeight = FontWeight.Black,
+                fontSize = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Spacer(Modifier.height(14.dp))
+
+            // ═══════════════════════════════════════
+            // שורה 3: תגים מסודרים ונקיים בסגנון Apple
+            // ═══════════════════════════════════════
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // איכות - צבע עמוק ומודרני
+                PremiumBadge(source.quality.displayName, Color(0xFF0D47A1))
+
+                // מזהה RD - ירוק עמוק
+                if (source.isCachedRd) {
+                    PremiumBadge("RD+ CACHED", Color(0xFF1B5E20), icon = "\uf0e7") // FontAwesome: fa-bolt
+                }
+
+                // אזהרת CAM
+                if (meta.isCam) {
+                    PremiumBadge("CAM", Color(0xFFB71C1C), icon = "\uf071") // FontAwesome: fa-exclamation-triangle
+                }
+
+                // קודק (אם קיים) - Outline עדין
+                if (meta.videoCodecLabel != "—") {
+                    PremiumBadge(meta.videoCodecLabel, WH.copy(alpha = 0.8f), isOutline = true)
+                }
+
+                // תגית HDR ראשונה - זהב/HDR עמוק
+                meta.hdrBadges.firstOrNull()?.let {
+                    PremiumBadge(it.first, Color(0xFFFF8F00), isOutline = true)
+                }
+
+                // תגית שמע ראשונה
+                meta.audioBadges.firstOrNull()?.let {
+                    PremiumBadge(it.first, Color(0xFF8E24AA), isOutline = true)
+                }
+
+                // זיהוי עברית מדובב/מתורגם
+                val hasHebrew = meta.langBadges.any { it.first.contains("עברית") || it.first.contains("מדובב") }
+                        || meta.subtitleBadges.any { it.first.contains("כתוביות עב") }
+                if (hasHebrew) {
+                    PremiumBadge("HEBREW", Color(0xFF00ACC1), isOutline = true)
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // ═══════════════════════════════════════
+            // שורה 4: שם הקובץ המקורי (עדין ומוחלש)
+            // ═══════════════════════════════════════
+            Text(
+                text = source.filename.replace(".", " "),
+                color = WH.copy(alpha = if (isFocused) 0.5f else 0.25f),
+                fontSize = 11.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+// ── רכיב תג מינימליסטי ونקי — מעודכן (No Flash) ──────────────────────────────────
+@Composable
+private fun PremiumBadge(
+    text: String,
+    color: Color,
+    isOutline: Boolean = false,
+    icon: String? = null
+) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            // שימוש בצבע רקע חלש יותר המשתלב עם הרקע החדש של הכרטיסייה
+            .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
+            .border(
+                width = 1.dp,
+                color = if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, // ללא Border לתגים מלאים
+                shape = RoundedCornerShape(6.dp)
+            )
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Text(
+                    text = icon,
+                    color = color,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(end = 6.dp)
+                    // fontFamily = yourFontAwesomeFamily
+                )
+            }
+            Text(
+                text = text.uppercase(),
+                color = if (isOutline) color else WH, // טקסט לבן עבור תגים מלאים
+                fontWeight = FontWeight.ExtraBold,
+                fontSize = 11.sp,
+                letterSpacing = 0.5.sp
+            )
+        }
+    }
+}
+
+// ── Rest of helpers ───────────────────────────────────────────────────────────
 @Composable private fun MDot() = Text("•", color = GB, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
 @Composable private fun QPill(label: String, color: Color) = Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(0.88f)).padding(horizontal = 6.dp, vertical = 3.dp)) { Text(label, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }
 @Composable private fun RatingChip(icon: ImageVector, tintC: Color, value: String, label: String) = Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = tintC, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text(value, color = WH, fontWeight = FontWeight.Black, fontSize = 14.sp); Spacer(Modifier.width(3.dp)); Text(label, color = MT, fontSize = 11.sp) }
@@ -538,11 +925,11 @@ fun DetailsScreen(
 @Composable
 private fun ActionPill(label: String, icon: ImageVector, onClick: () -> Unit) {
     Surface(
-        onClick = onClick,
-        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors  = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
-        scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-        border  = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, Color(0x33FFFFFF))), focusedBorder = Border.None),
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
+        border   = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, Color(0x33FFFFFF))), focusedBorder = Border.None),
         modifier = Modifier.wrapContentWidth()
     ) {
         Row(modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -562,11 +949,11 @@ private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     }
 }
 
-@Suppress("ASSIGNED_BUT_NEVER_READ_REFERENCE", "UNUSED_VARIABLE")
 @Composable
 private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    var isFocused by remember { mutableStateOf(false) }
+    val focusedState = remember { mutableStateOf(false) }
+    val isFocused by focusedState
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
@@ -576,7 +963,7 @@ private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) 
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WH.copy(alpha = 0.5f), 16.dp)),
         modifier = Modifier.width(280.dp).aspectRatio(16f / 9f)
             .zIndex(if (isFocused) 10f else 0f)
-            .onFocusChanged { isFocused = it.isFocused }
+            .onFocusChanged { focusedState.value = it.isFocused }
             .focusProperties { if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel } }
     ) {
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
@@ -595,7 +982,6 @@ private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) 
     }
 }
 
-@Suppress("ASSIGNED_BUT_NEVER_READ_REFERENCE", "UNUSED_VARIABLE")
 @Composable
 private fun CastMemberCard(actor: CastMember, isLast: Boolean) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
@@ -614,82 +1000,5 @@ private fun CastMemberCard(actor: CastMember, isLast: Boolean) {
         Spacer(Modifier.height(10.dp))
         Text(actor.name, color = if (focused) WH else DM, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, minLines = 2, lineHeight = 16.sp, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         Text(actor.character, color = MT, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
-private fun StreamSourceCard(source: AdvancedStreamSource, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    var isFocused by remember { mutableStateOf(false) }
-    val qualityColor = when (source.quality.priority) { 9 -> Color(0xFF1565C0); 7 -> Color(0xFF6A1B9A); 6 -> Color(0xFF2E7D32); else -> Color(0xFF424242) }
-    val nameUpper = source.filename.uppercase()
-
-    val audioBadges = buildList {
-        if (nameUpper.contains("HEB") || nameUpper.contains("HEBREW")) add("HEB" to Color(0xFFE65100))
-        if (nameUpper.contains("ENG") || nameUpper.contains("ENGLISH")) add("ENG" to Color(0xFF1976D2))
-        if (nameUpper.contains("MULTI") || nameUpper.contains("DUAL")) add("MULTI" to Color(0xFFF57C00))
-    }
-    val techBadges = buildList {
-        if (nameUpper.contains("HDR")) add("HDR" to Color(0xFF4A148C))
-        if (nameUpper.contains("DV") || nameUpper.contains("DOLBY VISION")) add("DV" to Color(0xFF311B92))
-        if (nameUpper.contains("ATMOS")) add("ATMOS" to Color(0xFF004D40))
-    }
-    val provider = when {
-        nameUpper.contains("YTS") || nameUpper.contains("YIFY") -> "YTS"
-        nameUpper.contains("RARBG") -> "RARBG"
-        nameUpper.contains("EZTV")  -> "EZTV"
-        nameUpper.contains("1337X") -> "1337x"
-        else -> "Torrentio"
-    }
-
-    Surface(
-        onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x12FFFFFF), focusedContainerColor = Color(0xFF141414), contentColor = WH, focusedContentColor = WH),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.3f), 20.dp)),
-        modifier = modifier.fillMaxWidth()
-            .onFocusChanged { isFocused = it.isFocused }
-            .shadow(if (isFocused) 24.dp else 0.dp, RoundedCornerShape(14.dp))
-    ) {
-        Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(88.dp)) {
-                Box(Modifier.clip(RoundedCornerShape(8.dp)).background(qualityColor).padding(horizontal = 8.dp, vertical = 5.dp)) {
-                    Text(source.quality.displayName, color = WH, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, softWrap = false)
-                }
-                Spacer(Modifier.height(6.dp))
-                Text(source.formattedSize, fontWeight = FontWeight.Bold, fontSize = 13.sp, color = WH.copy(if (isFocused) 1f else 0.6f), maxLines = 1, softWrap = false)
-                if (source.isCachedRd) {
-                    Spacer(Modifier.height(4.dp))
-                    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFF2E7D32)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                        Text("RD+", color = WH, fontSize = 9.sp, fontWeight = FontWeight.Black)
-                    }
-                }
-            }
-            Spacer(Modifier.width(12.dp))
-            Box(Modifier.width(1.dp).height(52.dp).background(Color(0x22FFFFFF)))
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(provider, color = Color(0xFFB0BEC5), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.width(8.dp))
-                    Text(source.releaseGroup.uppercase(), fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-                }
-                val allBadges = audioBadges + techBadges
-                if (allBadges.isNotEmpty()) {
-                    Spacer(Modifier.height(7.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        allBadges.take(4).forEach { (text, color) ->
-                            Box(Modifier.border(1.dp, color.copy(alpha = 0.7f), RoundedCornerShape(4.dp)).background(color.copy(alpha = 0.12f)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                                Text(text, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = color)
-                            }
-                        }
-                    }
-                }
-                Spacer(Modifier.height(7.dp))
-                Text(source.filename.replace(".", " "), color = if (isFocused) WH.copy(0.7f) else WH.copy(0.4f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Spacer(Modifier.width(8.dp))
-            Icon(Icons.Default.PlayArrow, null, tint = if (isFocused) BR else WH.copy(0.3f), modifier = Modifier.size(20.dp))
-        }
     }
 }

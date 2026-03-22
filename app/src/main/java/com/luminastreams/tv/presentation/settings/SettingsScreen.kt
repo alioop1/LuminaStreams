@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
@@ -34,18 +35,16 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 
 // ══════════════════════════════════════════════════════════════════
-//  ULTRA PREMIUM PALETTE
+//  ULTRA PREMIUM PALETTE (Apple TV / Glassmorphism Style)
 // ══════════════════════════════════════════════════════════════════
 private val BG_DARK       = Color(0xFF040405)
-private val PANEL_BG      = Color(0xFF0A0A0C)
-private val CARD_IDLE     = Color(0xFF121215)
-private val CARD_FOCUSED  = Color(0xFF1E1E24)
-private val BORDER_IDLE   = Color(0xFF202025)
-private val BORDER_FOCUS  = Color(0xFFFFFFFF)
+private val PANEL_BG      = Color(0xEB0A0A0C)
+private val CARD_IDLE     = Color(0x0CFFFFFF)
+private val CARD_FOCUSED  = Color(0xFF282832)
 private val TEXT_PRIMARY  = Color(0xFFFFFFFF)
 private val TEXT_MUTED    = Color(0xFF8A8A93)
 private val ACCENT_RED    = Color(0xFFE50914)
-private val ACCENT_GOLD   = Color(0xFFE5C07B) // Premium Real-Debrid Gold
+private val ACCENT_GOLD   = Color(0xFFE5C07B)
 private val ACCENT_BLUE   = Color(0xFF4D90FE)
 
 private data class CatMeta(val cat: SettingsCategory, val icon: ImageVector, val desc: String)
@@ -84,31 +83,48 @@ fun SettingsScreen(
                 SettingsCategory.SYSTEM   -> ACCENT_RED.copy(alpha = 0.05f)
                 else                      -> Color.White.copy(alpha = 0.03f)
             },
-            animationSpec = tween(800)
+            animationSpec = tween(800),
+            label = "bgGlow"
         )
         Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(glowColor, Color.Transparent), radius = 1500f)))
 
         Row(Modifier.fillMaxSize()) {
             // ── SMART COLLAPSING RAIL ──
-            val railWidth by animateDpAsState(if (isRailFocused) 280.dp else 80.dp, tween(300, easing = FastOutSlowInEasing), label = "railWidth")
+            val railWidth by animateDpAsState(
+                targetValue = if (isRailFocused) 280.dp else 88.dp,
+                animationSpec = tween(300, easing = LinearOutSlowInEasing),
+                label = "railWidth"
+            )
+
+            // עיגול הרדיוס רק בצד של התוכן, מתהפך אוטומטית לפי השפה
+            val railShape = if (isRtl) RoundedCornerShape(topStart = 32.dp, bottomStart = 32.dp)
+            else RoundedCornerShape(topEnd = 32.dp, bottomEnd = 32.dp)
 
             Box(
-                Modifier.width(railWidth).fillMaxHeight().background(PANEL_BG)
-                    .border(1.dp, BORDER_IDLE, RoundedCornerShape(0.dp))
+                Modifier
+                    .width(railWidth)
+                    .fillMaxHeight()
+                    .clip(railShape)
+                    .background(PANEL_BG)
                     .onFocusChanged { isRailFocused = it.hasFocus }
                     .focusProperties { right = contentFR }
             ) {
-                Column(Modifier.fillMaxSize().padding(vertical = 32.dp), horizontalAlignment = if (isRailFocused) Alignment.Start else Alignment.CenterHorizontally) {
-
+                Column(
+                    Modifier.fillMaxSize().padding(vertical = 32.dp),
+                    horizontalAlignment = Alignment.Start
+                ) {
                     LuminaLogo(isExpanded = isRailFocused)
                     Spacer(Modifier.height(48.dp))
 
-                    Box(Modifier.padding(horizontal = if (isRailFocused) 24.dp else 0.dp)) {
-                        IconButton(
-                            onClick = onNavigateBack,
-                            modifier = Modifier.size(48.dp).focusRequester(railFR),
-                            colors = IconButtonDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = TEXT_PRIMARY, contentColor = TEXT_MUTED, focusedContentColor = BG_DARK)
-                        ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp)) }
+                    // כפתור חזור מקובע
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Box(Modifier.width(88.dp), contentAlignment = Alignment.Center) {
+                            IconButton(
+                                onClick = onNavigateBack,
+                                modifier = Modifier.size(48.dp).focusRequester(railFR),
+                                colors = IconButtonDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = TEXT_PRIMARY, contentColor = TEXT_MUTED, focusedContentColor = BG_DARK)
+                            ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp)) }
+                        }
                     }
 
                     Spacer(Modifier.height(48.dp))
@@ -146,29 +162,78 @@ fun SettingsScreen(
     }
 }
 
+// ── רכיבי סרגל צד מושלמים ויציבים ללא קפיצות (No Flash / No Layout Shift) ──
 @Composable
 private fun SmartRailItem(meta: CatMeta, isSelected: Boolean, isExpanded: Boolean, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val bg = if (focused) TEXT_PRIMARY else if (isSelected) CARD_IDLE else Color.Transparent
-    val tint = if (focused) BG_DARK else if (isSelected) TEXT_PRIMARY else TEXT_MUTED
+
+    val bg by animateColorAsState(
+        targetValue = if (focused) TEXT_PRIMARY else if (isSelected) CARD_IDLE else Color.Transparent,
+        animationSpec = tween(150), label = "railBg"
+    )
+    val tint by animateColorAsState(
+        targetValue = if (focused) BG_DARK else if (isSelected) TEXT_PRIMARY else TEXT_MUTED,
+        animationSpec = tween(150), label = "railTint"
+    )
+
+    val textAlpha by animateFloatAsState(
+        targetValue = if (isExpanded) 1f else 0f,
+        animationSpec = tween(durationMillis = 200, easing = LinearEasing),
+        label = "textAlpha"
+    )
 
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f), // ביטול קפיצה
-        modifier = Modifier.fillMaxWidth().height(64.dp).padding(horizontal = if (isExpanded) 16.dp else 12.dp)
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .padding(horizontal = 12.dp)
             .onFocusChanged { focused = it.isFocused }
     ) {
-        Row(
-            Modifier.fillMaxSize().background(bg, RoundedCornerShape(12.dp)).padding(horizontal = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = if (isExpanded) Arrangement.spacedBy(16.dp) else Arrangement.Center
-        ) {
-            Icon(meta.icon, null, Modifier.size(24.dp), tint = tint)
-            if (isExpanded) {
-                Text(meta.cat.titleEn, color = tint, fontSize = 16.sp, fontWeight = if (isSelected || focused) FontWeight.Bold else FontWeight.Medium, maxLines = 1)
+        Box(Modifier.fillMaxSize().background(bg, RoundedCornerShape(12.dp))) {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically) {
+                // העוגן - שומר על האייקון ממורכז תמיד
+                Box(Modifier.width(64.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
+                    Icon(meta.icon, null, Modifier.size(24.dp), tint = tint)
+                }
+
+                // ה-Text נשאר בעץ הרכיבים תמיד, רק השקיפות שלו משתנה
+                Text(
+                    text = meta.cat.titleEn,
+                    color = tint.copy(alpha = textAlpha),
+                    fontSize = 16.sp,
+                    fontWeight = if (isSelected || focused) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier.padding(end = 16.dp)
+                )
             }
+        }
+    }
+}
+
+@Composable
+private fun LuminaLogo(isExpanded: Boolean) {
+    val textAlpha by animateFloatAsState(
+        targetValue = if (isExpanded) 1f else 0f,
+        animationSpec = tween(durationMillis = 200, easing = LinearEasing),
+        label = "logoAlpha"
+    )
+
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.width(88.dp), contentAlignment = Alignment.Center) {
+            Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(ACCENT_RED), Alignment.Center) {
+                Text("L", color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
+            }
+        }
+
+        // גם כאן, ה-Column נשאר תמיד בעץ, השקיפות שולטת בנראות
+        Column(Modifier.alpha(textAlpha)) {
+            Text("LUMINA",  color = TEXT_PRIMARY, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
+            Text("STREAMS", color = ACCENT_RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 10.sp)
         }
     }
 }
@@ -179,9 +244,8 @@ private fun DashboardContent(
     state: SettingsState, viewModel: SettingsViewModel, onToggleLang: () -> Unit
 ) {
     LazyColumn(
-        // הוגדל הרווח בתחתית ל-120dp כדי שכרטיס ה-RD לא ייחתך
         contentPadding = PaddingValues(start = 56.dp, end = 80.dp, top = 48.dp, bottom = 120.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp), // צמצום קל של הרווחים בין הכרטיסיות
+        verticalArrangement = Arrangement.spacedBy(14.dp),
         modifier = Modifier.fillMaxSize().focusProperties {
             up = FocusRequester.Cancel
             down = FocusRequester.Cancel
@@ -234,15 +298,19 @@ private fun androidx.compose.foundation.lazy.LazyListScope.buildAccountDashboard
 @Composable
 private fun RdConnectedPremiumCard(state: SettingsState, viewModel: SettingsViewModel) {
     var focused by remember { mutableStateOf(false) }
+
     Surface(
         onClick = { viewModel.logoutRealDebrid() },
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
-        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
-        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 20.dp)
+        ),
         modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
     ) {
-        Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(CARD_IDLE, Color(0xFF1F1A0F)))).padding(24.dp)) {
+        Box(Modifier.fillMaxWidth().background(Brush.linearGradient(listOf(Color.Transparent, ACCENT_GOLD.copy(alpha = 0.05f)))).padding(24.dp)) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(Icons.Default.WorkspacePremium, null, tint = ACCENT_GOLD, modifier = Modifier.size(20.dp))
@@ -254,8 +322,9 @@ private fun RdConnectedPremiumCard(state: SettingsState, viewModel: SettingsView
                 Text("Token: ${state.rdToken.take(5)}••••••••${state.rdToken.takeLast(4)}", color = TEXT_MUTED, fontSize = 14.sp, fontFamily = FontFamily.Monospace)
                 Spacer(Modifier.height(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.LinkOff, null, tint = if (focused) ACCENT_RED else TEXT_MUTED, modifier = Modifier.size(18.dp))
-                    Text("Press OK to Disconnect Device", color = if (focused) ACCENT_RED else TEXT_MUTED, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    val actionColor by animateColorAsState(if (focused) ACCENT_RED else TEXT_MUTED, label = "rdActionColor")
+                    Icon(Icons.Default.LinkOff, null, tint = actionColor, modifier = Modifier.size(18.dp))
+                    Text("Press OK to Disconnect Device", color = actionColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -275,7 +344,7 @@ private fun RdConnectCard(viewModel: SettingsViewModel) {
 
 @Composable
 private fun RdAuthCard(auth: SettingsAuthStatus.WaitingForUser) {
-    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CARD_IDLE).border(1.dp, ACCENT_GOLD, RoundedCornerShape(20.dp)).padding(28.dp)) {
+    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp)).background(CARD_IDLE).padding(28.dp)) {
         Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Device Authorization Required", color = TEXT_PRIMARY, fontSize = 22.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(24.dp))
@@ -285,7 +354,7 @@ private fun RdAuthCard(auth: SettingsAuthStatus.WaitingForUser) {
             Text(auth.url, color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
 
             Spacer(Modifier.height(24.dp))
-            Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(BORDER_IDLE))
+            Box(Modifier.fillMaxWidth(0.5f).height(1.dp).background(Color(0x1AFFFFFF)))
             Spacer(Modifier.height(24.dp))
 
             Text("2. Enter this Code", color = TEXT_MUTED, fontSize = 15.sp)
@@ -297,7 +366,7 @@ private fun RdAuthCard(auth: SettingsAuthStatus.WaitingForUser) {
 
 @Composable
 private fun RdLoadingCard() {
-    Box(Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(20.dp)).background(CARD_IDLE).border(1.dp, BORDER_IDLE, RoundedCornerShape(20.dp)), Alignment.Center) {
+    Box(Modifier.fillMaxWidth().height(100.dp).clip(RoundedCornerShape(20.dp)).background(CARD_IDLE), Alignment.Center) {
         androidx.compose.material3.CircularProgressIndicator(color = ACCENT_GOLD, modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
     }
 }
@@ -436,7 +505,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.buildSystemDashboard(
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  REUSABLE DASHBOARD COMPONENTS
+//  REUSABLE DASHBOARD COMPONENTS (Glassmorphism & Shadows)
 // ══════════════════════════════════════════════════════════════════
 @Composable
 private fun SectionTitle(title: String) {
@@ -446,17 +515,24 @@ private fun SectionTitle(title: String) {
 @Composable
 private fun DashboardToggleCard(title: String, desc: String, icon: ImageVector, isChecked: Boolean, onToggle: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+
+    val iconBgColor by animateColorAsState(if (focused) TEXT_PRIMARY else Color(0x1AFFFFFF), label = "iconBg")
+    val iconTintColor by animateColorAsState(if (focused) BG_DARK else TEXT_PRIMARY, label = "iconTint")
+
     Surface(
         onClick = onToggle,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
-        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
-        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
-        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 20.dp)
+        ),
+        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused }
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(if (focused) TEXT_PRIMARY else BORDER_IDLE, CircleShape), Alignment.Center) {
-                Icon(icon, null, tint = if (focused) BG_DARK else TEXT_PRIMARY, modifier = Modifier.size(20.dp))
+            Box(Modifier.size(42.dp).background(iconBgColor, CircleShape), Alignment.Center) {
+                Icon(icon, null, tint = iconTintColor, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
@@ -464,11 +540,11 @@ private fun DashboardToggleCard(title: String, desc: String, icon: ImageVector, 
                 Text(desc, color = TEXT_MUTED, fontSize = 12.sp, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(16.dp))
-            // Custom Switch
-            val thumbPos by animateFloatAsState(if (isChecked) 1f else 0f, tween(250))
-            val trackColor by animateColorAsState(if (isChecked) ACCENT_BLUE else BORDER_IDLE)
+
+            val thumbPos by animateFloatAsState(if (isChecked) 1f else 0f, tween(250), label = "thumb")
+            val trackColor by animateColorAsState(if (isChecked) ACCENT_BLUE else Color(0x33FFFFFF), label = "track")
             Box(Modifier.width(48.dp).height(24.dp).clip(RoundedCornerShape(12.dp)).background(trackColor)) {
-                Box(Modifier.padding(3.dp).size(18.dp).offset(x = (thumbPos * 24).dp).background(if (isChecked) BG_DARK else TEXT_MUTED, CircleShape))
+                Box(Modifier.padding(3.dp).size(18.dp).offset(x = (thumbPos * 24).dp).background(Color.White, CircleShape))
             }
         }
     }
@@ -477,17 +553,24 @@ private fun DashboardToggleCard(title: String, desc: String, icon: ImageVector, 
 @Composable
 private fun DashboardActionCard(title: String, desc: String, icon: ImageVector, value: String, highlight: Color? = null, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+
+    val iconBgColor by animateColorAsState(if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "actionIconBg")
+    val iconTintColor by animateColorAsState(if (focused) BG_DARK else highlight ?: TEXT_PRIMARY, label = "actionIconTint")
+
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
-        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, highlight ?: BORDER_FOCUS))),
-        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
-        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 20.dp)
+        ),
+        modifier = Modifier.fillMaxWidth().height(76.dp).onFocusChanged { focused = it.isFocused }
     ) {
         Row(Modifier.fillMaxSize().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.size(42.dp).background(if (focused) highlight ?: TEXT_PRIMARY else BORDER_IDLE, CircleShape), Alignment.Center) {
-                Icon(icon, null, tint = if (focused) BG_DARK else highlight ?: TEXT_PRIMARY, modifier = Modifier.size(20.dp))
+            Box(Modifier.size(42.dp).background(iconBgColor, CircleShape), Alignment.Center) {
+                Icon(icon, null, tint = iconTintColor, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
@@ -496,8 +579,10 @@ private fun DashboardActionCard(title: String, desc: String, icon: ImageVector, 
             }
             if (value.isNotBlank()) {
                 Spacer(Modifier.width(16.dp))
-                Box(Modifier.background(if (focused) highlight ?: TEXT_PRIMARY else BORDER_IDLE, RoundedCornerShape(8.dp)).padding(horizontal = 14.dp, vertical = 6.dp)) {
-                    Text(value, color = if (focused) BG_DARK else TEXT_PRIMARY, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                val btnBg by animateColorAsState(if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "btnBg")
+                val btnText by animateColorAsState(if (focused) BG_DARK else TEXT_PRIMARY, label = "btnText")
+                Box(Modifier.background(btnBg, RoundedCornerShape(8.dp)).padding(horizontal = 14.dp, vertical = 6.dp)) {
+                    Text(value, color = btnText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -507,13 +592,19 @@ private fun DashboardActionCard(title: String, desc: String, icon: ImageVector, 
 @Composable
 private fun DashboardRadioCard(label: String, sub: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
+
+    val bgColor by animateColorAsState(if (isSelected) Color(0x2AFFFFFF) else CARD_IDLE, label = "radioBg")
+
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSelected) BORDER_IDLE else CARD_IDLE, focusedContainerColor = CARD_FOCUSED),
-        border = ClickableSurfaceDefaults.border(Border(BorderStroke(1.dp, BORDER_IDLE)), Border(BorderStroke(2.dp, BORDER_FOCUS))),
-        scale = ClickableSurfaceDefaults.scale(1f), // ביטול קפיצה
-        modifier = modifier.height(76.dp).onFocusChanged { focused = it.isFocused } // הקטנת גובה
+        colors = ClickableSurfaceDefaults.colors(containerColor = bgColor, focusedContainerColor = CARD_FOCUSED),
+        border = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 20.dp)
+        ),
+        modifier = modifier.height(76.dp).onFocusChanged { focused = it.isFocused }
     ) {
         Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -521,25 +612,6 @@ private fun DashboardRadioCard(label: String, sub: String, isSelected: Boolean, 
                 if (isSelected) Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = ACCENT_BLUE)
             }
             Text(sub, color = TEXT_MUTED, fontSize = 12.sp)
-        }
-    }
-}
-
-@Composable
-private fun LuminaLogo(isExpanded: Boolean) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        modifier = Modifier.padding(horizontal = if (isExpanded) 24.dp else 0.dp)
-    ) {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(ACCENT_RED), Alignment.Center) {
-            Text("L", color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
-        }
-        if (isExpanded) {
-            Column {
-                Text("LUMINA",  color = TEXT_PRIMARY, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
-                Text("STREAMS", color = ACCENT_RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 10.sp)
-            }
         }
     }
 }

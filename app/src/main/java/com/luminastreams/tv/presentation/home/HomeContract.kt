@@ -67,22 +67,17 @@ data class HomeState(
 )
 
 /**
- * Fuzer category IDs — used by HomeViewModel.loadFuzerContent().
- * Each entry maps a human-readable name to the numeric cat ID on fuzer.xyz.
+ * Fuzer category IDs used by HomeViewModel.loadFuzerContent().
+ * Only the 8 categories that are actively fetched and displayed are listed.
+ * To add a new row (e.g. Animation), add its const here and wire it in the ViewModel.
  */
 object FuzerCats {
-    const val MOVIES         = 1
-    const val SERIES         = 2
-    const val MOVIES_HD      = 41
-    const val SERIES_HD      = 42
-    const val MOVIES_4K      = 65
-    const val SERIES_4K      = 66
-    const val DUBBED_MOVIES  = 83
-    const val DUBBED_SERIES  = 84
-    const val ANIMATION      = 14
-    const val DOCUMENTARY    = 33
-    const val KIDS           = 31
-    const val ISRAELI        = 49
-    const val FOREIGN        = 6
-    const val SPORTS         = 54
+    const val MOVIES        = 1
+    const val SERIES        = 2
+    const val MOVIES_HD     = 41
+    const val SERIES_HD     = 42
+    const val MOVIES_4K     = 65
+    const val SERIES_4K     = 66
+    const val DUBBED_MOVIES = 83
+    const val DUBBED_SERIES = 84
 }
