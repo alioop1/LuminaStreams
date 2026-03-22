@@ -2,9 +2,6 @@ package com.luminastreams.tv.presentation.home
 
 import com.luminastreams.tv.domain.model.Movie
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  HomeContract.kt — single source of truth for state & events
-// ══════════════════════════════════════════════════════════════════════════════
 enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY, HBO, AMAZON, PARAMOUNT, HULU }
 
 sealed class RowDef {
@@ -21,7 +18,6 @@ data class HomeState(
     val selectedStudioFilter: String?      = null,
     // ── Movies ──────────────────────────────────────────────────────────────
     val movieTrending:  List<Movie>  = emptyList(),
-    val fuzerItems:     List<Movie>  = emptyList(),
     val moviePremieres: List<Movie>  = emptyList(),
     val movieAction:    List<Movie>  = emptyList(),
     val movieDrama:     List<Movie>  = emptyList(),
@@ -48,9 +44,42 @@ data class HomeState(
     val tvAmazon:       List<Movie>  = emptyList(),
     val tvParamount:    List<Movie>  = emptyList(),
     val tvHulu:         List<Movie>  = emptyList(),
-    // ── Discovery (used by DiscoveryScreen) ─────────────────────────────────
+    // ── Fuzer ───────────────────────────────────────────────────────────────
+    val fuzerItems:           List<Movie>  = emptyList(),
+    val fuzerMovies:          List<Movie>  = emptyList(),
+    val fuzerSeries:          List<Movie>  = emptyList(),
+    val fuzerMoviesHD:        List<Movie>  = emptyList(),
+    val fuzerSeriesHD:        List<Movie>  = emptyList(),
+    val fuzerMovies4K:        List<Movie>  = emptyList(),
+    val fuzerSeries4K:        List<Movie>  = emptyList(),
+    val fuzerDubbedMovies:    List<Movie>  = emptyList(),
+    val fuzerDubbedSeries:    List<Movie>  = emptyList(),
+    val fuzerIsLoading:       Boolean      = false,
+    val fuzerError:           String?      = null,
+    val fuzerSelectedCat:     Int          = 1,
+    val fuzerCurrentPage:     Int          = 1,
+    val fuzerHasMore:         Boolean      = true,
+    // ── Discovery ───────────────────────────────────────────────────────────
     val isFilterComplete:  Boolean      = false,
     val selectedGenreName: String       = "",
     val discoveryResults:  List<Movie>  = emptyList(),
     val focusedItem:       Movie?       = null,
 )
+
+// כל קטגוריות Fuzer עם ID וכותרת
+enum class FuzerCategory(val catId: Int, val displayName: String) {
+    MOVIES          (1,  "סרטים"),
+    SERIES          (2,  "סדרות"),
+    MOVIES_HD       (41, "סרטים HD"),
+    SERIES_HD       (42, "סדרות HD"),
+    MOVIES_4K       (65, "סרטים 4K"),
+    SERIES_4K       (66, "סדרות 4K"),
+    DUBBED_MOVIES   (83, "סרטים מדובבים"),
+    DUBBED_SERIES   (84, "סדרות מדובבות"),
+    ANIMATION       (14, "אנימציה"),
+    DOCUMENTARY     (33, "דוקומנטרי"),
+    KIDS            (31, "ילדים"),
+    ISRAELI         (49, "ישראלי"),
+    FOREIGN         (6,  "זר"),
+    SPORTS          (54, "ספורט"),
+}

@@ -2,14 +2,6 @@ package com.luminastreams.tv.presentation.details
 
 import androidx.compose.runtime.Immutable
 
-// ─────────────────────────────────────────────────────────────────
-// DetailsContract.kt
-// אוסף: State + Events + Models משותפים לשכבת Details.
-// DetailsScreen.kt → רק UI Composables
-// DetailsViewModel.kt → רק לוגיקה עסקית
-// ─────────────────────────────────────────────────────────────────
-
-// ── Domain models (specific to Details layer) ────────────────────
 @Immutable
 data class CastMember(val id: String, val name: String, val character: String, val imageUrl: String)
 
@@ -24,7 +16,6 @@ data class Episode(
 @Immutable
 data class Recommendation(val id: String, val title: String, val posterUrl: String)
 
-// ── Enums ────────────────────────────────────────────────────────────
 enum class StreamQuality(val priority: Int, val displayName: String) {
     UHD_4K(9, "4K UHD"), FHD_1080P(7, "1080p"), HD_720P(6, "720p"), SD_480P(5, "480p"), UNKNOWN(0, "Unknown");
     companion object {
@@ -33,9 +24,9 @@ enum class StreamQuality(val priority: Int, val displayName: String) {
             return when {
                 t.contains("4K") || t.contains("2160P") -> UHD_4K
                 t.contains("1080P") -> FHD_1080P
-                t.contains("720P") -> HD_720P
-                t.contains("480P") -> SD_480P
-                else -> UNKNOWN
+                t.contains("720P")  -> HD_720P
+                t.contains("480P")  -> SD_480P
+                else                -> UNKNOWN
             }
         }
     }
@@ -48,15 +39,14 @@ enum class VideoCodec(val displayName: String) {
             val t = title.uppercase()
             return when {
                 t.contains("HEVC") || t.contains("X265") || t.contains("H265") -> HEVC
-                t.contains("AVC") || t.contains("X264") || t.contains("H264") -> AVC
-                t.contains("AV1") -> AV1
-                else -> UNKNOWN
+                t.contains("AVC")  || t.contains("X264") || t.contains("H264") -> AVC
+                t.contains("AV1")  -> AV1
+                else               -> UNKNOWN
             }
         }
     }
 }
 
-// ── Stream source model ─────────────────────────────────────────────
 @Immutable
 data class AdvancedStreamSource(
     val id: String,
@@ -69,12 +59,11 @@ data class AdvancedStreamSource(
     val quality: StreamQuality,
     val videoCodec: VideoCodec
 ) {
-    val sizeGb: Double get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
+    val sizeGb: Double        get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
     val formattedSize: String get() = String.format(java.util.Locale.US, "%.2f GB", sizeGb)
-    val sortScore: Int get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
+    val sortScore: Int        get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
 }
 
-// ── Media info model ───────────────────────────────────────────────
 @Immutable
 data class MediaDetailsInfo(
     val id: String = "", val imdbId: String = "", val title: String = "",
@@ -87,11 +76,10 @@ data class MediaDetailsInfo(
     val totalSeasons: Int = 0, val isFavorite: Boolean = false, val trailerUrl: String? = null
 ) {
     val displayStudios: String get() = studios.take(2).joinToString(" • ").uppercase()
-    val displayGenres: String get() = genres.take(3).joinToString(" • ")
+    val displayGenres:  String get() = genres.take(3).joinToString(" • ")
     val formattedRuntime: String get() = if (runtimeMinutes > 0) "${runtimeMinutes / 60}h ${runtimeMinutes % 60}m" else "N/A"
 }
 
-// ── Scraping status ────────────────────────────────────────────────
 sealed interface ScrapingStatus {
     object Idle : ScrapingStatus
     object Searching : ScrapingStatus
@@ -100,7 +88,6 @@ sealed interface ScrapingStatus {
     data class Error(val message: String) : ScrapingStatus
 }
 
-// ── UI State ──────────────────────────────────────────────────────────────
 @Immutable
 data class DetailsScreenState(
     val isLoadingData: Boolean = true,
@@ -112,10 +99,10 @@ data class DetailsScreenState(
     val scrapingStatus: ScrapingStatus = ScrapingStatus.Idle,
     val availableStreams: List<AdvancedStreamSource> = emptyList(),
     val readyToPlayUrl: String? = null,
-    val bestSourceHint: String? = null
+    val bestSourceHint: String? = null,
+    val isFuzerDirect: Boolean = false
 )
 
-// ── UI Events ─────────────────────────────────────────────────────────────
 sealed interface DetailsEvent {
     data class LoadInitialData(val fullId: String) : DetailsEvent
     data class SelectSeason(val seasonNumber: Int) : DetailsEvent

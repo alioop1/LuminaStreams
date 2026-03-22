@@ -38,31 +38,36 @@ class FuzerEngine {
     private var currentToken = "guest"
 
     // המרה למודל Movie החדש של המערכת
+
     suspend fun getCategoryPage(catId: Int, page: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             if (!loginIfNeeded()) return@withContext Result.failure(Exception("Fuzer Login Failed"))
             val url = "https://www.fuzer.xyz/browse.php?cat=$catId&page=$page"
-            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val response = client.newCall(request).execute()
-            Result.success(parseHtmlToMovies(response.body?.string() ?: ""))
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Accept-Charset", "windows-1255,utf-8;q=0.7,*;q=0.3")
+                .build()
+            val bytes = client.newCall(request).execute().body?.bytes() ?: return@withContext Result.success(emptyList())
+            val html = String(bytes, Charset.forName("windows-1255"))
+            Result.success(parseHtmlToMovies(html))
         } catch (e: Exception) { Result.failure(e) }
     }
 
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             if (!loginIfNeeded()) return@withContext Result.failure(Exception("Fuzer Login Failed"))
-
-            // פיוזר עובד עם קידוד windows-1255 לעברית
             val encodedQuery = URLEncoder.encode(query, "windows-1255")
             val url = "https://www.fuzer.xyz/browse.php?search=$encodedQuery&cat=0"
-
-            val request = Request.Builder().url(url).header("User-Agent", "Mozilla/5.0").build()
-            val response = client.newCall(request).execute()
-
-            Result.success(parseHtmlToMovies(response.body?.string() ?: ""))
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+            val request = Request.Builder()
+                .url(url)
+                .header("User-Agent", "Mozilla/5.0")
+                .header("Accept-Charset", "windows-1255,utf-8;q=0.7,*;q=0.3")
+                .build()
+            val bytes = client.newCall(request).execute().body?.bytes() ?: return@withContext Result.success(emptyList())
+            val html = String(bytes, Charset.forName("windows-1255"))
+            Result.success(parseHtmlToMovies(html))
+        } catch (e: Exception) { Result.failure(e) }
     }
 
     suspend fun downloadTorrentFile(url: String): Result<ByteArray> = withContext(Dispatchers.IO) {

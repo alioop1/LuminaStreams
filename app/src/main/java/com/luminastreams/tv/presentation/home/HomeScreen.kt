@@ -207,7 +207,6 @@ fun HomeScreen(
     navController: NavController,
     onMovieClick:  (String) -> Unit
 ) {
-    // ✅ תיקון Davey #1: רק fields רלוונטיים כ-keys, לא state שלם
     val rows: List<RowDef> = remember(
         state.selectedTab, state.selectedStudioFilter,
         state.movieTrending, state.movieHBO, state.tvTrending,
@@ -217,7 +216,11 @@ fun HomeScreen(
         state.movieDrama, state.movieScifi, state.movieTopRated,
         state.tvHBO, state.tvAmazon, state.tvParamount, state.tvHulu,
         state.tvNetflix, state.tvDisney, state.tvPremieres,
-        state.tvDrama, state.tvCrime, state.tvScifi, state.tvTopRated
+        state.tvDrama, state.tvCrime, state.tvScifi, state.tvTopRated,
+        // Fuzer:
+        state.fuzerMovies, state.fuzerSeries, state.fuzerMoviesHD,
+        state.fuzerSeriesHD, state.fuzerMovies4K, state.fuzerSeries4K,
+        state.fuzerDubbedMovies, state.fuzerDubbedSeries
     ) {
         val filter = state.selectedStudioFilter
         when (state.selectedTab) {
@@ -267,27 +270,31 @@ fun HomeScreen(
                 }
             }
             "Fuzer" -> buildList {
-                try {
-                    @Suppress("UNCHECKED_CAST")
-                    val fuzerItems = state::class.java.getMethod("getFuzerItems").invoke(state) as? List<Movie> ?: emptyList()
-                    if (fuzerItems.isNotEmpty()) {
-                        val kids       = fuzerItems.filter { it.title.contains("מדובב") }
-                        val kidsMovies = kids.filter { it.mediaType == "movie" }
-                        val kidsTv     = kids.filter { it.mediaType == "tv" }
-                        val nonKids    = fuzerItems.filter { !it.title.contains("מדובב") }
-                        val movies     = nonKids.filter { it.mediaType == "movie" }
-                        val tv         = nonKids.filter { it.mediaType == "tv" }
-                        val israeli    = nonKids.filter {
-                            it.title.contains("ישראל") || it.title.contains("עברית") || it.overview.contains("ישראל")
-                        }.ifEmpty { nonKids.take(8) }
+                // תוכן חדש — סרטים + סדרות ביחד
+                val newContent = (state.fuzerMovies + state.fuzerSeries)
+                    .sortedByDescending { it.id } // הכי חדשים ראשון
+                if (newContent.isNotEmpty())
+                    add(RowDef.Regular("fuzer_new",  "🆕 תוכן חדש",          newContent))
 
-                        if (movies.isNotEmpty())     add(RowDef.Regular("fuzer_m",  "🔥 סרטים חדשים בטראקר",          movies.take(15)))
-                        if (tv.isNotEmpty())         add(RowDef.Regular("fuzer_tv", "📺 סדרות ופרקים חדשים",           tv.take(15)))
-                        if (israeli.isNotEmpty())    add(RowDef.Regular("fuzer_il", "⭐ הקולנוע והטלוויזיה הישראלית", israeli))
-                        if (kidsMovies.isNotEmpty()) add(RowDef.Regular("fuzer_km", "🧸 סרטים מדובבים לילדים",        kidsMovies))
-                        if (kidsTv.isNotEmpty())     add(RowDef.Regular("fuzer_kt", "🎈 סדרות מדובבות לילדים",        kidsTv))
-                    }
-                } catch (_: Exception) {}
+                // סרטים בלבד
+                if (state.fuzerMovies.isNotEmpty())
+                    add(RowDef.Regular("fuzer_m",    "🎬 סרטים",              state.fuzerMovies))
+                if (state.fuzerMoviesHD.isNotEmpty())
+                    add(RowDef.Regular("fuzer_mhd",  "🎬 סרטים HD",           state.fuzerMoviesHD))
+                if (state.fuzerMovies4K.isNotEmpty())
+                    add(RowDef.Regular("fuzer_m4k",  "✨ סרטים 4K",           state.fuzerMovies4K))
+                if (state.fuzerDubbedMovies.isNotEmpty())
+                    add(RowDef.Regular("fuzer_dm",   "🎤 סרטים מדובבים",      state.fuzerDubbedMovies))
+
+                // סדרות בלבד
+                if (state.fuzerSeries.isNotEmpty())
+                    add(RowDef.Regular("fuzer_tv",   "📺 סדרות",              state.fuzerSeries))
+                if (state.fuzerSeriesHD.isNotEmpty())
+                    add(RowDef.Regular("fuzer_shd",  "📺 סדרות HD",           state.fuzerSeriesHD))
+                if (state.fuzerSeries4K.isNotEmpty())
+                    add(RowDef.Regular("fuzer_s4k",  "✨ סדרות 4K",           state.fuzerSeries4K))
+                if (state.fuzerDubbedSeries.isNotEmpty())
+                    add(RowDef.Regular("fuzer_ds",   "🎤 סדרות מדובבות",      state.fuzerDubbedSeries))
             }
             else -> emptyList()
         }

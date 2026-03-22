@@ -30,11 +30,6 @@ import java.net.URL
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * DetailsViewModel — ניהול מצב מסך הפרטים.
- */
-
-// ── Torrentio models ────────────────
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(
     val name: String?     = null,
@@ -53,7 +48,6 @@ interface DynamicTorrentioApi {
     ): retrofit2.Response<TorrentioResponse>
 }
 
-// ────────────────────────────────────────────────────────────────────────────
 @SuppressLint("StaticFieldLeak")
 class DetailsViewModel(
     private val repository: MediaRepository,
@@ -63,9 +57,9 @@ class DetailsViewModel(
     private val _state = MutableStateFlow(DetailsScreenState())
     val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
 
-    private val rdManager       = RealDebridManager()
+    private val rdManager        = RealDebridManager()
     private val watchlistManager = WatchlistManager(context)
-    private val fuzerEngine     = FuzerEngine()
+    private val fuzerEngine      = FuzerEngine()
 
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder()
         .baseUrl("https://torrentio.strem.fun/")
@@ -76,7 +70,6 @@ class DetailsViewModel(
     private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
     private var scrapingJob: Job? = null
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
     private fun getRdToken(): String =
         context.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE)
             .getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
@@ -99,37 +92,31 @@ class DetailsViewModel(
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoadingData = true, errorData = null) }
 
-            // --- בדיקה: האם זה לינק מפיוזר? ---
             try {
                 val decodedId = URLDecoder.decode(fullId, "UTF-8")
                 if (decodedId.startsWith("http")) {
                     _state.update {
                         it.copy(
-                            isLoadingData = false,
+                            isLoadingData  = false,
+                            isFuzerDirect  = true,
                             bestSourceHint = "Fuzer Direct • RD+",
                             mediaInfo = MediaDetailsInfo(
-                                id              = decodedId,
-                                imdbId          = decodedId,
-                                title           = "Fuzer Release",
-                                overview        = "Press Play to instantly stream this file via Real-Debrid.",
-                                posterUrl       = "",
-                                backdropUrl     = "",
-                                isSeries        = false,
-                                tmdbRating      = 10.0,
-                                imdbRating      = 10.0,
-                                ageRating       = "IL",
-                                studios         = listOf("Fuzer Israel"),
-                                genres          = listOf("Direct Download")
+                                id        = decodedId,
+                                imdbId    = decodedId,
+                                title     = "Fuzer Release",
+                                overview  = "מוריד ומפעיל אוטומטית דרך Real-Debrid...",
+                                isSeries  = false,
+                                ageRating = "IL",
+                                studios   = listOf("Fuzer Israel"),
+                                genres    = listOf("Direct Download")
                             )
                         )
                     }
+                    playFuzerDirect(decodedId)
                     return@launch
                 }
-            } catch (_: Exception) {
-                // מתעלם וממשיך ללוגיקה הרגילה
-            }
+            } catch (_: Exception) {}
 
-            // --- הלוגיקה הרגילה של TMDB ---
             val type   = fullId.substringBefore("_")
             val realId = fullId.substringAfter("_")
             try {
@@ -140,60 +127,80 @@ class DetailsViewModel(
         }
     }
 
+    // ── Fuzer direct play ─────────────────────────────────────────────────────
+    private fun playFuzerDirect(torrentUrl: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val token = getRdToken()
+            if (token.isEmpty()) {
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("טוקן Real-Debrid חסר — עבור להגדרות")) }
+                return@launch
+            }
+
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מוריד קובץ טורנט...")) }
+
+            val torrentBytes = fuzerEngine.downloadTorrentFile(torrentUrl).getOrElse { e ->
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאה בהורדת הטורנט: ${e.message}")) }
+                return@launch
+            }
+
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מעלה ל-Real-Debrid...")) }
+
+            rdManager.resolveTorrentFileToStream(
+                torrentBytes = torrentBytes,
+                apiToken     = token,
+                season       = null,
+                episode      = null
+            ) { progress ->
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("ממיר ב-RD: ${progress.toInt()}%")) }
+            }.fold(
+                onSuccess = { url -> _state.update { it.copy(readyToPlayUrl = url, scrapingStatus = ScrapingStatus.Idle) } },
+                onFailure = { e  -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאת RD: ${e.message}")) } }
+            )
+        }
+    }
+
+    // ── Load Movie ────────────────────────────────────────────────────────────
     private suspend fun loadMovie(id: String) {
         repository.getMovieFullDetails(id).fold(
             onSuccess = { dto ->
                 val rawImdb  = dto.external_ids?.imdbId
                 val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
-
-                val genres = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") }
-                    ?: listOf("Drama")
-
-                val studios = dto.productionCompanies
-                    ?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") }
-                    ?: listOf("Independent")
-
+                val genres   = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") } ?: listOf("Drama")
+                val studios  = dto.productionCompanies?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") } ?: listOf("Independent")
                 val castList = dto.credits?.cast?.take(15)?.mapNotNull {
-                    if (it.profilePath != null) CastMember(
-                        it.id.toString(), it.name, it.character,
-                        "${Constants.IMAGE_W300}${it.profilePath}"
-                    ) else null
+                    if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "${Constants.IMAGE_W300}${it.profilePath}") else null
                 } ?: emptyList()
-
-                val directorName = dto.credits?.crew
-                    ?.find { it.job == "Director" }?.name ?: ""
-
+                val directorName    = dto.credits?.crew?.find { it.job == "Director" }?.name ?: ""
                 val recommendations = fetchGenreRecommendations("movie", genres.first())
                 val trailerUrl      = fetchRealTrailer(scrapeId, "movie")
                 val isSaved         = watchlistManager.isInWatchlist("movie_$id")
-
-                val qualityHint = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
+                val qualityHint     = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
 
                 _state.update {
                     it.copy(
-                        isLoadingData = false,
+                        isLoadingData  = false,
                         bestSourceHint = qualityHint,
                         mediaInfo = MediaDetailsInfo(
-                            id              = "movie_${dto.id}",
-                            imdbId          = scrapeId,
-                            title           = dto.title,
-                            overview        = dto.overview ?: "",
-                            posterUrl       = "${Constants.IMAGE_W780}${dto.posterPath}",
-                            backdropUrl     = "${Constants.IMAGE_W1280}${dto.backdropPath}",
-                            logoUrl         = null,
-                            isSeries        = false,
-                            releaseDate     = dto.releaseDate?.take(4) ?: "",
-                            runtimeMinutes  = dto.runtime ?: 0,
-                            tmdbRating      = dto.voteAverage.toDouble(),
-                            imdbRating      = dto.voteAverage.toDouble(),
-                            ageRating       = "R",
-                            studios         = studios,
-                            genres          = genres,
-                            director        = directorName,
-                            cast            = castList,
+                            id             = "movie_${dto.id}",
+                            imdbId         = scrapeId,
+                            title          = dto.title,
+                            overview       = dto.overview ?: "",
+                            posterUrl      = "${Constants.IMAGE_W780}${dto.posterPath}",
+                            backdropUrl    = "${Constants.IMAGE_W1280}${dto.backdropPath}",
+                            logoUrl        = null,
+                            isSeries       = false,
+                            releaseDate    = dto.releaseDate?.take(4) ?: "",
+                            runtimeMinutes = dto.runtime ?: 0,
+                            tmdbRating     = dto.voteAverage.toDouble(),
+                            imdbRating     = dto.voteAverage.toDouble(),
+                            ageRating      = "R",
+                            studios        = studios,
+                            genres         = genres,
+                            director       = directorName,
+                            cast           = castList,
                             recommendations = recommendations,
-                            trailerUrl      = trailerUrl,
-                            isFavorite      = isSaved
+                            trailerUrl     = trailerUrl,
+                            isFavorite     = isSaved
                         )
                     )
                 }
@@ -204,58 +211,47 @@ class DetailsViewModel(
         )
     }
 
+    // ── Load TV Show ──────────────────────────────────────────────────────────
     private suspend fun loadTvShow(id: String) {
         repository.getTvFullDetails(id).fold(
             onSuccess = { dto ->
                 val rawImdb  = dto.external_ids?.imdbId
                 val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
-
-                val genres = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") }
-                    ?: listOf("Drama")
-
-                val studios = dto.networks
-                    ?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") }
-                    ?: listOf("Independent")
-
+                val genres   = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") } ?: listOf("Drama")
+                val studios  = dto.networks?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") } ?: listOf("Independent")
                 val castList = dto.credits?.cast?.take(15)?.mapNotNull {
-                    if (it.profilePath != null) CastMember(
-                        it.id.toString(), it.name, it.character,
-                        "${Constants.IMAGE_W300}${it.profilePath}"
-                    ) else null
+                    if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "${Constants.IMAGE_W300}${it.profilePath}") else null
                 } ?: emptyList()
-
-                val creatorName = dto.credits?.crew
-                    ?.find { it.job == "Creator" || it.department == "Writing" }?.name ?: ""
-
+                val creatorName     = dto.credits?.crew?.find { it.job == "Creator" || it.department == "Writing" }?.name ?: ""
                 val recommendations = fetchGenreRecommendations("series", genres.first())
                 val trailerUrl      = fetchRealTrailer(scrapeId, "series")
                 val isSaved         = watchlistManager.isInWatchlist("tv_$id")
 
                 _state.update {
                     it.copy(
-                        isLoadingData = false,
+                        isLoadingData  = false,
                         bestSourceHint = "1080p • RD+",
                         mediaInfo = MediaDetailsInfo(
-                            id              = "tv_${dto.id}",
-                            imdbId          = scrapeId,
-                            title           = dto.name,
-                            overview        = dto.overview ?: "",
-                            posterUrl       = "${Constants.IMAGE_W780}${dto.posterPath}",
-                            backdropUrl     = "${Constants.IMAGE_W1280}${dto.backdropPath}",
-                            logoUrl         = null,
-                            isSeries        = true,
-                            releaseDate     = dto.firstAirDate?.take(4) ?: "",
-                            tmdbRating      = dto.voteAverage.toDouble(),
-                            imdbRating      = dto.voteAverage.toDouble(),
-                            ageRating       = "TV-MA",
-                            studios         = studios,
-                            genres          = genres,
-                            director        = creatorName,
-                            cast            = castList,
+                            id             = "tv_${dto.id}",
+                            imdbId         = scrapeId,
+                            title          = dto.name,
+                            overview       = dto.overview ?: "",
+                            posterUrl      = "${Constants.IMAGE_W780}${dto.posterPath}",
+                            backdropUrl    = "${Constants.IMAGE_W1280}${dto.backdropPath}",
+                            logoUrl        = null,
+                            isSeries       = true,
+                            releaseDate    = dto.firstAirDate?.take(4) ?: "",
+                            tmdbRating     = dto.voteAverage.toDouble(),
+                            imdbRating     = dto.voteAverage.toDouble(),
+                            ageRating      = "TV-MA",
+                            studios        = studios,
+                            genres         = genres,
+                            director       = creatorName,
+                            cast           = castList,
                             recommendations = recommendations,
-                            totalSeasons    = dto.numberOfSeasons,
-                            trailerUrl      = trailerUrl,
-                            isFavorite      = isSaved
+                            totalSeasons   = dto.numberOfSeasons,
+                            trailerUrl     = trailerUrl,
+                            isFavorite     = isSaved
                         )
                     )
                 }
@@ -288,40 +284,39 @@ class DetailsViewModel(
             }
         }
 
-    private suspend fun fetchGenreRecommendations(
-        type: String, genre: String
-    ): List<Recommendation> = withContext(Dispatchers.IO) {
-        val recs = mutableListOf<Recommendation>()
-        withTimeoutOrNull(1_500) {
-            try {
-                val conn = (URL("https://v3-cinemeta.strem.io/catalog/$type/top/genre=$genre.json")
-                    .openConnection() as HttpURLConnection).apply {
-                    requestMethod  = "GET"
-                    connectTimeout = 1_000
-                    readTimeout    = 1_000
-                }
-                if (conn.responseCode == 200) {
-                    val metas = JSONObject(
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    ).optJSONArray("metas")
-                    if (metas != null) {
-                        for (i in 0 until minOf(metas.length(), 8)) {
-                            val m      = metas.getJSONObject(i)
-                            val poster = m.optString("poster", "")
-                            if (poster.isNotEmpty()) {
-                                recs += Recommendation(
-                                    id        = m.optString("id", ""),
-                                    title     = m.optString("name", "Unknown"),
-                                    posterUrl = poster.replace("http://", "https://")
-                                )
+    private suspend fun fetchGenreRecommendations(type: String, genre: String): List<Recommendation> =
+        withContext(Dispatchers.IO) {
+            val recs = mutableListOf<Recommendation>()
+            withTimeoutOrNull(1_500) {
+                try {
+                    val conn = (URL("https://v3-cinemeta.strem.io/catalog/$type/top/genre=$genre.json")
+                        .openConnection() as HttpURLConnection).apply {
+                        requestMethod  = "GET"
+                        connectTimeout = 1_000
+                        readTimeout    = 1_000
+                    }
+                    if (conn.responseCode == 200) {
+                        val metas = JSONObject(
+                            conn.inputStream.bufferedReader().use { it.readText() }
+                        ).optJSONArray("metas")
+                        if (metas != null) {
+                            for (i in 0 until minOf(metas.length(), 8)) {
+                                val m      = metas.getJSONObject(i)
+                                val poster = m.optString("poster", "")
+                                if (poster.isNotEmpty()) {
+                                    recs += Recommendation(
+                                        id        = m.optString("id", ""),
+                                        title     = m.optString("name", "Unknown"),
+                                        posterUrl = poster.replace("http://", "https://")
+                                    )
+                                }
                             }
                         }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
+            recs
         }
-        recs
-    }
 
     // ── Episodes ──────────────────────────────────────────────────────────────
     private fun fetchEpisodesForSeason(seasonNum: Int) {
@@ -340,7 +335,7 @@ class DetailsViewModel(
                         seasonNumber  = seasonNum,
                         title         = "Episode $ep",
                         overview      = "",
-                        stillUrl      = _state.value.mediaInfo.backdropUrl ?: "",
+                        stillUrl      = _state.value.mediaInfo.backdropUrl,
                         progress      = 0f
                     )
                 }
@@ -349,90 +344,55 @@ class DetailsViewModel(
         }
     }
 
-    private suspend fun fetchCinemetaEpisodes(
-        imdbId: String, targetSeason: Int
-    ): List<Episode> = withContext(Dispatchers.IO) {
-        val list = mutableListOf<Episode>()
-        withTimeoutOrNull(2_000) {
-            try {
-                val conn = (URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json")
-                    .openConnection() as HttpURLConnection).apply {
-                    requestMethod  = "GET"
-                    connectTimeout = 1_500
-                    readTimeout    = 1_500
-                }
-                if (conn.responseCode == 200) {
-                    val videos = JSONObject(
-                        conn.inputStream.bufferedReader().use { it.readText() }
-                    ).optJSONObject("meta")?.optJSONArray("videos")
+    private suspend fun fetchCinemetaEpisodes(imdbId: String, targetSeason: Int): List<Episode> =
+        withContext(Dispatchers.IO) {
+            val list = mutableListOf<Episode>()
+            withTimeoutOrNull(2_000) {
+                try {
+                    val conn = (URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json")
+                        .openConnection() as HttpURLConnection).apply {
+                        requestMethod  = "GET"
+                        connectTimeout = 1_500
+                        readTimeout    = 1_500
+                    }
+                    if (conn.responseCode == 200) {
+                        val videos = JSONObject(
+                            conn.inputStream.bufferedReader().use { it.readText() }
+                        ).optJSONObject("meta")?.optJSONArray("videos")
 
-                    videos?.let {
-                        for (i in 0 until it.length()) {
-                            val v  = it.getJSONObject(i)
-                            if (v.optInt("season", 0) != targetSeason) continue
-                            val ep = v.optInt("episode", 0)
-                            list += Episode(
-                                id            = v.optString("id", "s${targetSeason}e$ep"),
-                                episodeNumber = ep,
-                                seasonNumber  = targetSeason,
-                                title         = v.optString("title", "Episode $ep"),
-                                overview      = v.optString("overview", ""),
-                                stillUrl      = v.optString("thumbnail", "").replace("http://", "https://"),
-                                progress      = 0f
-                            )
+                        videos?.let {
+                            for (i in 0 until it.length()) {
+                                val v  = it.getJSONObject(i)
+                                if (v.optInt("season", 0) != targetSeason) continue
+                                val ep = v.optInt("episode", 0)
+                                list += Episode(
+                                    id            = v.optString("id", "s${targetSeason}e$ep"),
+                                    episodeNumber = ep,
+                                    seasonNumber  = targetSeason,
+                                    title         = v.optString("title", "Episode $ep"),
+                                    overview      = v.optString("overview", ""),
+                                    stillUrl      = v.optString("thumbnail", "").replace("http://", "https://"),
+                                    progress      = 0f
+                                )
+                            }
                         }
                     }
-                }
-            } catch (_: Exception) {}
+                } catch (_: Exception) {}
+            }
+            list.sortedBy { it.episodeNumber }
         }
-        list.sortedBy { it.episodeNumber }
-    }
 
     // ── Stream scraping ───────────────────────────────────────────────────────
     private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?) {
         cancelActiveScraping()
         val token = getRdToken()
         if (token.isEmpty()) {
-            _state.update {
-                it.copy(scrapingStatus = ScrapingStatus.Error(
-                    "Real-Debrid account required. Please connect in Settings."
-                ))
-            }
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("Real-Debrid account required. Please connect in Settings.")) }
             return
         }
 
         scrapingJob = viewModelScope.launch(Dispatchers.IO) {
-            // --- המעקף של פיוזר ---
-            if (scrapeId.startsWith("http")) {
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מתחיל הורדה לענן...")) }
-
-                try {
-                    val torrentBytes = fuzerEngine.downloadTorrentFile(scrapeId).getOrThrow()
-                    val rdToken = getRdToken()
-
-                    val directLink = rdManager.resolveTorrentFileToStream(
-                        torrentBytes = torrentBytes,
-                        apiToken = rdToken,
-                        season = season,
-                        episode = episode
-                    ) { progress ->
-                        _state.update {
-                            it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מוריד ל-RD: ${progress.toInt()}%"))
-                        }
-                    }.getOrThrow()
-
-                    _state.update {
-                        it.copy(scrapingStatus = ScrapingStatus.Success, readyToPlayUrl = directLink)
-                    }
-                } catch (e: Exception) {
-                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("${e.message}")) }
-                }
-                return@launch
-            }
-            // ---------------------
-
-            val cacheKey = if (season != null && episode != null)
-                "$scrapeId:$season:$episode" else scrapeId
+            val cacheKey = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
 
             streamCache[cacheKey]?.let { cached ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached) }
@@ -443,8 +403,7 @@ class DetailsViewModel(
 
             try {
                 val queryType = if (season != null && episode != null) "series" else "movie"
-                val queryId   = if (season != null && episode != null)
-                    "$scrapeId:$season:$episode" else scrapeId
+                val queryId   = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
 
                 val response = dynamicTorrentio.getStreamsDynamic(
                     config = "realdebrid=$token",
@@ -527,15 +486,15 @@ class DetailsViewModel(
     private fun handleToggleFavorite() {
         val info = _state.value.mediaInfo
         val movie = Movie(
-            id        = info.id,
-            title     = info.title,
-            posterUrl = info.posterUrl,
+            id          = info.id,
+            title       = info.title,
+            posterUrl   = info.posterUrl,
             backdropUrl = info.backdropUrl,
-            rating    = info.tmdbRating.toFloat(),
-            mediaType = if (info.isSeries) "tv" else "movie",
-            overview  = info.overview,
-            year      = info.releaseDate.toIntOrNull() ?: 0,
-            genre     = info.genres.firstOrNull() ?: ""
+            rating      = info.tmdbRating.toFloat(),
+            mediaType   = if (info.isSeries) "tv" else "movie",
+            overview    = info.overview,
+            year        = info.releaseDate.toIntOrNull() ?: 0,
+            genre       = info.genres.firstOrNull() ?: ""
         )
         val isNowAdded = watchlistManager.toggleWatchlist(movie)
         _state.update { it.copy(mediaInfo = info.copy(isFavorite = isNowAdded)) }

@@ -137,13 +137,63 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Fuzer Loading ──────────────────────────────────────────────
     fun loadFuzerContent() {
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(isLoading = true, error = null) }
-            fuzerEngine.getCategoryPage(catId = 1, page = 1)
-                .onSuccess { items -> _state.update { it.copy(fuzerItems = items, isLoading = false) } }
-                .onFailure { e -> _state.update { it.copy(isLoading = false, error = "Error loading Fuzer: ${e.message}") } }
+            _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
+            try {
+                coroutineScope {
+                    val movies       = async { fuzerEngine.getCategoryPage(1,  1).getOrElse { emptyList() } }
+                    val series       = async { fuzerEngine.getCategoryPage(2,  1).getOrElse { emptyList() } }
+                    val moviesHd     = async { fuzerEngine.getCategoryPage(41, 1).getOrElse { emptyList() } }
+                    val seriesHd     = async { fuzerEngine.getCategoryPage(42, 1).getOrElse { emptyList() } }
+                    val movies4k     = async { fuzerEngine.getCategoryPage(65, 1).getOrElse { emptyList() } }
+                    val series4k     = async { fuzerEngine.getCategoryPage(66, 1).getOrElse { emptyList() } }
+                    val dubbedMovies = async { fuzerEngine.getCategoryPage(83, 1).getOrElse { emptyList() } }
+                    val dubbedSeries = async { fuzerEngine.getCategoryPage(84, 1).getOrElse { emptyList() } }
+
+                    // await פעם אחת כל אחד ושמור בval
+                    val moviesR       = movies.await()
+                    val seriesR       = series.await()
+                    val moviesHdR     = moviesHd.await()
+                    val seriesHdR     = seriesHd.await()
+                    val movies4kR     = movies4k.await()
+                    val series4kR     = series4k.await()
+                    val dubbedMoviesR = dubbedMovies.await()
+                    val dubbedSeriesR = dubbedSeries.await()
+
+                    _state.update { s -> s.copy(
+                        fuzerIsLoading    = false,
+                        fuzerItems        = moviesR + seriesR,
+                        fuzerMovies       = moviesR,
+                        fuzerSeries       = seriesR,
+                        fuzerMoviesHD     = moviesHdR,
+                        fuzerSeriesHD     = seriesHdR,
+                        fuzerMovies4K     = movies4kR,
+                        fuzerSeries4K     = series4kR,
+                        fuzerDubbedMovies = dubbedMoviesR,
+                        fuzerDubbedSeries = dubbedSeriesR,
+                    ) }
+                }
+            } catch (e: Exception) {
+                _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }
+            }
+        }
+    }
+
+    // ── Fuzer: pagination לקטגוריה ספציפית ────────────────────────
+    fun loadFuzerCategoryPage(catId: Int, page: Int, onResult: (List<Movie>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            fuzerEngine.getCategoryPage(catId, page)
+                .onSuccess { onResult(it) }
+        }
+    }
+
+    // ── Fuzer: חיפוש ───────────────────────────────────────────────
+    fun searchFuzer(query: String, onResult: (List<Movie>) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
+            fuzerEngine.search(query)
+                .onSuccess { onResult(it) }
+                .onFailure { onResult(emptyList()) }
         }
     }
 

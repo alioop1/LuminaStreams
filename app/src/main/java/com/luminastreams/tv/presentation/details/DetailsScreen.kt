@@ -21,6 +21,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -39,7 +40,6 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusRestorer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -105,7 +105,6 @@ fun DetailsScreen(
     val context  = LocalContext.current
     val isRtl    = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    // ─── 💎 קסם ה-UI של פיוזר (ללא פגיעה בלוגיקה!) ───
     var media by remember(state.mediaInfo) { mutableStateOf(state.mediaInfo) }
 
     LaunchedEffect(state.mediaInfo.id) {
@@ -115,19 +114,17 @@ fun DetailsScreen(
                 if (activity != null) {
                     val homeVm = androidx.lifecycle.ViewModelProvider(activity)[com.luminastreams.tv.presentation.home.HomeViewModel::class.java]
                     val homeState = homeVm.state.value
-
                     @Suppress("UNCHECKED_CAST")
                     val fuzerItems = homeState::class.java.getMethod("getFuzerItems").invoke(homeState) as? List<com.luminastreams.tv.domain.model.Movie>
                     val matched = fuzerItems?.find { it.id == state.mediaInfo.id }
-
                     if (matched != null) {
                         media = state.mediaInfo.copy(
-                            title = matched.title,
-                            overview = matched.overview.ifBlank { "קובץ מקורי ואקסקלוסיבי זה נמשך ישירות מהטראקר הפרטי של Fuzer.\nלחץ על 'Play Now' להזרמה ישירה, מהירה ומאובטחת דרך שרתי Real Debrid." },
-                            posterUrl = matched.posterUrl,
+                            title       = matched.title,
+                            overview    = matched.overview.ifBlank { "לוחץ Play להפעלה אוטומטית דרך Real-Debrid." },
+                            posterUrl   = matched.posterUrl,
                             backdropUrl = matched.backdropUrl.ifBlank { matched.posterUrl },
-                            genres = listOf("Fuzer VIP"),
-                            studios = listOf("Private Tracker")
+                            genres      = listOf("Fuzer VIP"),
+                            studios     = listOf("Private Tracker")
                         )
                     }
                 }
@@ -136,15 +133,21 @@ fun DetailsScreen(
             media = state.mediaInfo
         }
     }
-    // ────────────────────────────────────────────────
 
     val playFR        = remember { FocusRequester() }
     val backBtnFR     = remember { FocusRequester() }
     val firstSourceFR = remember { FocusRequester() }
-
     val scrollState   = rememberLazyListState()
-    var showSources by remember { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
+    var showSources   by remember { mutableStateOf(false) }
+    val focusManager  = LocalFocusManager.current
+
+    // ── כשהתוכן הוא Fuzer — הפעל ישירות ואל תציג Sources panel
+    LaunchedEffect(state.mediaInfo.id) {
+        if (state.mediaInfo.id.startsWith("http")) {
+            showSources = false
+            onEvent(DetailsEvent.InitiateScraping(state.mediaInfo.imdbId))
+        }
+    }
 
     LaunchedEffect(state.readyToPlayUrl) {
         state.readyToPlayUrl?.let { url ->
@@ -191,7 +194,7 @@ fun DetailsScreen(
                     model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(true).memoryCachePolicy(CachePolicy.ENABLED).build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
-            } else if (media.posterUrl.isNotEmpty() == true) {
+            } else if (media.posterUrl.isNotEmpty()) {
                 AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.5f)
             }
         }
@@ -199,13 +202,13 @@ fun DetailsScreen(
         Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(if (isRtl) listOf(BK.copy(0.85f), Color.Transparent) else listOf(Color.Transparent, BK.copy(0.85f)), startX = 0f, endX = 1400f)))
 
         LazyColumn(
-            state = scrollState, modifier = Modifier.fillMaxSize().focusRestorer(),
+            state = scrollState,
+            modifier = Modifier.fillMaxSize().focusGroup(),
             contentPadding = PaddingValues(top = 48.dp, bottom = 80.dp),
             verticalArrangement = Arrangement.spacedBy(48.dp)
         ) {
             item {
                 Box(modifier = Modifier.fillMaxWidth().heightIn(min = 420.dp)) {
-                    // Back button
                     Surface(
                         onClick  = { onNavigateBack() },
                         shape    = ClickableSurfaceDefaults.shape(CircleShape),
@@ -233,7 +236,7 @@ fun DetailsScreen(
                         Spacer(Modifier.height(12.dp))
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             if (media.releaseDate.isNotEmpty()) { Text(media.releaseDate.take(4), color = WH, fontSize = 13.sp, fontWeight = FontWeight.Bold); MDot() }
-                            if (media.ageRating.isNotEmpty()) { Box(Modifier.border(1.dp, GB, RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 2.dp)) { Text(media.ageRating, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }; MDot() }
+                            if (media.ageRating.isNotEmpty())   { Box(Modifier.border(1.dp, GB, RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 2.dp)) { Text(media.ageRating, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }; MDot() }
                             if (!media.isSeries && media.runtimeMinutes > 0) Text(media.formattedRuntime, color = DM, fontSize = 13.sp)
                             else if (media.isSeries && media.totalSeasons > 0) Text("${media.totalSeasons} Seasons", color = DM, fontSize = 13.sp)
                             if (media.displayGenres.isNotEmpty()) { MDot(); Text(media.displayGenres, color = DM, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
@@ -241,16 +244,16 @@ fun DetailsScreen(
                         Spacer(Modifier.height(9.dp))
                         state.bestSourceHint?.let { h ->
                             Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                                if (h.contains("4K"))    QPill("4K",    Color(0xFF1565C0))
-                                if (h.contains("HDR"))   QPill("HDR",   Color(0xFF6A1B9A))
-                                if (h.contains("REMUX")) QPill("REMUX", Color(0xFF37474F))
-                                if (h.contains("RD+"))   QPill("RD+",   Color(0xFF2E7D32))
+                                if (h.contains("4K"))           QPill("4K",        Color(0xFF1565C0))
+                                if (h.contains("HDR"))          QPill("HDR",       Color(0xFF6A1B9A))
+                                if (h.contains("REMUX"))        QPill("REMUX",     Color(0xFF37474F))
+                                if (h.contains("RD+"))          QPill("RD+",       Color(0xFF2E7D32))
                                 if (h.contains("Fuzer Direct")) QPill("Fuzer VIP", Color(0xFF00B0FF))
                             }
                             Spacer(Modifier.height(9.dp))
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (media.imdbRating > 0) RatingChip(Icons.Default.Star,      GLD, String.format(Locale.US, "%.1f", media.imdbRating), "IMDb")
+                            if (media.imdbRating > 0) RatingChip(Icons.Default.Star,     GLD, String.format(Locale.US, "%.1f", media.imdbRating), "IMDb")
                             if (media.tmdbRating > 0) RatingChip(Icons.Default.Favorite, TMR, "${(media.tmdbRating * 10).toInt()}%", "TMDB")
                         }
                         Spacer(Modifier.height(12.dp))
@@ -259,56 +262,81 @@ fun DetailsScreen(
                         }
                         Spacer(Modifier.height(22.dp))
 
-                        // ── Action buttons row ──
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment     = Alignment.CenterVertically,
-                            modifier              = Modifier.focusRestorer().focusProperties { up = backBtnFR }
+                            modifier              = Modifier.focusGroup().focusProperties { up = backBtnFR }
                         ) {
-                            // ▶ Play button
-                            Surface(
-                                onClick  = {
+                            // ── כפתור Play / סטטוס Fuzer ──
+                            if (state.isFuzerDirect) {
+                                // Fuzer — מציג סטטוס במקום כפתור
+                                when (val st = state.scrapingStatus) {
+                                    is ScrapingStatus.ResolvingDebrid -> {
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            LoadingIndicator()
+                                            Text(st.streamId, color = WH, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                                        }
+                                    }
+                                    is ScrapingStatus.Error -> {
+                                        Row(
+                                            Modifier.background(BR.copy(0.12f), RoundedCornerShape(10.dp))
+                                                .border(1.dp, BR.copy(0.35f), RoundedCornerShape(10.dp))
+                                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment     = Alignment.CenterVertically
+                                        ) {
+                                            Icon(Icons.Default.Warning, null, tint = BR, modifier = Modifier.size(18.dp))
+                                            Text(st.message, color = WH, fontSize = 13.sp)
+                                        }
+                                    }
+                                    else -> {
+                                        // Idle / Searching — spinner כללי
+                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            LoadingIndicator()
+                                            Text("מתחבר ל-Real-Debrid...", color = DM, fontSize = 15.sp)
+                                        }
+                                    }
+                                }
+                            } else {
+                                // ── תוכן רגיל TMDB ──
+                                Surface(
+                                    onClick = {
+                                        showSources = true
+                                        if (media.isSeries) onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
+                                        else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                    },
+                                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                    colors   = ClickableSurfaceDefaults.colors(containerColor = WH, contentColor = BK, focusedContainerColor = BR, focusedContentColor = WH),
+                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
+                                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
+                                    modifier = Modifier.wrapContentWidth().focusRequester(playFR)
+                                ) {
+                                    Row(Modifier.padding(horizontal = 28.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Play Now", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, softWrap = false)
+                                    }
+                                }
+                                ActionPill("Trailer", Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
+                                ActionPill(
+                                    label = if (state.availableStreams.isNotEmpty()) "Sources (${state.availableStreams.size})" else "Sources",
+                                    icon  = Icons.AutoMirrored.Filled.List
+                                ) {
                                     showSources = true
                                     if (media.isSeries) onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
                                     else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
-                                },
-                                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                colors   = ClickableSurfaceDefaults.colors(containerColor = WH, contentColor = BK, focusedContainerColor = BR, focusedContentColor = WH),
-                                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-                                glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
-                                modifier = Modifier.wrapContentWidth().focusRequester(playFR)
-                            ) {
-                                Row(Modifier.padding(horizontal = 28.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Play Now", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, softWrap = false)
                                 }
-                            }
-
-                            // Trailer button
-                            ActionPill("Trailer", Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
-
-                            // Sources button
-                            ActionPill(
-                                label = if (state.availableStreams.isNotEmpty()) "Sources (${state.availableStreams.size})" else "Sources",
-                                icon  = Icons.AutoMirrored.Filled.List
-                            ) {
-                                showSources = true
-                                if (media.isSeries) onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
-                                else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
-                            }
-
-                            // Favorite button (Watchlist)
-                            Surface(
-                                onClick  = { onEvent(DetailsEvent.ToggleFavorite) },
-                                shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                                colors   = ClickableSurfaceDefaults.colors(containerColor = GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
-                                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                                border   = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                    Icon(if (media.isFavorite) Icons.Default.Check else Icons.Default.Add, null, Modifier.size(24.dp))
+                                Surface(
+                                    onClick  = { onEvent(DetailsEvent.ToggleFavorite) },
+                                    shape    = ClickableSurfaceDefaults.shape(CircleShape),
+                                    colors   = ClickableSurfaceDefaults.colors(containerColor = GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
+                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                                    border   = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                        Icon(if (media.isFavorite) Icons.Default.Check else Icons.Default.Add, null, Modifier.size(24.dp))
+                                    }
                                 }
                             }
                         }
@@ -316,13 +344,17 @@ fun DetailsScreen(
                 }
             }
 
-            // Seasons + Episodes
-            if (media.isSeries && media.totalSeasons > 0) {
+            // ── Seasons + Episodes (TMDB בלבד) ────────────────────────────────
+            if (!state.isFuzerDirect && media.isSeries && media.totalSeasons > 0) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("Seasons & Episodes", Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(12.dp))
-                        LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.focusRestorer().padding(bottom = 14.dp)) {
+                        LazyRow(
+                            contentPadding = PaddingValues(horizontal = 64.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.focusGroup().padding(bottom = 14.dp)
+                        ) {
                             items(media.totalSeasons) { idx ->
                                 val n = idx + 1; val sel = state.selectedSeason == n; val isLast = idx == media.totalSeasons - 1
                                 Surface(
@@ -340,7 +372,11 @@ fun DetailsScreen(
                         if (state.isEpisodesLoading) {
                             Box(Modifier.fillMaxWidth().height(145.dp), Alignment.Center) { LoadingIndicator() }
                         } else if (state.episodes.isNotEmpty()) {
-                            LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.focusRestorer()) {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 64.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                modifier = Modifier.focusGroup()
+                            ) {
                                 itemsIndexed(state.episodes, key = { _, ep -> ep.id }) { idx, ep ->
                                     EpisodeCard(ep, idx == state.episodes.size - 1) {
                                         showSources = true
@@ -353,21 +389,21 @@ fun DetailsScreen(
                 }
             }
 
-            // Cast
-            if (media.cast.isNotEmpty()) {
+            // ── Cast ──────────────────────────────────────────────────────────
+            if (!state.isFuzerDirect && media.cast.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("Cast & Crew", Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
-                        LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.focusRestorer()) {
+                        LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.focusGroup()) {
                             itemsIndexed(media.cast) { idx, a -> CastMemberCard(a, idx == media.cast.size - 1) }
                         }
                     }
                 }
             }
 
-            // Recommendations (More Like This)
-            if (media.recommendations.isNotEmpty()) {
+            // ── Recommendations ───────────────────────────────────────────────
+            if (!state.isFuzerDirect && media.recommendations.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("More Like This", Modifier.padding(horizontal = 64.dp))
@@ -375,7 +411,7 @@ fun DetailsScreen(
                         LazyRow(
                             contentPadding = PaddingValues(horizontal = 64.dp),
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.focusRestorer()
+                            modifier = Modifier.focusGroup()
                         ) {
                             itemsIndexed(media.recommendations, key = { _, r -> r.id }) { idx, rec ->
                                 val tempMovie = com.luminastreams.tv.domain.model.Movie(
@@ -385,11 +421,11 @@ fun DetailsScreen(
                                 )
                                 val isLast = idx == media.recommendations.size - 1
                                 com.luminastreams.tv.presentation.home.PosterCard(
-                                    movie = tempMovie,
+                                    movie    = tempMovie,
                                     modifier = Modifier.focusProperties {
                                         if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel }
                                     },
-                                    onClick = { onRecommendationClick(rec.id) }
+                                    onClick  = { onRecommendationClick(rec.id) }
                                 )
                             }
                         }
@@ -398,94 +434,94 @@ fun DetailsScreen(
             }
         }
 
-        // ── Sources Side Panel ──
-        AnimatedVisibility(
-            visible  = showSources,
-            enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
-            exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize().zIndex(200f)
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize()
-                    .background(BK.copy(alpha = 0.8f))
-                    .focusGroup()
-                    .onPreviewKeyEvent { event ->
-                        if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK ||
-                            event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE) {
-                            if (event.type == KeyEventType.KeyUp) {
-                                showSources = false; onEvent(DetailsEvent.CancelScraping); focusManager.clearFocus()
-                            }
-                            true
-                        } else false
-                    }
-                    .clickable(remember { MutableInteractionSource() }, null) {
-                        showSources = false; onEvent(DetailsEvent.CancelScraping); focusManager.clearFocus()
-                    },
-                contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
+        // ── Sources Side Panel (TMDB בלבד) ────────────────────────────────────
+        if (!state.isFuzerDirect) {
+            AnimatedVisibility(
+                visible  = showSources,
+                enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
+                exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
+                modifier = Modifier.fillMaxSize().zIndex(200f)
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxHeight().width(580.dp)
-                        .background(Color(0xF0080808))
-                        .border(1.dp, Color(0x1AFFFFFF))
-                        .padding(horizontal = 44.dp, vertical = 52.dp)
-                        .clickable(remember { MutableInteractionSource() }, null) {}
+                Box(
+                    modifier = Modifier.fillMaxSize()
+                        .background(BK.copy(alpha = 0.8f))
+                        .focusGroup()
+                        .onPreviewKeyEvent { event ->
+                            if (event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_BACK ||
+                                event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_ESCAPE) {
+                                if (event.type == KeyEventType.KeyUp) {
+                                    showSources = false; onEvent(DetailsEvent.CancelScraping); focusManager.clearFocus()
+                                }
+                                true
+                            } else false
+                        }
+                        .clickable(remember { MutableInteractionSource() }, null) {
+                            showSources = false; onEvent(DetailsEvent.CancelScraping); focusManager.clearFocus()
+                        },
+                    contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
                 ) {
-                    // Panel header
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(32.dp).background(BR, RoundedCornerShape(2.dp)))
-                        Spacer(Modifier.width(12.dp))
-                        Column {
-                            Text("Available Sources", color = WH, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                            if (state.availableStreams.isNotEmpty()) {
-                                Text("${state.availableStreams.size} premium sources found", color = DM, fontSize = 14.sp)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxHeight().width(580.dp)
+                            .background(Color(0xF0080808))
+                            .border(1.dp, Color(0x1AFFFFFF))
+                            .padding(horizontal = 44.dp, vertical = 52.dp)
+                            .clickable(remember { MutableInteractionSource() }, null) {}
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.width(4.dp).height(32.dp).background(BR, RoundedCornerShape(2.dp)))
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text("Available Sources", color = WH, fontSize = 28.sp, fontWeight = FontWeight.Black)
+                                if (state.availableStreams.isNotEmpty()) {
+                                    Text("${state.availableStreams.size} premium sources found", color = DM, fontSize = 14.sp)
+                                }
                             }
                         }
-                    }
-                    Spacer(Modifier.height(28.dp))
+                        Spacer(Modifier.height(28.dp))
 
-                    when (val st = state.scrapingStatus) {
-                        is ScrapingStatus.Error -> {
-                            Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    Box(Modifier.size(64.dp).background(BR.copy(0.15f), CircleShape), Alignment.Center) {
-                                        Icon(Icons.Default.Warning, null, tint = BR, modifier = Modifier.size(32.dp))
+                        when (val st = state.scrapingStatus) {
+                            is ScrapingStatus.Error -> {
+                                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        Box(Modifier.size(64.dp).background(BR.copy(0.15f), CircleShape), Alignment.Center) {
+                                            Icon(Icons.Default.Warning, null, tint = BR, modifier = Modifier.size(32.dp))
+                                        }
+                                        Text(st.message, color = DM, fontSize = 17.sp, textAlign = TextAlign.Center)
                                     }
-                                    Text(st.message, color = DM, fontSize = 17.sp, textAlign = TextAlign.Center)
                                 }
                             }
-                        }
-                        is ScrapingStatus.Searching -> {
-                            Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    LoadingIndicator()
-                                    Text("Scanning Torrentio servers...", color = DM, fontSize = 17.sp)
+                            is ScrapingStatus.Searching -> {
+                                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        LoadingIndicator()
+                                        Text("Scanning Torrentio servers...", color = DM, fontSize = 17.sp)
+                                    }
                                 }
                             }
-                        }
-                        is ScrapingStatus.ResolvingDebrid -> {
-                            Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                    LoadingIndicator()
-                                    val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") || st.streamId.contains("מתחיל"))
-                                        st.streamId
-                                    else "Resolving via Real-Debrid..."
-                                    Text(msg, color = WH, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                            is ScrapingStatus.ResolvingDebrid -> {
+                                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                                        LoadingIndicator()
+                                        val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") || st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
+                                            st.streamId else "Resolving via Real-Debrid..."
+                                        Text(msg, color = WH, fontSize = 17.sp, fontWeight = FontWeight.Bold)
+                                    }
                                 }
                             }
-                        }
-                        else -> {
-                            LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(12.dp),
-                                contentPadding      = PaddingValues(bottom = 64.dp),
-                                modifier            = Modifier.focusRestorer()
-                            ) {
-                                itemsIndexed(state.availableStreams) { index, stream ->
-                                    StreamSourceCard(
-                                        source   = stream,
-                                        modifier = if (index == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
-                                        onClick  = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
-                                    )
+                            else -> {
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    contentPadding      = PaddingValues(bottom = 64.dp),
+                                    modifier            = Modifier.focusGroup()
+                                ) {
+                                    itemsIndexed(state.availableStreams) { index, stream ->
+                                        StreamSourceCard(
+                                            source   = stream,
+                                            modifier = if (index == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
+                                            onClick  = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -496,7 +532,7 @@ fun DetailsScreen(
     }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+// ── Helpers ───────────────────────────────────────────────────────────────────
 @Composable private fun MDot() = Text("•", color = GB, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
 @Composable private fun QPill(label: String, color: Color) = Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(0.88f)).padding(horizontal = 6.dp, vertical = 3.dp)) { Text(label, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }
 @Composable private fun RatingChip(icon: ImageVector, tintC: Color, value: String, label: String) = Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = tintC, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text(value, color = WH, fontWeight = FontWeight.Black, fontSize = 14.sp); Spacer(Modifier.width(3.dp)); Text(label, color = MT, fontSize = 11.sp) }
@@ -504,19 +540,11 @@ fun DetailsScreen(
 @Composable
 private fun ActionPill(label: String, icon: ImageVector, onClick: () -> Unit) {
     Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color(0x1AFFFFFF),
-            contentColor          = WH,
-            focusedContainerColor = WH,
-            focusedContentColor   = BK
-        ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-        border   = ClickableSurfaceDefaults.border(
-            border        = Border(BorderStroke(1.dp, Color(0x33FFFFFF))),
-            focusedBorder = Border.None
-        ),
+        onClick = onClick,
+        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors  = ClickableSurfaceDefaults.colors(containerColor = Color(0x1AFFFFFF), contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
+        scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
+        border  = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, Color(0x33FFFFFF))), focusedBorder = Border.None),
         modifier = Modifier.wrapContentWidth()
     ) {
         Row(modifier = Modifier.padding(horizontal = 22.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -607,23 +635,17 @@ private fun StreamSourceCard(source: AdvancedStreamSource, modifier: Modifier = 
         if (nameUpper.contains("DV") || nameUpper.contains("DOLBY VISION")) add("DV" to Color(0xFF311B92))
         if (nameUpper.contains("ATMOS")) add("ATMOS" to Color(0xFF004D40))
     }
-
     val provider = when {
         nameUpper.contains("YTS") || nameUpper.contains("YIFY") -> "YTS"
         nameUpper.contains("RARBG") -> "RARBG"
-        nameUpper.contains("EZTV") -> "EZTV"
+        nameUpper.contains("EZTV")  -> "EZTV"
         nameUpper.contains("1337X") -> "1337x"
         else -> "Torrentio"
     }
 
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color(0x12FFFFFF),
-            focusedContainerColor = Color(0xFF141414),
-            contentColor          = WH,
-            focusedContentColor   = WH
-        ),
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x12FFFFFF), focusedContainerColor = Color(0xFF141414), contentColor = WH, focusedContentColor = WH),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.3f), 20.dp)),
@@ -632,7 +654,6 @@ private fun StreamSourceCard(source: AdvancedStreamSource, modifier: Modifier = 
             .shadow(if (isFocused) 24.dp else 0.dp, RoundedCornerShape(14.dp))
     ) {
         Row(modifier = Modifier.padding(16.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            // Quality badge
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(88.dp)) {
                 Box(Modifier.clip(RoundedCornerShape(8.dp)).background(qualityColor).padding(horizontal = 8.dp, vertical = 5.dp)) {
                     Text(source.quality.displayName, color = WH, fontWeight = FontWeight.Black, fontSize = 13.sp, maxLines = 1, softWrap = false)
@@ -669,7 +690,6 @@ private fun StreamSourceCard(source: AdvancedStreamSource, modifier: Modifier = 
                 Spacer(Modifier.height(7.dp))
                 Text(source.filename.replace(".", " "), color = if (isFocused) WH.copy(0.7f) else WH.copy(0.4f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            // Play arrow indicator
             Spacer(Modifier.width(8.dp))
             Icon(Icons.Default.PlayArrow, null, tint = if (isFocused) BR else WH.copy(0.3f), modifier = Modifier.size(20.dp))
         }
