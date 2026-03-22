@@ -5,7 +5,8 @@ import android.content.Context
 import android.opengl.GLES20
 
 // ═══════════════════════════════════════════════════════════════════
-// DeviceProfile — מזהה את המכשיר בזמן ריצה ומכוונן ביצועים
+// DeviceProfile — detects hardware tier at runtime, drives anim config.
+// forceLowTier: override for Lite UI Mode set via SettingsViewModel.
 // ═══════════════════════════════════════════════════════════════════
 
 object DeviceProfile {
@@ -33,6 +34,15 @@ object DeviceProfile {
 
     var totalRamMb: Int = 0
         private set
+
+    // ✅ NEW: set to true by SettingsViewModel when Lite UI mode is toggled ON
+    // Immediately forces LOW-tier animation config for the current session.
+    // Persisted across cold-starts via SharedPreferences read in LuminaApp.
+    var forceLowTier: Boolean = false
+        set(value) {
+            field = value
+            animConfig = buildConfig(if (value) Tier.LOW else tier)
+        }
 
     fun init(context: Context) {
         gpuRenderer  = readGpuRenderer()
@@ -68,7 +78,7 @@ object DeviceProfile {
         }
     }
 
-    private fun buildConfig(tier: Tier): AnimConfig = when (tier) {
+    private fun buildConfig(t: Tier): AnimConfig = when (t) {
         Tier.HIGH -> AnimConfig(
             rowFadeDuration   = 200,
             backdropDuration  = 500,
@@ -99,6 +109,7 @@ object DeviceProfile {
     }
 
     fun debugInfo(): String =
-        "Tier=$tier | GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
-        "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
+        "Tier=${if (forceLowTier) "LOW (forced)" else tier.name} | " +
+                "GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
+                "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }

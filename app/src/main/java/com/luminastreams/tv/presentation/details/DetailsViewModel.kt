@@ -438,7 +438,29 @@ class DetailsViewModel(
                         quality      = StreamQuality.fromString(upper),
                         videoCodec   = VideoCodec.fromString(upper)
                     )
-                }.sortedByDescending { it.sortScore }
+                }
+                    .sortedByDescending { it.sortScore }
+                    .let { list ->
+                        // ✅ REAL: force_hdr — promote HDR/DV/HDR10+ streams to the top
+                        if (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
+                                .getBoolean("force_hdr", false)) {
+                            val hdr = list.filter { src ->
+                                val u = "${src.filename} ${src.releaseGroup}".uppercase()
+                                u.contains("HDR") || u.contains("DV") || u.contains(".DV.") ||
+                                        u.contains("DOLBY VISION") || u.contains("HDR10") || u.contains("HLG")
+                            }
+                            hdr + (list - hdr.toSet())
+                        } else list
+                    }
+                    .let { list ->
+                        // ✅ REAL: max_quality — filter out streams above the user's chosen ceiling
+                        when (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
+                            .getString("max_quality", "4K") ?: "4K") {
+                            "1080p" -> list.filter { it.quality != StreamQuality.UHD_4K }
+                            "720p"  -> list.filter { it.quality.priority <= 6 }
+                            else    -> list   // "4K" — no filtering
+                        }
+                    }
 
                 streamCache[cacheKey] = mapped
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }

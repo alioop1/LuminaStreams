@@ -55,7 +55,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        // ✅ תיקון: הוסר בדיקת SDK_INT (minSdk=26 = O כבר, הבדיקה מיותרת)
         window.colorMode = ActivityInfo.COLOR_MODE_HDR
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.attributes = window.attributes.also {
@@ -192,11 +191,11 @@ fun AppNavHostContainer(
             )
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 SettingsScreen(
-                    state            = vm.state.collectAsState().value,
-                    viewModel        = vm,
-                    isRtl            = false,
-                    onNavigateBack   = { navController.popBackStack() },
-                    onToggleLanguage = {}
+                    state          = vm.state.collectAsState().value,
+                    viewModel      = vm,
+                    isRtl          = false,
+                    onNavigateBack = { navController.popBackStack() }
+                    // ✅ Fixed: onToggleLanguage removed — no longer a parameter
                 )
             }
         }

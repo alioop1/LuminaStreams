@@ -18,35 +18,39 @@ enum class SettingsCategory(val titleHe: String, val titleEn: String) {
 data class SettingsState(
     val selectedCategory: SettingsCategory = SettingsCategory.ACCOUNT,
 
-    // ── Real-Debrid Auth ──
+    // ── Real-Debrid Auth ──────────────────────────────────────────────────────
     val rdToken: String = "",
     val authStatus: SettingsAuthStatus = SettingsAuthStatus.Idle,
 
-    // ── General ──
-    val isHebrew: Boolean = true,
-    val maxResolution: String = "4K",
-    val themeColor: String = "Netflix Red",
+    // ── Speed Test ────────────────────────────────────────────────────────────
+    val rdSpeedTesting: Boolean = false,
+    val rdSpeedTestResult: String? = null,
 
-    // ── Playback & Home Theater (New Features) ──
-    val audioPassthrough: Boolean = false, // העברת סאונד ישירות לרסיבר
-    val forceHdr: Boolean = false,         // עדיפות ל-HDR/Dolby Vision
-    val autoFrameRate: Boolean = false,    // התאמת תדר רענון (AFR)
+    // ── Playback & Home Theater ───────────────────────────────────────────────
+    val audioPassthrough: Boolean = false,       // Bitstream offload to AV receiver
+    val forceHdr: Boolean = false,               // Boost HDR/DV sources to top of list
+    val autoFrameRate: Boolean = false,          // Match display Hz to content frame rate
     val autoPlayNext: Boolean = true,
     val hwAcceleration: Boolean = true,
+    val maxQuality: String = "4K",               // "4K" | "1080p" | "720p" — stream filter
+    val preferredAudioLang: String = "original", // "original" | "he" | "en"
 
-    // ── Personalization & Subtitles (New Features) ──
-    val defaultSubtitles: String = "Hebrew",
-    val yellowSubtitles: Boolean = false,  // כתוביות צהובות במקום לבנות
+    // ── Personalization & Subtitles ───────────────────────────────────────────
+    val defaultSubtitles: String = "Hebrew",     // "Hebrew" | "English" | "None"
+    val yellowSubtitles: Boolean = false,
+    val subtitleFontScale: String = "medium",    // "small" | "medium" | "large" | "xlarge"
     val safeSearch: Boolean = false,
     val saveSearchHistory: Boolean = true,
 
-    // ── System, OLED & Performance (New Features) ──
-    val dimUi: Boolean = true,             // הגנת צריבת מסך OLED
-    val liteUiMode: Boolean = false,       // ביטול אנימציות למכשירים חלשים
-    val preAllocateBuffer: Boolean = false,// שריון זיכרון למניעת קריסות ב-4K
+    // ── System, OLED & Performance ────────────────────────────────────────────
+    val dimUi: Boolean = true,                   // Dim screen after 2-min idle (OLED guard)
+    val liteUiMode: Boolean = false,             // Force LOW DeviceProfile tier
+    val preAllocateBuffer: Boolean = false,      // Reserve 64 MB for ExoPlayer
 
-    // ── Active "Action" statuses ──
-    val cacheSizeStr: String = "142 MB",
+    // ── Status & Info ─────────────────────────────────────────────────────────
+    val cacheSizeStr: String = "Calculating...",
     val searchHistoryStatus: String = "Clear",
-    val watchHistoryStatus: String = "Clear"
+    val watchHistoryStatus: String = "Clear",
+    val appVersion: String = "1.0.0-Lumina",
+    val deviceTier: String = ""                 // "HIGH • Adreno 650 • 4 GB RAM" etc.
 )
