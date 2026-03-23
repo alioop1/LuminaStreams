@@ -61,9 +61,11 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.text.CueGroup
+import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
+import android.graphics.Color as AndroidColor
 
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
@@ -120,19 +122,6 @@ fun PlayerScreen(
     var activityTick      by remember { mutableIntStateOf(0) }
     var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
 
-    // ════════════════════════════════════════════════════════════════
-    // BUG FIX 1 — Subtitles arrive before player is prepared
-    //
-    // Root cause:
-    //   LaunchedEffect(state.availableSubtitles) calls exo.applySubtitle()
-    //   which calls player.currentMediaItem → returns null because
-    //   exo.prepareStream() hasn't been called yet (surfaceReady = false).
-    //
-    // Fix:
-    //   Store the desired subtitle in `pendingSubtitle`.
-    //   A second LaunchedEffect(prepared, pendingSubtitle) polls until
-    //   player.currentMediaItem != null and then applies it safely.
-    // ════════════════════════════════════════════════════════════════
     var pendingSubtitle by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val backBtnFR   = remember { FocusRequester() }
@@ -153,7 +142,6 @@ fun PlayerScreen(
         }
     }
 
-    // Step 1: park the subtitle, don't apply yet
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty()) return@LaunchedEffect
         val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -166,16 +154,13 @@ fun PlayerScreen(
         } ?: return@LaunchedEffect
 
         selectedWebSubUrl = sub.url
-        pendingSubtitle   = sub.url to sub.lang   // park for step 2
+        pendingSubtitle   = sub.url to sub.lang
     }
 
-    // Step 2: apply once player actually has a media item
     LaunchedEffect(prepared, pendingSubtitle) {
         val (subUrl, subLang) = pendingSubtitle ?: return@LaunchedEffect
         if (!prepared) return@LaunchedEffect
 
-        // ExoPlayer sets currentMediaItem after prepare() but may still be
-        // in IDLE/BUFFERING. Poll with a generous timeout (6 s max).
         var attempts = 0
         while (exo.player.currentMediaItem == null && attempts < 20) {
             delay(300)
@@ -247,9 +232,6 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video surface + SubtitleView ───────────────────────────────────────
-        // ROOT CAUSE FIX: A bare SurfaceView has no SubtitleView attached,
-        // so ExoPlayer decodes cues correctly but has nowhere to paint them.
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -271,16 +253,31 @@ fun PlayerScreen(
                             }
                         })
                     }
+
+                    // 🔥 החשיבה מחוץ לקופסה עבדה: תיקון השקיפות והחלת הגדרות הלקוח
                     val subtitleView = SubtitleView(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
                         )
-                        setUserDefaultStyle()
-                        setUserDefaultTextSize()
+
+                        val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
+                        val style = CaptionStyleCompat(
+                            textColor,
+                            AndroidColor.TRANSPARENT, // רקע הטקסט שקוף
+                            AndroidColor.TRANSPARENT, // חלון הכתובית שקוף
+                            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, // הצללה חזקה שתבלוט על הסרט
+                            AndroidColor.BLACK,
+                            null
+                        )
+
+                        setStyle(style)
+                        setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
+                        setBottomPaddingFraction(0.08f) // הרמה קלה כדי שלא יחתך בתחתית המסך
                     }
+
                     addView(surfaceView)
-                    addView(subtitleView) // transparent overlay on top of video
-                    // Wire ExoPlayer cue events to SubtitleView
+                    addView(subtitleView)
+
                     exo.player.addListener(object : Player.Listener {
                         override fun onCues(cueGroup: CueGroup) {
                             subtitleView.setCues(cueGroup.cues)
@@ -294,7 +291,6 @@ fun PlayerScreen(
             }
         )
 
-        // ── Error overlay ──────────────────────────────────────────────────────
         if (error != null) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(0.88f)), Alignment.Center) {
                 Column(
@@ -325,7 +321,6 @@ fun PlayerScreen(
             return@Box
         }
 
-        // ── Controls overlay ───────────────────────────────────────────────────
         AnimatedVisibility(visible = showControls, enter = fadeIn(tween(200)), exit = fadeOut(tween(350)), modifier = Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f))))) {
                 AnimatedVisibility(visible = !isPlaying, enter = scaleIn(tween(120)) + fadeIn(tween(120)), exit = scaleOut(tween(100)) + fadeOut(tween(100)), modifier = Modifier.align(Alignment.Center)) {
@@ -392,24 +387,6 @@ fun PlayerScreen(
             }
         }
 
-        // ════════════════════════════════════════════════════════════
-        // BUG FIX 2 — Focus escapes popup at the bottom of the list
-        //
-        // Root cause:
-        //   focusProperties { down = FocusRequester.Cancel } was placed on
-        //   the LazyColumn CONTAINER. FocusRequester.Cancel on a container
-        //   only blocks focus from ENTERING, not from items navigating
-        //   WITHIN it. When the last item presses DOWN, Compose searches
-        //   for the next focusable outside the panel and finds it.
-        //
-        // Fix:
-        //   1. Removed focusProperties from the LazyColumn container.
-        //   2. Used itemsIndexed so we know which item is last.
-        //   3. Applied focusProperties { down = FocusRequester.Cancel }
-        //      directly on the LAST item — DOWN is cancelled right there.
-        //   4. Panel-level onPreviewKeyEvent closes on Back/Left/Right
-        //      but does NOT swallow DOWN (that's handled per-item).
-        // ════════════════════════════════════════════════════════════
         AnimatedVisibility(
             visible  = activeMenu != ActiveMenu.NONE,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
@@ -433,9 +410,6 @@ fun PlayerScreen(
                         .padding(horizontal = 36.dp, vertical = 40.dp)
                         .clickable(remember { MutableInteractionSource() }, null) {}
                         .onPreviewKeyEvent { ev ->
-                            // FIX 2: Panel closes on Back / outward-arrow key.
-                            // DOWN is intentionally NOT consumed here — the last
-                            // list item handles it via focusProperties.
                             if (ev.type == KeyEventType.KeyDown) {
                                 when {
                                     ev.key == Key.Back || ev.key == Key.Escape -> { activeMenu = ActiveMenu.NONE; true }
@@ -462,7 +436,6 @@ fun PlayerScreen(
                                     Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 15.sp)
                                 }
                             } else {
-                                // FIX 2: itemsIndexed → last item can block DOWN
                                 LazyColumn(
                                     verticalArrangement = Arrangement.spacedBy(12.dp),
                                     modifier = Modifier.focusGroup()
@@ -481,7 +454,7 @@ fun PlayerScreen(
                                             onClick = {
                                                 exo.applySubtitle(sub.url, sub.lang)
                                                 selectedWebSubUrl = sub.url
-                                                pendingSubtitle   = null  // user chose manually, cancel pending
+                                                pendingSubtitle   = null
                                                 activeMenu        = ActiveMenu.NONE
                                             }
                                         )
@@ -497,7 +470,6 @@ fun PlayerScreen(
     }
 }
 
-// ── Side panel header ─────────────────────────────────────────────────────────
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
     Column {
@@ -515,7 +487,6 @@ private fun SidePanelHeader(title: String, subtitle: String) {
     }
 }
 
-// ── Track list (Audio / Embedded subs) ───────────────────────────────────────
 @Composable
 private fun TrackListUi(
     exo:       ExoPlayerWrapper,
@@ -549,7 +520,6 @@ private fun TrackListUi(
             Text("No tracks available", color = DIM, fontSize = 15.sp)
         }
     } else {
-        // FIX 2: itemsIndexed so last item gets focusProperties { down = Cancel }
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.focusGroup()
@@ -586,7 +556,6 @@ private fun TrackListUi(
     }
 }
 
-// ── Track item card ───────────────────────────────────────────────────────────
 @Composable
 private fun TrackItemCard(
     title:     String,
@@ -642,7 +611,6 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
-// ── Progress bar ──────────────────────────────────────────────────────────────
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
@@ -715,7 +683,6 @@ fun PlayerProgressControls(
     }
 }
 
-// ── Control pill ──────────────────────────────────────────────────────────────
 @Composable
 fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
