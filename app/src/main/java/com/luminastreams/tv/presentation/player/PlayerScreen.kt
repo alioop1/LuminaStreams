@@ -270,6 +270,8 @@ fun PlayerScreen(
                         )
 
                         setStyle(style)
+                        setApplyEmbeddedStyles(false)       // ← מונע override של הסגנון ע"י הכתוביות עצמן
+                        setApplyEmbeddedFontSizes(false)    // ← מונע שגודל הגופן ישתנה (חשוב לעברית)
                         setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                         setBottomPaddingFraction(0.08f)
                     }

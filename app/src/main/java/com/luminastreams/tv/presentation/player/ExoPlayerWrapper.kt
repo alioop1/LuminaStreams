@@ -100,6 +100,7 @@ class ExoPlayerWrapper(context: Context) {
 
     private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
         .setDataSourceFactory(dataSourceFactory)
+        .setSubtitleParserFactory(androidx.media3.extractor.text.DefaultSubtitleParserFactory())
 
     val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
         .setMediaSourceFactory(mediaSourceFactory)
@@ -186,49 +187,49 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
+        // אם זה כבר file:// URI (מה-SubtitleScraper), אל תוריד שוב
+        if (subtitleUrl.startsWith("file://")) {
+            applyLocalSubtitle(subtitleUrl, lang, isVtt)
+            return
+        }
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
-                connection.connectTimeout = 5000
-                connection.readTimeout = 5000
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                connection.connectTimeout = 8000
+                connection.readTimeout = 8000
                 if (connection.responseCode in 200..299) {
                     val subText = connection.inputStream.bufferedReader(Charsets.UTF_8).readText()
-
                     val subFile = File(appContext.cacheDir, "external_sub.srt")
                     subFile.writeText(subText, Charsets.UTF_8)
-                    subFile.deleteOnExit()
-
                     withContext(Dispatchers.Main) {
-                        val current = player.currentMediaItem ?: return@withContext
-                        val mime = if (isVtt || subtitleUrl.lowercase().contains(".vtt"))
-                            MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-
-                        val localUri = Uri.fromFile(subFile) // ← השתמש ב-Uri.fromFile ולא toURI()
-
-                        val conf = MediaItem.SubtitleConfiguration.Builder(localUri)
-                            .setMimeType(mime)
-                            .setLanguage("iw") // ← "iw" זה הקוד הישן לעברית שExoPlayer מכיר טוב יותר
-                            .setId("external_sub_network")
-                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT) // ← הסר FORCED
-                            .build()
-
-                        val pos = player.currentPosition
-                        player.replaceMediaItem(
-                            player.currentMediaItemIndex,
-                            current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
-                        )
-                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                            .setPreferredTextLanguages("iw", "heb", "he")
-                            .build()
-                        player.seekTo(pos)
+                        applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, isVtt)
                     }
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
+    }
+
+    private fun applyLocalSubtitle(localUriStr: String, lang: String, isVtt: Boolean) {
+        val current = player.currentMediaItem ?: return
+        val mime = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val conf = MediaItem.SubtitleConfiguration.Builder(Uri.parse(localUriStr))
+            .setMimeType(mime)
+            .setLanguage("iw")
+            .setId("external_sub")
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT) // ← בלי FORCED!
+            .build()
+        val pos = player.currentPosition
+        player.replaceMediaItem(
+            player.currentMediaItemIndex,
+            current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
+        )
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setPreferredTextLanguages("iw", "heb", "he")
+            .build()
+        player.seekTo(pos)
     }
 
     fun play()  { player.play() }
