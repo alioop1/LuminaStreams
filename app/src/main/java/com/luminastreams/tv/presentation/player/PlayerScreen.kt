@@ -1,24 +1,31 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@file:OptIn(
+    androidx.compose.ui.ExperimentalComposeUiApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 
 package com.luminastreams.tv.presentation.player
 
+import android.content.Context
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
-import androidx.appcompat.view.ContextThemeWrapper
 import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,8 +36,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusTarget
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -46,9 +55,13 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
-import androidx.media3.ui.TrackSelectionDialogBuilder
+import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.text.CueGroup
+import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 
@@ -83,6 +96,8 @@ private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
 
+enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
+
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
@@ -90,23 +105,40 @@ fun PlayerScreen(
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {
-    val context   = LocalContext.current
-    val isRtl     = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val state     by viewModel.state.collectAsState()
-    val exo       = remember { ExoPlayerWrapper(context) }
-    val isPlaying by exo.isPlaying.collectAsState()
-    val error     by exo.playerError.collectAsState()
+    val context       = LocalContext.current
+    val isRtl         = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val state         by viewModel.state.collectAsState()
+    val exo           = remember { ExoPlayerWrapper(context) }
+    val isPlaying     by exo.isPlaying.collectAsState()
+    val error         by exo.playerError.collectAsState()
+    val currentTracks by exo.currentTracks.collectAsState()
 
-    var surfaceReady by remember { mutableStateOf(false) }
-    var prepared     by remember { mutableStateOf(false) }
-    var showControls by remember { mutableStateOf(true) }
-    var showSubMenu  by remember { mutableStateOf(false) }
-    var activityTick by remember { mutableIntStateOf(0) }
+    var surfaceReady      by remember { mutableStateOf(false) }
+    var prepared          by remember { mutableStateOf(false) }
+    var showControls      by remember { mutableStateOf(true) }
+    var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
+    var activityTick      by remember { mutableIntStateOf(0) }
+    var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
+
+    // ════════════════════════════════════════════════════════════════
+    // BUG FIX 1 — Subtitles arrive before player is prepared
+    //
+    // Root cause:
+    //   LaunchedEffect(state.availableSubtitles) calls exo.applySubtitle()
+    //   which calls player.currentMediaItem → returns null because
+    //   exo.prepareStream() hasn't been called yet (surfaceReady = false).
+    //
+    // Fix:
+    //   Store the desired subtitle in `pendingSubtitle`.
+    //   A second LaunchedEffect(prepared, pendingSubtitle) polls until
+    //   player.currentMediaItem != null and then applies it safely.
+    // ════════════════════════════════════════════════════════════════
+    var pendingSubtitle by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val backBtnFR   = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val firstPillFR = remember { FocusRequester() }
-    val firstSubFR  = remember { FocusRequester() }
+    val sideMenuFR  = remember { FocusRequester() }
 
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
@@ -121,22 +153,55 @@ fun PlayerScreen(
         }
     }
 
+    // Step 1: park the subtitle, don't apply yet
     LaunchedEffect(state.availableSubtitles) {
-        state.availableSubtitles.firstOrNull { it.lang.contains("heb", true) }
-            ?.let { exo.applySubtitle(it.url, it.lang) }
+        if (state.availableSubtitles.isEmpty()) return@LaunchedEffect
+        val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+        val defaultSubLang = prefs.getString("def_subs", "Hebrew") ?: "Hebrew"
+        if (defaultSubLang == "None") return@LaunchedEffect
+
+        val langCode = if (defaultSubLang == "Hebrew") "heb" else "eng"
+        val sub = state.availableSubtitles.firstOrNull {
+            it.lang.contains(langCode, ignoreCase = true)
+        } ?: return@LaunchedEffect
+
+        selectedWebSubUrl = sub.url
+        pendingSubtitle   = sub.url to sub.lang   // park for step 2
+    }
+
+    // Step 2: apply once player actually has a media item
+    LaunchedEffect(prepared, pendingSubtitle) {
+        val (subUrl, subLang) = pendingSubtitle ?: return@LaunchedEffect
+        if (!prepared) return@LaunchedEffect
+
+        // ExoPlayer sets currentMediaItem after prepare() but may still be
+        // in IDLE/BUFFERING. Poll with a generous timeout (6 s max).
+        var attempts = 0
+        while (exo.player.currentMediaItem == null && attempts < 20) {
+            delay(300)
+            attempts++
+        }
+        if (exo.player.currentMediaItem != null) {
+            exo.applySubtitle(subUrl, subLang)
+        }
     }
 
     LaunchedEffect(showControls) {
-        if (showControls) { delay(120); runCatching { seekBarFR.requestFocus() } }
+        if (showControls && activeMenu == ActiveMenu.NONE) {
+            delay(120); runCatching { seekBarFR.requestFocus() }
+        }
     }
 
-    LaunchedEffect(showSubMenu) {
-        if (showSubMenu) { delay(200); runCatching { firstSubFR.requestFocus() } }
-        else             { delay(160); runCatching { seekBarFR.requestFocus() } }
+    LaunchedEffect(activeMenu) {
+        if (activeMenu != ActiveMenu.NONE) {
+            delay(200); runCatching { sideMenuFR.requestFocus() }
+        } else {
+            delay(160); runCatching { seekBarFR.requestFocus() }
+        }
     }
 
     LaunchedEffect(showControls, isPlaying, activityTick) {
-        if (showControls && isPlaying && !showSubMenu) {
+        if (showControls && isPlaying && activeMenu == ActiveMenu.NONE) {
             delay(5000); showControls = false
         }
     }
@@ -145,9 +210,9 @@ fun PlayerScreen(
 
     BackHandler {
         when {
-            showSubMenu  -> showSubMenu = false
+            activeMenu != ActiveMenu.NONE -> activeMenu = ActiveMenu.NONE
             showControls -> showControls = false
-            else         -> { exo.pause(); onNavigateBack() }
+            else -> { exo.pause(); onNavigateBack() }
         }
     }
 
@@ -159,68 +224,79 @@ fun PlayerScreen(
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
-                    KeyEvent.KEYCODE_BACK,
-                    KeyEvent.KEYCODE_ESCAPE -> false
-
-                    KeyEvent.KEYCODE_DPAD_CENTER,
-                    KeyEvent.KEYCODE_ENTER -> {
-                        if (!showSubMenu) {
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (activeMenu == ActiveMenu.NONE) {
                             activityTick++
-                            if (showControls) {
-                                if (isPlaying) exo.pause() else exo.play()
-                            } else showControls = true
-                        }
-                        true
+                            if (showControls) { if (isPlaying) exo.pause() else exo.play() }
+                            else showControls = true
+                            true
+                        } else false
                     }
-                    KeyEvent.KEYCODE_DPAD_UP -> {
-                        if (!showSubMenu) { activityTick++; showControls = true }; true
-                    }
-                    KeyEvent.KEYCODE_DPAD_DOWN -> {
-                        if (!showSubMenu) { activityTick++; showControls = true }; true
+                    KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (activeMenu == ActiveMenu.NONE) { activityTick++; showControls = true; true } else false
                     }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                         if (isPlaying) exo.pause() else exo.play()
                         showControls = true; activityTick++; true
                     }
-                    KeyEvent.KEYCODE_DPAD_RIGHT,
-                    KeyEvent.KEYCODE_DPAD_LEFT -> {
-                        if (!showControls) { showControls = true; activityTick++ }; false
+                    KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        if (!showControls && activeMenu == ActiveMenu.NONE) { showControls = true; activityTick++; true } else false
                     }
                     else -> false
                 }
             }
     ) {
-        // ── Video surface ──────────────────────────────────────────────────────
+        // ── Video surface + SubtitleView ───────────────────────────────────────
+        // ROOT CAUSE FIX: A bare SurfaceView has no SubtitleView attached,
+        // so ExoPlayer decodes cues correctly but has nowhere to paint them.
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
-                SurfaceView(ctx).apply {
+                FrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    keepScreenOn = true
-                    addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-                        override fun onViewAttachedToWindow(v: android.view.View) {
-                            exo.player.setVideoSurfaceView(this@apply)
-                            surfaceReady = true
-                        }
-                        override fun onViewDetachedFromWindow(v: android.view.View) {
-                            surfaceReady = false
-                            exo.player.clearVideoSurface()
+                    val surfaceView = SurfaceView(ctx).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        keepScreenOn = true
+                        addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                            override fun onViewAttachedToWindow(v: android.view.View) {
+                                exo.player.setVideoSurfaceView(this@apply); surfaceReady = true
+                            }
+                            override fun onViewDetachedFromWindow(v: android.view.View) {
+                                surfaceReady = false; exo.player.clearVideoSurface()
+                            }
+                        })
+                    }
+                    val subtitleView = SubtitleView(ctx).apply {
+                        layoutParams = FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        setUserDefaultStyle()
+                        setUserDefaultTextSize()
+                    }
+                    addView(surfaceView)
+                    addView(subtitleView) // transparent overlay on top of video
+                    // Wire ExoPlayer cue events to SubtitleView
+                    exo.player.addListener(object : Player.Listener {
+                        override fun onCues(cueGroup: CueGroup) {
+                            subtitleView.setCues(cueGroup.cues)
                         }
                     })
                 }
             },
-            update = { sv -> exo.player.setVideoSurfaceView(sv) }
+            update = { frameLayout ->
+                val sv = frameLayout.getChildAt(0) as? SurfaceView
+                sv?.let { exo.player.setVideoSurfaceView(it) }
+            }
         )
 
         // ── Error overlay ──────────────────────────────────────────────────────
         if (error != null) {
-            Box(
-                modifier         = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.88f)), Alignment.Center) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(20.dp),
@@ -230,23 +306,16 @@ fun PlayerScreen(
                         Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
                     }
                     Text("Playback Error", color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                    Text(error!!, color = DIM, fontSize = 16.sp,
-                        textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+                    Text(error!!, color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
                     Spacer(Modifier.height(8.dp))
                     Surface(
-                        onClick = { exo.clearError(); onNavigateBack() },
-                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors  = ClickableSurfaceDefaults.colors(
-                            containerColor        = RED,
-                            focusedContainerColor = Color(0xFFFF2A2A),
-                            contentColor          = WHITE, focusedContentColor = WHITE
-                        ),
+                        onClick  = { exo.clearError(); onNavigateBack() },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                         modifier = Modifier.height(52.dp)
                     ) {
-                        Row(Modifier.padding(horizontal = 32.dp),
-                            verticalAlignment     = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(Modifier.padding(horizontal = 32.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
                             Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
@@ -257,105 +326,50 @@ fun PlayerScreen(
         }
 
         // ── Controls overlay ───────────────────────────────────────────────────
-        AnimatedVisibility(
-            visible  = showControls,
-            enter    = fadeIn(tween(200)),
-            exit     = fadeOut(tween(350)),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            Box(Modifier.fillMaxSize().background(
-                Brush.verticalGradient(listOf(
-                    CTRL_BG.copy(0.7f), Color.Transparent,
-                    Color.Transparent,  CTRL_BG.copy(0.85f)
-                ))
-            )) {
-                AnimatedVisibility(
-                    visible  = !isPlaying,
-                    enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
-                    exit     = scaleOut(tween(100)) + fadeOut(tween(100)),
-                    modifier = Modifier.align(Alignment.Center)
-                ) {
-                    Box(
-                        Modifier.size(80.dp)
-                            .background(Color.Black.copy(0.6f), CircleShape)
-                            .border(2.dp, WHITE.copy(0.7f), CircleShape),
-                        Alignment.Center
-                    ) {
+        AnimatedVisibility(visible = showControls, enter = fadeIn(tween(200)), exit = fadeOut(tween(350)), modifier = Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f))))) {
+                AnimatedVisibility(visible = !isPlaying, enter = scaleIn(tween(120)) + fadeIn(tween(120)), exit = scaleOut(tween(100)) + fadeOut(tween(100)), modifier = Modifier.align(Alignment.Center)) {
+                    Box(Modifier.size(80.dp).background(Color.Black.copy(0.6f), CircleShape).border(2.dp, WHITE.copy(0.7f), CircleShape), Alignment.Center) {
                         Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
                     }
                 }
 
                 Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart).fillMaxWidth()
-                        .padding(horizontal = 64.dp, vertical = 32.dp)
-                        .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
-                                runCatching { seekBarFR.requestFocus() }; true
-                            } else false
-                        },
+                    modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 64.dp, vertical = 32.dp).onPreviewKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { runCatching { seekBarFR.requestFocus() }; true } else false
+                    },
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
                         onClick  = { exo.pause(); onNavigateBack() },
                         shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                        colors   = ClickableSurfaceDefaults.colors(
-                            containerColor        = CTRL_BG,
-                            focusedContainerColor = WHITE,
-                            contentColor          = WHITE,
-                            focusedContentColor   = Color.Black
-                        ),
+                        colors   = ClickableSurfaceDefaults.colors(containerColor = CTRL_BG, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
                         modifier = Modifier.size(48.dp).focusRequester(backBtnFR)
                     ) {
-                        Box(Modifier.fillMaxSize(), Alignment.Center) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp))
-                        }
+                        Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp)) }
                     }
                     Spacer(Modifier.width(16.dp))
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
 
-                Column(
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter).fillMaxWidth()
-                        .padding(horizontal = 64.dp, vertical = 40.dp)
-                ) {
-                    PlayerProgressControls(
-                        exoWrapper    = exo,
-                        isPlaying     = isPlaying,
-                        isRtl         = isRtl,
-                        seekFR        = seekBarFR,
-                        onUpPressed   = { runCatching { backBtnFR.requestFocus() } },
-                        onDownPressed = { runCatching { firstPillFR.requestFocus() } }
-                    )
+                Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)) {
+                    PlayerProgressControls(exo, isPlaying, isRtl, seekBarFR, { runCatching { backBtnFR.requestFocus() } }, { runCatching { firstPillFR.requestFocus() } })
                     Spacer(Modifier.height(20.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
-                                runCatching { seekBarFR.requestFocus() }; true
-                            } else false
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) { runCatching { seekBarFR.requestFocus() }; true } else false
                         },
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             ControlPill(CustomAudioIcon, "Audio", Modifier.focusRequester(firstPillFR)) {
-                                try {
-                                    TrackSelectionDialogBuilder(
-                                        ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat_Dialog),
-                                        "Select Audio Track", exo.player, C.TRACK_TYPE_AUDIO
-                                    ).build().show()
-                                } catch (_: Exception) {}
+                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
                                 activityTick++
                             }
                             ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
-                                try {
-                                    TrackSelectionDialogBuilder(
-                                        ContextThemeWrapper(context, androidx.appcompat.R.style.Theme_AppCompat_Dialog),
-                                        "Select Subtitles", exo.player, C.TRACK_TYPE_TEXT
-                                    ).build().show()
-                                } catch (_: Exception) {}
+                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
                                 activityTick++
                             }
                             ControlPill(
@@ -366,91 +380,254 @@ fun PlayerScreen(
                                     else -> "Web Subs (${state.availableSubtitles.size})"
                                 }
                             ) {
-                                if (!state.isSubtitlesLoading) showSubMenu = true
+                                if (!state.isSubtitlesLoading) {
+                                    activeMenu = if (activeMenu == ActiveMenu.WEB_SUBS) ActiveMenu.NONE else ActiveMenu.WEB_SUBS
+                                }
                                 activityTick++
                             }
                         }
-                        ControlPill(Icons.Default.Close, "Exit") {
-                            exo.pause(); onNavigateBack()
-                        }
+                        ControlPill(Icons.Default.Close, "Exit") { exo.pause(); onNavigateBack() }
                     }
                 }
             }
         }
 
-        // ── Subtitle panel ─────────────────────────────────────────────────────
+        // ════════════════════════════════════════════════════════════
+        // BUG FIX 2 — Focus escapes popup at the bottom of the list
+        //
+        // Root cause:
+        //   focusProperties { down = FocusRequester.Cancel } was placed on
+        //   the LazyColumn CONTAINER. FocusRequester.Cancel on a container
+        //   only blocks focus from ENTERING, not from items navigating
+        //   WITHIN it. When the last item presses DOWN, Compose searches
+        //   for the next focusable outside the panel and finds it.
+        //
+        // Fix:
+        //   1. Removed focusProperties from the LazyColumn container.
+        //   2. Used itemsIndexed so we know which item is last.
+        //   3. Applied focusProperties { down = FocusRequester.Cancel }
+        //      directly on the LAST item — DOWN is cancelled right there.
+        //   4. Panel-level onPreviewKeyEvent closes on Back/Left/Right
+        //      but does NOT swallow DOWN (that's handled per-item).
+        // ════════════════════════════════════════════════════════════
         AnimatedVisibility(
-            visible  = showSubMenu,
-            enter    = slideInHorizontally(initialOffsetX = { it }, animationSpec = tween(300)) + fadeIn(tween(250)),
-            exit     = slideOutHorizontally(targetOffsetX = { it }, animationSpec = tween(250)) + fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize()
+            visible  = activeMenu != ActiveMenu.NONE,
+            enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
+            exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
+            modifier = Modifier.fillMaxSize().zIndex(200f)
         ) {
             Box(
-                Modifier.fillMaxSize().background(Color.Black.copy(0.7f))
-                    .clickable(remember { MutableInteractionSource() }, null) { showSubMenu = false },
-                contentAlignment = Alignment.CenterEnd
+                Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.7f))
+                    .clickable(remember { MutableInteractionSource() }, null) { activeMenu = ActiveMenu.NONE },
+                contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
             ) {
                 Column(
                     modifier = Modifier
-                        .fillMaxHeight().width(420.dp)
-                        .background(Color(0xFF0E0E0E))
-                        .border(1.dp, Color(0x22FFFFFF))
-                        .padding(32.dp)
+                        .fillMaxHeight()
+                        .padding(start = if (isRtl) 24.dp else 0.dp, top = 24.dp, end = if (isRtl) 0.dp else 24.dp, bottom = 24.dp)
+                        .width(460.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
+                        .padding(horizontal = 36.dp, vertical = 40.dp)
                         .clickable(remember { MutableInteractionSource() }, null) {}
                         .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown &&
-                                (ev.key == Key.Back || ev.key == Key.Escape)) {
-                                showSubMenu = false; true
+                            // FIX 2: Panel closes on Back / outward-arrow key.
+                            // DOWN is intentionally NOT consumed here — the last
+                            // list item handles it via focusProperties.
+                            if (ev.type == KeyEventType.KeyDown) {
+                                when {
+                                    ev.key == Key.Back || ev.key == Key.Escape -> { activeMenu = ActiveMenu.NONE; true }
+                                    (!isRtl && ev.key == Key.DirectionLeft)    -> { activeMenu = ActiveMenu.NONE; true }
+                                    (isRtl  && ev.key == Key.DirectionRight)   -> { activeMenu = ActiveMenu.NONE; true }
+                                    else -> false
+                                }
                             } else false
                         }
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(Modifier.width(4.dp).height(28.dp).background(RED, RoundedCornerShape(2.dp)))
-                        Spacer(Modifier.width(12.dp))
-                        Text("Subtitles", color = WHITE, fontSize = 24.sp, fontWeight = FontWeight.Black)
-                    }
-                    Spacer(Modifier.height(24.dp))
-
-                    if (state.availableSubtitles.isEmpty()) {
-                        Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
-                            Text(
-                                if (state.isSubtitlesLoading) "Searching for subtitles..."
-                                else "No subtitles found",
-                                color = DIM, fontSize = 15.sp
-                            )
+                    when (activeMenu) {
+                        ActiveMenu.AUDIO -> {
+                            SidePanelHeader("Audio Tracks", "Select language")
+                            TrackListUi(exo, currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, C.TRACK_TYPE_AUDIO, sideMenuFR) { activeMenu = ActiveMenu.NONE }
                         }
-                    } else {
-                        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(state.availableSubtitles, key = { it.url }) { sub ->
-                                Surface(
-                                    onClick = { exo.applySubtitle(sub.url, sub.lang); showSubMenu = false },
-                                    colors  = ClickableSurfaceDefaults.colors(
-                                        containerColor        = Color(0xFF1A1A1A),
-                                        focusedContainerColor = RED,
-                                        contentColor          = WHITE, focusedContentColor = WHITE
-                                    ),
-                                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
-                                    modifier = Modifier.fillMaxWidth().height(52.dp)
-                                        .let { if (sub == state.availableSubtitles.first())
-                                            it.focusRequester(firstSubFR) else it }
+                        ActiveMenu.EMBEDDED_SUBS -> {
+                            SidePanelHeader("Embedded Subtitles", "From video file")
+                            TrackListUi(exo, currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, C.TRACK_TYPE_TEXT, sideMenuFR) { activeMenu = ActiveMenu.NONE }
+                        }
+                        ActiveMenu.WEB_SUBS -> {
+                            SidePanelHeader("Web Subtitles", if (state.availableSubtitles.isNotEmpty()) "${state.availableSubtitles.size} online" else "")
+                            if (state.availableSubtitles.isEmpty()) {
+                                Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
+                                    Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 15.sp)
+                                }
+                            } else {
+                                // FIX 2: itemsIndexed → last item can block DOWN
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier = Modifier.focusGroup()
                                 ) {
-                                    Row(
-                                        Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                                        verticalAlignment     = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text("${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
-                                            fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                                        Text(sub.source, color = DIM, fontSize = 12.sp)
+                                    itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
+                                        val isFirst = index == 0
+                                        val isLast  = index == state.availableSubtitles.size - 1
+                                        TrackItemCard(
+                                            title      = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
+                                            subtitle   = sub.source,
+                                            isSelected = sub.url == selectedWebSubUrl,
+                                            modifier   = Modifier
+                                                .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
+                                                .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                                                .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                                            onClick = {
+                                                exo.applySubtitle(sub.url, sub.lang)
+                                                selectedWebSubUrl = sub.url
+                                                pendingSubtitle   = null  // user chose manually, cancel pending
+                                                activeMenu        = ActiveMenu.NONE
+                                            }
+                                        )
                                     }
                                 }
                             }
                         }
+                        ActiveMenu.NONE -> {}
                     }
                 }
             }
         }
+    }
+}
+
+// ── Side panel header ─────────────────────────────────────────────────────────
+@Composable
+private fun SidePanelHeader(title: String, subtitle: String) {
+    Column {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(4.dp).height(36.dp).background(RED, RoundedCornerShape(2.dp)))
+            Spacer(Modifier.width(14.dp))
+            Column {
+                Text(title, color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                if (subtitle.isNotEmpty()) Text(subtitle, color = DIM, fontSize = 13.sp)
+            }
+        }
+        Spacer(Modifier.height(24.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(RED.copy(0.6f), Color(0x08FFFFFF)))))
+        Spacer(Modifier.height(20.dp))
+    }
+}
+
+// ── Track list (Audio / Embedded subs) ───────────────────────────────────────
+@Composable
+private fun TrackListUi(
+    exo:       ExoPlayerWrapper,
+    groups:    List<androidx.media3.common.Tracks.Group>,
+    trackType: Int,
+    focusReq:  FocusRequester,
+    onClose:   () -> Unit
+) {
+    val trackList = remember(groups) {
+        val list = mutableListOf<Triple<androidx.media3.common.Tracks.Group?, Int, String>>()
+        if (trackType == C.TRACK_TYPE_TEXT) {
+            val isOff = groups.none { it.isSelected }
+            list.add(Triple(null, -1, if (isOff) "✅ Turn Off" else "Turn Off"))
+        }
+        groups.forEach { group ->
+            for (i in 0 until group.length) {
+                val format   = group.mediaTrackGroup.getFormat(i)
+                val lang     = format.language ?: "Unknown"
+                val label    = format.label    ?: ""
+                val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
+                val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
+                val name     = listOf(lang.uppercase(), label, channels, codec).filter { it.isNotBlank() }.joinToString(" • ")
+                list.add(Triple(group, i, name))
+            }
+        }
+        list
+    }
+
+    if (trackList.isEmpty()) {
+        Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
+            Text("No tracks available", color = DIM, fontSize = 15.sp)
+        }
+    } else {
+        // FIX 2: itemsIndexed so last item gets focusProperties { down = Cancel }
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.focusGroup()
+        ) {
+            itemsIndexed(trackList) { index, (group, trackIndex, name) ->
+                val isFirst    = index == 0
+                val isLast     = index == trackList.size - 1
+                val isSelected = group?.isTrackSelected(trackIndex)
+                    ?: (trackType == C.TRACK_TYPE_TEXT && name.contains("✅"))
+
+                TrackItemCard(
+                    title      = name.replace("✅ ", ""),
+                    subtitle   = if (group == null) "Disable" else "Internal",
+                    isSelected = isSelected,
+                    modifier   = Modifier
+                        .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
+                        .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                        .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                    onClick    = {
+                        val builder = exo.player.trackSelectionParameters.buildUpon()
+                        builder.clearOverridesOfType(trackType)
+                        if (group == null) {
+                            builder.setTrackTypeDisabled(trackType, true)
+                        } else {
+                            builder.setTrackTypeDisabled(trackType, false)
+                            builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
+                        }
+                        exo.player.trackSelectionParameters = builder.build()
+                        onClose()
+                    }
+                )
+            }
+        }
+    }
+}
+
+// ── Track item card ───────────────────────────────────────────────────────────
+@Composable
+private fun TrackItemCard(
+    title:     String,
+    subtitle:  String,
+    isSelected: Boolean,
+    modifier:  Modifier = Modifier,
+    onClick:   () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val containerBg by animateColorAsState(
+        if (focused) Color(0xFF282832) else Color(0x0CFFFFFF), tween(200), label = "bgAnim"
+    )
+    Surface(
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent, contentColor = WHITE, focusedContentColor = WHITE),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
+        modifier = modifier.fillMaxWidth().height(64.dp).onFocusChanged { focused = it.isFocused }
+    ) {
+        Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(16.dp)).padding(horizontal = 20.dp)) {
+            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, color = WHITE, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.7f))
+                    if (isSelected) { Spacer(Modifier.width(12.dp)); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4D90FE), modifier = Modifier.size(18.dp)) }
+                }
+                PremiumBadge(subtitle, if (focused) RED else Color.Gray, isOutline = !focused)
+            }
+        }
+    }
+}
+
+@Composable
+private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
+    Box(
+        Modifier.clip(RoundedCornerShape(6.dp))
+            .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
+            .border(1.dp, if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, RoundedCornerShape(6.dp))
+            .padding(horizontal = 8.dp, vertical = 4.dp)
+    ) {
+        Text(text.uppercase(), color = if (isOutline) color else WHITE, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, letterSpacing = 0.5.sp)
     }
 }
 
@@ -465,6 +642,7 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
+// ── Progress bar ──────────────────────────────────────────────────────────────
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
@@ -499,9 +677,10 @@ fun PlayerProgressControls(
         }
         Spacer(Modifier.height(10.dp))
         Box(
-            modifier = Modifier.fillMaxWidth().height(28.dp)
-                .focusRequester(seekFR)
-                .focusable()
+            modifier = Modifier
+                .fillMaxWidth().height(28.dp)
+                .focusRequester(seekFR).focusable()
+                .onFocusChanged { seekFocused = it.isFocused }
                 .onKeyEvent { ev ->
                     if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                     when (ev.nativeKeyEvent.keyCode) {
@@ -515,8 +694,7 @@ fun PlayerProgressControls(
                             val p = (exoWrapper.player.currentPosition + d).coerceIn(0L, videoDuration)
                             exoWrapper.seekTo(p); currentPosition = p; true
                         }
-                        KeyEvent.KEYCODE_DPAD_CENTER,
-                        KeyEvent.KEYCODE_ENTER -> {
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                             if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true
                         }
                         KeyEvent.KEYCODE_DPAD_UP   -> { onUpPressed();   true }
@@ -526,10 +704,8 @@ fun PlayerProgressControls(
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50))
-                .background(WHITE.copy(if (seekFocused) 0.25f else 0.18f)))
-            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50))
-                .background(if (seekFocused) WHITE else RED))
+            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(WHITE.copy(if (seekFocused) 0.25f else 0.18f)))
+            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) WHITE else RED))
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
                     Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE))
@@ -539,30 +715,21 @@ fun PlayerProgressControls(
     }
 }
 
+// ── Control pill ──────────────────────────────────────────────────────────────
 @Composable
-fun ControlPill(
-    icon:     ImageVector,
-    text:     String,
-    modifier: Modifier = Modifier,
-    onClick:  () -> Unit
-) {
+fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = Color(0x55000000),
-            focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE
-        ),
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x55000000), focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
         modifier = modifier
     ) {
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(icon, null, Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
-            Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

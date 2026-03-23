@@ -65,6 +65,8 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.ui.components.LoadingIndicator
+
+import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import java.util.Locale
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -116,7 +118,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
     val nameUpper = name.uppercase()
     val combined = "$upper $nameUpper"
 
-    // ── Video Codec ──
     val (codecLabel, codecColor) = when {
         combined.contains("AV1")                                       -> "AV1"  to Color(0xFF00C853)
         combined.contains("HEVC") || combined.contains("X265") ||
@@ -126,7 +127,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
         else                                                           -> "—"    to Color(0xFF424242)
     }
 
-    // ── HDR ──
     val hdrBadges = buildList {
         if (combined.contains("DOLBY VISION") || combined.contains("DV") ||
             combined.contains("DV.") || combined.contains(".DV."))    add("Dolby Vision" to Color(0xFF7B1FA2))
@@ -138,7 +138,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
             add("SDR"          to Color(0xFF424242))
     }
 
-    // ── Audio ──
     val audioBadges = buildList {
         if (combined.contains("ATMOS"))                                add("Atmos"      to Color(0xFF00796B))
         if (combined.contains("DTS:X") || combined.contains("DTSX"))  add("DTS:X"      to Color(0xFF00897B))
@@ -152,13 +151,12 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
         if (combined.contains("FLAC"))                                 add("FLAC"      to Color(0xFF558B2F))
     }
 
-    // ── Language ──
     val langBadges = buildList {
         if (combined.contains("HEBREW") || combined.contains("HEB") ||
             combined.contains("עברית"))                                add("עברית 🇮🇱"  to Color(0xFF1B5E20))
         if (combined.contains("ENGLISH") || combined.contains(" ENG") ||
             combined.contains(".ENG."))                                add("English 🇺🇸" to Color(0xFF1A237E))
-        if (combined.contains("ARABIC") || combined.contains("ARA"))  add("עربي 🇸🇦"   to Color(0xFF4E342E))
+        if (combined.contains("ARABIC") || combined.contains("ARA"))  add("عربي 🇸🇦"   to Color(0xFF4E342E))
         if (combined.contains("FRENCH") || combined.contains("FRE") ||
             combined.contains(".FR."))                                 add("French 🇫🇷"  to Color(0xFF311B92))
         if (combined.contains("GERMAN") || combined.contains("GER") ||
@@ -170,11 +168,10 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
             combined.contains("מדובב"))                               add("מדובב 🎤"    to Color(0xFFE65100))
     }
 
-    // ── Subtitles ──
     val subtitleBadges = buildList {
         if (combined.contains("HEBREW SUB") || combined.contains("HEBSUB") ||
             combined.contains("HEBSUBS") || combined.contains("SUB.HEB") ||
-            combined.contains("כתוביות"))                             add("כתוביות עב׳" to Color(0xFF2E7D32))
+            combined.contains("כתוביות"))                              add("כתוביות עב׳" to Color(0xFF2E7D32))
         if (combined.contains("MULTI.SUB") || combined.contains("MULTISUB") ||
             combined.contains("MULTI SUB"))                            add("Multi Subs"  to Color(0xFF1B5E20))
         if (combined.contains("SUBBED"))                               add("Subbed"      to Color(0xFF33691E))
@@ -182,7 +179,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
             add("Hardcoded"   to Color(0xFFBF360C))
     }
 
-    // ── Release Type ──
     val (releaseType, releaseTypeColor) = when {
         combined.contains("REMUX")                                  -> "REMUX"       to Color(0xFF37474F)
         combined.contains("BLURAY") || combined.contains("BLU-RAY") ||
@@ -196,7 +192,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
         else                                                        -> "WEB"         to Color(0xFF1E3A5F)
     }
 
-    // ── Provider ──
     val provider = when {
         combined.contains("YTS") || combined.contains("YIFY")      -> "YTS"
         combined.contains("RARBG")                                  -> "RARBG"
@@ -214,7 +209,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
         else                                                        -> "Torrentio"
     }
 
-    // ── Seeders (parse from title like "👤 1234" or "S: 1234") ──
     val seeders = Regex("(?:👤|S:|seeders:)\\s*(\\d+)", RegexOption.IGNORE_CASE)
         .find(name)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 0
 
@@ -238,7 +232,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
     )
 }
 
-// ── Seed-health color ─────────────────────────────────────────────────────────
 private fun seederColor(seeders: Int) = when {
     seeders <= 0  -> Color(0xFF546E7A)
     seeders < 5   -> Color(0xFFB71C1C)
@@ -284,9 +277,15 @@ fun DetailsScreen(
         }
     }
 
-    val playFR        = remember { FocusRequester() }
-    val backBtnFR     = remember { FocusRequester() }
-    val firstSourceFR = remember { FocusRequester() }
+    // הגדרת משתני הפוקוס להכוונת הניווט הגיאומטרי בצורה מדויקת
+    val playFR         = remember { FocusRequester() }
+    val backBtnFR      = remember { FocusRequester() }
+    val firstSourceFR  = remember { FocusRequester() }
+    val firstSeasonFR  = remember { FocusRequester() } // למעבר למעלה חזרה לעונות
+    val firstEpisodeFR = remember { FocusRequester() }
+    val firstCastFR    = remember { FocusRequester() }
+    val firstRecFR     = remember { FocusRequester() }
+
     val scrollState   = rememberLazyListState()
     var showSources   by remember { mutableStateOf(false) }
     val focusManager  = LocalFocusManager.current
@@ -489,90 +488,147 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Seasons + Episodes ─────────────────────────────────────────────
+            // ── Seasons + Episodes ──────────────────────────────────
             if (!state.isFuzerDirect && media.isSeries && media.totalSeasons > 0) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("Seasons & Episodes", Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(12.dp))
+
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 64.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.focusGroup().padding(bottom = 14.dp)
+                            modifier = Modifier.padding(bottom = 14.dp)
                         ) {
+                            item { Spacer(modifier = Modifier.width(56.dp)) }
+
                             items(media.totalSeasons) { idx ->
-                                val n = idx + 1; val sel = state.selectedSeason == n; val isLast = idx == media.totalSeasons - 1
+                                val n = idx + 1
+                                val sel = state.selectedSeason == n
                                 Surface(
                                     onClick  = { onEvent(DetailsEvent.SelectSeason(n)) },
                                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
                                     colors   = ClickableSurfaceDefaults.colors(containerColor = if (sel) BR else GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
                                     scale    = ClickableSurfaceDefaults.scale(1.05f),
                                     border   = ClickableSurfaceDefaults.border(border = if (sel) Border.None else Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
-                                    modifier = Modifier.focusProperties { if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel } }
+                                    // כאן מגדירים את focusRequester לעונה הראשונה (בשביל תנועה למעלה מהפרקים)
+                                    // וגם אכיפת הניווט למטה לפרק הראשון.
+                                    modifier = Modifier
+                                        .then(if (idx == 0) Modifier.focusRequester(firstSeasonFR) else Modifier)
+                                        .focusProperties {
+                                            if (state.episodes.isNotEmpty()) down = firstEpisodeFR
+                                            else if (media.cast.isNotEmpty()) down = firstCastFR
+                                            else if (media.recommendations.isNotEmpty()) down = firstRecFR
+                                        }
                                 ) {
                                     Text("Season $n", fontWeight = if (sel) FontWeight.Black else FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                                 }
                             }
+
+                            item { Spacer(modifier = Modifier.width(56.dp)) }
                         }
+
                         if (state.isEpisodesLoading) {
                             Box(Modifier.fillMaxWidth().height(145.dp), Alignment.Center) { LoadingIndicator() }
                         } else if (state.episodes.isNotEmpty()) {
                             LazyRow(
-                                contentPadding = PaddingValues(horizontal = 64.dp),
-                                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                modifier = Modifier.focusGroup()
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
                             ) {
+                                item { Spacer(modifier = Modifier.width(50.dp)) }
+
                                 itemsIndexed(state.episodes, key = { _, ep -> ep.id }) { idx, ep ->
-                                    EpisodeCard(ep, idx == state.episodes.size - 1) {
-                                        showSources = true
-                                        onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber))
-                                    }
+                                    val fallbackImage = media.backdropUrl.ifBlank { media.posterUrl }
+                                    EpisodeCard(
+                                        episode = ep,
+                                        fallbackImageUrl = fallbackImage,
+                                        modifier = Modifier
+                                            .then(if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier)
+                                            .focusProperties {
+                                                // אכיפת ניווט למעלה (לעונות) ולמטה (לשחקנים/המלצות)
+                                                if (media.totalSeasons > 0) up = firstSeasonFR
+
+                                                if (media.cast.isNotEmpty()) down = firstCastFR
+                                                else if (media.recommendations.isNotEmpty()) down = firstRecFR
+                                            },
+                                        onClick = {
+                                            showSources = true
+                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber))
+                                        }
+                                    )
                                 }
+
+                                item { Spacer(modifier = Modifier.width(50.dp)) }
                             }
                         }
                     }
                 }
             }
 
-            // ── Cast ───────────────────────────────────────────────────────────
+            // ── Cast ───────────────────────────────────────────────
             if (!state.isFuzerDirect && media.cast.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("Cast & Crew", Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
-                        LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(18.dp), modifier = Modifier.focusGroup()) {
-                            itemsIndexed(media.cast) { idx, a -> CastMemberCard(a, idx == media.cast.size - 1) }
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                        ) {
+                            item { Spacer(modifier = Modifier.width(46.dp)) }
+
+                            itemsIndexed(media.cast) { idx, a ->
+                                CastMemberCard(
+                                    actor = a,
+                                    modifier = Modifier
+                                        .then(if (idx == 0) Modifier.focusRequester(firstCastFR) else Modifier)
+                                        .focusProperties {
+                                            // אכיפת ניווט למעלה (לפרקים/עונות) ולמטה (להמלצות)
+                                            if (state.episodes.isNotEmpty()) up = firstEpisodeFR
+                                            else if (media.totalSeasons > 0) up = firstSeasonFR
+
+                                            if (media.recommendations.isNotEmpty()) down = firstRecFR
+                                        }
+                                )
+                            }
+
+                            item { Spacer(modifier = Modifier.width(46.dp)) }
                         }
                     }
                 }
             }
 
-            // ── Recommendations ────────────────────────────────────────────────
+            // ── Recommendations ────────────────────────────────────
             if (!state.isFuzerDirect && media.recommendations.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth()) {
                         SectionHeader("More Like This", Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
+
                         LazyRow(
-                            contentPadding = PaddingValues(horizontal = 64.dp),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.focusGroup()
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
+                            item { Spacer(modifier = Modifier.width(50.dp)) }
+
                             itemsIndexed(media.recommendations, key = { _, r -> r.id }) { idx, rec ->
-                                val tempMovie = com.luminastreams.tv.domain.model.Movie(
+                                val tempMovie = Movie(
                                     id = rec.id, title = rec.title, posterUrl = rec.posterUrl,
                                     backdropUrl = "", rating = 0f, mediaType = media.id.substringBefore("_"),
                                     overview = "", year = 0, genre = ""
                                 )
-                                val isLast = idx == media.recommendations.size - 1
                                 com.luminastreams.tv.presentation.home.PosterCard(
                                     movie    = tempMovie,
-                                    modifier = Modifier.focusProperties {
-                                        if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel }
-                                    },
+                                    modifier = Modifier
+                                        .then(if (idx == 0) Modifier.focusRequester(firstRecFR) else Modifier)
+                                        .focusProperties {
+                                            // אכיפת ניווט למעלה מההמלצות
+                                            if (media.cast.isNotEmpty()) up = firstCastFR
+                                            else if (state.episodes.isNotEmpty()) up = firstEpisodeFR
+                                            else if (media.totalSeasons > 0) up = firstSeasonFR
+                                        },
                                     onClick  = { onRecommendationClick(rec.id) }
                                 )
                             }
+
+                            item { Spacer(modifier = Modifier.width(50.dp)) }
                         }
                     }
                 }
@@ -608,16 +664,14 @@ fun DetailsScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxHeight()
-                            // עיצוב ה-Popup כפאנל מרחף ואלגנטי בסגנון Apple TV
                             .padding(vertical = 24.dp)
                             .padding(start = if (isRtl) 24.dp else 0.dp, end = if (isRtl) 0.dp else 24.dp)
                             .width(660.dp)
-                            .clip(RoundedCornerShape(28.dp)) // פינות עגולות גדולות
-                            .background(Color(0xFF0F0F13).copy(alpha = 0.98f)) // צבע אפל-כמו כהה ועמוק
+                            .clip(RoundedCornerShape(28.dp))
+                            .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
                             .padding(horizontal = 36.dp, vertical = 44.dp)
                             .clickable(remember { MutableInteractionSource() }, null) {}
                     ) {
-                        // ── Panel header ──
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(Modifier.width(4.dp).height(36.dp).background(BR, RoundedCornerShape(2.dp)))
                             Spacer(Modifier.width(14.dp))
@@ -698,7 +752,6 @@ fun DetailsScreen(
     }
 }
 
-// ── StreamSourceCard — Fixed smooth transitions (No Flash) ───────────────────
 @Composable
 private fun StreamSourceCard(
     source: AdvancedStreamSource,
@@ -710,11 +763,9 @@ private fun StreamSourceCard(
         parseStreamMeta(source.filename, source.releaseGroup)
     }
 
-    // ניהול המדינה הממוקדת באופן מקומי רק עבור שינויי צבע טקסט עדינים פנימיים
     val focusedState = remember { mutableStateOf(false) }
     val isFocused by focusedState
 
-    // אנימציה חלקה לטקסט משקל הקובץ
     val fileSizeColor by animateColorAsState(
         targetValue = if (isFocused) WH else DM,
         animationSpec = tween(150),
@@ -723,35 +774,27 @@ private fun StreamSourceCard(
 
     Surface(
         onClick = onClick,
-        // אסטרטגיית תיקון הפלאש: ניהול צבעי הרקע ישירות על ידי ה-Surface
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0x0CFFFFFF), // צבע לא ממוקד (חצי שקוף)
-            focusedContainerColor = Color(0xFF282832), // צבע ממוקד (אטום בסגנון Apple)
+            containerColor = Color(0x0CFFFFFF),
+            focusedContainerColor = Color(0xFF282832),
             contentColor = WH,
             focusedContentColor = WH
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f), // גדילה קלה ויוקרתית
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         glow = ClickableSurfaceDefaults.glow(
-            // צל עמוק ומרשים המדגיש את האלמנט הממוקד
             focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 25.dp)
         ),
         modifier = modifier
             .fillMaxWidth()
-            // עדכון המדינה הממוקדת
             .onFocusChanged { focusedState.value = it.isFocused }
     ) {
-        // התוכן הראשי ללא Box או Background ידני נוסף
         Column(Modifier.fillMaxWidth().padding(24.dp)) {
 
-            // ═══════════════════════════════════════
-            // שורה 1: דירוג, ספק, סידרים, ומשקל הקובץ
-            // ═══════════════════════════════════════
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // דירוג
                 Text(
                     text = "#$rank",
                     color = WH.copy(alpha = 0.5f),
@@ -760,7 +803,6 @@ private fun StreamSourceCard(
                 )
                 Spacer(Modifier.width(12.dp))
 
-                // ספק
                 Text(
                     text = meta.provider.uppercase(),
                     color = if (source.isCachedRd) Color(0xFF43A047) else Color(0xFF29B6F6),
@@ -771,14 +813,12 @@ private fun StreamSourceCard(
 
                 Spacer(Modifier.weight(1f))
 
-                // סידרים (עם אייקון FontAwesome)
                 if (meta.seeders > 0) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "\uf0c0", // FontAwesome: fa-users
+                            text = "\uf0c0",
                             color = seederColor(meta.seeders),
                             fontSize = 12.sp
-                            // fontFamily = yourFontAwesomeFamily
                         )
                         Spacer(Modifier.width(6.dp))
                         Text(
@@ -791,7 +831,6 @@ private fun StreamSourceCard(
                     Spacer(Modifier.width(16.dp))
                 }
 
-                // משקל הקובץ - משתמש באנימציה חלקה לצבע
                 Text(
                     text = source.formattedSize,
                     color = fileSizeColor,
@@ -802,9 +841,6 @@ private fun StreamSourceCard(
 
             Spacer(Modifier.height(8.dp))
 
-            // ═══════════════════════════════════════
-            // שורה 2: כותרת / שם קבוצת השחרור (מודגש)
-            // ═══════════════════════════════════════
             Text(
                 text = source.releaseGroup.ifEmpty { "UNKNOWN RELEASE" }.uppercase(),
                 color = WH,
@@ -816,43 +852,33 @@ private fun StreamSourceCard(
 
             Spacer(Modifier.height(14.dp))
 
-            // ═══════════════════════════════════════
-            // שורה 3: תגים מסודרים ונקיים בסגנון Apple
-            // ═══════════════════════════════════════
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // איכות - צבע עמוק ומודרני
                 PremiumBadge(source.quality.displayName, Color(0xFF0D47A1))
 
-                // מזהה RD - ירוק עמוק
                 if (source.isCachedRd) {
-                    PremiumBadge("RD+ CACHED", Color(0xFF1B5E20), icon = "\uf0e7") // FontAwesome: fa-bolt
+                    PremiumBadge("RD+ CACHED", Color(0xFF1B5E20), icon = "\uf0e7")
                 }
 
-                // אזהרת CAM
                 if (meta.isCam) {
-                    PremiumBadge("CAM", Color(0xFFB71C1C), icon = "\uf071") // FontAwesome: fa-exclamation-triangle
+                    PremiumBadge("CAM", Color(0xFFB71C1C), icon = "\uf071")
                 }
 
-                // קודק (אם קיים) - Outline עדין
                 if (meta.videoCodecLabel != "—") {
                     PremiumBadge(meta.videoCodecLabel, WH.copy(alpha = 0.8f), isOutline = true)
                 }
 
-                // תגית HDR ראשונה - זהב/HDR עמוק
                 meta.hdrBadges.firstOrNull()?.let {
                     PremiumBadge(it.first, Color(0xFFFF8F00), isOutline = true)
                 }
 
-                // תגית שמע ראשונה
                 meta.audioBadges.firstOrNull()?.let {
                     PremiumBadge(it.first, Color(0xFF8E24AA), isOutline = true)
                 }
 
-                // זיהוי עברית מדובב/מתורגם
                 val hasHebrew = meta.langBadges.any { it.first.contains("עברית") || it.first.contains("מדובב") }
                         || meta.subtitleBadges.any { it.first.contains("כתוביות עב") }
                 if (hasHebrew) {
@@ -862,9 +888,6 @@ private fun StreamSourceCard(
 
             Spacer(Modifier.height(14.dp))
 
-            // ═══════════════════════════════════════
-            // שורה 4: שם הקובץ המקורי (עדין ומוחלש)
-            // ═══════════════════════════════════════
             Text(
                 text = source.filename.replace(".", " "),
                 color = WH.copy(alpha = if (isFocused) 0.5f else 0.25f),
@@ -876,7 +899,6 @@ private fun StreamSourceCard(
     }
 }
 
-// ── רכיב תג מינימליסטי ونקי — מעודכן (No Flash) ──────────────────────────────────
 @Composable
 private fun PremiumBadge(
     text: String,
@@ -887,11 +909,10 @@ private fun PremiumBadge(
     Box(
         modifier = Modifier
             .clip(RoundedCornerShape(6.dp))
-            // שימוש בצבע רקע חלש יותר המשתלב עם הרקע החדש של הכרטיסייה
             .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
             .border(
                 width = 1.dp,
-                color = if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, // ללא Border לתגים מלאים
+                color = if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent,
                 shape = RoundedCornerShape(6.dp)
             )
             .padding(horizontal = 10.dp, vertical = 5.dp)
@@ -903,12 +924,11 @@ private fun PremiumBadge(
                     color = color,
                     fontSize = 10.sp,
                     modifier = Modifier.padding(end = 6.dp)
-                    // fontFamily = yourFontAwesomeFamily
                 )
             }
             Text(
                 text = text.uppercase(),
-                color = if (isOutline) color else WH, // טקסט לבן עבור תגים מלאים
+                color = if (isOutline) color else WH,
                 fontWeight = FontWeight.ExtraBold,
                 fontSize = 11.sp,
                 letterSpacing = 0.5.sp
@@ -917,7 +937,6 @@ private fun PremiumBadge(
     }
 }
 
-// ── Rest of helpers ───────────────────────────────────────────────────────────
 @Composable private fun MDot() = Text("•", color = GB, fontSize = 12.sp, modifier = Modifier.padding(horizontal = 4.dp))
 @Composable private fun QPill(label: String, color: Color) = Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(0.88f)).padding(horizontal = 6.dp, vertical = 3.dp)) { Text(label, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }
 @Composable private fun RatingChip(icon: ImageVector, tintC: Color, value: String, label: String) = Row(verticalAlignment = Alignment.CenterVertically) { Icon(icon, null, tint = tintC, modifier = Modifier.size(14.dp)); Spacer(Modifier.width(4.dp)); Text(value, color = WH, fontWeight = FontWeight.Black, fontSize = 14.sp); Spacer(Modifier.width(3.dp)); Text(label, color = MT, fontSize = 11.sp) }
@@ -950,10 +969,15 @@ private fun SectionHeader(title: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) {
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+private fun EpisodeCard(
+    episode: Episode,
+    fallbackImageUrl: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
     val focusedState = remember { mutableStateOf(false) }
     val isFocused by focusedState
+
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
@@ -961,13 +985,23 @@ private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) 
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
         border   = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border(BorderStroke(3.dp, WH))),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WH.copy(alpha = 0.5f), 16.dp)),
-        modifier = Modifier.width(280.dp).aspectRatio(16f / 9f)
+        modifier = modifier.width(280.dp).aspectRatio(16f / 9f)
             .zIndex(if (isFocused) 10f else 0f)
             .onFocusChanged { focusedState.value = it.isFocused }
-            .focusProperties { if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel } }
     ) {
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
-            AsyncImage(model = episode.stillUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            val imageUrl = if (episode.stillUrl.isNullOrBlank() || episode.stillUrl.endsWith("null")) fallbackImageUrl else episode.stillUrl
+
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.98f)), startY = 40f)))
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
                 Text("${episode.episodeNumber}. ${episode.title}", color = WH, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -983,17 +1017,15 @@ private fun EpisodeCard(episode: Episode, isLast: Boolean, onClick: () -> Unit) 
 }
 
 @Composable
-private fun CastMemberCard(actor: CastMember, isLast: Boolean) {
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+private fun CastMemberCard(actor: CastMember, modifier: Modifier = Modifier) {
     var focused by remember { mutableStateOf(false) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(100.dp).onFocusChanged { focused = it.isFocused }.zIndex(if (focused) 10f else 0f)) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(100.dp).onFocusChanged { focused = it.isFocused }.zIndex(if (focused) 10f else 0f)) {
         Surface(
             onClick  = {},
             shape    = ClickableSurfaceDefaults.shape(CircleShape),
             colors   = ClickableSurfaceDefaults.colors(containerColor = GL, focusedContainerColor = WH),
             scale    = ClickableSurfaceDefaults.scale(1.1f),
             modifier = Modifier.size(90.dp).shadow(if (focused) 16.dp else 0.dp, CircleShape)
-                .focusProperties { if (isLast) { if (isRtl) left = FocusRequester.Cancel else right = FocusRequester.Cancel } }
         ) {
             AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
