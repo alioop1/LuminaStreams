@@ -2,60 +2,112 @@ package com.luminastreams.tv.data.remote
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import org.jsoup.Jsoup
+import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 
+// ── תיקון באג 2 (גרסה שניה) ──────────────────────────────────────────────────
+// הבעיה בגרסה הקודמת: rest.opensubtitles.org הושבת סופית ב-2023.
+// כל קריאה אליו מחזירה 404/410.
+//
+// הפתרון: subdl.com — API חינמי, ללא API Key נדרש, פעיל.
+// תיעוד: https://subdl.com/api-doc
+//
+// זרימה:
+//   1. GET /api/v1/?imdb_id={id}&lang={HE/EN}&subs_per_page=5
+//   2. בוחרים ראשון עם url
+//   3. מורידים ZIP מ-https://dl.subdl.com{url}
+//   4. מחלצים SRT/VTT/SUB → ByteArray
+// ─────────────────────────────────────────────────────────────────────────────
+
 class SubtitleScraper {
 
     companion object {
-        private const val BASE_URL = "https://www.opensubtitles.org"
-        // Upgraded User-Agent to prevent bot-blocking
-        private const val USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        private const val SEARCH_BASE = "https://api.subdl.com/api/v1/"
+        private const val DL_BASE     = "https://dl.subdl.com"
+        private const val USER_AGENT  = "Mozilla/5.0 (Android TV; Android 12) LuminaStreams/1.0"
+        private const val TIMEOUT_MS  = 10_000
     }
 
-    suspend fun fetchSubtitleInMemory(imdbId: String, langCode: String = "heb"): Result<ByteArray> = withContext(Dispatchers.IO) {
+    suspend fun fetchSubtitleInMemory(
+        imdbId:   String,
+        langCode: String = "heb"
+    ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            val searchUrl = "$BASE_URL/he/search/sublanguageid-$langCode/imdbid-${imdbId.removePrefix("tt")}"
+            // subdl משתמש ב-ISO 639-1 uppercase
+            val sdLang = when (langCode.lowercase().take(3)) {
+                "he", "heb", "iw" -> "HE"
+                "ar", "ara"       -> "AR"
+                "ru", "rus"       -> "RU"
+                "fr", "fre"       -> "FR"
+                "de", "ger"       -> "DE"
+                "es", "spa"       -> "ES"
+                else              -> "EN"
+            }
 
-            // Added strict headers to bypass security blocks
-            val doc = Jsoup.connect(searchUrl)
-                .userAgent(USER_AGENT)
-                .header("Accept-Language", "en-US,en;q=0.9")
-                .timeout(10000)
-                .get()
+            val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+            val searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
 
-            // Broadened the selector to catch different URL structures
-            val downloadLinkElement = doc.select("a[href*=/subtitleserve/sub/]").first()
-                ?: return@withContext Result.failure(Exception("לא נמצאו כתוביות תואמות"))
+            val searchConn = openGet(searchUrl)
+            if (searchConn.responseCode != 200) {
+                return@withContext Result.failure(Exception("subdl search HTTP ${searchConn.responseCode}"))
+            }
 
-            val downloadPath = downloadLinkElement.attr("href")
-            val downloadUrl = "$BASE_URL$downloadPath"
+            val body = searchConn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val json = JSONObject(body)
 
-            val connection = URL(downloadUrl).openConnection() as HttpURLConnection
-            connection.setRequestProperty("User-Agent", USER_AGENT)
-            connection.setRequestProperty("Referer", searchUrl)
-            connection.connectTimeout = 10000
-            connection.readTimeout = 10000
+            if (!json.optBoolean("status", false)) {
+                return@withContext Result.failure(Exception("subdl status=false"))
+            }
 
-            connection.inputStream.use { inputStream ->
-                ZipInputStream(inputStream).use { zis ->
-                    var entry = zis.nextEntry
-                    while (entry != null) {
-                        // FIX: Now accepts .srt, .vtt, and .sub files instead of just strictly .srt
-                        val name = entry.name.lowercase()
-                        if (name.endsWith(".srt") || name.endsWith(".vtt") || name.endsWith(".sub")) {
-                            val srtBytes = zis.readBytes()
-                            return@withContext Result.success(srtBytes)
-                        }
-                        entry = zis.nextEntry
+            val subtitlesArr = json.optJSONArray("subtitles")
+            if (subtitlesArr == null || subtitlesArr.length() == 0) {
+                return@withContext Result.failure(Exception("לא נמצאו כתוביות ב-subdl"))
+            }
+
+            // בוחרים ראשון עם url
+            var downloadPath: String? = null
+            for (i in 0 until subtitlesArr.length()) {
+                val link = subtitlesArr.getJSONObject(i).optString("url", "")
+                if (link.isNotEmpty()) { downloadPath = link; break }
+            }
+            if (downloadPath == null) {
+                return@withContext Result.failure(Exception("לא נמצא url בתשובת subdl"))
+            }
+
+            val dlUrl  = "$DL_BASE$downloadPath"
+            val dlConn = openGet(dlUrl)
+            if (dlConn.responseCode != 200) {
+                return@withContext Result.failure(Exception("subdl download HTTP ${dlConn.responseCode}"))
+            }
+
+            ZipInputStream(BufferedInputStream(dlConn.inputStream)).use { zis ->
+                var entry = zis.nextEntry
+                while (entry != null) {
+                    val name = entry.name.lowercase()
+                    if (name.endsWith(".srt") || name.endsWith(".vtt") || name.endsWith(".sub")) {
+                        return@withContext Result.success(zis.readBytes())
                     }
+                    entry = zis.nextEntry
                 }
             }
-            Result.failure(Exception("קובץ כתוביות תקין לא נמצא בתוך הארכיון"))
+
+            Result.failure(Exception("קובץ כתוביות תקין לא נמצא בארכיון"))
         } catch (e: Exception) {
             Result.failure(e)
         }
+    }
+
+    private fun openGet(urlString: String): HttpURLConnection {
+        val conn = URL(urlString).openConnection() as HttpURLConnection
+        conn.requestMethod       = "GET"
+        conn.connectTimeout      = TIMEOUT_MS
+        conn.readTimeout         = TIMEOUT_MS
+        conn.instanceFollowRedirects = true
+        conn.setRequestProperty("User-Agent", USER_AGENT)
+        conn.setRequestProperty("Accept",     "application/json, */*")
+        return conn
     }
 }

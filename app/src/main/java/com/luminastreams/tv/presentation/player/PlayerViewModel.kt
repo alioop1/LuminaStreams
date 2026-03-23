@@ -1,7 +1,9 @@
 package com.luminastreams.tv.presentation.player
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.luminastreams.tv.data.remote.SubtitleScraper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -12,10 +14,10 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-// Moved the data model out of the UI and into the business logic layer
 data class StremioSubtitle(val url: String, val lang: String, val source: String)
 
 data class PlayerUiState(
@@ -24,18 +26,20 @@ data class PlayerUiState(
     val availableSubtitles: List<StremioSubtitle> = emptyList()
 )
 
-class PlayerViewModel : ViewModel() {
+class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
+
+    private val subtitleScraper = SubtitleScraper()
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
-    fun loadMedia(videoUrl: String, imdbId: String) {
+    // עדכון הפונקציה loadMedia כדי שתתמוך (אופציונלית) גם בעונה ופרק
+    fun loadMedia(videoUrl: String, imdbId: String, season: Int? = null, episode: Int? = null) {
         _state.update { it.copy(videoUrl = videoUrl, isSubtitlesLoading = true) }
 
         if (imdbId.isNotEmpty()) {
-            // Launch the heavy network call in the ViewModelScope so it survives orientation changes
             viewModelScope.launch {
-                val subs = fetchStremioSubtitles(imdbId)
+                val subs = fetchStremioSubtitles(imdbId, season, episode)
                 _state.update {
                     it.copy(
                         isSubtitlesLoading = false,
@@ -48,15 +52,27 @@ class PlayerViewModel : ViewModel() {
         }
     }
 
-    private suspend fun fetchStremioSubtitles(imdbId: String): List<StremioSubtitle> = coroutineScope {
-        val openSubUrl = "https://opensubtitles-v3.strem.io/subtitles/movie/$imdbId.json"
+    private suspend fun fetchStremioSubtitles(imdbId: String, season: Int? = null, episode: Int? = null): List<StremioSubtitle> = coroutineScope {
+        val formattedId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+        val type = if (season != null && episode != null) "series" else "movie"
+        val queryId = if (type == "series") "$formattedId:$season:$episode" else formattedId
 
-        // This is safe and won't block the UI because we shift to Dispatchers.IO inside the parse function
-        val openSubDeferred = async { fetchAndParseStremioJson(openSubUrl, "OpenSubtitles") }
-        val results = openSubDeferred.await()
+        // מביא גם מהשרת הרשמי וגם משרת הקהילה (כדי שיהיו לך הרבה אפשרויות להורדה)
+        val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
+        val ufoUrl = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
 
-        // Sort Hebrew to the top of the list automatically
-        return@coroutineScope results.sortedBy { if (it.lang.contains("heb", true)) 0 else 1 }
+        val officialDeferred = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
+        val ufoDeferred = async { fetchAndParseStremioJson(ufoUrl, "OS-Community") }
+
+        val allResults = officialDeferred.await() + ufoDeferred.await()
+
+        // משאירים אך ורק עברית ואנגלית (כל שאר השפות הזרות נמחקות)
+        val filteredSubs = allResults.filter {
+            val lang = it.lang.lowercase()
+            lang.contains("heb") || lang == "he" || lang.contains("עברית") || lang.contains("eng") || lang == "en"
+        }
+
+        return@coroutineScope filteredSubs.distinctBy { it.url }
     }
 
     private suspend fun fetchAndParseStremioJson(urlString: String, sourceName: String): List<StremioSubtitle> = withContext(Dispatchers.IO) {
@@ -65,9 +81,13 @@ class PlayerViewModel : ViewModel() {
             val url = URL(urlString)
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
-            // Strict 2-second timeout so a dead subtitle server never freezes your app
-            connection.connectTimeout = 2000
-            connection.readTimeout = 2000
+
+            // תוספת קריטית - בלעדיה סטרמיו מתעלם מעברית ומחזיר שפות אחרות
+            connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+            connection.setRequestProperty("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
+
+            connection.connectTimeout = 4000
+            connection.readTimeout = 4000
 
             if (connection.responseCode == 200) {
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
@@ -91,4 +111,27 @@ class PlayerViewModel : ViewModel() {
         }
         return@withContext subtitles
     }
+
+    // ── מקור 2: SubtitleScraper (REST API) ───────────────────────────────────
+    private suspend fun fetchFromSubtitleScraper(imdbId: String): List<StremioSubtitle> =
+        withContext(Dispatchers.IO) {
+            try {
+                val result = subtitleScraper.fetchSubtitleInMemory(imdbId, "heb")
+                val bytes  = result.getOrNull() ?: return@withContext emptyList()
+
+                val cacheFile = File(app.cacheDir, "subtitle_${imdbId}_heb.srt")
+                cacheFile.writeBytes(bytes)
+
+                listOf(
+                    StremioSubtitle(
+                        url    = "file://${cacheFile.absolutePath}",
+                        lang   = "heb",
+                        source = "OpenSubtitles.org"
+                    )
+                )
+            } catch (e: Exception) {
+                e.printStackTrace()
+                emptyList()
+            }
+        }
 }

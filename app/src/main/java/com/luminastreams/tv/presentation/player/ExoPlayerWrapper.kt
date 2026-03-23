@@ -3,7 +3,7 @@
 package com.luminastreams.tv.presentation.player
 
 import android.content.Context
-import androidx.core.net.toUri
+import android.net.Uri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -11,13 +11,23 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.Tracks
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 
 class ExoPlayerWrapper(context: Context) {
 
@@ -81,7 +91,17 @@ class ExoPlayerWrapper(context: Context) {
             .build()
     }
 
+    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        .setAllowCrossProtocolRedirects(true)
+
+    private val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
+
+    private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
+        .setDataSourceFactory(dataSourceFactory)
+
     val player: ExoPlayer = ExoPlayer.Builder(appContext, renderersFactory)
+        .setMediaSourceFactory(mediaSourceFactory)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
         .setAudioAttributes(
@@ -133,7 +153,9 @@ class ExoPlayerWrapper(context: Context) {
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network connection failed."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
                     PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
-                        player.seekToDefaultPosition(); player.prepare(); return
+                        player.seekToDefaultPosition()
+                        player.prepare()
+                        return
                     }
                     else -> "Playback error (${error.errorCode})"
                 }
@@ -154,7 +176,7 @@ class ExoPlayerWrapper(context: Context) {
     fun prepareStream(videoUrl: String) {
         try {
             _playerError.value = null
-            player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
+            player.setMediaItem(MediaItem.Builder().setUri(Uri.parse(videoUrl)).build())
             player.prepare()
             player.playWhenReady = true
         } catch (e: Exception) {
@@ -162,36 +184,60 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ✨ התיקון: אילוץ ניקוי בחירות קודמות והפעלת כתובית הרשת מיד
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
-        try {
-            val current = player.currentMediaItem ?: return
-            val mime = if (isVtt || subtitleUrl.endsWith(".vtt")) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
 
-            val conf = MediaItem.SubtitleConfiguration.Builder(subtitleUrl.toUri())
-                .setMimeType(mime)
-                .setLanguage(lang)
-                .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED) // מכריח כתובית
-                .build()
+                if (connection.responseCode in 200..299) {
+                    val subText = connection.inputStream.bufferedReader().readText()
 
-            val pos = player.currentPosition
+                    val subFile = File(appContext.cacheDir, "external_sub.srt")
+                    subFile.writeText(subText)
 
-            // עדכון המדיה אייטם - זה עוצר את הסרט לשבריר שניה וטוען את הכתובית
-            player.replaceMediaItem(
-                player.currentMediaItemIndex,
-                current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
-            )
-            player.seekTo(pos)
+                    withContext(Dispatchers.Main) {
+                        val current = player.currentMediaItem ?: return@withContext
+                        val mime = if (isVtt || subtitleUrl.lowercase().contains(".vtt")) {
+                            MimeTypes.TEXT_VTT
+                        } else {
+                            MimeTypes.APPLICATION_SUBRIP
+                        }
 
-            // אילוץ הנגן לבחור את ערוץ הטקסט ולנקות כל הגדרה שמפריעה לו
-            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                .setPreferredTextLanguage(lang)
-                .build()
+                        val injectedLang = "ext_heb"
+                        val localUri = Uri.parse(subFile.toURI().toString())
 
-        } catch (_: Exception) {}
+                        val conf = MediaItem.SubtitleConfiguration.Builder(localUri)
+                            .setMimeType(mime)
+                            .setLanguage(injectedLang)
+                            .setId("external_sub_network")
+                            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED)
+                            .build()
+
+                        val pos = player.currentPosition
+
+                        player.replaceMediaItem(
+                            player.currentMediaItemIndex,
+                            current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
+                        )
+
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setPreferredTextLanguage(injectedLang)
+                            .build()
+
+                        player.seekTo(pos)
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun play()  { player.play() }
