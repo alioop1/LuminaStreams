@@ -4,6 +4,7 @@ package com.luminastreams.tv.presentation.player
 
 import android.content.Context
 import android.net.Uri
+import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
@@ -176,7 +177,7 @@ class ExoPlayerWrapper(context: Context) {
     fun prepareStream(videoUrl: String) {
         try {
             _playerError.value = null
-            player.setMediaItem(MediaItem.Builder().setUri(Uri.parse(videoUrl)).build())
+            player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
             player.playWhenReady = true
         } catch (e: Exception) {
@@ -187,119 +188,42 @@ class ExoPlayerWrapper(context: Context) {
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                var currentUrl = subtitleUrl
-                var redirectCount = 0
-                var connected = false
-                var rawBytes: ByteArray? = null
+                val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
+                connection.connectTimeout = 5000
+                connection.readTimeout = 5000
+                if (connection.responseCode in 200..299) {
+                    val subText = connection.inputStream.bufferedReader(Charsets.UTF_8).readText()
 
-                if (subtitleUrl.startsWith("file://")) {
-                    val sourceFile = File(subtitleUrl.replace("file://", ""))
-                    if (sourceFile.exists()) rawBytes = sourceFile.readBytes()
-                    connected = true
-                } else {
-                    while (!connected && redirectCount < 5) {
-                        val connection = URL(currentUrl).openConnection() as HttpURLConnection
-                        connection.requestMethod = "GET"
-                        connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                        connection.setRequestProperty("Accept-Encoding", "gzip")
-                        connection.connectTimeout = 8000
-                        connection.readTimeout = 8000
-                        connection.instanceFollowRedirects = false
+                    val subFile = File(appContext.cacheDir, "external_sub.srt")
+                    subFile.writeText(subText, Charsets.UTF_8)
+                    subFile.deleteOnExit()
 
-                        val status = connection.responseCode
-                        if (status in 200..299) {
-                            val encoding = connection.contentEncoding
-                            rawBytes = if (encoding != null && encoding.contains("gzip")) {
-                                java.util.zip.GZIPInputStream(connection.inputStream).readBytes()
-                            } else {
-                                connection.inputStream.readBytes()
-                            }
-                            connected = true
-                        } else if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_MOVED_PERM || status == 303) {
-                            currentUrl = connection.getHeaderField("Location") ?: break
-                            redirectCount++
-                        } else {
-                            break
-                        }
+                    withContext(Dispatchers.Main) {
+                        val current = player.currentMediaItem ?: return@withContext
+                        val mime = if (isVtt || subtitleUrl.lowercase().contains(".vtt"))
+                            MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+
+                        val localUri = Uri.fromFile(subFile) // ← השתמש ב-Uri.fromFile ולא toURI()
+
+                        val conf = MediaItem.SubtitleConfiguration.Builder(localUri)
+                            .setMimeType(mime)
+                            .setLanguage("iw") // ← "iw" זה הקוד הישן לעברית שExoPlayer מכיר טוב יותר
+                            .setId("external_sub_network")
+                            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT) // ← הסר FORCED
+                            .build()
+
+                        val pos = player.currentPosition
+                        player.replaceMediaItem(
+                            player.currentMediaItemIndex,
+                            current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
+                        )
+                        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                            .setPreferredTextLanguages("iw", "heb", "he")
+                            .build()
+                        player.seekTo(pos)
                     }
-                }
-
-                if (rawBytes == null || rawBytes.isEmpty()) return@launch
-
-                var decodedBytes: ByteArray = rawBytes
-
-                if (decodedBytes.size >= 4 && decodedBytes[0] == 0x50.toByte() && decodedBytes[1] == 0x4B.toByte()) {
-                    try {
-                        val unzippedBytes = java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(decodedBytes)).use { zis ->
-                            zis.nextEntry
-                            zis.readBytes()
-                        }
-                        decodedBytes = unzippedBytes
-                    } catch (e: Exception) {}
-                }
-                else if (decodedBytes.size >= 2 && decodedBytes[0] == 0x1F.toByte() && decodedBytes[1] == 0x8B.toByte()) {
-                    try {
-                        val unzippedBytes = java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(decodedBytes)).use { zis ->
-                            zis.readBytes()
-                        }
-                        decodedBytes = unzippedBytes
-                    } catch (e: Exception) {}
-                }
-
-                var text = ""
-                try {
-                    text = String(decodedBytes, Charsets.UTF_8)
-                    if (!text.contains("-->") && !text.contains("WEBVTT")) {
-                        text = String(decodedBytes, java.nio.charset.Charset.forName("windows-1255"))
-                    }
-                } catch (e: Exception) {
-                    text = String(decodedBytes, java.nio.charset.Charset.forName("windows-1255"))
-                }
-
-                if (text.startsWith("\uFEFF")) {
-                    text = text.substring(1)
-                }
-
-                // הגנה קריטית מהדבקה של דפי שגיאה (HTML) אל תוך הנגן
-                val lowerText = text.trimStart().lowercase()
-                if (lowerText.startsWith("<!doctype") || lowerText.startsWith("<html")) {
-                    return@launch
-                }
-
-                val isActualVtt = text.trimStart().startsWith("WEBVTT", ignoreCase = true)
-                val mime = if (isActualVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-                val ext = if (isActualVtt) ".vtt" else ".srt"
-
-                val subFile = File(appContext.cacheDir, "external_sub$ext")
-                subFile.writeText(text, Charsets.UTF_8)
-
-                withContext(Dispatchers.Main) {
-                    val current = player.currentMediaItem ?: return@withContext
-                    val injectedLang = "he-IL" // שימוש בקוד שפה שונה לחלוטין מזה של הטורנט המובנה
-                    val localUri = Uri.fromFile(subFile)
-
-                    val conf = MediaItem.SubtitleConfiguration.Builder(localUri)
-                        .setMimeType(mime)
-                        .setLanguage(injectedLang)
-                        .setId("external_sub_network")
-                        .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED)
-                        .build()
-
-                    val pos = player.currentPosition
-
-                    player.replaceMediaItem(
-                        player.currentMediaItemIndex,
-                        current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
-                    )
-
-                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                        .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                        .setPreferredTextLanguage(injectedLang)
-                        .build()
-
-                    player.seekTo(pos)
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
