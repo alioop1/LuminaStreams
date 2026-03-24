@@ -67,6 +67,8 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 import android.graphics.Color as AndroidColor
 
+// ── אייקונים מותאמים ─────────────────────────────────────────────────────────
+
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -121,13 +123,21 @@ fun PlayerScreen(
     var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
     var activityTick      by remember { mutableIntStateOf(0) }
     var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
+    var pendingSubtitle   by remember { mutableStateOf<Pair<String, String>?>(null) }
 
-    var pendingSubtitle by remember { mutableStateOf<Pair<String, String>?>(null) }
+    // ── Watch Progress / Resume ───────────────────────────────────────────────
+    val watchPrefs       = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
+    val progressKey      = remember(imdbId) { "progress_$imdbId" }
+    val savedPosition    = remember(imdbId) { watchPrefs.getLong(progressKey, -1L) }
+    var showResumeDialog by remember { mutableStateOf(false) }
+    var resumeHandled    by remember { mutableStateOf(false) }
 
     val backBtnFR   = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
+
+    // ── Effects ───────────────────────────────────────────────────────────────
 
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId)
@@ -142,14 +152,42 @@ fun PlayerScreen(
         }
     }
 
+    // הצג dialog להמשך אחרי שהנגן מוכן
+    LaunchedEffect(prepared) {
+        if (prepared && savedPosition > 30_000L && !resumeHandled) {
+            delay(800)
+            showResumeDialog = true
+        }
+    }
+
+    // שמירת מיקום כל 5 שניות
+    LaunchedEffect(prepared) {
+        if (!prepared) return@LaunchedEffect
+        while (true) {
+            delay(5_000)
+            val pos = exo.player.currentPosition
+            val dur = exo.player.duration
+            if (pos > 10_000L && dur > 0L) {
+                if (pos.toFloat() / dur.toFloat() < 0.95f) {
+                    watchPrefs.edit().putLong(progressKey, pos).apply()
+                } else {
+                    // כמעט סוף — מחיקת ההתקדמות
+                    watchPrefs.edit().remove(progressKey).apply()
+                }
+            }
+        }
+    }
+
+    // ── כתוביות אוטומטיות ────────────────────────────────────────────────────
+    // שלב 1: כשהכתוביות נטענות — בחר ברירת מחדל ושמור ב-pendingSubtitle
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty()) return@LaunchedEffect
-        val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-        val defaultSubLang = prefs.getString("def_subs", "Hebrew") ?: "Hebrew"
+        val prefs           = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+        val defaultSubLang  = prefs.getString("def_subs", "Hebrew") ?: "Hebrew"
         if (defaultSubLang == "None") return@LaunchedEffect
 
         val langCode = if (defaultSubLang == "Hebrew") "heb" else "eng"
-        val sub = state.availableSubtitles.firstOrNull {
+        val sub      = state.availableSubtitles.firstOrNull {
             it.lang.contains(langCode, ignoreCase = true)
         } ?: return@LaunchedEffect
 
@@ -157,20 +195,22 @@ fun PlayerScreen(
         pendingSubtitle   = sub.url to sub.lang
     }
 
+    // שלב 2: רק כשגם prepared=true וגם pendingSubtitle קיים — מריץ applySubtitle
+    // מחכה עד שה-MediaItem מוכן (currentMediaItem != null)
     LaunchedEffect(prepared, pendingSubtitle) {
         val (subUrl, subLang) = pendingSubtitle ?: return@LaunchedEffect
         if (!prepared) return@LaunchedEffect
 
         var attempts = 0
         while (exo.player.currentMediaItem == null && attempts < 20) {
-            delay(300)
-            attempts++
+            delay(300); attempts++
         }
         if (exo.player.currentMediaItem != null) {
             exo.applySubtitle(subUrl, subLang)
         }
     }
 
+    // ── פוקוס ─────────────────────────────────────────────────────────────────
     LaunchedEffect(showControls) {
         if (showControls && activeMenu == ActiveMenu.NONE) {
             delay(120); runCatching { seekBarFR.requestFocus() }
@@ -185,8 +225,9 @@ fun PlayerScreen(
         }
     }
 
+    // הסתרת כפתורים אוטומטית אחרי 5 שניות
     LaunchedEffect(showControls, isPlaying, activityTick) {
-        if (showControls && isPlaying && activeMenu == ActiveMenu.NONE) {
+        if (showControls && isPlaying && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
             delay(5000); showControls = false
         }
     }
@@ -195,12 +236,14 @@ fun PlayerScreen(
 
     BackHandler {
         when {
+            showResumeDialog              -> showResumeDialog = false
             activeMenu != ActiveMenu.NONE -> activeMenu = ActiveMenu.NONE
-            showControls -> showControls = false
-            else -> { exo.pause(); onNavigateBack() }
+            showControls                  -> showControls = false
+            else                          -> { exo.pause(); onNavigateBack() }
         }
     }
 
+    // ── Root Box ──────────────────────────────────────────────────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -211,7 +254,7 @@ fun PlayerScreen(
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (activeMenu == ActiveMenu.NONE) {
+                        if (activeMenu == ActiveMenu.NONE && !showResumeDialog) {
                             activityTick++
                             if (showControls) { if (isPlaying) exo.pause() else exo.play() }
                             else showControls = true
@@ -219,66 +262,72 @@ fun PlayerScreen(
                         } else false
                     }
                     KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
-                        if (activeMenu == ActiveMenu.NONE) { activityTick++; showControls = true; true } else false
+                        if (activeMenu == ActiveMenu.NONE && !showResumeDialog) {
+                            activityTick++; showControls = true; true
+                        } else false
                     }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                         if (isPlaying) exo.pause() else exo.play()
                         showControls = true; activityTick++; true
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> {
-                        if (!showControls && activeMenu == ActiveMenu.NONE) { showControls = true; activityTick++; true } else false
+                        if (!showControls && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
+                            showControls = true; activityTick++; true
+                        } else false
                     }
                     else -> false
                 }
             }
     ) {
+        // ── Video surface + SubtitleView ──────────────────────────────────────
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
                 FrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
                     )
                     val surfaceView = SurfaceView(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         keepScreenOn = true
                         addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                             override fun onViewAttachedToWindow(v: android.view.View) {
-                                exo.player.setVideoSurfaceView(this@apply); surfaceReady = true
+                                exo.player.setVideoSurfaceView(this@apply)
+                                surfaceReady = true
                             }
                             override fun onViewDetachedFromWindow(v: android.view.View) {
-                                surfaceReady = false; exo.player.clearVideoSurface()
+                                surfaceReady = false
+                                exo.player.clearVideoSurface()
                             }
                         })
                     }
-
                     val subtitleView = SubtitleView(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                            ViewGroup.LayoutParams.MATCH_PARENT,
+                            ViewGroup.LayoutParams.MATCH_PARENT
                         )
-
                         val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
-                        val style = CaptionStyleCompat(
-                            textColor,
-                            AndroidColor.TRANSPARENT,
-                            AndroidColor.TRANSPARENT,
-                            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
-                            AndroidColor.BLACK,
-                            null
+                        setStyle(
+                            CaptionStyleCompat(
+                                textColor,
+                                AndroidColor.TRANSPARENT,
+                                AndroidColor.TRANSPARENT,
+                                CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
+                                AndroidColor.BLACK,
+                                null
+                            )
                         )
-
-                        setStyle(style)
-                        setApplyEmbeddedStyles(false)       // ← מונע override של הסגנון ע"י הכתוביות עצמן
-                        setApplyEmbeddedFontSizes(false)    // ← מונע שגודל הגופן ישתנה (חשוב לעברית)
+                        setApplyEmbeddedStyles(false)
+                        setApplyEmbeddedFontSizes(false)
                         setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                         setBottomPaddingFraction(0.08f)
                     }
-
                     addView(surfaceView)
                     addView(subtitleView)
-
                     exo.player.addListener(object : Player.Listener {
                         override fun onCues(cueGroup: CueGroup) {
                             subtitleView.setCues(cueGroup.cues)
@@ -292,184 +341,424 @@ fun PlayerScreen(
             }
         )
 
-        // טיפול באזהרת return@Box: מוחלף ב-if / else
-        if (error != null) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.88f)), Alignment.Center) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                    modifier = Modifier.padding(48.dp)
-                ) {
-                    Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape), Alignment.Center) {
-                        Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
-                    }
-                    Text("Playback Error", color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black)
-                    Text(error!!, color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
-                    Spacer(Modifier.height(8.dp))
-                    Surface(
-                        onClick  = { exo.clearError(); onNavigateBack() },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(52.dp)
-                    ) {
-                        Row(Modifier.padding(horizontal = 32.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
-                            Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp)
-                        }
-                    }
-                }
-            }
-        } else {
-            AnimatedVisibility(visible = showControls, enter = fadeIn(tween(200)), exit = fadeOut(tween(350)), modifier = Modifier.fillMaxSize()) {
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f))))) {
-                    AnimatedVisibility(visible = !isPlaying, enter = scaleIn(tween(120)) + fadeIn(tween(120)), exit = scaleOut(tween(100)) + fadeOut(tween(100)), modifier = Modifier.align(Alignment.Center)) {
-                        Box(Modifier.size(80.dp).background(Color.Black.copy(0.6f), CircleShape).border(2.dp, WHITE.copy(0.7f), CircleShape), Alignment.Center) {
-                            Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
-                        }
-                    }
+        // ── Resume Dialog ─────────────────────────────────────────────────────
+        if (showResumeDialog) {
+            val resumeFR    = remember { FocusRequester() }
+            val fromStartFR = remember { FocusRequester() }
+            LaunchedEffect(Unit) { delay(100); runCatching { resumeFR.requestFocus() } }
 
-                    Row(
-                        modifier = Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 64.dp, vertical = 32.dp).onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) { runCatching { seekBarFR.requestFocus() }; true } else false
-                        },
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            onClick  = { exo.pause(); onNavigateBack() },
-                            shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = CTRL_BG, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                            modifier = Modifier.size(48.dp).focusRequester(backBtnFR)
-                        ) {
-                            Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp)) }
-                        }
-                        Spacer(Modifier.width(16.dp))
-                        if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
-                    }
-
-                    Column(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)) {
-                        PlayerProgressControls(exo, isPlaying, isRtl, seekBarFR, { runCatching { backBtnFR.requestFocus() } }, { runCatching { firstPillFR.requestFocus() } })
-                        Spacer(Modifier.height(20.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
-                                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) { runCatching { seekBarFR.requestFocus() }; true } else false
-                            },
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment     = Alignment.CenterVertically
-                        ) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                ControlPill(CustomAudioIcon, "Audio", Modifier.focusRequester(firstPillFR)) {
-                                    activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
-                                    activityTick++
-                                }
-                                ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
-                                    activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
-                                    activityTick++
-                                }
-                                ControlPill(
-                                    Icons.Default.Search,
-                                    when {
-                                        state.isSubtitlesLoading           -> "Loading Subs..."
-                                        state.availableSubtitles.isEmpty() -> "Web Subs"
-                                        else -> "Web Subs (${state.availableSubtitles.size})"
-                                    }
-                                ) {
-                                    if (!state.isSubtitlesLoading) {
-                                        activeMenu = if (activeMenu == ActiveMenu.WEB_SUBS) ActiveMenu.NONE else ActiveMenu.WEB_SUBS
-                                    }
-                                    activityTick++
-                                }
-                            }
-                            ControlPill(Icons.Default.Close, "Exit") { exo.pause(); onNavigateBack() }
-                        }
-                    }
-                }
-            }
-
-            AnimatedVisibility(
-                visible  = activeMenu != ActiveMenu.NONE,
-                enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
-                exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
-                modifier = Modifier.fillMaxSize().zIndex(200f)
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.75f))
+                    .zIndex(300f),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(0.7f))
-                        .clickable(remember { MutableInteractionSource() }, null) { activeMenu = ActiveMenu.NONE },
-                    contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
+                Column(
+                    modifier = Modifier
+                        .width(480.dp)
+                        .background(Color(0xFF1A1A24), RoundedCornerShape(24.dp))
+                        .padding(36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Column(
+                    Icon(
+                        Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint     = RED,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Text(
+                        "Continue Watching?",
+                        color      = WHITE,
+                        fontSize   = 22.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign  = TextAlign.Center
+                    )
+                    Text(
+                        "Stopped at ${formatTime(savedPosition)}",
+                        color     = DIM,
+                        fontSize  = 15.sp,
+                        textAlign = TextAlign.Center
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier
-                            .fillMaxHeight()
-                            .padding(start = if (isRtl) 24.dp else 0.dp, top = 24.dp, end = if (isRtl) 0.dp else 24.dp, bottom = 24.dp)
-                            .width(460.dp)
-                            .clip(RoundedCornerShape(28.dp))
-                            .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
-                            .padding(horizontal = 36.dp, vertical = 40.dp)
-                            .clickable(remember { MutableInteractionSource() }, null) {}
+                            .fillMaxWidth()
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type == KeyEventType.KeyDown) {
                                     when {
-                                        ev.key == Key.Back || ev.key == Key.Escape -> { activeMenu = ActiveMenu.NONE; true }
-                                        (!isRtl && ev.key == Key.DirectionLeft)    -> { activeMenu = ActiveMenu.NONE; true }
-                                        (isRtl  && ev.key == Key.DirectionRight)   -> { activeMenu = ActiveMenu.NONE; true }
+                                        ev.key == Key.DirectionRight -> { runCatching { fromStartFR.requestFocus() }; true }
+                                        ev.key == Key.DirectionLeft  -> { runCatching { resumeFR.requestFocus() }; true }
                                         else -> false
                                     }
                                 } else false
                             }
                     ) {
-                        when (activeMenu) {
-                            ActiveMenu.AUDIO -> {
-                                SidePanelHeader("Audio Tracks", "Select language")
-                                TrackListUi(exo, currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, C.TRACK_TYPE_AUDIO, sideMenuFR) { activeMenu = ActiveMenu.NONE }
+                        // כפתור המשך
+                        Surface(
+                            onClick = {
+                                showResumeDialog = false
+                                resumeHandled    = true
+                                exo.seekTo(savedPosition)
+                            },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = RED,
+                                focusedContainerColor = Color(0xFFFF2A2A),
+                                contentColor          = WHITE,
+                                focusedContentColor   = WHITE
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                            modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
+                        ) {
+                            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
-                            ActiveMenu.EMBEDDED_SUBS -> {
-                                SidePanelHeader("Embedded Subtitles", "From video file")
-                                TrackListUi(exo, currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, C.TRACK_TYPE_TEXT, sideMenuFR) { activeMenu = ActiveMenu.NONE }
+                        }
+                        // כפתור מתחילה
+                        Surface(
+                            onClick = {
+                                showResumeDialog = false
+                                resumeHandled    = true
+                                watchPrefs.edit().remove(progressKey).apply()
+                            },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = Color(0xFF2A2A38),
+                                focusedContainerColor = Color(0xFF3A3A50),
+                                contentColor          = WHITE,
+                                focusedContentColor   = WHITE
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                            modifier = Modifier.weight(1f).height(52.dp).focusRequester(fromStartFR)
+                        ) {
+                            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                Text("From Start", fontWeight = FontWeight.Bold, fontSize = 15.sp)
                             }
-                            ActiveMenu.WEB_SUBS -> {
-                                SidePanelHeader("Web Subtitles", if (state.availableSubtitles.isNotEmpty()) "${state.availableSubtitles.size} online" else "")
-                                if (state.availableSubtitles.isEmpty()) {
-                                    Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
-                                        Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 15.sp)
-                                    }
-                                } else {
-                                    LazyColumn(
-                                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                                        modifier = Modifier.focusGroup()
-                                    ) {
-                                        itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
-                                            val isFirst = index == 0
-                                            val isLast  = index == state.availableSubtitles.size - 1
-                                            TrackItemCard(
-                                                title      = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
-                                                subtitle   = sub.source,
-                                                isSelected = sub.url == selectedWebSubUrl,
-                                                modifier   = Modifier
-                                                    .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
-                                                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
-                                                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
-                                                onClick = {
-                                                    exo.applySubtitle(sub.url, sub.lang)
-                                                    selectedWebSubUrl = sub.url
-                                                    pendingSubtitle   = null
-                                                    activeMenu        = ActiveMenu.NONE
-                                                }
-                                            )
-                                        }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Error overlay ─────────────────────────────────────────────────────
+        if (error != null) {
+            val errorFR = remember { FocusRequester() }
+            LaunchedEffect(error) {
+                if (error != null) { delay(100); runCatching { errorFR.requestFocus() } }
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.88f))
+                    .zIndex(200f),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(20.dp),
+                    modifier = Modifier.padding(48.dp)
+                ) {
+                    Box(
+                        Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape),
+                        Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
+                    }
+                    Text(
+                        "Playback Error",
+                        color      = WHITE,
+                        fontSize   = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        textAlign  = TextAlign.Center
+                    )
+                    Text(
+                        error!!,
+                        color     = DIM,
+                        fontSize  = 16.sp,
+                        textAlign = TextAlign.Center,
+                        modifier  = Modifier.widthIn(max = 560.dp)
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Surface(
+                        onClick  = { exo.clearError(); onNavigateBack() },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = RED,
+                            focusedContainerColor = Color(0xFFFF2A2A),
+                            contentColor          = WHITE,
+                            focusedContentColor   = WHITE
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                        modifier = Modifier.height(52.dp).focusRequester(errorFR)
+                    ) {
+                        Box(
+                            Modifier.padding(horizontal = 32.dp).fillMaxHeight(),
+                            Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment     = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
+                                Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Controls overlay (רק כשאין error ואין resume dialog) ─────────────
+        AnimatedVisibility(
+            visible  = showControls && error == null && !showResumeDialog,
+            enter    = fadeIn(tween(200)),
+            exit     = fadeOut(tween(350)),
+            modifier = Modifier.fillMaxSize()
+        ) {
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(
+                        listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f))
+                    )
+                )
+            ) {
+                // אייקון pause/play במרכז
+                AnimatedVisibility(
+                    visible  = !isPlaying,
+                    enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
+                    exit     = scaleOut(tween(100)) + fadeOut(tween(100)),
+                    modifier = Modifier.align(Alignment.Center)
+                ) {
+                    Box(
+                        Modifier
+                            .size(80.dp)
+                            .background(Color.Black.copy(0.6f), CircleShape)
+                            .border(2.dp, WHITE.copy(0.7f), CircleShape),
+                        Alignment.Center
+                    ) {
+                        Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
+                    }
+                }
+
+                // כפתור חזרה + Buffering
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .padding(horizontal = 64.dp, vertical = 32.dp)
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                                runCatching { seekBarFR.requestFocus() }; true
+                            } else false
+                        },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Surface(
+                        onClick  = { exo.pause(); onNavigateBack() },
+                        shape    = ClickableSurfaceDefaults.shape(CircleShape),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = CTRL_BG,
+                            focusedContainerColor = WHITE,
+                            contentColor          = WHITE,
+                            focusedContentColor   = Color.Black
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                        modifier = Modifier.size(48.dp).focusRequester(backBtnFR)
+                    ) {
+                        Box(Modifier.fillMaxSize(), Alignment.Center) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp))
+                        }
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
+                }
+
+                // Progress bar + Pills
+                Column(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .fillMaxWidth()
+                        .padding(horizontal = 64.dp, vertical = 40.dp)
+                ) {
+                    PlayerProgressControls(
+                        exoWrapper    = exo,
+                        isPlaying     = isPlaying,
+                        isRtl         = isRtl,
+                        seekFR        = seekBarFR,
+                        onUpPressed   = { runCatching { backBtnFR.requestFocus() } },
+                        onDownPressed = { runCatching { firstPillFR.requestFocus() } }
+                    )
+                    Spacer(Modifier.height(20.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onPreviewKeyEvent { ev ->
+                                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
+                                    runCatching { seekBarFR.requestFocus() }; true
+                                } else false
+                            },
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment     = Alignment.CenterVertically
+                    ) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            ControlPill(
+                                icon     = CustomAudioIcon,
+                                text     = "Audio",
+                                modifier = Modifier.focusRequester(firstPillFR)
+                            ) {
+                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
+                                activityTick++
+                            }
+                            ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
+                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
+                                activityTick++
+                            }
+                            ControlPill(
+                                icon = Icons.Default.Search,
+                                text = when {
+                                    state.isSubtitlesLoading           -> "Loading Subs..."
+                                    state.availableSubtitles.isEmpty() -> "Web Subs"
+                                    else -> "Web Subs (${state.availableSubtitles.size})"
+                                }
+                            ) {
+                                if (!state.isSubtitlesLoading) {
+                                    activeMenu = if (activeMenu == ActiveMenu.WEB_SUBS) ActiveMenu.NONE else ActiveMenu.WEB_SUBS
+                                }
+                                activityTick++
+                            }
+                        }
+                        ControlPill(Icons.Default.Close, "Exit") {
+                            exo.pause(); onNavigateBack()
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Side Panel (Audio / Embedded Subs / Web Subs) ─────────────────────
+        AnimatedVisibility(
+            visible  = activeMenu != ActiveMenu.NONE && error == null,
+            enter    = slideInHorizontally(
+                initialOffsetX = { if (isRtl) -it else it },
+                animationSpec  = tween(380, easing = FastOutSlowInEasing)
+            ) + fadeIn(tween(250)),
+            exit     = slideOutHorizontally(
+                targetOffsetX = { if (isRtl) -it else it },
+                animationSpec = tween(300, easing = FastOutSlowInEasing)
+            ) + fadeOut(tween(200)),
+            modifier = Modifier.fillMaxSize().zIndex(200f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.7f))
+                    .clickable(remember { MutableInteractionSource() }, null) {
+                        activeMenu = ActiveMenu.NONE
+                    },
+                contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(
+                            start  = if (isRtl) 24.dp else 0.dp,
+                            top    = 24.dp,
+                            end    = if (isRtl) 0.dp else 24.dp,
+                            bottom = 24.dp
+                        )
+                        .width(460.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
+                        .padding(horizontal = 36.dp, vertical = 40.dp)
+                        .clickable(remember { MutableInteractionSource() }, null) {}
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown) {
+                                when {
+                                    ev.key == Key.Back || ev.key == Key.Escape      -> { activeMenu = ActiveMenu.NONE; true }
+                                    (!isRtl && ev.key == Key.DirectionLeft)         -> { activeMenu = ActiveMenu.NONE; true }
+                                    (isRtl  && ev.key == Key.DirectionRight)        -> { activeMenu = ActiveMenu.NONE; true }
+                                    else -> false
+                                }
+                            } else false
+                        }
+                ) {
+                    when (activeMenu) {
+                        ActiveMenu.AUDIO -> {
+                            SidePanelHeader("Audio Tracks", "Select language")
+                            TrackListUi(
+                                exo       = exo,
+                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO },
+                                trackType = C.TRACK_TYPE_AUDIO,
+                                focusReq  = sideMenuFR
+                            ) { activeMenu = ActiveMenu.NONE }
+                        }
+                        ActiveMenu.EMBEDDED_SUBS -> {
+                            SidePanelHeader("Embedded Subtitles", "From video file")
+                            TrackListUi(
+                                exo       = exo,
+                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT },
+                                trackType = C.TRACK_TYPE_TEXT,
+                                focusReq  = sideMenuFR
+                            ) { activeMenu = ActiveMenu.NONE }
+                        }
+                        ActiveMenu.WEB_SUBS -> {
+                            SidePanelHeader(
+                                "Web Subtitles",
+                                if (state.availableSubtitles.isNotEmpty()) "${state.availableSubtitles.size} online" else ""
+                            )
+                            if (state.availableSubtitles.isEmpty()) {
+                                Box(
+                                    Modifier.fillMaxWidth().padding(vertical = 32.dp),
+                                    Alignment.Center
+                                ) {
+                                    Text(
+                                        if (state.isSubtitlesLoading) "Searching..." else "No subtitles found",
+                                        color    = DIM,
+                                        fontSize = 15.sp
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    modifier            = Modifier.focusGroup()
+                                ) {
+                                    itemsIndexed(
+                                        state.availableSubtitles,
+                                        key = { _, s -> s.url }
+                                    ) { index, sub ->
+                                        val isFirst = index == 0
+                                        val isLast  = index == state.availableSubtitles.size - 1
+                                        TrackItemCard(
+                                            title      = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
+                                            subtitle   = sub.source,
+                                            isSelected = sub.url == selectedWebSubUrl,
+                                            modifier   = Modifier
+                                                .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
+                                                .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                                                .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                                            onClick    = {
+                                                exo.applySubtitle(sub.url, sub.lang)
+                                                selectedWebSubUrl = sub.url
+                                                pendingSubtitle   = null
+                                                activeMenu        = ActiveMenu.NONE
+                                            }
+                                        )
                                     }
                                 }
                             }
-                            ActiveMenu.NONE -> {}
                         }
+                        ActiveMenu.NONE -> {}
                     }
                 }
             }
         }
     }
 }
+
+// ── Side Panel Header ─────────────────────────────────────────────────────────
 
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
@@ -483,10 +772,15 @@ private fun SidePanelHeader(title: String, subtitle: String) {
             }
         }
         Spacer(Modifier.height(24.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(RED.copy(0.6f), Color(0x08FFFFFF)))))
+        Box(
+            Modifier.fillMaxWidth().height(1.dp)
+                .background(Brush.horizontalGradient(listOf(RED.copy(0.6f), Color(0x08FFFFFF))))
+        )
         Spacer(Modifier.height(20.dp))
     }
 }
+
+// ── Track List UI ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun TrackListUi(
@@ -509,7 +803,8 @@ private fun TrackListUi(
                 val label    = format.label    ?: ""
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
-                val name     = listOf(lang.uppercase(), label, channels, codec).filter { it.isNotBlank() }.joinToString(" • ")
+                val name     = listOf(lang.uppercase(), label, channels, codec)
+                    .filter { it.isNotBlank() }.joinToString(" • ")
                 list.add(Triple(group, i, name))
             }
         }
@@ -523,7 +818,7 @@ private fun TrackListUi(
     } else {
         LazyColumn(
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.focusGroup()
+            modifier            = Modifier.focusGroup()
         ) {
             itemsIndexed(trackList) { index, (group, trackIndex, name) ->
                 val isFirst    = index == 0
@@ -546,7 +841,9 @@ private fun TrackListUi(
                             builder.setTrackTypeDisabled(trackType, true)
                         } else {
                             builder.setTrackTypeDisabled(trackType, false)
-                            builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
+                            builder.setOverrideForType(
+                                TrackSelectionOverride(group.mediaTrackGroup, trackIndex)
+                            )
                         }
                         exo.player.trackSelectionParameters = builder.build()
                         onClose()
@@ -557,31 +854,68 @@ private fun TrackListUi(
     }
 }
 
+// ── Track Item Card ───────────────────────────────────────────────────────────
+
 @Composable
 private fun TrackItemCard(
-    title:     String,
-    subtitle:  String,
+    title:      String,
+    subtitle:   String,
     isSelected: Boolean,
-    modifier:  Modifier = Modifier,
-    onClick:   () -> Unit
+    modifier:   Modifier = Modifier,
+    onClick:    () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
     val containerBg by animateColorAsState(
-        if (focused) Color(0xFF282832) else Color(0x0CFFFFFF), tween(200), label = "bgAnim"
+        targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
+        animationSpec = tween(200),
+        label         = "bgAnim"
     )
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent, contentColor = WHITE, focusedContentColor = WHITE),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color.Transparent,
+            contentColor          = WHITE,
+            focusedContentColor   = WHITE
+        ),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
-        modifier = modifier.fillMaxWidth().height(64.dp).onFocusChanged { focused = it.isFocused }
+        modifier = modifier
+            .fillMaxWidth()
+            .height(64.dp)
+            .onFocusChanged { focused = it.isFocused }
     ) {
-        Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(16.dp)).padding(horizontal = 20.dp)) {
-            Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(containerBg, RoundedCornerShape(16.dp))
+                .padding(horizontal = 20.dp)
+        ) {
+            Row(
+                modifier              = Modifier.fillMaxSize(),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, color = WHITE, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.7f))
-                    if (isSelected) { Spacer(Modifier.width(12.dp)); Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4D90FE), modifier = Modifier.size(18.dp)) }
+                    Text(
+                        text       = title,
+                        color      = WHITE,
+                        fontSize   = 16.sp,
+                        fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
+                        maxLines   = 1,
+                        overflow   = TextOverflow.Ellipsis,
+                        modifier   = Modifier.fillMaxWidth(0.7f)
+                    )
+                    if (isSelected) {
+                        Spacer(Modifier.width(12.dp))
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint     = Color(0xFF4D90FE),
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
                 PremiumBadge(subtitle, if (focused) RED else Color.Gray, isOutline = !focused)
             }
@@ -589,17 +923,32 @@ private fun TrackItemCard(
     }
 }
 
+// ── Premium Badge ─────────────────────────────────────────────────────────────
+
 @Composable
 private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
     Box(
-        Modifier.clip(RoundedCornerShape(6.dp))
+        Modifier
+            .clip(RoundedCornerShape(6.dp))
             .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
-            .border(1.dp, if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, RoundedCornerShape(6.dp))
+            .border(
+                1.dp,
+                if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent,
+                RoundedCornerShape(6.dp)
+            )
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
-        Text(text.uppercase(), color = if (isOutline) color else WHITE, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, letterSpacing = 0.5.sp)
+        Text(
+            text.uppercase(),
+            color      = if (isOutline) color else WHITE,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize   = 10.sp,
+            letterSpacing = 0.5.sp
+        )
     }
 }
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
 
 private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
@@ -611,6 +960,8 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "ger", "de" -> "\uD83C\uDDE9\uD83C\uDDEA"
     else        -> "\uD83C\uDF10"
 }
+
+// ── Progress Bar ──────────────────────────────────────────────────────────────
 
 @Composable
 fun PlayerProgressControls(
@@ -639,7 +990,10 @@ fun PlayerProgressControls(
     val thumbSize by animateDpAsState(if (seekFocused) 18.dp else 0.dp,  label = "ts")
 
     Column {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            modifier              = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
             Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             Text("-${formatTime((videoDuration - currentPosition).coerceAtLeast(0L))}", color = DIM, fontSize = 13.sp)
             Text(formatTime(videoDuration), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -647,8 +1001,10 @@ fun PlayerProgressControls(
         Spacer(Modifier.height(10.dp))
         Box(
             modifier = Modifier
-                .fillMaxWidth().height(28.dp)
-                .focusRequester(seekFR).focusable()
+                .fillMaxWidth()
+                .height(28.dp)
+                .focusRequester(seekFR)
+                .focusable()
                 .onFocusChanged { seekFocused = it.isFocused }
                 .onKeyEvent { ev ->
                     if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
@@ -673,8 +1029,23 @@ fun PlayerProgressControls(
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(WHITE.copy(if (seekFocused) 0.25f else 0.18f)))
-            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) WHITE else RED))
+            // רקע
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(barHeight)
+                    .clip(RoundedCornerShape(50))
+                    .background(WHITE.copy(if (seekFocused) 0.25f else 0.18f))
+            )
+            // התקדמות
+            Box(
+                Modifier
+                    .fillMaxWidth(progress)
+                    .height(barHeight)
+                    .clip(RoundedCornerShape(50))
+                    .background(if (seekFocused) WHITE else RED)
+            )
+            // thumb
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
                     Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE))
@@ -684,17 +1055,32 @@ fun PlayerProgressControls(
     }
 }
 
+// ── Control Pill ──────────────────────────────────────────────────────────────
+
 @Composable
-fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun ControlPill(
+    icon:     ImageVector,
+    text:     String,
+    modifier: Modifier = Modifier,
+    onClick:  () -> Unit
+) {
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x55000000), focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = Color(0x55000000),
+            focusedContainerColor = RED,
+            contentColor          = WHITE,
+            focusedContentColor   = WHITE
+        ),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
         modifier = modifier
     ) {
-        Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier          = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Icon(icon, null, Modifier.size(20.dp))
             Spacer(Modifier.width(8.dp))
             Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -702,7 +1088,12 @@ fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, 
     }
 }
 
+// ── Format Time ───────────────────────────────────────────────────────────────
+
 fun formatTime(ms: Long): String {
-    val s = ms / 1000; val h = s / 3600; val m = (s % 3600) / 60; val sec = s % 60
+    val s = ms / 1000
+    val h = s / 3600
+    val m = (s % 3600) / 60
+    val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
 }

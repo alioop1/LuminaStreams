@@ -56,27 +56,34 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         val type = if (season != null && episode != null) "series" else "movie"
         val queryId = if (type == "series") "$formattedId:$season:$episode" else formattedId
 
-        // השרתים הישראלים של Wizdom ו-Ktuvit!
+        // 1. השרתים הישראלים הייעודיים (Wizdom ו-Ktuvit) - המקור הכי עשיר לעברית!
         val wizdomUrl = "https://4b139a4b7f94-wizdom-stremio-v2.baby-beamup.club/subtitles/$type/$queryId.json"
         val ktuvitUrl = "https://4b139a4b7f94-ktuvit-stremio.baby-beamup.club/subtitles/$type/$queryId.json"
-        val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
 
+        // 2. השרתים הרשמיים (נשארים רק כגיבוי במידה ואין כלום באתרים הישראלים)
+        val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
+        val ufoUrl = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
+
+        // משיכה במקביל של כל התוספים כדי לא לתקוע את הנגן
         val wizdomDeferred = async { fetchAndParseStremioJson(wizdomUrl, "Wizdom") }
         val ktuvitDeferred = async { fetchAndParseStremioJson(ktuvitUrl, "Ktuvit") }
         val officialDeferred = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
+        val ufoDeferred = async { fetchAndParseStremioJson(ufoUrl, "OS-Community") }
         val scraperDeferred = async { fetchFromSubtitleScraper(formattedId) }
 
-        val allResults = wizdomDeferred.await() + ktuvitDeferred.await() + officialDeferred.await() + scraperDeferred.await()
+        val allResults = wizdomDeferred.await() + ktuvitDeferred.await() + officialDeferred.await() + ufoDeferred.await() + scraperDeferred.await()
 
+        // סינון: משאירים רק עברית (ואנגלית כגיבוי אחרון)
         val filteredSubs = allResults.filter {
             val lang = it.lang.lowercase()
             lang.contains("heb") || lang == "he" || lang.contains("עברית") || lang.contains("eng") || lang == "en"
         }
 
+        // מיון חכם: מציב את Wizdom ו-Ktuvit בעדיפות עליונה מעל כולם!
         return@coroutineScope filteredSubs.distinctBy { it.url }.sortedBy { sub ->
             var score = 0
-            if (!sub.lang.lowercase().contains("he")) score += 100 // אנגלית נזרקת למטה
-            if (sub.source == "OpenSubtitles") score += 10 // מקורות מחו"ל עדיפות שניה
+            if (!sub.lang.lowercase().contains("he")) score += 100 // אנגלית נזרקת לתחתית הרשימה
+            if (sub.source == "OpenSubtitles" || sub.source == "OS-Community") score += 10 // מקורות מחו"ל עדיפות שניה
             score
         }
     }
@@ -102,7 +109,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                         val subObj = subsArray.getJSONObject(i)
                         val subUrl = subObj.optString("url", "")
 
-                        // תיקון Wizdom/Ktuvit - אם אין שפה, זה אוטומטית עברית
+                        // תיקון לאתרים הישראלים: אם הם לא מחזירים את שם השפה, אנחנו קובעים שזה עברית אוטומטית
                         var lang = subObj.optString("lang", "Unknown")
                         if ((lang == "Unknown" || lang.isEmpty()) && (sourceName == "Wizdom" || sourceName == "Ktuvit")) {
                             lang = "heb"

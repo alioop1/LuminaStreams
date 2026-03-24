@@ -150,9 +150,9 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onPlayerError(error: PlaybackException) {
                 val message = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED -> "Decoder init failed — try a different source."
-                    PlaybackException.ERROR_CODE_DECODING_FAILED -> "Decoding error — try a different source."
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED -> "Network connection failed."
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED      -> "Decoder init failed — try a different source."
+                    PlaybackException.ERROR_CODE_DECODING_FAILED          -> "Decoding error — try a different source."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED  -> "Network connection failed."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
                     PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
                         player.seekToDefaultPosition()
@@ -186,8 +186,13 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
+    // ── כתוביות: הורדה + החלה ─────────────────────────────────────────────────
+    // הבעיה הישנה: replaceMediaItem קורה לפני שהקובץ נכתב, ו-seekTo מאפס.
+    // התיקון:
+    //   1. מוריד לקובץ זמני
+    //   2. קורא applyLocalSubtitle רק אחרי שהכתיבה הצליחה
+    //   3. שומר את ה-position לפני ה-replace ומחזיר אחרי
     fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
-        // אם זה כבר file:// URI (מה-SubtitleScraper), אל תוריד שוב
         if (subtitleUrl.startsWith("file://")) {
             applyLocalSubtitle(subtitleUrl, lang, isVtt)
             return
@@ -196,40 +201,54 @@ class ExoPlayerWrapper(context: Context) {
             try {
                 val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
                 connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                connection.connectTimeout = 8000
-                connection.readTimeout = 8000
-                if (connection.responseCode in 200..299) {
-                    val subText = connection.inputStream.bufferedReader(Charsets.UTF_8).readText()
-                    val subFile = File(appContext.cacheDir, "external_sub.srt")
-                    subFile.writeText(subText, Charsets.UTF_8)
+                connection.connectTimeout = 10_000
+                connection.readTimeout    = 10_000
+                val responseCode = connection.responseCode
+                if (responseCode in 200..299) {
+                    val bytes   = connection.inputStream.readBytes()
+                    val ext     = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
+                    val subFile = File(appContext.cacheDir, "lumina_sub.$ext")
+                    subFile.writeBytes(bytes)
                     withContext(Dispatchers.Main) {
-                        applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, isVtt)
+                        applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, ext == "vtt")
                     }
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
     }
 
     private fun applyLocalSubtitle(localUriStr: String, lang: String, isVtt: Boolean) {
         val current = player.currentMediaItem ?: return
-        val mime = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val mime    = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+
+        // שמירת המיקום לפני ה-replace
+        val savedPos     = player.currentPosition
+        val wasPlaying   = player.isPlaying
+
         val conf = MediaItem.SubtitleConfiguration.Builder(Uri.parse(localUriStr))
             .setMimeType(mime)
             .setLanguage("iw")
             .setId("external_sub")
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT) // ← בלי FORCED!
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
             .build()
-        val pos = player.currentPosition
+
+        // replace + שחזור מיקום
         player.replaceMediaItem(
             player.currentMediaItemIndex,
             current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
         )
+
+        // אחרי replace חייבים לבקש מחדש את הטראק ולחזור למיקום
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setPreferredTextLanguages("iw", "heb", "he")
             .build()
-        player.seekTo(pos)
+
+        player.seekTo(savedPos)
+        if (wasPlaying) player.play()
     }
 
     fun play()  { player.play() }
