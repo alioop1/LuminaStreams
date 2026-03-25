@@ -6,6 +6,7 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.model.SearchResult
 import kotlinx.coroutines.*
@@ -15,35 +16,51 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
+// ─── Source selector ──────────────────────────────────────────────
+enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
+
 @Immutable
 data class SearchState(
     val query: String = "",
-    val isSearching: Boolean = false,
-    val isVoiceListening: Boolean = false,
-    val containsHebrew: Boolean = false,
-    val results: List<SearchResult> = emptyList(),
-    val searchHistory: List<String> = emptyList(),
-    val trendingSearches: List<SearchResult> = emptyList(),
-    val autocompleteSuggestions: List<String> = emptyList(),
-    val suggestedCorrection: String? = null,
-    val dynamicThemeColor: Color? = null,
-    val filters: List<String> = listOf("הכל", "סרטים", "סדרות"),
-    val selectedFilter: String = "הכל",
-    val exactMatch: SearchResult? = null,
-    val focusedItemUrl: String? = null
-)
+    val source: SearchSource = SearchSource.ALL,
 
-sealed interface SearchEvent {
-    data class ShowError(val message: String) : SearchEvent
-    data class NavigateToDetails(val id: String) : SearchEvent
-    object TriggerHapticFeedback : SearchEvent
+    // TMDB
+    val tmdbResults: List<SearchResult> = emptyList(),
+    val isTmdbLoading: Boolean = false,
+
+    // Fuzer
+    val fuzerResults: List<SearchResult> = emptyList(),
+    val isFuzerLoading: Boolean = false,
+    val fuzerError: String? = null,
+
+    // Discovery (no query)
+    val discoveryResults: List<SearchResult> = emptyList(),
+    val isDiscoveryLoading: Boolean = false,
+
+    // Shared
+    val searchHistory: List<String> = emptyList(),
+    val autocompleteSuggestions: List<String> = emptyList(),
+    val focusedItemUrl: String? = null,
+    val dynamicThemeColor: Color? = null
+) {
+    // What the grid shows right now
+    val activeResults: List<SearchResult> get() = when {
+        source == SearchSource.FUZER              -> fuzerResults
+        query.isBlank()                           -> discoveryResults
+        source == SearchSource.MOVIES             -> tmdbResults.filter { it.type == MediaType.MOVIE }
+        source == SearchSource.SERIES             -> tmdbResults.filter { it.type == MediaType.TV_SHOW }
+        else                                      -> tmdbResults
+    }
+    val isLoading: Boolean get() = when (source) {
+        SearchSource.FUZER -> isFuzerLoading
+        else               -> if (query.isBlank()) isDiscoveryLoading else isTmdbLoading
+    }
 }
 
 sealed interface SearchIntent {
     data class UpdateQuery(val query: String) : SearchIntent
-    data class SelectFilter(val filter: String) : SearchIntent
+    data class SelectSource(val source: SearchSource) : SearchIntent
     data class SetFocusedBackground(val url: String?) : SearchIntent
-    data class SetVoiceListeningState(val isListening: Boolean) : SearchIntent
     object ClearHistory : SearchIntent
     data class RemoveHistoryItem(val item: String) : SearchIntent
 }
@@ -54,178 +71,232 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _state = MutableStateFlow(SearchState())
     val state: StateFlow<SearchState> = _state.asStateFlow()
 
-    private val queryFlow = MutableStateFlow("")
-    private var allFetchedResults: List<SearchResult> = emptyList()
-    private val historyPrefs   = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
-    private val settingsPrefs  = application.getSharedPreferences("lumina_settings",        Context.MODE_PRIVATE)
+    private val queryFlow    = MutableStateFlow("")
+    private val historyPrefs = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
+    private val settingsPrefs= application.getSharedPreferences("lumina_settings",        Context.MODE_PRIVATE)
 
-    private val popularSearchTerms = listOf(
+    private val fuzerEngine by lazy { FuzerEngine() }
+
+    private val popularTerms = listOf(
         "Avatar", "Avengers", "Batman", "Spider-Man", "Superman",
         "Matrix", "Inception", "Interstellar", "Joker", "Star Wars",
-        "Harry Potter", "Lord of the Rings", "Deadpool", "X-Men"
+        "Harry Potter", "Lord of the Rings", "Deadpool", "Breaking Bad"
     )
 
     init {
         loadHistory()
         observeQuery()
-        fetchTrendingPosters()
+        loadDiscovery()
     }
 
-    private fun observeQuery() {
-        viewModelScope.launch {
-            queryFlow
-                .debounce(400)
-                .distinctUntilChanged()
-                .filter { it.isNotBlank() }
-                .collectLatest { validQuery -> performNetworkSearch(validQuery) }
+    // ─── Intent handler ───────────────────────────────────────────
+    fun onIntent(intent: SearchIntent) = when (intent) {
+        is SearchIntent.UpdateQuery         -> handleQueryUpdate(intent.query)
+        is SearchIntent.SelectSource        -> handleSourceChange(intent.source)
+        is SearchIntent.SetFocusedBackground-> _state.update { it.copy(focusedItemUrl = intent.url) }
+        is SearchIntent.ClearHistory        -> clearHistory()
+        is SearchIntent.RemoveHistoryItem   -> removeHistoryItem(intent.item)
+    }
+
+    // ─── Source change ────────────────────────────────────────────
+    private fun handleSourceChange(src: SearchSource) {
+        _state.update { it.copy(source = src) }
+        // אם עוברים ל-Fuzer והחיפוש כבר פעיל, תביא תוצאות פיוזר
+        if (src == SearchSource.FUZER && _state.value.fuzerResults.isEmpty()) {
+            launchFuzerSearch(_state.value.query)
         }
     }
 
-    private fun fetchTrendingPosters() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val url = URL("https://v3-cinemeta.strem.io/catalog/movie/top.json")
-                val connection = url.openConnection() as HttpURLConnection
-                connection.requestMethod = "GET"
-                connection.connectTimeout = 3000
-                if (connection.responseCode == 200) {
-                    val response = connection.inputStream.bufferedReader().use { it.readText() }
-                    val metas    = JSONObject(response).optJSONArray("metas") ?: return@launch
-                    val trending = mutableListOf<SearchResult>()
-                    for (i in 0 until minOf(20, metas.length())) {
-                        val meta = metas.getJSONObject(i)
-                        trending.add(SearchResult(
-                            id          = meta.optString("id", ""),
-                            title       = meta.optString("name", "Unknown"),
-                            posterUrl   = meta.optString("poster", "").replace("http://", "https://"),
-                            backdropUrl = meta.optString("background", "").replace("http://", "https://"),
-                            type        = MediaType.MOVIE,
-                            rating      = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
-                            releaseYear = meta.optString("releaseInfo", "")
-                        ))
-                    }
-                    _state.update { it.copy(trendingSearches = trending) }
-                }
-            } catch (e: Exception) { e.printStackTrace() }
-        }
-    }
-
-    fun onIntent(intent: SearchIntent) {
-        when (intent) {
-            is SearchIntent.UpdateQuery          -> handleQueryUpdate(intent.query)
-            is SearchIntent.SelectFilter         -> applyFilter(intent.filter)
-            is SearchIntent.SetFocusedBackground -> _state.update { it.copy(focusedItemUrl = intent.url) }
-            is SearchIntent.ClearHistory         -> clearHistory()
-            is SearchIntent.RemoveHistoryItem    -> removeHistoryItem(intent.item)
-            is SearchIntent.SetVoiceListeningState -> _state.update { it.copy(isVoiceListening = intent.isListening) }
-        }
-    }
-
+    // ─── Query update ─────────────────────────────────────────────
     private fun handleQueryUpdate(newQuery: String) {
-        val isHebrew = newQuery.any { it in '\u0590'..'\u05FF' }
-        val suggestions = if (newQuery.length >= 2 && !isHebrew) {
-            val historyMatches  = _state.value.searchHistory.filter { it.contains(newQuery, ignoreCase = true) }
-            val popularMatches  = popularSearchTerms.filter { it.contains(newQuery, ignoreCase = true) }
-            val trendingMatches = _state.value.trendingSearches.map { it.title }.filter { it.contains(newQuery, ignoreCase = true) }
-            (historyMatches + popularMatches + trendingMatches).distinct().take(6)
-        } else emptyList()
+        val suggestions = buildSuggestions(newQuery)
+        _state.update { it.copy(query = newQuery, autocompleteSuggestions = suggestions) }
 
-        _state.update {
-            it.copy(
-                query                  = newQuery,
-                exactMatch             = null,
-                containsHebrew         = isHebrew,
-                autocompleteSuggestions = suggestions
-            )
-        }
-
-        if (newQuery.isBlank() || isHebrew) {
-            allFetchedResults = emptyList()
-            _state.update { it.copy(results = emptyList(), isSearching = false, focusedItemUrl = null) }
+        if (newQuery.isBlank()) {
+            _state.update { it.copy(tmdbResults = emptyList(), fuzerResults = emptyList(), fuzerError = null) }
             return
         }
-        _state.update { it.copy(isSearching = true) }
         queryFlow.value = newQuery
     }
 
-    private suspend fun performNetworkSearch(query: String) = coroutineScope {
-        try {
-            // ✅ REAL: only persist to history if save_history is enabled
-            val saveHistory = settingsPrefs.getBoolean("save_history", true)
-            if (saveHistory) saveToHistory(query)
-
-            val moviesDeferred = async(Dispatchers.IO) { fetchFromCinemeta(query, "movie",  MediaType.MOVIE) }
-            val seriesDeferred = async(Dispatchers.IO) { fetchFromCinemeta(query, "series", MediaType.TV_SHOW) }
-
-            val combined = (moviesDeferred.await() + seriesDeferred.await())
-                .filter { it.posterUrl.isNotBlank() }
-                .sortedByDescending { it.title.equals(query, ignoreCase = true) }
-
-            allFetchedResults = combined
-            val exactMatch = combined.firstOrNull { it.title.equals(query, ignoreCase = true) }
-            _state.update { it.copy(isSearching = false, exactMatch = exactMatch) }
-            applyFilter(_state.value.selectedFilter)
-        } catch (e: Exception) {
-            _state.update { it.copy(isSearching = false, results = emptyList()) }
-        }
+    private fun buildSuggestions(q: String): List<String> {
+        if (q.length < 2) return emptyList()
+        val hist    = _state.value.searchHistory.filter { it.contains(q, ignoreCase = true) }
+        val popular = popularTerms.filter { it.contains(q, ignoreCase = true) }
+        return (hist + popular).distinct().take(6)
     }
 
-    private fun applyFilter(filter: String) {
-        val filteredList = when (filter) {
-            "סרטים" -> allFetchedResults.filter { it.type == MediaType.MOVIE }
-            "סדרות" -> allFetchedResults.filter { it.type == MediaType.TV_SHOW }
-            else    -> allFetchedResults
-        }
-        _state.update { it.copy(selectedFilter = filter, results = filteredList) }
-    }
-
-    private fun fetchFromCinemeta(query: String, catalogType: String, mediaType: MediaType): List<SearchResult> {
-        val results = mutableListOf<SearchResult>()
-        try {
-            val encodedQuery = URLEncoder.encode(query, "UTF-8")
-            val url = URL("https://v3-cinemeta.strem.io/catalog/$catalogType/top/search=$encodedQuery.json")
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.connectTimeout = 3000
-            if (connection.responseCode == 200) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                val metas    = JSONObject(response).optJSONArray("metas") ?: return emptyList()
-                for (i in 0 until metas.length()) {
-                    val meta = metas.getJSONObject(i)
-                    results.add(SearchResult(
-                        id          = meta.optString("id", ""),
-                        title       = meta.optString("name", "Unknown"),
-                        posterUrl   = meta.optString("poster", "").replace("http://", "https://"),
-                        backdropUrl = meta.optString("background", "").replace("http://", "https://"),
-                        type        = mediaType,
-                        rating      = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
-                        releaseYear = meta.optString("releaseInfo", "")
-                    ))
+    // ─── Query observe ────────────────────────────────────────────
+    private fun observeQuery() {
+        viewModelScope.launch {
+            queryFlow
+                .debounce(380)
+                .distinctUntilChanged()
+                .filter { it.isNotBlank() }
+                .collectLatest { q ->
+                    // שמירת היסטוריה
+                    if (settingsPrefs.getBoolean("save_history", true)) saveToHistory(q)
+                    // הרצת שני sources במקביל
+                    coroutineScope {
+                        launch { runTmdbSearch(q) }
+                        launch { if (_state.value.source == SearchSource.FUZER) launchFuzerSearch(q) }
+                    }
                 }
+        }
+    }
+
+    // ─── TMDB search ──────────────────────────────────────────────
+    private suspend fun runTmdbSearch(query: String) {
+        _state.update { it.copy(isTmdbLoading = true) }
+        try {
+            val isHe  = query.any { it in '\u0590'..'\u05FF' }
+            val lang  = if (isHe) "he-IL" else "en-US"
+            val enc   = URLEncoder.encode(query, "UTF-8")
+            val key   = "9ab4a284f0c028007b78925852196b79"
+            val base  = "https://image.tmdb.org/t/p"
+
+            val p1 = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 1) }
+            val p2 = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 2) }
+            val combined = (p1 + p2).distinctBy { it.id }
+
+            _state.update { it.copy(tmdbResults = combined, isTmdbLoading = false) }
+        } catch (_: Exception) {
+            _state.update { it.copy(tmdbResults = emptyList(), isTmdbLoading = false) }
+        }
+    }
+
+    private fun fetchTmdbPage(enc: String, lang: String, key: String, base: String, page: Int): List<SearchResult> {
+        val out = mutableListOf<SearchResult>()
+        try {
+            val con = URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
+                .openConnection() as HttpURLConnection
+            con.connectTimeout = 6000; con.readTimeout = 9000
+            if (con.responseCode != 200) return emptyList()
+            val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: return emptyList()
+            for (i in 0 until arr.length()) {
+                val j  = arr.getJSONObject(i)
+                val mt = j.optString("media_type")
+                if (mt != "movie" && mt != "tv") continue
+                val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
+                            else             j.optString("title").ifBlank { j.optString("original_title") }
+                val poster = j.optString("poster_path").let { p ->
+                    if (p.isNotBlank() && p != "null") "$base/w342$p" else ""
+                }
+                out += SearchResult(
+                    id          = "${mt}_${j.optInt("id")}",
+                    title       = title,
+                    posterUrl   = poster,
+                    backdropUrl = j.optString("backdrop_path").let { p ->
+                        if (p.isNotBlank() && p != "null") "$base/w780$p" else ""
+                    },
+                    type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                    rating      = j.optDouble("vote_average", 0.0).toFloat(),
+                    releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4)
+                )
             }
-        } catch (e: Exception) {}
-        return results
+        } catch (_: Exception) {}
+        return out
     }
 
-    private fun saveToHistory(query: String) {
-        val newHistory = (listOf(query) + _state.value.searchHistory).distinct().take(8)
-        historyPrefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
-        _state.update { it.copy(searchHistory = newHistory) }
+    // ─── Fuzer search ─────────────────────────────────────────────
+    private fun launchFuzerSearch(query: String) {
+        viewModelScope.launch {
+            _state.update { it.copy(isFuzerLoading = true, fuzerError = null) }
+            try {
+                val raw = withContext(Dispatchers.IO) {
+                    fuzerEngine.search(query).getOrElse { emptyList() }
+                }
+                val filtered = if (query.isBlank()) raw else
+                    raw.filter { it.title.contains(query, ignoreCase = true) }
+                val mapped = filtered.map { m ->
+                    SearchResult(
+                        id          = m.id,
+                        title       = m.title,
+                        posterUrl   = m.posterUrl,
+                        backdropUrl = m.backdropUrl,
+                        type        = if (m.mediaType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                        rating      = m.rating,
+                        releaseYear = if (m.year > 0) m.year.toString() else ""
+                    )
+                }
+                _state.update { it.copy(fuzerResults = mapped, isFuzerLoading = false) }
+            } catch (e: Exception) {
+                _state.update { it.copy(
+                    fuzerResults   = emptyList(),
+                    isFuzerLoading = false,
+                    fuzerError     = "Fuzer unavailable: ${e.message?.take(60)}"
+                ) }
+            }
+        }
     }
 
+    // ─── Discovery (initial / no query) ──────────────────────────
+    private fun loadDiscovery() {
+        viewModelScope.launch {
+            _state.update { it.copy(isDiscoveryLoading = true) }
+            try {
+                val key  = "9ab4a284f0c028007b78925852196b79"
+                val base = "https://image.tmdb.org/t/p"
+                val p1 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 1) }
+                val p2 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 2) }
+                _state.update { it.copy(discoveryResults = (p1 + p2).distinctBy { r -> r.id }, isDiscoveryLoading = false) }
+            } catch (_: Exception) {
+                _state.update { it.copy(isDiscoveryLoading = false) }
+            }
+        }
+    }
+
+    private fun fetchDiscoveryPage(key: String, base: String, page: Int): List<SearchResult> {
+        val out = mutableListOf<SearchResult>()
+        for (mt in listOf("movie", "tv")) {
+            try {
+                val url = "https://api.themoviedb.org/3/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=popularity.desc"
+                val con = URL(url).openConnection() as HttpURLConnection
+                con.connectTimeout = 6000; con.readTimeout = 9000
+                if (con.responseCode != 200) continue
+                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: continue
+                for (i in 0 until arr.length()) {
+                    val j     = arr.getJSONObject(i)
+                    val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
+                                else             j.optString("title").ifBlank { j.optString("original_title") }
+                    val poster = j.optString("poster_path").let { p ->
+                        if (p.isNotBlank() && p != "null") "$base/w342$p" else ""
+                    }
+                    if (poster.isBlank()) continue
+                    out += SearchResult(
+                        id          = "${mt}_${j.optInt("id")}",
+                        title       = title,
+                        posterUrl   = poster,
+                        backdropUrl = j.optString("backdrop_path").let { p ->
+                            if (p.isNotBlank() && p != "null") "$base/w780$p" else ""
+                        },
+                        type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+                        rating      = j.optDouble("vote_average", 0.0).toFloat(),
+                        releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4)
+                    )
+                }
+            } catch (_: Exception) {}
+        }
+        return out
+    }
+
+    // ─── History ─────────────────────────────────────────────────
+    private fun saveToHistory(q: String) {
+        val newH = (listOf(q) + _state.value.searchHistory).distinct().take(8)
+        historyPrefs.edit().putString("history_items", newH.joinToString("||")).apply()
+        _state.update { it.copy(searchHistory = newH) }
+    }
     private fun loadHistory() {
-        val historyString = historyPrefs.getString("history_items", "") ?: ""
-        _state.update { it.copy(searchHistory = historyString.split("||").filter { it.isNotBlank() }) }
+        val s = historyPrefs.getString("history_items", "") ?: ""
+        _state.update { it.copy(searchHistory = s.split("||").filter { it.isNotBlank() }) }
     }
-
     private fun clearHistory() {
         historyPrefs.edit().remove("history_items").apply()
         _state.update { it.copy(searchHistory = emptyList()) }
     }
-
     private fun removeHistoryItem(item: String) {
-        val newHistory = _state.value.searchHistory.filter { it != item }
-        historyPrefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
-        _state.update { it.copy(searchHistory = newHistory) }
+        val newH = _state.value.searchHistory.filter { it != item }
+        historyPrefs.edit().putString("history_items", newH.joinToString("||")).apply()
+        _state.update { it.copy(searchHistory = newH) }
     }
 }
