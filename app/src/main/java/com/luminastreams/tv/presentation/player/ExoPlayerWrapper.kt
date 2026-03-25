@@ -21,16 +21,16 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -106,8 +106,8 @@ class ExoPlayerWrapper(context: Context) {
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .setAllowCrossProtocolRedirects(true)
-    val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
-    val mediaSourceFactory: DefaultMediaSourceFactory = DefaultMediaSourceFactory(appContext)
+    private val dataSourceFactory  = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
+    private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
         .setDataSourceFactory(dataSourceFactory)
         .setSubtitleParserFactory(androidx.media3.extractor.text.DefaultSubtitleParserFactory())
 
@@ -133,7 +133,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ────────────────────────────────────────────────────────
+    // ─── State ─────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -146,11 +146,17 @@ class ExoPlayerWrapper(context: Context) {
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
+    // currentCues מוזן עכשיו מ-2 מקורות:
+    // 1. onCues מ-ExoPlayer (כתוביות embedded)
+    // 2. ה-ticker הפנימי שלנו (כתוביות מורדות)
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // שומר את ה-videoUrl לצורך MergingMediaSource
-    private var currentVideoUrl: String? = null
+    // ─── כתוביות ידניות ───────────────────────────────────────────
+    private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
+    private var parsedSubs: List<SubEntry> = emptyList()
+    private var subTickerJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.Main)
 
     init {
         player.addListener(object : Player.Listener {
@@ -159,8 +165,12 @@ class ExoPlayerWrapper(context: Context) {
                 _isPlaying.value = p
             }
 
+            // onCues רק לכתוביות embedded — כתוביות מורדות מושמעות דרך ה-ticker
             override fun onCues(cueGroup: CueGroup) {
-                _currentCues.value = cueGroup.cues
+                // אם יש כתוביות מורדות פעילות — אל תדרוס אתן עם embedded
+                if (parsedSubs.isEmpty()) {
+                    _currentCues.value = cueGroup.cues
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -183,37 +193,13 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
-
-                val textGroup = tracks.groups
-                    .filter { it.type == C.TRACK_TYPE_TEXT }
-                    .firstOrNull { grp ->
-                        (0 until grp.length).any { i ->
-                            grp.mediaTrackGroup.getFormat(i).id == "ext_sub"
-                        }
-                    } ?: return
-
-                val alreadySelected = (0 until textGroup.length).any { i ->
-                    textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub" &&
-                    textGroup.isTrackSelected(i)
-                }
-                if (alreadySelected) return
-
-                val idx = (0 until textGroup.length).firstOrNull { i ->
-                    textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub"
-                } ?: 0
-
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .setOverrideForType(TrackSelectionOverride(textGroup.mediaTrackGroup, idx))
-                    .build()
-                _subtitleApplied.value = true
             }
         })
     }
 
     fun prepareStream(videoUrl: String) {
-        currentVideoUrl        = videoUrl
+        stopSubTicker()
+        parsedSubs             = emptyList()
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
@@ -226,6 +212,7 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
+    // ─── applySubtitle ─────────────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -234,7 +221,7 @@ class ExoPlayerWrapper(context: Context) {
     ) {
         if (subtitleUrl.startsWith("file://")) {
             val f = File(Uri.parse(subtitleUrl).path!!)
-            injectSubtitle(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
@@ -250,7 +237,9 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { injectSubtitle(file, ext == "vtt") }
+                        withContext(Dispatchers.Main) {
+                            loadAndStartTicker(file, ext == "vtt")
+                        }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -262,59 +251,94 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── injectSubtitle ─────────────────────────────────────────────────────
+    // ─── Parser + Ticker ───────────────────────────────────────────
     //
-    // משתמשת ב-MergingMediaSource — הגישה היחידה שבאמת מפעילה onCues:
-    //
-    //  videoSource  =  אותו video URL בדיוקה (ExoPlayer מזהה URI שווה -> לא re-fetch)
-    //  subSource    =  SingleSampleMediaSource מה-cache file המקומי
-    //  setMediaSource(merged, resetPosition=false)
-    //    └ ExoPlayer עוצר / מתחיל מחדש את הנגינה במיקום הנכון
-    //    └ ה-video URL זהה -> הוא עושה reuse ל-segments שכבר הורדו
-    //    └ ה-subtitle file הוא מקומי -> לא צריך אינטרנט
-    //    └ onTracksChanged מופעל -> נבחר track -> onCues מתחיל
-    //
-    //  על error 1004: זה יקרה אם ה-video URL הוא HLS token-based שפג
-    //  תוקפו. במקרה כזה ExoPlayer יפעיל שגיאה, אבל הנגינה הקודמת
-    //  תמשיך מה-buffer הקיים. חוץ מזה אין פתרון ב-Media3 API שעובד
-    //  באמת לכתוביות חיצוניות בלי לאפס את ה-buffer.
-    private fun injectSubtitle(subFile: File, isVtt: Boolean) {
-        val videoUrl   = currentVideoUrl ?: return
-        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos   = player.currentPosition
-        val wasPlaying = player.isPlaying
+    // מפעיל פרסר SRT/VTT פנימי והופך את הכתוביות ל-Cue objects.
+    // אחרכך coroutine ticker קורא את player.currentPosition
+    // כל 200ms ומעדכן את _currentCues לפי הזמן.
+    // אין כאן שינוי ב-MediaSource / URL — אפס סיכון ל-1004.
+    private fun loadAndStartTicker(subFile: File, isVtt: Boolean) {
+        stopSubTicker()
+        _currentCues.value = emptyList()
 
-        _subtitleApplied.value = false
-        _currentCues.value     = emptyList()
+        val text = subFile.readText(Charsets.UTF_8)
+        parsedSubs = if (isVtt) parseVtt(text) else parseSrt(text)
 
-        try {
-            // video source — אותו URI בדיוקה
-            val videoSource = mediaSourceFactory.createMediaSource(
-                MediaItem.Builder().setUri(videoUrl.toUri()).build()
-            )
+        if (parsedSubs.isEmpty()) return
 
-            // subtitle source — מקומי, לא צריך רשת
-            val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
-                .setMimeType(mime)
-                .setLanguage("iw")
-                .setId("ext_sub")
-                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                .build()
+        _subtitleApplied.value = true
 
-            val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(subConfig, C.TIME_UNSET)
-
-            val merged = MergingMediaSource(videoSource, subSource)
-
-            // ✅ setMediaSource בלי prepare() נוסף — ExoPlayer עושה
-            //    prepare פנימי אוטומטית כשהוא רואה שה-source השתנה
-            player.playWhenReady = wasPlaying
-            player.setMediaSource(merged, savedPos)
-            player.prepare()
-
-        } catch (e: Exception) {
-            e.printStackTrace()
+        subTickerJob = scope.launch {
+            while (isActive) {
+                val pos = player.currentPosition
+                val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
+                _currentCues.value = active.map { entry ->
+                    Cue.Builder()
+                        .setText(entry.text)
+                        .build()
+                }
+                delay(200)
+            }
         }
+    }
+
+    private fun stopSubTicker() {
+        subTickerJob?.cancel()
+        subTickerJob = null
+        parsedSubs = emptyList()
+        _currentCues.value = emptyList()
+        _subtitleApplied.value = false
+    }
+
+    // ─── SRT Parser ────────────────────────────────────────────────
+    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})""")
+
+    private fun parseTimeMs(s: String): Long {
+        val m = srtTimeRegex.find(s) ?: return -1
+        val (h, min, sec, ms) = m.destructured
+        return h.toLong() * 3_600_000 + min.toLong() * 60_000 + sec.toLong() * 1_000 + ms.toLong()
+    }
+
+    private fun parseSrt(text: String): List<SubEntry> {
+        val entries = mutableListOf<SubEntry>()
+        val blocks  = text.trim().replace("\r\n", "\n").split(Regex("\n{2,}"))
+        for (block in blocks) {
+            val lines = block.trim().lines()
+            if (lines.size < 2) continue
+            val timeLine = lines.firstOrNull { "-->" in it } ?: continue
+            val parts = timeLine.split("-->")
+            if (parts.size < 2) continue
+            val start = parseTimeMs(parts[0].trim())
+            val end   = parseTimeMs(parts[1].trim())
+            if (start < 0 || end < 0) continue
+            val textLines = lines.dropWhile { "-->" !in it }.drop(1)
+            val txt = textLines.joinToString("\n").trim()
+                .replace(Regex("<[^>]+>"), "")  // הסר HTML tags
+            if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
+        }
+        return entries
+    }
+
+    // ─── VTT Parser ────────────────────────────────────────────────
+    private fun parseVtt(text: String): List<SubEntry> {
+        val entries = mutableListOf<SubEntry>()
+        val cleaned = text.replace("\r\n", "\n").removePrefix("\uFEFF")
+        val blocks  = cleaned.trim().split(Regex("\n{2,}"))
+        for (block in blocks) {
+            val lines = block.trim().lines()
+            val timeLine = lines.firstOrNull { "-->" in it } ?: continue
+            val timeOnly = timeLine.split(Regex("\\s+")).take(3).joinToString(" ")
+            val parts = timeOnly.split("-->")
+            if (parts.size < 2) continue
+            val start = parseTimeMs(parts[0].trim())
+            val end   = parseTimeMs(parts[1].trim())
+            if (start < 0 || end < 0) continue
+            val textLines = lines.dropWhile { "-->" !in it }.drop(1)
+            val txt = textLines.joinToString("\n").trim()
+                .replace(Regex("<[^>]+>"), "")
+            if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
+        }
+        return entries
     }
 
     fun play()  { player.play() }
@@ -325,7 +349,7 @@ class ExoPlayerWrapper(context: Context) {
     }
     fun clearError() { _playerError.value = null }
     fun release() {
-        _currentCues.value = emptyList()
+        stopSubTicker()
         try { player.release() } catch (_: Exception) {}
     }
 }
