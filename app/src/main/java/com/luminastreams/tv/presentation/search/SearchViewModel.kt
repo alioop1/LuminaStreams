@@ -15,7 +15,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-// ── State ─────────────────────────────────────────────────────────────────────
 @Immutable
 data class SearchState(
     val query: String = "",
@@ -34,14 +33,12 @@ data class SearchState(
     val focusedItemUrl: String? = null
 )
 
-// ── Events ────────────────────────────────────────────────────────────────────
 sealed interface SearchEvent {
     data class ShowError(val message: String) : SearchEvent
     data class NavigateToDetails(val id: String) : SearchEvent
     object TriggerHapticFeedback : SearchEvent
 }
 
-// ── Intents ───────────────────────────────────────────────────────────────────
 sealed interface SearchIntent {
     data class UpdateQuery(val query: String) : SearchIntent
     data class SelectFilter(val filter: String) : SearchIntent
@@ -59,10 +56,14 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private val queryFlow = MutableStateFlow("")
     private var allFetchedResults: List<SearchResult> = emptyList()
-    private val prefs = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
+    private val historyPrefs   = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
+    private val settingsPrefs  = application.getSharedPreferences("lumina_settings",        Context.MODE_PRIVATE)
 
-    // מאגר מקומי מהיר להשלמה אוטומטית (בנוסף לטרנדים ולהיסטוריה)
-    private val popularSearchTerms = listOf("Avatar", "Avengers", "Batman", "Spider-Man", "Superman", "Matrix", "Inception", "Interstellar", "Joker", "Star Wars", "Harry Potter", "Lord of the Rings", "Deadpool", "X-Men")
+    private val popularSearchTerms = listOf(
+        "Avatar", "Avengers", "Batman", "Spider-Man", "Superman",
+        "Matrix", "Inception", "Interstellar", "Joker", "Star Wars",
+        "Harry Potter", "Lord of the Rings", "Deadpool", "X-Men"
+    )
 
     init {
         loadHistory()
@@ -87,25 +88,21 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.connectTimeout = 3000
-
                 if (connection.responseCode == 200) {
                     val response = connection.inputStream.bufferedReader().use { it.readText() }
-                    val metas = JSONObject(response).optJSONArray("metas") ?: return@launch
+                    val metas    = JSONObject(response).optJSONArray("metas") ?: return@launch
                     val trending = mutableListOf<SearchResult>()
-
                     for (i in 0 until minOf(20, metas.length())) {
                         val meta = metas.getJSONObject(i)
-                        trending.add(
-                            SearchResult(
-                                id = meta.optString("id", ""),
-                                title = meta.optString("name", "Unknown"),
-                                posterUrl = meta.optString("poster", "").replace("http://", "https://"),
-                                backdropUrl = meta.optString("background", "").replace("http://", "https://"),
-                                type = MediaType.MOVIE,
-                                rating = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
-                                releaseYear = meta.optString("releaseInfo", "")
-                            )
-                        )
+                        trending.add(SearchResult(
+                            id          = meta.optString("id", ""),
+                            title       = meta.optString("name", "Unknown"),
+                            posterUrl   = meta.optString("poster", "").replace("http://", "https://"),
+                            backdropUrl = meta.optString("background", "").replace("http://", "https://"),
+                            type        = MediaType.MOVIE,
+                            rating      = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
+                            releaseYear = meta.optString("releaseInfo", "")
+                        ))
                     }
                     _state.update { it.copy(trendingSearches = trending) }
                 }
@@ -115,31 +112,29 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     fun onIntent(intent: SearchIntent) {
         when (intent) {
-            is SearchIntent.UpdateQuery -> handleQueryUpdate(intent.query)
-            is SearchIntent.SelectFilter -> applyFilter(intent.filter)
+            is SearchIntent.UpdateQuery          -> handleQueryUpdate(intent.query)
+            is SearchIntent.SelectFilter         -> applyFilter(intent.filter)
             is SearchIntent.SetFocusedBackground -> _state.update { it.copy(focusedItemUrl = intent.url) }
-            is SearchIntent.ClearHistory -> clearHistory()
-            is SearchIntent.RemoveHistoryItem -> removeHistoryItem(intent.item)
+            is SearchIntent.ClearHistory         -> clearHistory()
+            is SearchIntent.RemoveHistoryItem    -> removeHistoryItem(intent.item)
             is SearchIntent.SetVoiceListeningState -> _state.update { it.copy(isVoiceListening = intent.isListening) }
         }
     }
 
     private fun handleQueryUpdate(newQuery: String) {
         val isHebrew = newQuery.any { it in '\u0590'..'\u05FF' }
-
-        // Batch 2: ייצור הצעות השלמה אוטומטית לפי מה שהמשתמש מקליד
         val suggestions = if (newQuery.length >= 2 && !isHebrew) {
-            val historyMatches = _state.value.searchHistory.filter { it.contains(newQuery, ignoreCase = true) }
-            val popularMatches = popularSearchTerms.filter { it.contains(newQuery, ignoreCase = true) }
+            val historyMatches  = _state.value.searchHistory.filter { it.contains(newQuery, ignoreCase = true) }
+            val popularMatches  = popularSearchTerms.filter { it.contains(newQuery, ignoreCase = true) }
             val trendingMatches = _state.value.trendingSearches.map { it.title }.filter { it.contains(newQuery, ignoreCase = true) }
             (historyMatches + popularMatches + trendingMatches).distinct().take(6)
         } else emptyList()
 
         _state.update {
             it.copy(
-                query = newQuery,
-                exactMatch = null,
-                containsHebrew = isHebrew,
+                query                  = newQuery,
+                exactMatch             = null,
+                containsHebrew         = isHebrew,
                 autocompleteSuggestions = suggestions
             )
         }
@@ -149,15 +144,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             _state.update { it.copy(results = emptyList(), isSearching = false, focusedItemUrl = null) }
             return
         }
-
         _state.update { it.copy(isSearching = true) }
         queryFlow.value = newQuery
     }
 
     private suspend fun performNetworkSearch(query: String) = coroutineScope {
         try {
-            saveToHistory(query)
-            val moviesDeferred = async(Dispatchers.IO) { fetchFromCinemeta(query, "movie", MediaType.MOVIE) }
+            // ✅ REAL: only persist to history if save_history is enabled
+            val saveHistory = settingsPrefs.getBoolean("save_history", true)
+            if (saveHistory) saveToHistory(query)
+
+            val moviesDeferred = async(Dispatchers.IO) { fetchFromCinemeta(query, "movie",  MediaType.MOVIE) }
             val seriesDeferred = async(Dispatchers.IO) { fetchFromCinemeta(query, "series", MediaType.TV_SHOW) }
 
             val combined = (moviesDeferred.await() + seriesDeferred.await())
@@ -166,10 +163,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
             allFetchedResults = combined
             val exactMatch = combined.firstOrNull { it.title.equals(query, ignoreCase = true) }
-
             _state.update { it.copy(isSearching = false, exactMatch = exactMatch) }
             applyFilter(_state.value.selectedFilter)
-
         } catch (e: Exception) {
             _state.update { it.copy(isSearching = false, results = emptyList()) }
         }
@@ -179,7 +174,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val filteredList = when (filter) {
             "סרטים" -> allFetchedResults.filter { it.type == MediaType.MOVIE }
             "סדרות" -> allFetchedResults.filter { it.type == MediaType.TV_SHOW }
-            else -> allFetchedResults
+            else    -> allFetchedResults
         }
         _state.update { it.copy(selectedFilter = filter, results = filteredList) }
     }
@@ -192,24 +187,20 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             val connection = url.openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 3000
-
             if (connection.responseCode == 200) {
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
-                val metas = JSONObject(response).optJSONArray("metas") ?: return emptyList()
-
+                val metas    = JSONObject(response).optJSONArray("metas") ?: return emptyList()
                 for (i in 0 until metas.length()) {
                     val meta = metas.getJSONObject(i)
-                    results.add(
-                        SearchResult(
-                            id = meta.optString("id", ""),
-                            title = meta.optString("name", "Unknown"),
-                            posterUrl = meta.optString("poster", "").replace("http://", "https://"),
-                            backdropUrl = meta.optString("background", "").replace("http://", "https://"),
-                            type = mediaType,
-                            rating = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
-                            releaseYear = meta.optString("releaseInfo", "")
-                        )
-                    )
+                    results.add(SearchResult(
+                        id          = meta.optString("id", ""),
+                        title       = meta.optString("name", "Unknown"),
+                        posterUrl   = meta.optString("poster", "").replace("http://", "https://"),
+                        backdropUrl = meta.optString("background", "").replace("http://", "https://"),
+                        type        = mediaType,
+                        rating      = meta.optString("imdbRating", "0").toFloatOrNull() ?: 0f,
+                        releaseYear = meta.optString("releaseInfo", "")
+                    ))
                 }
             }
         } catch (e: Exception) {}
@@ -218,23 +209,23 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun saveToHistory(query: String) {
         val newHistory = (listOf(query) + _state.value.searchHistory).distinct().take(8)
-        prefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
+        historyPrefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
         _state.update { it.copy(searchHistory = newHistory) }
     }
 
     private fun loadHistory() {
-        val historyString = prefs.getString("history_items", "") ?: ""
+        val historyString = historyPrefs.getString("history_items", "") ?: ""
         _state.update { it.copy(searchHistory = historyString.split("||").filter { it.isNotBlank() }) }
     }
 
     private fun clearHistory() {
-        prefs.edit().remove("history_items").apply()
+        historyPrefs.edit().remove("history_items").apply()
         _state.update { it.copy(searchHistory = emptyList()) }
     }
 
     private fun removeHistoryItem(item: String) {
         val newHistory = _state.value.searchHistory.filter { it != item }
-        prefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
+        historyPrefs.edit().putString("history_items", newHistory.joinToString("||")).apply()
         _state.update { it.copy(searchHistory = newHistory) }
     }
 }

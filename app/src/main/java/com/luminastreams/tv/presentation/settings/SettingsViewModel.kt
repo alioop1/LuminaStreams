@@ -35,59 +35,47 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _state.update { it.copy(selectedCategory = category) }
     }
 
-    // ── Load all settings from SharedPreferences ──────────────────────────────
     private fun loadAllSettings() {
         _state.update {
             it.copy(
-                rdToken           = prefs.getString("rd_api_token", "") ?: "",
-
-                // Playback
-                audioPassthrough  = prefs.getBoolean("audio_passthrough", false),
-                forceHdr          = prefs.getBoolean("force_hdr", false),
-                autoFrameRate     = prefs.getBoolean("afr", false),
-                autoPlayNext      = prefs.getBoolean("auto_play", true),
-                hwAcceleration    = prefs.getBoolean("hw_accel", true),
-                maxQuality        = prefs.getString("max_quality", "4K") ?: "4K",
-                preferredAudioLang= prefs.getString("preferred_audio_lang", "original") ?: "original",
-
-                // Personalization
-                defaultSubtitles  = prefs.getString("def_subs", "Hebrew") ?: "Hebrew",
-                yellowSubtitles   = prefs.getBoolean("yellow_subs", false),
-                subtitleFontScale = prefs.getString("subtitle_font_scale", "medium") ?: "medium",
-                safeSearch        = prefs.getBoolean("safe_search", false),
-                saveSearchHistory = prefs.getBoolean("save_history", true),
-
-                // System
-                dimUi             = prefs.getBoolean("dim_ui", true),
-                liteUiMode        = prefs.getBoolean("lite_ui", false),
-                preAllocateBuffer = prefs.getBoolean("pre_buffer", false),
+                rdToken            = prefs.getString("rd_api_token", "") ?: "",
+                audioPassthrough   = prefs.getBoolean("audio_passthrough", false),
+                autoFrameRate      = prefs.getBoolean("afr", false),
+                hwAcceleration     = prefs.getBoolean("hw_accel", true),
+                preferredAudioLang = prefs.getString("preferred_audio_lang", "original") ?: "original",
+                defaultSubtitles   = prefs.getString("def_subs", "Hebrew") ?: "Hebrew",
+                yellowSubtitles    = prefs.getBoolean("yellow_subs", false),
+                subtitleFontScale  = prefs.getString("subtitle_font_scale", "medium") ?: "medium",
+                saveSearchHistory  = prefs.getBoolean("save_history", true),
+                subtitleCacheOnly  = prefs.getBoolean("subtitle_cache_only", false),
+                liteUiMode         = prefs.getBoolean("lite_ui", false),
+                reduceMotion       = prefs.getBoolean("reduce_motion", false),
+                preAllocateBuffer  = prefs.getBoolean("pre_buffer", false),
             )
         }
-
-        // Apply lite UI mode to DeviceProfile immediately on load
-        DeviceProfile.forceLowTier = prefs.getBoolean("lite_ui", false)
+        DeviceProfile.forceLowTier      = prefs.getBoolean("lite_ui", false)
+        DeviceProfile.forceReduceMotion = prefs.getBoolean("reduce_motion", false)
     }
 
-    // ── Toggle setting ────────────────────────────────────────────────────────
     fun updateToggleSetting(key: String, value: Boolean) {
         _state.update { current ->
             when (key) {
-                "audio_passthrough" -> current.copy(audioPassthrough = value)
-                "force_hdr"         -> current.copy(forceHdr = value)
-                "afr"               -> current.copy(autoFrameRate = value)
-                "auto_play"         -> current.copy(autoPlayNext = value)
-                "hw_accel"          -> current.copy(hwAcceleration = value)
-                "yellow_subs"       -> current.copy(yellowSubtitles = value)
-                "safe_search"       -> current.copy(safeSearch = value)
-                "save_history"      -> current.copy(saveSearchHistory = value)
-                "dim_ui"            -> current.copy(dimUi = value)
-                "lite_ui"           -> {
-                    // ✅ REAL: Update DeviceProfile tier immediately for current session
+                "audio_passthrough"   -> current.copy(audioPassthrough  = value)
+                "afr"                 -> current.copy(autoFrameRate     = value)
+                "hw_accel"            -> current.copy(hwAcceleration    = value)
+                "yellow_subs"         -> current.copy(yellowSubtitles   = value)
+                "save_history"        -> current.copy(saveSearchHistory = value)
+                "subtitle_cache_only" -> current.copy(subtitleCacheOnly = value)
+                "lite_ui"             -> {
                     DeviceProfile.forceLowTier = value
                     current.copy(liteUiMode = value)
                 }
-                "pre_buffer"        -> current.copy(preAllocateBuffer = value)
-                else                -> current
+                "reduce_motion"       -> {
+                    DeviceProfile.forceReduceMotion = value
+                    current.copy(reduceMotion = value)
+                }
+                "pre_buffer"          -> current.copy(preAllocateBuffer = value)
+                else                  -> current
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -95,14 +83,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ── String setting ────────────────────────────────────────────────────────
     fun updateStringSetting(key: String, value: String) {
         _state.update { current ->
             when (key) {
-                "max_quality"          -> current.copy(maxQuality = value)
                 "preferred_audio_lang" -> current.copy(preferredAudioLang = value)
-                "def_subs"             -> current.copy(defaultSubtitles = value)
-                "subtitle_font_scale"  -> current.copy(subtitleFontScale = value)
+                "def_subs"             -> current.copy(defaultSubtitles   = value)
+                "subtitle_font_scale"  -> current.copy(subtitleFontScale  = value)
                 else                   -> current
             }
         }
@@ -112,7 +98,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── RD Speed Test ─────────────────────────────────────────────────────────
-    // ✅ REAL: Pings the Real-Debrid API and measures latency
     fun runSpeedTest() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(rdSpeedTesting = true, rdSpeedTestResult = "Testing connection...") }
@@ -125,15 +110,14 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 conn.connectTimeout = 5_000
                 conn.readTimeout    = 5_000
                 if (token.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $token")
-                val code = conn.responseCode
+                val code    = conn.responseCode
                 val elapsed = System.currentTimeMillis() - startTime
-
-                val result = if (code == 200 || code == 401 /* valid server response */) {
+                val result = if (code == 200 || code == 401) {
                     val grade = when {
-                        elapsed < 150  -> "🟢 Excellent"
-                        elapsed < 350  -> "🟡 Good"
-                        elapsed < 700  -> "🟠 Fair"
-                        else           -> "🔴 Poor"
+                        elapsed < 150 -> "🟢 Excellent"
+                        elapsed < 350 -> "🟡 Good"
+                        elapsed < 700 -> "🟠 Fair"
+                        else          -> "🔴 Poor"
                     }
                     "$grade — ${elapsed}ms to Real-Debrid servers"
                 } else {
@@ -153,25 +137,16 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── Cache ─────────────────────────────────────────────────────────────────
-    // ✅ REAL: Walks cache directory and deletes every file
     fun clearCache() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(cacheSizeStr = "Clearing...") }
             try {
                 val app = getApplication<Application>()
-                // Clear app cache dir (includes Coil disk cache)
-                app.cacheDir.walkTopDown().forEach { f ->
-                    if (f.isFile) f.delete()
-                }
-                // Clear external cache if present
-                app.externalCacheDir?.walkTopDown()?.forEach { f ->
-                    if (f.isFile) f.delete()
-                }
-                // Try clearing Coil in-memory cache via reflection (safe fallback)
+                app.cacheDir.walkTopDown().forEach { f -> if (f.isFile) f.delete() }
+                app.externalCacheDir?.walkTopDown()?.forEach { f -> if (f.isFile) f.delete() }
                 try {
                     val coilClass = Class.forName("coil.Coil")
-                    val imageLoaderGetter = coilClass.getMethod("imageLoader", Context::class.java)
-                    val loader = imageLoaderGetter.invoke(null, app)
+                    val loader = coilClass.getMethod("imageLoader", Context::class.java).invoke(null, app)
                     loader.javaClass.getMethod("memoryCache").invoke(loader)
                         ?.javaClass?.getMethod("clear")?.invoke(
                             loader.javaClass.getMethod("memoryCache").invoke(loader)
@@ -187,16 +162,12 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val app = getApplication<Application>()
-                var sizeBytes = app.cacheDir.walkTopDown()
-                    .filter { it.isFile }.sumOf { it.length() }
-                app.externalCacheDir?.walkTopDown()
-                    ?.filter { it.isFile }?.sumOf { it.length() }
-                    ?.let { sizeBytes += it }
-
+                var sizeBytes = app.cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                app.externalCacheDir?.walkTopDown()?.filter { it.isFile }?.sumOf { it.length() }?.let { sizeBytes += it }
                 val str = when {
-                    sizeBytes < 1024 * 1024      -> "${sizeBytes / 1024} KB"
+                    sizeBytes < 1024 * 1024        -> "${sizeBytes / 1024} KB"
                     sizeBytes < 1024 * 1024 * 1024 -> "${"%.1f".format(sizeBytes / 1024.0 / 1024.0)} MB"
-                    else -> "${"%.2f".format(sizeBytes / 1024.0 / 1024.0 / 1024.0)} GB"
+                    else                           -> "${"%.2f".format(sizeBytes / 1024.0 / 1024.0 / 1024.0)} GB"
                 }
                 _state.update { it.copy(cacheSizeStr = str) }
             } catch (_: Exception) {
@@ -206,16 +177,13 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── Device Info ───────────────────────────────────────────────────────────
-    // ✅ REAL: Reads DeviceProfile to show GPU/RAM/tier info in About section
     private fun loadDeviceInfo() {
         viewModelScope.launch(Dispatchers.Default) {
             try {
                 if (DeviceProfile.totalRamMb > 0) {
-                    val tier  = DeviceProfile.tier.name
-                    val gpu   = DeviceProfile.gpuRenderer.take(30).let {
-                        if (it.length == 30) "$it…" else it
-                    }
-                    val ram   = "${DeviceProfile.totalRamMb} MB RAM"
+                    val tier = DeviceProfile.tier.name
+                    val gpu  = DeviceProfile.gpuRenderer.take(30).let { if (it.length == 30) "$it…" else it }
+                    val ram  = "${DeviceProfile.totalRamMb} MB RAM"
                     _state.update { it.copy(deviceTier = "$tier — $gpu — $ram") }
                 }
             } catch (_: Exception) {}
@@ -223,7 +191,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── Search history ────────────────────────────────────────────────────────
-    // ✅ REAL: Clears SearchViewModel's SharedPreferences key
     fun clearSearchHistory() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(searchHistoryStatus = "Clearing...") }

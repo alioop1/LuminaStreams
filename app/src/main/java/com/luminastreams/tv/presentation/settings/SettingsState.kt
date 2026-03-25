@@ -27,30 +27,26 @@ data class SettingsState(
     val rdSpeedTestResult: String? = null,
 
     // ── Playback & Home Theater ───────────────────────────────────────────────
-    val audioPassthrough: Boolean = false,       // Bitstream offload to AV receiver
-    val forceHdr: Boolean = false,               // Boost HDR/DV sources to top of list
-    val autoFrameRate: Boolean = false,          // Match display Hz to content frame rate
-    val autoPlayNext: Boolean = true,
+    val audioPassthrough: Boolean = false,
+    val autoFrameRate: Boolean = false,          // ✅ REAL: PlayerScreen sets window frame rate
     val hwAcceleration: Boolean = true,
-    val maxQuality: String = "4K",               // "4K" | "1080p" | "720p" — stream filter
-    val preferredAudioLang: String = "original", // "original" | "he" | "en"
+    val preferredAudioLang: String = "original",
 
     // ── Personalization & Subtitles ───────────────────────────────────────────
-    val defaultSubtitles: String = "Hebrew",     // "Hebrew" | "English" | "None"
+    val defaultSubtitles: String = "Hebrew",
     val yellowSubtitles: Boolean = false,
-    val subtitleFontScale: String = "medium",    // "small" | "medium" | "large" | "xlarge"
-    val safeSearch: Boolean = false,
-    val saveSearchHistory: Boolean = true,
+    val subtitleFontScale: String = "medium",
+    val saveSearchHistory: Boolean = true,       // ✅ REAL: SearchViewModel checks before saving
+    val subtitleCacheOnly: Boolean = false,      // ✅ REAL: ExoPlayer skips stream sub tracks
 
-    // ── System, OLED & Performance ────────────────────────────────────────────
-    val dimUi: Boolean = true,                   // Dim screen after 2-min idle (OLED guard)
-    val liteUiMode: Boolean = false,             // Force LOW DeviceProfile tier
-    val preAllocateBuffer: Boolean = false,      // Reserve 64 MB for ExoPlayer
+    // ── System & Performance ──────────────────────────────────────────────────
+    val liteUiMode: Boolean = false,
+    val reduceMotion: Boolean = false,           // ✅ REAL: DeviceProfile.forceReduceMotion
+    val preAllocateBuffer: Boolean = false,
 
     // ── Status & Info ─────────────────────────────────────────────────────────
     val cacheSizeStr: String = "Calculating...",
     val searchHistoryStatus: String = "Clear",
-    val watchHistoryStatus: String = "Clear",
     val appVersion: String = "1.0.0-Lumina",
-    val deviceTier: String = ""                 // "HIGH • Adreno 650 • 4 GB RAM" etc.
+    val deviceTier: String = ""
 )

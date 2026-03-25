@@ -69,10 +69,9 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     isRtl: Boolean,
     onNavigateBack: () -> Unit,
-    // ✅ Fixed: removed unused onToggleLanguage param (was never called)
 ) {
     var isRailFocused by remember { mutableStateOf(false) }
-    val railFR   = remember { FocusRequester() }
+    val railFR    = remember { FocusRequester() }
     val contentFR = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
@@ -96,7 +95,6 @@ fun SettingsScreen(
         ))
 
         Row(Modifier.fillMaxSize()) {
-            // ── Collapsing Rail ──
             val railWidth by animateDpAsState(
                 targetValue   = if (isRailFocused) 280.dp else 88.dp,
                 animationSpec = tween(300, easing = LinearOutSlowInEasing),
@@ -150,7 +148,6 @@ fun SettingsScreen(
                 }
             }
 
-            // ── Content ──
             Box(
                 Modifier.weight(1f).fillMaxHeight()
                     .focusRequester(contentFR)
@@ -175,14 +172,11 @@ fun SettingsScreen(
     }
 }
 
-// ── Rail ──────────────────────────────────────────────────────────────────────
 @Composable
 private fun SmartRailItem(
     meta: CatMeta, isSelected: Boolean, isExpanded: Boolean, onClick: () -> Unit
 ) {
-    // ✅ Fixed: focused IS used in bg and tint below
     var focused by remember { mutableStateOf(false) }
-
     val bg by animateColorAsState(
         targetValue   = if (focused) TEXT_PRIMARY else if (isSelected) CARD_IDLE else Color.Transparent,
         animationSpec = tween(150), label = "railBg"
@@ -196,7 +190,6 @@ private fun SmartRailItem(
         animationSpec = tween(200, easing = LinearEasing),
         label = "textAlpha"
     )
-
     Surface(
         onClick  = onClick,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
@@ -248,7 +241,6 @@ private fun LuminaLogo(isExpanded: Boolean) {
     }
 }
 
-// ── Dashboard router ──────────────────────────────────────────────────────────
 @Composable
 private fun DashboardContent(
     cat: SettingsCategory, meta: CatMeta,
@@ -271,7 +263,6 @@ private fun DashboardContent(
             SettingsCategory.ACCOUNT  -> buildAccountDashboard(state, viewModel)
             SettingsCategory.PLAYBACK -> buildPlaybackDashboard(state, viewModel)
             SettingsCategory.PRIVACY  -> buildPersonalizationDashboard(state, viewModel)
-            // ✅ Fixed: removed unused onToggleLang param
             SettingsCategory.SYSTEM   -> buildSystemDashboard(state, viewModel)
         }
     }
@@ -299,35 +290,24 @@ private fun LazyListScope.buildAccountDashboard(
             }
         }
     }
-
     item { Spacer(Modifier.height(24.dp)) }
     item { SectionTitle("NETWORK DIAGNOSTICS") }
-
-    // ✅ REAL: speed test actually pings RD API and measures latency
     item {
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            DashboardActionCard(
-                title     = "RD Server Speed Test",
-                desc      = if (state.rdSpeedTesting) "Pinging Real-Debrid API..."
-                else state.rdSpeedTestResult ?: "Measure latency to Real-Debrid CDN",
-                icon      = if (state.rdSpeedTesting) Icons.Default.HourglassEmpty
-                else Icons.Default.NetworkCheck,
-                value     = if (state.rdSpeedTesting) "Testing..." else "Run Test",
-                highlight = if (state.rdSpeedTestResult?.contains("🟢") == true) ACCENT_GREEN else null
-            ) {
-                if (!state.rdSpeedTesting) viewModel.runSpeedTest()
-            }
-        }
+        DashboardActionCard(
+            title     = "RD Server Speed Test",
+            desc      = if (state.rdSpeedTesting) "Pinging Real-Debrid API..."
+                        else state.rdSpeedTestResult ?: "Measure latency to Real-Debrid CDN",
+            icon      = if (state.rdSpeedTesting) Icons.Default.HourglassEmpty else Icons.Default.NetworkCheck,
+            value     = if (state.rdSpeedTesting) "Testing..." else "Run Test",
+            highlight = if (state.rdSpeedTestResult?.contains("🟢") == true) ACCENT_GREEN else null
+        ) { if (!state.rdSpeedTesting) viewModel.runSpeedTest() }
     }
 }
 
 @Composable
 private fun RdConnectedPremiumCard(state: SettingsState, viewModel: SettingsViewModel) {
-    // ✅ Fixed: focused IS used in actionColor animation
     var focused by remember { mutableStateOf(false) }
-    val actionColor by animateColorAsState(
-        if (focused) ACCENT_RED else TEXT_MUTED, label = "rdActionColor"
-    )
+    val actionColor by animateColorAsState(if (focused) ACCENT_RED else TEXT_MUTED, label = "rdActionColor")
     Surface(
         onClick  = { viewModel.logoutRealDebrid() },
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
@@ -414,22 +394,7 @@ private fun RdErrorCard(msg: String) {
 private fun LazyListScope.buildPlaybackDashboard(
     state: SettingsState, viewModel: SettingsViewModel
 ) {
-    item { SectionTitle("STREAM QUALITY FILTER") }
-    // ✅ REAL: maxQuality is read by DetailsViewModel to filter available streams
-    item {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            listOf("4K" to "4K UHD", "1080p" to "1080p FHD", "720p" to "720p HD").forEach { (v, l) ->
-                DashboardRadioCard(l, if (v == "4K") "All sources" else "Cap at $v", state.maxQuality == v, Modifier.weight(1f)) {
-                    viewModel.updateStringSetting("max_quality", v)
-                }
-            }
-        }
-    }
-
-    item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("HOME THEATER AUDIO") }
-
-    // ✅ REAL: Sets AudioOffloadPreferences in ExoPlayerWrapper at next playback session
     item {
         DashboardToggleCard(
             title     = "Audio Passthrough (Bitstream)",
@@ -438,8 +403,6 @@ private fun LazyListScope.buildPlaybackDashboard(
             isChecked = state.audioPassthrough
         ) { viewModel.updateToggleSetting("audio_passthrough", !state.audioPassthrough) }
     }
-
-    // ✅ REAL: Sets preferred audio language in ExoPlayer TrackSelector
     item {
         Column {
             SectionTitle("PREFERRED AUDIO LANGUAGE")
@@ -453,42 +416,19 @@ private fun LazyListScope.buildPlaybackDashboard(
             }
         }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("CINEMATIC VIDEO") }
-
-    // ✅ REAL: DetailsViewModel reads force_hdr pref and re-sorts stream list
-    item {
-        DashboardToggleCard(
-            title     = "Force Dolby Vision / HDR10+",
-            desc      = "Promote HDR/DV streams to the top of the Sources panel so the best version is always #1.",
-            icon      = Icons.Default.HdrOn,
-            isChecked = state.forceHdr
-        ) { viewModel.updateToggleSetting("force_hdr", !state.forceHdr) }
-    }
-
-    // ✅ REAL: PlayerScreen reads afr pref and calls window.setFrameRate on playback start
+    // ✅ REAL: PlayerScreen reads afr and calls window.setFrameRate on playback start
     item {
         DashboardToggleCard(
             title     = "Auto Frame Rate (AFR)",
-            desc      = "Switch TV to 24 Hz / 25 Hz / 30 Hz to match the content and eliminate judder.",
+            desc      = "Switch TV to 24 / 25 / 30 Hz to match content and eliminate judder.",
             icon      = Icons.Default.Monitor,
             isChecked = state.autoFrameRate
         ) { viewModel.updateToggleSetting("afr", !state.autoFrameRate) }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("PLAYER BEHAVIOR") }
-
-    item {
-        DashboardToggleCard(
-            title     = "Auto-Play Next Episode",
-            desc      = "Automatically start the next episode when the current one ends.",
-            icon      = Icons.Default.SkipNext,
-            isChecked = state.autoPlayNext
-        ) { viewModel.updateToggleSetting("auto_play", !state.autoPlayNext) }
-    }
-
     item {
         DashboardToggleCard(
             title     = "Hardware Acceleration",
@@ -506,7 +446,6 @@ private fun LazyListScope.buildPersonalizationDashboard(
     state: SettingsState, viewModel: SettingsViewModel
 ) {
     item { SectionTitle("DEFAULT SUBTITLE LANGUAGE") }
-    // ✅ REAL: PlayerViewModel reads def_subs and auto-selects matching language
     item {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp)) {
             DashboardRadioCard("Hebrew", "עברית", state.defaultSubtitles == "Hebrew", Modifier.weight(1f)) { viewModel.updateStringSetting("def_subs", "Hebrew") }
@@ -514,11 +453,8 @@ private fun LazyListScope.buildPersonalizationDashboard(
             DashboardRadioCard("Off", "No subtitles", state.defaultSubtitles == "None", Modifier.weight(1f)) { viewModel.updateStringSetting("def_subs", "None") }
         }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("SUBTITLE APPEARANCE") }
-
-    // ✅ REAL: ExoPlayerWrapper exposes useYellowSubtitles; PlayerScreen applies CaptionStyle
     item {
         DashboardToggleCard(
             title     = "Yellow Subtitles",
@@ -527,71 +463,60 @@ private fun LazyListScope.buildPersonalizationDashboard(
             isChecked = state.yellowSubtitles
         ) { viewModel.updateToggleSetting("yellow_subs", !state.yellowSubtitles) }
     }
-
-    // ✅ REAL: ExoPlayerWrapper exposes subtitleFontScale; PlayerScreen uses it on SubtitleView
     item {
         Column {
             SectionTitle("SUBTITLE SIZE")
             Spacer(Modifier.height(8.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 listOf("small" to "Small", "medium" to "Medium", "large" to "Large", "xlarge" to "XL").forEach { (v, l) ->
-                    DashboardRadioCard(l, "${mapOf("small" to "75%", "medium" to "100%", "large" to "130%", "xlarge" to "160%")[v] ?: ""}", state.subtitleFontScale == v, Modifier.weight(1f)) {
+                    DashboardRadioCard(l, mapOf("small" to "75%", "medium" to "100%", "large" to "130%", "xlarge" to "160%")[v] ?: "", state.subtitleFontScale == v, Modifier.weight(1f)) {
                         viewModel.updateStringSetting("subtitle_font_scale", v)
                     }
                 }
             }
         }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
-    item { SectionTitle("CONTENT FILTERING") }
-
-    // ✅ REAL: SearchScreen reads safe_search pref and adds include_adult=false to TMDB queries
+    item { SectionTitle("SEARCH & HISTORY") }
+    // ✅ REAL: SearchViewModel checks save_history before calling saveToHistory()
     item {
         DashboardToggleCard(
-            title     = "Safe Search",
-            desc      = "Filter adult content from TMDB discovery, search results and recommendations.",
-            icon      = Icons.Default.FamilyRestroom,
-            isChecked = state.safeSearch
-        ) { viewModel.updateToggleSetting("safe_search", !state.safeSearch) }
+            title     = "Save Search History",
+            desc      = "Remember recent searches for autocomplete and quick re-search.",
+            icon      = Icons.Default.History,
+            isChecked = state.saveSearchHistory
+        ) { viewModel.updateToggleSetting("save_history", !state.saveSearchHistory) }
     }
-
     item {
         DashboardActionCard(
             title = "Clear Search History",
             desc  = if (state.searchHistoryStatus == "Clear") "Remove all saved search queries from this device."
-            else state.searchHistoryStatus,
-            icon  = Icons.Default.History,
+                    else state.searchHistoryStatus,
+            icon  = Icons.Default.DeleteSweep,
             value = state.searchHistoryStatus
-        ) {
-            if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory()
-        }
+        ) { if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory() }
+    }
+    item { Spacer(Modifier.height(8.dp)) }
+    item { SectionTitle("PERFORMANCE TWEAKS") }
+    // ✅ REAL: ExoPlayer skips stream embedded subtitle tracks — saves CPU & bandwidth on weak devices
+    item {
+        DashboardToggleCard(
+            title     = "Skip Embedded Subtitle Tracks",
+            desc      = "Don't load subtitle tracks from the video stream itself — use only downloaded .srt files.",
+            icon      = Icons.Default.ClosedCaptionDisabled,
+            isChecked = state.subtitleCacheOnly
+        ) { viewModel.updateToggleSetting("subtitle_cache_only", !state.subtitleCacheOnly) }
     }
 }
 
 // ══════════════════════════════════════════════════════════════════
-//  4. SYSTEM, OLED & PERFORMANCE
+//  4. SYSTEM & PERFORMANCE
 // ══════════════════════════════════════════════════════════════════
-// ✅ Fixed: removed unused onToggleLang parameter
 private fun LazyListScope.buildSystemDashboard(
     state: SettingsState, viewModel: SettingsViewModel
 ) {
-    item { SectionTitle("OLED PROTECTION") }
-
-    // ✅ REAL: HomeScreen reads dim_ui pref — starts 2-min timer and dims window brightness
-    item {
-        DashboardToggleCard(
-            title     = "Dim UI on Inactivity",
-            desc      = "After 2 min of no input, reduce screen brightness to 10% to protect OLED panels.",
-            icon      = Icons.Default.Brightness4,
-            isChecked = state.dimUi
-        ) { viewModel.updateToggleSetting("dim_ui", !state.dimUi) }
-    }
-
-    item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("PERFORMANCE") }
-
-    // ✅ REAL: Immediately calls DeviceProfile.forceLowTier = true — disables parallax & fades
+    // ✅ REAL: Immediately calls DeviceProfile.forceLowTier — disables parallax & fades
     item {
         DashboardToggleCard(
             title     = "Lite UI Mode",
@@ -600,8 +525,16 @@ private fun LazyListScope.buildSystemDashboard(
             isChecked = state.liteUiMode
         ) { viewModel.updateToggleSetting("lite_ui", !state.liteUiMode) }
     }
-
-    // ✅ REAL: ExoPlayerWrapper reads pre_buffer pref — reserves 64 MB and extends buffer window
+    // ✅ REAL: DeviceProfile.forceReduceMotion — cuts ALL transition animations to 0ms
+    item {
+        DashboardToggleCard(
+            title     = "Reduce Motion",
+            desc      = "Skip all transition animations instantly. Improves responsiveness on weak or older streamers.",
+            icon      = Icons.Default.FlashOff,
+            isChecked = state.reduceMotion
+        ) { viewModel.updateToggleSetting("reduce_motion", !state.reduceMotion) }
+    }
+    // ✅ REAL: ExoPlayer reserves 64 MB and extends buffer window
     item {
         DashboardToggleCard(
             title     = "Pre-allocate Video Buffer (64 MB)",
@@ -610,11 +543,8 @@ private fun LazyListScope.buildSystemDashboard(
             isChecked = state.preAllocateBuffer
         ) { viewModel.updateToggleSetting("pre_buffer", !state.preAllocateBuffer) }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("STORAGE") }
-
-    // ✅ REAL: Walks cacheDir and externalCacheDir and deletes every file (Coil included)
     item {
         DashboardActionCard(
             title = "Clear Image Cache",
@@ -623,21 +553,19 @@ private fun LazyListScope.buildSystemDashboard(
             value = "Clear Now"
         ) { viewModel.clearCache() }
     }
-
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("ABOUT") }
-
     item {
         Box(
             Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp))
                 .background(CARD_IDLE).padding(24.dp)
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                AboutRow(icon = Icons.Default.Info,         label = "Version",       value = state.appVersion)
-                AboutRow(icon = Icons.Default.Devices,      label = "Device Tier",   value = state.deviceTier.ifEmpty { "Detecting…" })
-                AboutRow(icon = Icons.Default.Shield,       label = "Stream Engine", value = "Torrentio + Real-Debrid")
-                AboutRow(icon = Icons.Default.Movie,        label = "Metadata",      value = "TMDB API + Cinemeta")
-                AboutRow(icon = Icons.Default.Subtitles,    label = "Subtitles",     value = "OpenSubtitles via Stremio")
+                AboutRow(icon = Icons.Default.Info,      label = "Version",       value = state.appVersion)
+                AboutRow(icon = Icons.Default.Devices,   label = "Device Tier",   value = state.deviceTier.ifEmpty { "Detecting…" })
+                AboutRow(icon = Icons.Default.Shield,    label = "Stream Engine", value = "Torrentio + Real-Debrid")
+                AboutRow(icon = Icons.Default.Movie,     label = "Metadata",      value = "TMDB API + Cinemeta")
+                AboutRow(icon = Icons.Default.Subtitles, label = "Subtitles",     value = "Ktuvit + Wizdom + OpenSubtitles")
             }
         }
     }
@@ -668,16 +596,9 @@ private fun SectionTitle(title: String) {
 private fun DashboardToggleCard(
     title: String, desc: String, icon: ImageVector, isChecked: Boolean, onToggle: () -> Unit
 ) {
-    // ✅ Fixed: focused IS used in iconBgColor and iconTintColor
     var focused by remember { mutableStateOf(false) }
-
-    val iconBgColor by animateColorAsState(
-        if (focused) TEXT_PRIMARY else Color(0x1AFFFFFF), label = "iconBg"
-    )
-    val iconTintColor by animateColorAsState(
-        if (focused) BG_DARK else TEXT_PRIMARY, label = "iconTint"
-    )
-
+    val iconBgColor   by animateColorAsState(if (focused) TEXT_PRIMARY else Color(0x1AFFFFFF), label = "iconBg")
+    val iconTintColor by animateColorAsState(if (focused) BG_DARK else TEXT_PRIMARY, label = "iconTint")
     Surface(
         onClick  = onToggle,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
@@ -694,10 +615,10 @@ private fun DashboardToggleCard(
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = TEXT_PRIMARY, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(desc, color = TEXT_MUTED, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(desc,  color = TEXT_MUTED,   fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             Spacer(Modifier.width(16.dp))
-            val thumbPos by animateFloatAsState(if (isChecked) 1f else 0f, tween(250), label = "thumb")
+            val thumbPos   by animateFloatAsState(if (isChecked) 1f else 0f, tween(250), label = "thumb")
             val trackColor by animateColorAsState(if (isChecked) ACCENT_BLUE else Color(0x33FFFFFF), label = "track")
             Box(Modifier.width(48.dp).height(24.dp).clip(RoundedCornerShape(12.dp)).background(trackColor)) {
                 Box(Modifier.padding(3.dp).size(18.dp).offset(x = (thumbPos * 24).dp).background(Color.White, CircleShape))
@@ -711,16 +632,9 @@ private fun DashboardActionCard(
     title: String, desc: String, icon: ImageVector,
     value: String, highlight: Color? = null, onClick: () -> Unit
 ) {
-    // ✅ Fixed: focused IS used in iconBgColor, iconTintColor, btnBg, btnText
     var focused by remember { mutableStateOf(false) }
-
-    val iconBgColor by animateColorAsState(
-        if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "actionIconBg"
-    )
-    val iconTintColor by animateColorAsState(
-        if (focused) BG_DARK else highlight ?: TEXT_PRIMARY, label = "actionIconTint"
-    )
-
+    val iconBgColor   by animateColorAsState(if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "actionIconBg")
+    val iconTintColor by animateColorAsState(if (focused) BG_DARK else highlight ?: TEXT_PRIMARY, label = "actionIconTint")
     Surface(
         onClick  = onClick,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
@@ -737,16 +651,12 @@ private fun DashboardActionCard(
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
                 Text(title, color = TEXT_PRIMARY, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                Text(desc,  color = TEXT_MUTED,    fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(desc,  color = TEXT_MUTED,   fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             if (value.isNotBlank()) {
                 Spacer(Modifier.width(16.dp))
-                val btnBg by animateColorAsState(
-                    if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "btnBg"
-                )
-                val btnText by animateColorAsState(
-                    if (focused) BG_DARK else TEXT_PRIMARY, label = "btnText"
-                )
+                val btnBg   by animateColorAsState(if (focused) highlight ?: TEXT_PRIMARY else Color(0x1AFFFFFF), label = "btnBg")
+                val btnText by animateColorAsState(if (focused) BG_DARK else TEXT_PRIMARY, label = "btnText")
                 Box(Modifier.background(btnBg, RoundedCornerShape(8.dp)).padding(horizontal = 14.dp, vertical = 6.dp)) {
                     Text(value, color = btnText, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
@@ -760,22 +670,16 @@ private fun DashboardRadioCard(
     label: String, sub: String, isSelected: Boolean,
     modifier: Modifier = Modifier, onClick: () -> Unit
 ) {
-    // ✅ Fixed: focused IS now used in bgColor (was the source of the warning)
     var focused by remember { mutableStateOf(false) }
-
     val bgColor by animateColorAsState(
         targetValue   = if (isSelected) Color(0x2AFFFFFF) else if (focused) CARD_FOCUSED else CARD_IDLE,
         animationSpec = tween(150),
         label         = "radioBg"
     )
-
     Surface(
         onClick  = onClick,
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = bgColor,
-            focusedContainerColor = CARD_FOCUSED
-        ),
+        colors   = ClickableSurfaceDefaults.colors(containerColor = bgColor, focusedContainerColor = CARD_FOCUSED),
         border   = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)),
@@ -796,9 +700,7 @@ private fun DashboardRadioCard(
                     overflow   = TextOverflow.Ellipsis,
                     modifier   = Modifier.weight(1f)
                 )
-                if (isSelected) {
-                    Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = ACCENT_BLUE)
-                }
+                if (isSelected) Icon(Icons.Default.CheckCircle, null, Modifier.size(18.dp), tint = ACCENT_BLUE)
             }
             Text(sub, color = TEXT_MUTED, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
