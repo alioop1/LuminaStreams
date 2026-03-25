@@ -35,19 +35,9 @@ object DeviceProfile {
     var totalRamMb: Int = 0
         private set
 
-    // ✅ Manufacturer flags — used by ExoPlayerWrapper for device-specific workarounds
-    val isXiaomi: Boolean
-        get() = android.os.Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)
-
-    val isMeCool: Boolean
-        get() = android.os.Build.MANUFACTURER.equals("MeCool", ignoreCase = true) ||
-                android.os.Build.MODEL.startsWith("KM", ignoreCase = true)
-
-    val isAmlogic: Boolean
-        get() = android.os.Build.HARDWARE.contains("amlogic", ignoreCase = true) ||
-                android.os.Build.HARDWARE.startsWith("meson", ignoreCase = true)
-
-    // ✅ set to true by SettingsViewModel when Lite UI mode is toggled ON
+    // ✅ NEW: set to true by SettingsViewModel when Lite UI mode is toggled ON
+    // Immediately forces LOW-tier animation config for the current session.
+    // Persisted across cold-starts via SharedPreferences read in LuminaApp.
     var forceLowTier: Boolean = false
         set(value) {
             field = value
@@ -74,48 +64,17 @@ object DeviceProfile {
 
     private fun detectTier(gpu: String, ramMb: Int): Tier {
         val g = gpu.lowercase()
-        val manufacturer = android.os.Build.MANUFACTURER.lowercase()
-        val hardware = android.os.Build.HARDWARE.lowercase()
-
         return when {
-            // ── HIGH-end GPUs ─────────────────────────────────────────────
             g.contains("tegra")                               -> Tier.HIGH
             g.contains("adreno 6") || g.contains("adreno 7") -> Tier.HIGH
             g.contains("mali-g7") || g.contains("mali-g9")   -> Tier.HIGH
             g.contains("apple")                               -> Tier.HIGH
             ramMb >= 3000 && !g.contains("mali-g3")          -> Tier.HIGH
-
-            // ── MID-tier GPUs ─────────────────────────────────────────────
             g.contains("adreno 5")                            -> Tier.MID
             g.contains("mali-g5") || g.contains("mali-g6")   -> Tier.MID
             g.contains("powervr gm")                          -> Tier.MID
-
-            // ── MeCool / Amlogic — S905X3/S905X4/S922X etc. ──────────────
-            // Amlogic GPUs report as "Mali-G31" or "Vivante GC" variants.
-            // KM6/KM7 (S905X4/S922X) have enough power for MID animations.
-            manufacturer == "mecool" || hardware.contains("amlogic") ||
-            hardware.startsWith("meson") -> when {
-                ramMb >= 4000 -> Tier.HIGH  // KM7 / S922X
-                ramMb >= 2000 -> Tier.MID   // KM6 / S905X4
-                else          -> Tier.LOW   // KM2 / S905X2
-            }
-
-            // ── Xiaomi TV Stick / Mi Box ──────────────────────────────────
-            // Mi Box S (S905X), Mi TV Stick 4K (S905Y4), Xiaomi TV Box S 2nd Gen
-            manufacturer == "xiaomi" -> when {
-                ramMb >= 3000 -> Tier.HIGH
-                ramMb >= 2000 -> Tier.MID
-                else          -> Tier.LOW
-            }
-
-            // ── Vivante GPU (older Amlogic S905/S912) ─────────────────────
-            g.contains("vivante") || g.contains("gc1000") || g.contains("gc7000") -> Tier.LOW
-
-            // ── Generic 2GB fallback ──────────────────────────────────────
-            ramMb in 2000..2999 && !g.contains("mali-g3") && !g.contains("adreno 3") -> Tier.MID
-            ramMb in 2000..2999 -> Tier.LOW
-
-            else -> Tier.LOW
+            ramMb in 2000..2999                               -> Tier.MID
+            else                                              -> Tier.LOW
         }
     }
 
@@ -151,7 +110,6 @@ object DeviceProfile {
 
     fun debugInfo(): String =
         "Tier=${if (forceLowTier) "LOW (forced)" else tier.name} | " +
-        "GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
-        "Xiaomi=$isXiaomi | MeCool=$isMeCool | Amlogic=$isAmlogic | " +
-        "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
+                "GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
+                "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }
