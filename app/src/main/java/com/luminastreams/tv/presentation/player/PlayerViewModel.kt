@@ -1,8 +1,10 @@
 package com.luminastreams.tv.presentation.player
 
 import android.app.Application
+import android.content.Context
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.luminastreams.tv.data.remote.KtuvitDirectClient
 import com.luminastreams.tv.data.remote.SubtitleScraper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -28,7 +30,8 @@ data class PlayerUiState(
 
 class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
 
-    private val subtitleScraper = SubtitleScraper()
+    private val subtitleScraper  = SubtitleScraper()
+    private val ktuvitDirect     = KtuvitDirectClient(app)
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -51,28 +54,43 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun fetchAllSubtitles(imdbId: String, season: Int? = null, episode: Int? = null): List<StremioSubtitle> = coroutineScope {
+    private suspend fun fetchAllSubtitles(
+        imdbId: String,
+        season: Int? = null,
+        episode: Int? = null
+    ): List<StremioSubtitle> = coroutineScope {
         val formattedId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
-        val type = if (season != null && episode != null) "series" else "movie"
-        val queryId = if (type == "series") "$formattedId:$season:$episode" else formattedId
+        val type        = if (season != null && episode != null) "series" else "movie"
+        val queryId     = if (type == "series") "$formattedId:$season:$episode" else formattedId
 
-        val wizdomUrl  = "https://4b139a4b7f94-wizdom-stremio-v2.baby-beamup.club/subtitles/$type/$queryId.json"
-        val ktuvitUrl  = "https://4b139a4b7f94-ktuvit-stremio.baby-beamup.club/subtitles/$type/$queryId.json"
+        // ── Stremio add-on proxies (קיים) ─────────────────────────────
+        val wizdomUrl   = "https://4b139a4b7f94-wizdom-stremio-v2.baby-beamup.club/subtitles/$type/$queryId.json"
+        val ktuvitUrl   = "https://4b139a4b7f94-ktuvit-stremio.baby-beamup.club/subtitles/$type/$queryId.json"
         val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
-        val ufoUrl     = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
+        val ufoUrl      = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
 
-        val wizdomDeferred   = async { fetchAndParseStremioJson(wizdomUrl, "Wizdom") }
-        val ktuvitDeferred   = async { fetchAndParseStremioJson(ktuvitUrl, "Ktuvit") }
-        val officialDeferred = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
-        val ufoDeferred      = async { fetchAndParseStremioJson(ufoUrl, "OS-Community") }
-        val scraperDeferred  = async { fetchFromSubtitleScraper(formattedId) }
+        val wizdomDeferred    = async { fetchAndParseStremioJson(wizdomUrl,   "Wizdom") }
+        val ktuvitProxyDeferred = async { fetchAndParseStremioJson(ktuvitUrl, "Ktuvit") }
+        val officialDeferred  = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
+        val ufoDeferred       = async { fetchAndParseStremioJson(ufoUrl,      "OS-Community") }
+        val scraperDeferred   = async { fetchFromSubtitleScraper(formattedId) }
 
-        val allResults = wizdomDeferred.await() + ktuvitDeferred.await() +
-                         officialDeferred.await() + ufoDeferred.await() + scraperDeferred.await()
+        // ── Direct Ktuvit (חדש) ────────────────────────────────────────
+        val ktuvitDirectDeferred = async {
+            fetchFromKtuvitDirect(formattedId, type, season, episode)
+        }
+
+        val allResults = wizdomDeferred.await() +
+                ktuvitProxyDeferred.await() +
+                officialDeferred.await() +
+                ufoDeferred.await() +
+                scraperDeferred.await() +
+                ktuvitDirectDeferred.await()
 
         val filteredSubs = allResults.filter {
             val lang = it.lang.lowercase()
-            lang.contains("heb") || lang == "he" || lang.contains("עברית") || lang.contains("eng") || lang == "en"
+            lang.contains("heb") || lang == "he" || lang.contains("עברית") ||
+            lang.contains("eng") || lang == "en"
         }
 
         return@coroutineScope filteredSubs.distinctBy { it.url }.sortedBy { sub ->
@@ -83,54 +101,100 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private suspend fun fetchAndParseStremioJson(urlString: String, sourceName: String): List<StremioSubtitle> = withContext(Dispatchers.IO) {
+    // ── Direct Ktuvit.me ─────────────────────────────────────────────
+    private suspend fun fetchFromKtuvitDirect(
+        imdbId: String,
+        type: String,
+        season: Int?,
+        episode: Int?
+    ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
+        try {
+            val prefs   = app.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+            val email   = prefs.getString("ktuvit_email",    "") ?: ""
+            val pass    = prefs.getString("ktuvit_password",  "") ?: ""
+
+            // אם אין credentials — skip
+            if (email.isBlank() || pass.isBlank()) return@withContext emptyList()
+
+            // login אם אין cookie
+            if (ktuvitDirect.cookie == null) {
+                val ok = ktuvitDirect.login(email, pass)
+                if (!ok) return@withContext emptyList()
+            }
+
+            // חפש KtuvitID
+            val isSeries = type == "series"
+            val ktuvitId = ktuvitDirect.getKtuvitId(
+                name     = "",  // ריק — ה-client ינסה לחפש לפי imdbId בלבד
+                isSeries = isSeries,
+                imdbId   = imdbId
+            ) ?: return@withContext emptyList()
+
+            // קבל רשימת כתוביות
+            val subsList = if (isSeries && season != null && episode != null)
+                ktuvitDirect.getSubsListEpisode(ktuvitId, season, episode)
+            else
+                ktuvitDirect.getSubsListMovie(ktuvitId)
+
+            if (subsList.isEmpty()) return@withContext emptyList()
+
+            // הורד את הכתובית הכי מורדת (top 1) ישירות ל-cache
+            val best = subsList.first()
+            val file = ktuvitDirect.downloadSubtitle(ktuvitId, best.id, best.fileType)
+                ?: return@withContext emptyList()
+
+            // החזר כ-StremioSubtitle עם file:// URL
+            listOf(StremioSubtitle(
+                url    = "file://${file.absolutePath}",
+                lang   = "heb",
+                source = "Ktuvit-Direct"
+            ))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    // ── Stremio JSON parser (קיים) ────────────────────────────────────
+    private suspend fun fetchAndParseStremioJson(
+        urlString: String,
+        sourceName: String
+    ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
         val subtitles = mutableListOf<StremioSubtitle>()
         try {
-            val url = URL(urlString)
-            val connection = url.openConnection() as HttpURLConnection
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", "Stremio/4.4.168")
-            connection.setRequestProperty("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
-            // ✅ Extended timeouts for Xiaomi MIUI DNS blocking & slow network stacks
-            connection.connectTimeout = 10_000
-            connection.readTimeout    = 10_000
-
-            if (connection.responseCode in 200..299) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
+            val conn = URL(urlString).openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.setRequestProperty("User-Agent", "Stremio/4.4.168")
+            conn.setRequestProperty("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
+            conn.connectTimeout = 10_000
+            conn.readTimeout    = 10_000
+            if (conn.responseCode in 200..299) {
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
                 val jsonObject = JSONObject(response)
-
                 if (jsonObject.has("subtitles")) {
                     val subsArray = jsonObject.getJSONArray("subtitles")
                     for (i in 0 until subsArray.length()) {
                         val subObj = subsArray.getJSONObject(i)
                         val subUrl = subObj.optString("url", "")
-
-                        var lang = subObj.optString("lang", "Unknown")
-                        if ((lang == "Unknown" || lang.isEmpty()) && (sourceName == "Wizdom" || sourceName == "Ktuvit")) {
-                            lang = "heb"
-                        }
-
-                        if (subUrl.isNotEmpty()) {
-                            subtitles.add(StremioSubtitle(subUrl, lang, sourceName))
-                        }
+                        var lang   = subObj.optString("lang", "Unknown")
+                        if ((lang == "Unknown" || lang.isEmpty()) &&
+                            (sourceName == "Wizdom" || sourceName == "Ktuvit")) lang = "heb"
+                        if (subUrl.isNotEmpty()) subtitles.add(StremioSubtitle(subUrl, lang, sourceName))
                     }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return@withContext subtitles
+        } catch (e: Exception) { e.printStackTrace() }
+        subtitles
     }
 
-    private suspend fun fetchFromSubtitleScraper(imdbId: String): List<StremioSubtitle> = withContext(Dispatchers.IO) {
-        try {
-            val result = subtitleScraper.fetchSubtitleInMemory(imdbId, "heb")
-            val bytes  = result.getOrNull() ?: return@withContext emptyList()
-            val cacheFile = File(app.cacheDir, "subtitle_${imdbId}_heb.srt")
-            cacheFile.writeBytes(bytes)
-            listOf(StremioSubtitle(url = "file://${cacheFile.absolutePath}", lang = "heb", source = "OS-Scraper"))
-        } catch (e: Exception) {
-            emptyList()
+    private suspend fun fetchFromSubtitleScraper(imdbId: String): List<StremioSubtitle> =
+        withContext(Dispatchers.IO) {
+            try {
+                val result = subtitleScraper.fetchSubtitleInMemory(imdbId, "heb")
+                val bytes  = result.getOrNull() ?: return@withContext emptyList()
+                val file   = File(app.cacheDir, "subtitle_${imdbId}_heb.srt")
+                file.writeBytes(bytes)
+                listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
+            } catch (e: Exception) { emptyList() }
         }
-    }
 }
