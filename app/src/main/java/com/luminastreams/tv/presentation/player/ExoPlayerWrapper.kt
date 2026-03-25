@@ -21,6 +21,8 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
@@ -104,8 +106,8 @@ class ExoPlayerWrapper(context: Context) {
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .setAllowCrossProtocolRedirects(true)
-    private val dataSourceFactory  = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
-    private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
+    val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
+    val mediaSourceFactory: DefaultMediaSourceFactory = DefaultMediaSourceFactory(appContext)
         .setDataSourceFactory(dataSourceFactory)
         .setSubtitleParserFactory(androidx.media3.extractor.text.DefaultSubtitleParserFactory())
 
@@ -147,6 +149,9 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
+    // שומר את ה-videoUrl לצורך MergingMediaSource
+    private var currentVideoUrl: String? = null
+
     init {
         player.addListener(object : Player.Listener {
 
@@ -179,7 +184,6 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                // בחר אוטומטית את ה-track של הכתובית החיצונית ברגע שהיא מופיעת
                 val textGroup = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_TEXT }
                     .firstOrNull { grp ->
@@ -209,6 +213,7 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String) {
+        currentVideoUrl        = videoUrl
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
@@ -221,7 +226,6 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── applySubtitle: מוריד + מזריק ──────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -258,28 +262,38 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── injectSubtitle: replaceMediaItem ───────────────────────────────────
+    // ─── injectSubtitle ─────────────────────────────────────────────────────
     //
-    // הגישה הנכונה לכתוביות חיצוניות שלא גורמות טעינת מחדש של ה-stream:
+    // משתמשת ב-MergingMediaSource — הגישה היחידה שבאמת מפעילה onCues:
     //
-    // player.replaceMediaItem(index, newMediaItem)
+    //  videoSource  =  אותו video URL בדיוקה (ExoPlayer מזהה URI שווה -> לא re-fetch)
+    //  subSource    =  SingleSampleMediaSource מה-cache file המקומי
+    //  setMediaSource(merged, resetPosition=false)
+    //    └ ExoPlayer עוצר / מתחיל מחדש את הנגינה במיקום הנכון
+    //    └ ה-video URL זהה -> הוא עושה reuse ל-segments שכבר הורדו
+    //    └ ה-subtitle file הוא מקומי -> לא צריך אינטרנט
+    //    └ onTracksChanged מופעל -> נבחר track -> onCues מתחיל
     //
-    // replaceMediaItem מעדכן את ה-MediaItem במקום הנכון בתוך רשימת
-    // ה-MediaItems בלי להפסיק את הנגינה. ExoPlayer רואה שה-URI
-    // זהה לא השתנה, ולכן הוא משאיר את ה-buffer ומוסיף רקאת את
-    // ה-SubtitleConfiguration אל ה-MediaItem.
-    //
-    // חשוב: אין כאן קריאה ל-prepare() ואין טעינת URL מחדש =
-    // לא יהיה שגיאת 1004 ב-token-based URLs כמו Stremio.
+    //  על error 1004: זה יקרה אם ה-video URL הוא HLS token-based שפג
+    //  תוקפו. במקרה כזה ExoPlayer יפעיל שגיאה, אבל הנגינה הקודמת
+    //  תמשיך מה-buffer הקיים. חוץ מזה אין פתרון ב-Media3 API שעובד
+    //  באמת לכתוביות חיצוניות בלי לאפס את ה-buffer.
     private fun injectSubtitle(subFile: File, isVtt: Boolean) {
-        val mime        = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val currentItem = player.currentMediaItem ?: return
-        val currentIdx  = player.currentMediaItemIndex
+        val videoUrl   = currentVideoUrl ?: return
+        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos   = player.currentPosition
+        val wasPlaying = player.isPlaying
 
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
 
         try {
+            // video source — אותו URI בדיוקה
+            val videoSource = mediaSourceFactory.createMediaSource(
+                MediaItem.Builder().setUri(videoUrl.toUri()).build()
+            )
+
+            // subtitle source — מקומי, לא צריך רשת
             val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
                 .setMimeType(mime)
                 .setLanguage("iw")
@@ -287,12 +301,16 @@ class ExoPlayerWrapper(context: Context) {
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
 
-            // ✅ replaceMediaItem שומר את ה-buffer, לא מתחבר מחדש ל-URL
-            val newItem = currentItem.buildUpon()
-                .setSubtitleConfigurations(listOf(subConfig))
-                .build()
+            val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(subConfig, C.TIME_UNSET)
 
-            player.replaceMediaItem(currentIdx, newItem)
+            val merged = MergingMediaSource(videoSource, subSource)
+
+            // ✅ setMediaSource בלי prepare() נוסף — ExoPlayer עושה
+            //    prepare פנימי אוטומטית כשהוא רואה שה-source השתנה
+            player.playWhenReady = wasPlaying
+            player.setMediaSource(merged, savedPos)
+            player.prepare()
 
         } catch (e: Exception) {
             e.printStackTrace()
