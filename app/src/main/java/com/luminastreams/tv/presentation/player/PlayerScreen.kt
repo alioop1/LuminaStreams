@@ -60,14 +60,13 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
-import androidx.media3.common.text.CueGroup
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 import android.graphics.Color as AndroidColor
 
-// ── אייקונים מותאמים ─────────────────────────────────────────────────
+// ── Icons ─────────────────────────────────────────────────────────────
 
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
@@ -123,16 +122,12 @@ fun PlayerScreen(
     var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
     var activityTick      by remember { mutableIntStateOf(0) }
     var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
-
-    // ✅ pendingSubtitleIndex: במקום לשמור URL, שומרים index ברשימת availableSubtitles.
-    // כך אפשר fallback לכתובית הבאה ברשימה אם ההורדה נכשלת.
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
 
-    // ── Watch Progress / Resume ───────────────────────────────────────────
-    val watchPrefs       = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
-    val progressKey      = remember(imdbId) { "progress_$imdbId" }
-    val savedPosition    = remember(imdbId) { watchPrefs.getLong(progressKey, -1L) }
+    val watchPrefs    = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
+    val progressKey   = remember(imdbId) { "progress_$imdbId" }
+    val savedPosition = remember(imdbId) { watchPrefs.getLong(progressKey, -1L) }
     var showResumeDialog by remember { mutableStateOf(false) }
     var resumeHandled    by remember { mutableStateOf(false) }
 
@@ -141,11 +136,7 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ── Effects ───────────────────────────────────────────────────
-
-    LaunchedEffect(videoUrl, imdbId) {
-        viewModel.loadMedia(videoUrl, imdbId)
-    }
+    LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId) }
 
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
@@ -158,8 +149,7 @@ fun PlayerScreen(
 
     LaunchedEffect(prepared) {
         if (prepared && savedPosition > 30_000L && !resumeHandled) {
-            delay(800)
-            showResumeDialog = true
+            delay(800); showResumeDialog = true
         }
     }
 
@@ -170,81 +160,55 @@ fun PlayerScreen(
             val pos = exo.player.currentPosition
             val dur = exo.player.duration
             if (pos > 10_000L && dur > 0L) {
-                if (pos.toFloat() / dur.toFloat() < 0.95f) {
+                if (pos.toFloat() / dur.toFloat() < 0.95f)
                     watchPrefs.edit().putLong(progressKey, pos).apply()
-                } else {
+                else
                     watchPrefs.edit().remove(progressKey).apply()
-                }
             }
         }
     }
 
-    // ── כתוביות אוטומטיות — שלב 1: בחירת ברירת מחדל עפרית ───────────────
-    // רץ כשהרשימה מתעדכנת, לא מחכה ל-prepared. שומר index בלבד (לא URL)
-    // כדי ש-LaunchedEffect הבא יוכל לנסות fallback לידי index+1 אם יש שגיאה.
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
-        val prefs          = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-        val defaultSubLang = prefs.getString("def_subs", "Hebrew") ?: "Hebrew"
-        if (defaultSubLang == "None") return@LaunchedEffect
-
-        val langCode = if (defaultSubLang == "Hebrew") "heb" else "eng"
-
-        // מצא רשימת כל הכתוביות בשפה המבוקשת
-        val candidates = state.availableSubtitles.mapIndexedNotNull { i, sub ->
-            if (sub.lang.contains(langCode, ignoreCase = true)) i else null
+        val defLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+            .getString("def_subs", "Hebrew") ?: "Hebrew"
+        if (defLang == "None") return@LaunchedEffect
+        val langCode = if (defLang == "Hebrew") "heb" else "eng"
+        val idx = state.availableSubtitles.indexOfFirst { it.lang.contains(langCode, ignoreCase = true) }
+        if (idx >= 0) {
+            pendingSubIndex   = idx
+            selectedWebSubUrl = state.availableSubtitles[idx].url
         }
-        if (candidates.isEmpty()) return@LaunchedEffect
-
-        pendingSubIndex   = candidates.first()
-        selectedWebSubUrl = state.availableSubtitles[candidates.first()].url
     }
 
-    // ── כתוביות אוטומטיות — שלב 2: החל כשגם prepared=true וגם pendingSubIndex קיים ──
-    // מנסה עם fallback אוטומטי לכתובית הבאה ברשימה אם ההורדה נכשלת.
     LaunchedEffect(prepared, pendingSubIndex) {
         val idx = pendingSubIndex ?: return@LaunchedEffect
-        if (!prepared) return@LaunchedEffect
-        if (subtitleApplied) return@LaunchedEffect
-
+        if (!prepared || subtitleApplied) return@LaunchedEffect
         val subs = state.availableSubtitles
         if (idx >= subs.size) return@LaunchedEffect
-
-        // מחכה עד שה-MediaItem מוכן — עד 60 ניסיונות (18 שניות ב-Xiaomi/MeCool)
         var attempts = 0
-        while (exo.player.currentMediaItem == null && attempts < 60) {
-            delay(300); attempts++
-        }
+        while (exo.player.currentMediaItem == null && attempts < 60) { delay(300); attempts++ }
         if (exo.player.currentMediaItem == null) return@LaunchedEffect
-
-        // נסה להוריד את הכתובית. אם נכשל — fallback להבא ברשימה
         val langCode = if (
             context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
                 .getString("def_subs", "Hebrew") == "Hebrew"
         ) "heb" else "eng"
-
         val candidates = subs.mapIndexedNotNull { i, sub ->
             if (sub.lang.contains(langCode, ignoreCase = true)) i else null
         }
-
-        for (candidateIdx in candidates) {
-            val sub = subs[candidateIdx]
+        for (ci in candidates) {
+            val sub = subs[ci]
             exo.applySubtitle(sub.url, sub.lang)
-            // מחכה עד 2.5 שניות לאישור
             var waitMs = 0
-            while (!exo.subtitleApplied.value && waitMs < 2500) {
-                delay(200); waitMs += 200
-            }
+            while (!exo.subtitleApplied.value && waitMs < 2500) { delay(200); waitMs += 200 }
             if (exo.subtitleApplied.value) {
-                subtitleApplied   = true
+                subtitleApplied = true
                 selectedWebSubUrl = sub.url
-                break // הצליח
+                break
             }
-            // לא הצליח — מנסה את הבא ברשימה
         }
     }
 
-    // ── פוקוס ─────────────────────────────────────────────────────
     LaunchedEffect(showControls) {
         if (showControls && activeMenu == ActiveMenu.NONE) {
             delay(120); runCatching { seekBarFR.requestFocus() }
@@ -276,7 +240,6 @@ fun PlayerScreen(
         }
     }
 
-    // ── Root Box ───────────────────────────────────────────────────
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -312,7 +275,10 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video surface + SubtitleView ──────────────────────────────────
+        // ── Video + SubtitleView ─────────────────────────────────────────
+        // ✅ SubtitleView.setPlayer(player) — הדרך הנכונה ב-Media3!
+        // במקום onCues ידני, נותנים ל-ExoPlayer לנהל את ה-cues ישירות.
+        // זה כולל גם כתוביות embedded וגם כתוביות חיצוניות.
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -358,14 +324,12 @@ fun PlayerScreen(
                         setApplyEmbeddedFontSizes(false)
                         setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                         setBottomPaddingFraction(0.08f)
+                        // ✅ THE FIX: setPlayer במקום addListener + onCues ידני
+                        // ExoPlayer ינהל את כל ה-cue delivery אוטומטית
+                        setPlayer(exo.player)
                     }
                     addView(surfaceView)
                     addView(subtitleView)
-                    exo.player.addListener(object : Player.Listener {
-                        override fun onCues(cueGroup: CueGroup) {
-                            subtitleView.setCues(cueGroup.cues)
-                        }
-                    })
                 }
             },
             update = { frameLayout ->
@@ -374,17 +338,13 @@ fun PlayerScreen(
             }
         )
 
-        // ── Resume Dialog ───────────────────────────────────────────────
+        // ── Resume Dialog ────────────────────────────────────────────────
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
             LaunchedEffect(Unit) { delay(100); runCatching { resumeFR.requestFocus() } }
-
             Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(0.75f))
-                    .zIndex(300f),
+                modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.75f)).zIndex(300f),
                 contentAlignment = Alignment.Center
             ) {
                 Column(
@@ -395,7 +355,7 @@ fun PlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = RED, modifier = Modifier.size(48.dp))
+                    Icon(Icons.Default.PlayArrow, null, tint = RED, modifier = Modifier.size(48.dp))
                     Text("Continue Watching?", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
                     Text("Stopped at ${formatTime(savedPosition)}", color = DIM, fontSize = 15.sp, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(8.dp))
@@ -412,17 +372,17 @@ fun PlayerScreen(
                         }
                     ) {
                         Surface(
-                            onClick = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition) },
-                            shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                            colors  = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
-                            scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
                         Surface(
-                            onClick = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit().remove(progressKey).apply() },
-                            shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                            colors  = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = Color(0xFF3A3A50), contentColor = WHITE, focusedContentColor = WHITE),
-                            scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                            onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit().remove(progressKey).apply() },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = Color(0xFF3A3A50), contentColor = WHITE, focusedContentColor = WHITE),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(fromStartFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("From Start", fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
                     }
@@ -430,7 +390,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Error overlay ─────────────────────────────────────────────────
+        // ── Error overlay ────────────────────────────────────────────────
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
@@ -467,7 +427,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Controls overlay ──────────────────────────────────────────────
+        // ── Controls overlay ─────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -640,7 +600,7 @@ fun PlayerScreen(
     }
 }
 
-// ── Side Panel Header ──────────────────────────────────────────────────
+// ── Side Panel Header ─────────────────────────────────────────────────
 
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
@@ -688,7 +648,6 @@ private fun TrackListUi(
         }
         list
     }
-
     if (trackList.isEmpty()) {
         Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
             Text("No tracks available", color = DIM, fontSize = 15.sp)
@@ -725,7 +684,7 @@ private fun TrackListUi(
     }
 }
 
-// ── Track Item Card ─────────────────────────────────────────────────────
+// ── Track Item Card ───────────────────────────────────────────────────
 
 @Composable
 private fun TrackItemCard(
@@ -736,7 +695,10 @@ private fun TrackItemCard(
     onClick:    () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val containerBg by animateColorAsState(targetValue = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF), animationSpec = tween(200), label = "bgAnim")
+    val containerBg by animateColorAsState(
+        targetValue = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
+        animationSpec = tween(200), label = "bgAnim"
+    )
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent, contentColor = WHITE, focusedContentColor = WHITE),
@@ -751,7 +713,7 @@ private fun TrackItemCard(
                     Text(text = title, color = WHITE, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.7f))
                     if (isSelected) {
                         Spacer(Modifier.width(12.dp))
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = Color(0xFF4D90FE), modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4D90FE), modifier = Modifier.size(18.dp))
                     }
                 }
                 PremiumBadge(subtitle, if (focused) RED else Color.Gray, isOutline = !focused)
@@ -765,7 +727,8 @@ private fun TrackItemCard(
 @Composable
 private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
     Box(
-        Modifier.clip(RoundedCornerShape(6.dp)).background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
+        Modifier.clip(RoundedCornerShape(6.dp))
+            .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
             .border(1.dp, if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, RoundedCornerShape(6.dp))
             .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
@@ -773,7 +736,7 @@ private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false)
     }
 }
 
-// ── Utils ───────────────────────────────────────────────────────────────
+// ── Utils ──────────────────────────────────────────────────────────────
 
 private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
@@ -862,7 +825,7 @@ fun PlayerProgressControls(
     }
 }
 
-// ── Control Pill ────────────────────────────────────────────────────────
+// ── Control Pill ──────────────────────────────────────────────────────
 
 @Composable
 fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -882,12 +845,12 @@ fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, 
     }
 }
 
-// ── Format Time ──────────────────────────────────────────────────────────
+// ── Format Time ───────────────────────────────────────────────────────
 
 fun formatTime(ms: Long): String {
-    val s = ms / 1000
-    val h = s / 3600
-    val m = (s % 3600) / 60
+    val s   = ms / 1000
+    val h   = s / 3600
+    val m   = (s % 3600) / 60
     val sec = s % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
 }

@@ -23,6 +23,7 @@ import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -128,8 +129,9 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
+    // ─── State ────────────────────────────────────────────────────────────
     private val _isPlaying      = MutableStateFlow(false)
-    val isPlaying: StateFlow<Boolean>  = _isPlaying.asStateFlow()
+    val isPlaying: StateFlow<Boolean>   = _isPlaying.asStateFlow()
 
     private val _playerError    = MutableStateFlow<String?>(null)
     val playerError: StateFlow<String?> = _playerError.asStateFlow()
@@ -140,9 +142,9 @@ class ExoPlayerWrapper(context: Context) {
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
-    // ── listener חד-פעמי שממתין ל-onTracksChanged אחרי replaceMediaItem ──────
-    // כשהטראק "ext_sub" מופיע — עושה override ומסיר את עצמו
-    private var pendingSubListener: Player.Listener? = null
+    // ─── Pending subtitle (url + isVtt) שממתינה להזרקה ───────────────────
+    // כשה-player מגיע ל-STATE_READY אחרי prepareStream, אנחנו מזריקים אותה.
+    private var pendingSubtitle: Pair<File, Boolean>? = null
 
     init {
         player.addListener(object : Player.Listener {
@@ -168,14 +170,39 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
+
+                // ─── ניסיון override מיד כש-onTracksChanged נקרא ───────────
+                // עובד רק לכתוביות embedded (HLS manifested tracks).
+                // לכתוביות חיצוניות — ראה injectSubtitle().
+                val pending = pendingSubtitle ?: return
+                val textGroup = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_TEXT }
+                    .firstOrNull { grp ->
+                        (0 until grp.length).any { i ->
+                            grp.mediaTrackGroup.getFormat(i).id == "ext_sub"
+                        }
+                    } ?: return
+
+                pendingSubtitle = null
+                val idx = (0 until textGroup.length).firstOrNull { i ->
+                    textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub"
+                } ?: 0
+
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setOverrideForType(TrackSelectionOverride(textGroup.mediaTrackGroup, idx))
+                    .build()
+                _subtitleApplied.value = true
             }
         })
     }
 
+    // ─── prepareStream: שומר pending subtitle אם קיים ─────────────────────
+    // אחרי prepare, נזריק את הכתובית ב-injectSubtitle()
     fun prepareStream(videoUrl: String) {
         _playerError.value     = null
         _subtitleApplied.value = false
-        removePendingSubListener()
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -185,9 +212,7 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // applySubtitle — מוריד מה-URL ומחיל מקומית
-    // ────────────────────────────────────────────────────────────────────────
+    // ─── applySubtitle: מוריד + מזריק ─────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -195,7 +220,8 @@ class ExoPlayerWrapper(context: Context) {
         maxRetries: Int = 2
     ) {
         if (subtitleUrl.startsWith("file://")) {
-            applyLocalSubtitle(File(Uri.parse(subtitleUrl).path!!), isVtt)
+            val f = File(Uri.parse(subtitleUrl).path!!)
+            injectSubtitle(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
@@ -211,95 +237,69 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { applyLocalSubtitle(file, ext == "vtt") }
+                        withContext(Dispatchers.Main) { injectSubtitle(file, ext == "vtt") }
                         return@launch
                     }
                 } catch (e: Exception) {
                     lastErr = e
-                    if (attempt < maxRetries) kotlinx.coroutines.delay(1_500L * (attempt + 1))
+                    if (attempt < maxRetries) delay(1_500L * (attempt + 1))
                 }
             }
             lastErr?.printStackTrace()
         }
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // applyLocalSubtitle — הלב של הפיקס
+    // ─── injectSubtitle: הגישה הנכונה ─────────────────────────────────────
     //
-    // שלב 1: replaceMediaItem עם SubtitleConfiguration → ExoPlayer יודע על
-    //         הכתובית אבל עוד לא בחר בה
-    // שלב 2: מוסיפים listener חד-פעמי שמחכה ל-onTracksChanged הבא
-    // שלב 3: כש-"ext_sub" מופיע ברשימת הטראקים — עושים override מפורש
-    //         ומסירים את ה-listener
-    // ────────────────────────────────────────────────────────────────────────
-    private fun applyLocalSubtitle(subFile: File, isVtt: Boolean) {
-        val current = player.currentMediaItem ?: return
-        val mime    = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos   = player.currentPosition
+    // ExoPlayer/Media3 + HLS/DASH: אי אפשר להוסיף כתובית חיצונית ל-stream
+    // פעיל דרך replaceMediaItem בלבד. הדרך הנכונה:
+    //
+    // 1. בונים MediaItem חדש עם SubtitleConfiguration
+    // 2. קוראים setMediaItem (ולא stop!) — ExoPlayer מחזיק את ה-stream
+    //    ממשיך מאותו position דרך seekTo
+    // 3. prepare() + seekTo(savedPos) + play()
+    //
+    // זה **שונה** מ-MergingMediaSource כי אנחנו לא יוצרים MediaSource חדש
+    // — אנחנו רק מעדכנים את ה-MediaItem שעליו ExoPlayer כבר עובד.
+    // ExoPlayer מזהה שה-URI לא השתנה ומנסה לעשות seamless transition.
+    //
+    // NOTE: אם ה-URL של הסרט פג תוקף (Stremio token) — יהיה שגיאת 1004.
+    // במקרה כזה אנחנו שומרים את הכתובית ב-pendingSubtitle ומנסים שוב
+    // אחרי שהמשתמש טוען source חדש.
+    private fun injectSubtitle(subFile: File, isVtt: Boolean) {
+        val mime     = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos = player.currentPosition
         val wasPlaying = player.isPlaying
 
-        // הסרת listener קודם אם קיים
-        removePendingSubListener()
+        val subConf = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
+            .setMimeType(mime)
+            .setLanguage("iw")
+            .setId("ext_sub")
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .build()
 
-        // שלב 2: listener חד-פעמי
-        val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: Tracks) {
-                val textGroup = tracks.groups
-                    .filter { it.type == C.TRACK_TYPE_TEXT }
-                    .firstOrNull { grp ->
-                        (0 until grp.length).any { i ->
-                            grp.mediaTrackGroup.getFormat(i).id == "ext_sub"
-                        }
-                    }
-
-                if (textGroup == null) return // עדיין לא הגיע הטראק שלנו
-
-                // מצאנו! — מסירים את ה-listener לפני שעושים כל שינוי
-                player.removeListener(this)
-                pendingSubListener = null
-
-                val trackIdx = (0 until textGroup.length).firstOrNull { i ->
-                    textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub"
-                } ?: 0
-
-                // שלב 3: override מפורש — זה היחיד שמבטיח הצגה
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .setOverrideForType(
-                        TrackSelectionOverride(textGroup.mediaTrackGroup, trackIdx)
-                    )
-                    .build()
-
-                _subtitleApplied.value = true
-            }
+        val currentUri = player.currentMediaItem?.localConfiguration?.uri
+        if (currentUri == null) {
+            // player עוד לא מוכן — שמור ל-later (לא בשימוש בגרסה הנוכחית)
+            pendingSubtitle = Pair(subFile, isVtt)
+            return
         }
-        pendingSubListener = listener
-        player.addListener(listener)
 
-        // שלב 1: replaceMediaItem — לא מפסיק את ה-stream!
-        player.replaceMediaItem(
-            player.currentMediaItemIndex,
-            current.buildUpon()
-                .setSubtitleConfigurations(listOf(
-                    MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
-                        .setMimeType(mime)
-                        .setLanguage("iw")
-                        .setId("ext_sub")
-                        .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-                        .build()
-                ))
-                .build()
-        )
+        // ─── הגישה: setMediaItem עם SubtitleConfiguration ──────────────────
+        // ExoPlayer בודק אם ה-URI השתנה:
+        // - אם לא השתנה → seamless (ממשיך מאותו position)
+        // - אם השתנה    → re-buffer (הסרט נטען מחדש)
+        pendingSubtitle = Pair(subFile, isVtt)
 
-        // שמירת מיקום — replaceMediaItem לפעמים מאפס position
+        val newItem = MediaItem.Builder()
+            .setUri(currentUri)
+            .setSubtitleConfigurations(listOf(subConf))
+            .build()
+
+        player.setMediaItem(newItem, /* resetPosition= */ false)
+        player.prepare()
         player.seekTo(savedPos)
-        if (wasPlaying) player.play()
-    }
-
-    private fun removePendingSubListener() {
-        pendingSubListener?.let { player.removeListener(it) }
-        pendingSubListener = null
+        if (wasPlaying) player.playWhenReady = true
     }
 
     fun play()  { player.play() }
@@ -310,7 +310,6 @@ class ExoPlayerWrapper(context: Context) {
     }
     fun clearError() { _playerError.value = null }
     fun release() {
-        removePendingSubListener()
         try { player.release() } catch (_: Exception) {}
     }
 }
