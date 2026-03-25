@@ -3,8 +3,6 @@
     ExperimentalComposeUiApi::class,
     ExperimentalFoundationApi::class
 )
-@file:Suppress("UnusedImport")
-
 package com.luminastreams.tv.presentation.search
 
 import androidx.activity.compose.BackHandler
@@ -30,11 +28,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.*
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -54,37 +52,44 @@ import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.model.SearchResult
 import kotlinx.coroutines.delay
 
-// ─── Palette ─────────────────────────────────────────────────────
-private val BG          = Color(0xFF070707)
-private val PANEL_BG    = Color(0xFF0C0C0E)
-private val CARD_BG     = Color(0xFF161618)
-private val RED         = Color(0xFFE50914)
-private val WHITE       = Color(0xFFFFFFFF)
-private val DIM         = Color(0xAAFFFFFF)
-private val DIM2        = Color(0x33FFFFFF)
-private val DIM3        = Color(0x12FFFFFF)
-private val GOLD        = Color(0xFFFFD700)
-private val FUZER_BLUE  = Color(0xFF00B0FF)
-private val FUZER_PINK  = Color(0xFFE91E63)
-private val SEL_RED     = Color(0x22E50914)
+// ═══ PALETTE ═══════════════════════════════════════════════════════
+private val BG           = Color(0xFF060608)
+private val SURFACE      = Color(0xFF0D0D10)
+private val CARD_BG      = Color(0xFF13131A)
+private val RED          = Color(0xFFE50914)
+private val RED_DIM      = Color(0x33E50914)
+private val WHITE        = Color(0xFFFFFFFF)
+private val DIM          = Color(0x99FFFFFF)
+private val DIM2         = Color(0x28FFFFFF)
+private val DIM3         = Color(0x10FFFFFF)
+private val GOLD         = Color(0xFFFFCC00)
+private val ACCENT_BLUE  = Color(0xFF00D4FF)
+private val ACCENT_PINK  = Color(0xFFFF2D78)
+private val ACCENT_GREEN = Color(0xFF00E676)
 
 private val HINTS = listOf(
-    "Search movies, series, actors...",
-    "Try \"Inception\" or \"Breaking Bad\"...",
-    "Search by actor name...",
-    "Discover something new..."
+    "Search movies & series...",
+    "Try \"Inception\" or \"The Wire\"...",
+    "Search by actor or director...",
+    "Discover what\u2019s trending..."
 )
-
 val GENRES = listOf(
-    "Action", "Adventure", "Animation", "Comedy", "Crime",
-    "Documentary", "Drama", "Family", "Fantasy", "History",
-    "Horror", "Music", "Mystery", "Romance", "Sci-Fi",
-    "Thriller", "War", "Western"
+    "Action","Adventure","Animation","Comedy","Crime",
+    "Documentary","Drama","Family","Fantasy","History",
+    "Horror","Music","Mystery","Romance","Sci-Fi",
+    "Thriller","War","Western"
+)
+private val GENRE_EMOJI = mapOf(
+    "Action" to "\uD83D\uDCA5", "Adventure" to "\uD83C\uDFD4", "Animation" to "\uD83C\uDFA8",
+    "Comedy" to "\uD83D\uDE02", "Crime" to "\uD83D\uDD2B", "Documentary" to "\uD83C\uDFAC",
+    "Drama" to "\uD83C\uDFAD", "Family" to "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67",
+    "Fantasy" to "\u2728", "History" to "\uD83C\uDFDB", "Horror" to "\uD83D\uDC7B",
+    "Music" to "\uD83C\uDFB5", "Mystery" to "\uD83D\uDD0D", "Romance" to "\u2764",
+    "Sci-Fi" to "\uD83D\uDE80", "Thriller" to "\uD83D\uDDE1", "War" to "\uD83C\uDF0D",
+    "Western" to "\uD83E\uDD20"
 )
 
-// ═════════════════════════════════════════════════════════════════
-//  ROOT
-// ═════════════════════════════════════════════════════════════════
+// ═══ ROOT ══════════════════════════════════════════════════════════
 @Composable
 fun SearchScreen(
     state:          SearchState,
@@ -96,85 +101,106 @@ fun SearchScreen(
     val inputFR       = remember { FocusRequester() }
     val firstTabFR    = remember { FocusRequester() }
     val firstResultFR = remember { FocusRequester() }
+    val firstFilterFR = remember { FocusRequester() }
 
     BackHandler {
         when {
-            state.showFilters          -> onIntent(SearchIntent.ToggleFilters)
-            state.query.isNotBlank()   -> onIntent(SearchIntent.UpdateQuery(""))
-            else                       -> onNavigateBack()
+            state.showFilters        -> onIntent(SearchIntent.ToggleFilters)
+            state.query.isNotBlank() -> onIntent(SearchIntent.UpdateQuery(""))
+            else                     -> onNavigateBack()
         }
     }
+    LaunchedEffect(Unit) { delay(120); runCatching { backFR.requestFocus() } }
 
-    LaunchedEffect(Unit) { delay(150); runCatching { backFR.requestFocus() } }
+    // When filter panel opens, auto-focus first filter chip
+    LaunchedEffect(state.showFilters) {
+        if (state.showFilters) delay(260).also { runCatching { firstFilterFR.requestFocus() } }
+    }
 
-    Box(Modifier.fillMaxSize().background(BG)) {
-        Column(
-            Modifier.fillMaxSize()
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
-                        when {
-                            state.showFilters        -> { onIntent(SearchIntent.ToggleFilters); true }
-                            state.query.isNotBlank() -> { onIntent(SearchIntent.UpdateQuery(""));  true }
-                            else                     -> false
-                        }
-                    } else false
-                }
-        ) {
-            SearchTopBar(
-                state      = state,
-                backFR     = backFR,
-                inputFR    = inputFR,
-                firstTabFR = firstTabFR,
-                onBack     = onNavigateBack,
-                onIntent   = onIntent
+    Box(
+        Modifier.fillMaxSize().background(BG)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    when {
+                        state.showFilters        -> { onIntent(SearchIntent.ToggleFilters); true }
+                        state.query.isNotBlank() -> { onIntent(SearchIntent.UpdateQuery(""));  true }
+                        else                     -> false
+                    }
+                } else false
+            }
+    ) {
+        // Ambient backdrop glow when results exist
+        if (state.activeResults.isNotEmpty()) {
+            Box(
+                Modifier.fillMaxWidth().height(240.dp).align(Alignment.TopCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            listOf(
+                                if (state.source == SearchSource.FUZER) ACCENT_BLUE.copy(0.04f)
+                                else RED.copy(0.05f),
+                                Color.Transparent
+                            )
+                        )
+                    )
             )
+        }
 
-            SourceTabRow(
-                selected      = state.source,
-                filtersActive = state.filters.isActive,
-                firstTabFR    = firstTabFR,
-                firstResultFR = firstResultFR,
-                onSelect      = { onIntent(SearchIntent.SelectSource(it)) },
-                onToggleFilter= { onIntent(SearchIntent.ToggleFilters) }
-            )
-
-            // Filter panel — slides down when open
+        Row(Modifier.fillMaxSize()) {
+            // ── LEFT SIDEBAR (filters) ───────────────────────────
             AnimatedVisibility(
                 visible = state.showFilters,
-                enter   = expandVertically(tween(220)) + fadeIn(tween(180)),
-                exit    = shrinkVertically(tween(180)) + fadeOut(tween(140))
+                enter   = slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(200)),
+                exit    = slideOutHorizontally(tween(200, easing = FastOutSlowInEasing)) { -it } + fadeOut(tween(160))
             ) {
-                FilterPanel(
-                    filters  = state.filters,
-                    isFuzer  = state.source == SearchSource.FUZER,
-                    onUpdate = { onIntent(SearchIntent.UpdateFilters(it)) },
-                    onClear  = { onIntent(SearchIntent.ClearFilters) }
+                FilterSidebar(
+                    filters      = state.filters,
+                    isFuzer      = state.source == SearchSource.FUZER,
+                    firstFilterFR= firstFilterFR,
+                    firstResultFR= firstResultFR,
+                    onUpdate     = { onIntent(SearchIntent.UpdateFilters(it)) },
+                    onClear      = { onIntent(SearchIntent.ClearFilters) },
+                    onClose      = { onIntent(SearchIntent.ToggleFilters) }
                 )
             }
 
-            Box(Modifier.weight(1f).fillMaxWidth()) {
-                when {
-                    state.isLoading -> ShimmerGrid()
-                    state.source == SearchSource.FUZER && state.fuzerError != null ->
-                        FuzerErrorState(state.fuzerError!!)
-                    state.activeResults.isEmpty() -> EmptyState(state.query, state.source)
-                    else -> ResultsGrid(
-                        results       = state.activeResults,
-                        isFuzer       = state.source == SearchSource.FUZER,
-                        firstResultFR = firstResultFR,
-                        onResultClick = onResultClick
-                    )
+            // ── MAIN CONTENT ─────────────────────────────────────
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                TopBar(
+                    state      = state,
+                    backFR     = backFR,
+                    inputFR    = inputFR,
+                    firstTabFR = firstTabFR,
+                    onBack     = onNavigateBack,
+                    onIntent   = onIntent
+                )
+                TabRow(
+                    state         = state,
+                    firstTabFR    = firstTabFR,
+                    firstResultFR = firstResultFR,
+                    onIntent      = onIntent
+                )
+                Box(Modifier.weight(1f).fillMaxWidth()) {
+                    when {
+                        state.isLoading -> ShimmerGrid()
+                        state.source == SearchSource.FUZER && state.fuzerError != null ->
+                            FuzerError(state.fuzerError!!)
+                        state.activeResults.isEmpty() -> EmptyState(state.query, state.source)
+                        else -> ResultsGrid(
+                            results       = state.activeResults,
+                            isFuzer       = state.source == SearchSource.FUZER,
+                            firstResultFR = firstResultFR,
+                            onResultClick = onResultClick
+                        )
+                    }
                 }
             }
         }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  TOP BAR
-// ═════════════════════════════════════════════════════════════════
+// ═══ TOP BAR ═══════════════════════════════════════════════════════
 @Composable
-private fun SearchTopBar(
+private fun TopBar(
     state:      SearchState,
     backFR:     FocusRequester,
     inputFR:    FocusRequester,
@@ -182,417 +208,644 @@ private fun SearchTopBar(
     onBack:     () -> Unit,
     onIntent:   (SearchIntent) -> Unit
 ) {
-    val context = LocalContext.current
-    val view    = androidx.compose.ui.platform.LocalView.current
-    val imm     = remember {
-        context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+    val ctx  = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val imm  = remember {
+        ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
             as android.view.inputmethod.InputMethodManager
     }
-    var showAuto    by remember { mutableStateOf(false) }
     var inputFocused by remember { mutableStateOf(false) }
+    var showDropdown by remember { mutableStateOf(false) }
     var hintIdx      by remember { mutableStateOf(0) }
-    LaunchedEffect(Unit) { while (true) { delay(3000); hintIdx = (hintIdx + 1) % HINTS.size } }
+    LaunchedEffect(Unit) { while (true) { delay(3500); hintIdx = (hintIdx + 1) % HINTS.size } }
 
-    Column(Modifier.fillMaxWidth().background(PANEL_BG)) {
+    Column(
+        Modifier.fillMaxWidth()
+            .background(Brush.verticalGradient(listOf(SURFACE, BG.copy(0f))))
+    ) {
         Row(
-            Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 20.dp),
+            Modifier.fillMaxWidth().height(72.dp).padding(horizontal = 24.dp),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Back
+            // ── Back button ──
             Surface(
                 onClick  = onBack,
                 shape    = ClickableSurfaceDefaults.shape(CircleShape),
                 colors   = ClickableSurfaceDefaults.colors(
-                    containerColor = DIM3, focusedContainerColor = WHITE,
-                    contentColor   = WHITE, focusedContentColor   = BG),
-                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-                modifier = Modifier.size(36.dp).focusRequester(backFR).focusProperties { down = inputFR }
+                    containerColor        = DIM3,
+                    focusedContainerColor = WHITE,
+                    contentColor          = DIM,
+                    focusedContentColor   = BG
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.12f),
+                modifier = Modifier.size(38.dp)
+                    .focusRequester(backFR)
+                    .focusProperties { down = inputFR }
             ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp)) } }
 
-            // Logo
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.size(28.dp).clip(RoundedCornerShape(6.dp)).background(RED), Alignment.Center) {
-                    Text("L", color = WHITE, fontSize = 15.sp, fontWeight = FontWeight.Black)
-                }
-                Column {
-                    Text("LUMINA",  color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 11.sp)
-                    Text("STREAMS", color = RED,   fontSize = 6.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 8.sp)
+            // ── Logo ──
+            Row(
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
+                        .background(Brush.linearGradient(listOf(Color(0xFFE50914), Color(0xFF8B0000)))),
+                    Alignment.Center
+                ) { Text("L", color = WHITE, fontSize = 17.sp, fontWeight = FontWeight.Black) }
+                Column(verticalArrangement = Arrangement.Center) {
+                    Text("LUMINA",  color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.5.sp, lineHeight = 12.sp)
+                    Text("STREAMS", color = RED,   fontSize = 7.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp,  lineHeight = 9.sp)
                 }
             }
 
-            Box(Modifier.width(1.dp).height(20.dp).background(DIM2))
+            // ── Divider ──
+            Box(Modifier.width(1.dp).height(24.dp).background(DIM2))
 
-            // Search input
+            // ── Search field ──
+            val inputShape = RoundedCornerShape(14.dp)
             Box(
-                Modifier.weight(1f).height(40.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(if (inputFocused) Color(0xFF181818) else Color(0xFF0F0F0F))
-                    .border(
-                        if (inputFocused) 1.5.dp else 1.dp,
-                        if (inputFocused) RED.copy(0.65f) else DIM2,
-                        RoundedCornerShape(10.dp)
+                Modifier.weight(1f).height(44.dp)
+                    .clip(inputShape)
+                    .background(
+                        if (inputFocused) Color(0xFF181820)
+                        else Color(0xFF0F0F14)
                     )
-                    .padding(horizontal = 12.dp),
+                    .border(
+                        width = if (inputFocused) 1.5.dp else 1.dp,
+                        color = if (inputFocused) RED.copy(0.7f) else DIM2,
+                        shape = inputShape
+                    )
+                    .padding(horizontal = 14.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Icon(Icons.Default.Search, null, Modifier.size(14.dp), tint = if (inputFocused) RED else DIM)
+                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    // Animated icon
+                    val iconColor by animateColorAsState(
+                        if (inputFocused) RED else DIM.copy(0.5f), tween(200), label = "ic"
+                    )
+                    Icon(Icons.Default.Search, null, Modifier.size(16.dp), tint = iconColor)
+
                     BasicTextField(
                         value           = state.query,
-                        onValueChange   = { onIntent(SearchIntent.UpdateQuery(it)); showAuto = it.isNotBlank() },
+                        onValueChange   = { v -> onIntent(SearchIntent.UpdateQuery(v)); showDropdown = v.isNotBlank() },
                         singleLine      = true,
-                        textStyle       = TextStyle(color = WHITE, fontSize = 13.sp),
+                        textStyle       = TextStyle(color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Normal),
                         cursorBrush     = SolidColor(RED),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { imm.hideSoftInputFromWindow(view.windowToken, 0); showAuto = false }),
-                        decorationBox   = { inner ->
+                        keyboardActions = KeyboardActions(onSearch = {
+                            imm.hideSoftInputFromWindow(view.windowToken, 0)
+                            showDropdown = false
+                        }),
+                        decorationBox = { inner ->
                             Box(Modifier.weight(1f)) {
                                 if (state.query.isEmpty()) {
                                     AnimatedContent(
-                                        targetState   = hintIdx,
-                                        transitionSpec = { fadeIn(tween(300)) + slideInVertically { 6 } togetherWith fadeOut(tween(200)) + slideOutVertically { -6 } },
-                                        label = "h"
-                                    ) { i -> Text(HINTS[i], color = DIM.copy(0.35f), fontSize = 13.sp) }
+                                        targetState  = hintIdx,
+                                        transitionSpec = {
+                                            (fadeIn(tween(280)) + slideInVertically(tween(280)) { 8 })
+                                                .togetherWith(fadeOut(tween(200)) + slideOutVertically(tween(200)) { -8 })
+                                        },
+                                        label = "hint"
+                                    ) { i ->
+                                        Text(HINTS[i], color = DIM.copy(0.3f), fontSize = 14.sp)
+                                    }
                                 }
                                 inner()
                             }
                         },
-                        modifier = Modifier.weight(1f).focusRequester(inputFR)
-                            .onFocusChanged { inputFocused = it.isFocused; if (!it.isFocused) showAuto = false }
+                        modifier = Modifier.weight(1f)
+                            .focusRequester(inputFR)
+                            .onFocusChanged { f ->
+                                inputFocused = f.isFocused
+                                if (!f.isFocused) showDropdown = false
+                            }
                             .onPreviewKeyEvent { ev ->
                                 when {
-                                    ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionCenter ->
-                                        { imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT); true }
-                                    ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown ->
-                                        { showAuto = false; runCatching { firstTabFR.requestFocus() }; true }
+                                    ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionCenter -> {
+                                        imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                                        true
+                                    }
+                                    ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown -> {
+                                        showDropdown = false
+                                        runCatching { firstTabFR.requestFocus() }
+                                        true
+                                    }
                                     else -> false
                                 }
                             }
                     )
-                    AnimatedVisibility(state.query.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
+
+                    // Clear button
+                    AnimatedVisibility(state.query.isNotEmpty(), enter = fadeIn(tween(120)) + scaleIn(tween(120)), exit = fadeOut(tween(100)) + scaleOut(tween(100))) {
                         Surface(
                             onClick  = { onIntent(SearchIntent.UpdateQuery(""))
-                                         showAuto = false },
+                                         showDropdown = false },
                             shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = DIM2, focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE),
-                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                            modifier = Modifier.size(20.dp)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(9.dp)) } }
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = DIM2,
+                                focusedContainerColor = RED,
+                                contentColor          = DIM,
+                                focusedContentColor   = WHITE
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+                            modifier = Modifier.size(22.dp)
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(10.dp)) } }
                     }
                 }
             }
 
-            // Count
+            // ── Result count badge ──
             AnimatedContent(
                 targetState = when {
                     state.isLoading               -> "..."
-                    state.activeResults.isEmpty() -> "–"
+                    state.activeResults.isEmpty() -> "\u2013"
                     else                          -> "${state.activeResults.size}"
                 },
-                transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) },
+                transitionSpec = { fadeIn(tween(140)) togetherWith fadeOut(tween(100)) },
                 label = "cnt"
-            ) { t -> Text(t, color = DIM, fontSize = 12.sp, modifier = Modifier.widthIn(min = 28.dp), textAlign = TextAlign.Center) }
-        }
-
-        // Autocomplete
-        AnimatedVisibility(showAuto && state.autocompleteSuggestions.isNotEmpty(),
-            enter = expandVertically(tween(180)) + fadeIn(tween(150)),
-            exit  = shrinkVertically(tween(130)) + fadeOut(tween(100))
-        ) {
-            Column(Modifier.fillMaxWidth().background(Color(0xFF0A0A0C)).padding(horizontal = 72.dp, vertical = 6.dp)) {
-                state.autocompleteSuggestions.forEach { s ->
-                    Surface(
-                        onClick  = { onIntent(SearchIntent.UpdateQuery(s)); showAuto = false },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = DIM3, contentColor = DIM, focusedContentColor = WHITE),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-                        modifier = Modifier.fillMaxWidth().height(32.dp)
-                    ) {
-                        Row(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.History, null, Modifier.size(11.dp), tint = DIM)
-                            Text(s, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
+            ) { t ->
+                Box(
+                    Modifier.widthIn(min = 44.dp).height(28.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (state.activeResults.isNotEmpty() && !state.isLoading) RED_DIM else DIM3)
+                        .padding(horizontal = 10.dp),
+                    Alignment.Center
+                ) {
+                    Text(
+                        text = t,
+                        color = if (state.activeResults.isNotEmpty() && !state.isLoading) RED else DIM,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
 
-        // History chips
-        AnimatedVisibility(state.query.isBlank() && state.searchHistory.isNotEmpty(),
-            enter = expandVertically(tween(180)) + fadeIn(tween(150)),
-            exit  = shrinkVertically(tween(130)) + fadeOut(tween(100))
+        // ── Autocomplete dropdown ──
+        AnimatedVisibility(
+            visible = showDropdown && state.autocompleteSuggestions.isNotEmpty(),
+            enter   = expandVertically(tween(180)) + fadeIn(tween(150)),
+            exit    = shrinkVertically(tween(130)) + fadeOut(tween(110))
         ) {
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 72.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                modifier = Modifier.fillMaxWidth()
+            Column(
+                Modifier.fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 6.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color(0xFF0E0E16))
+                    .border(1.dp, DIM2, RoundedCornerShape(12.dp))
             ) {
-                items(state.searchHistory) { h ->
+                state.autocompleteSuggestions.forEachIndexed { i, s ->
+                    if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3))
                     Surface(
-                        onClick  = { onIntent(SearchIntent.UpdateQuery(h)) },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = DIM3, focusedContainerColor = Color(0xFF1E1E28), contentColor = DIM, focusedContentColor = WHITE),
-                        border   = ClickableSurfaceDefaults.border(
-                            border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, DIM2),              shape = RoundedCornerShape(50)),
-                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)),   shape = RoundedCornerShape(50))
+                        onClick  = { onIntent(SearchIntent.UpdateQuery(s)); showDropdown = false },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = Color.Transparent,
+                            focusedContainerColor = DIM3,
+                            contentColor          = DIM,
+                            focusedContentColor   = WHITE
                         ),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(28.dp)
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+                        modifier = Modifier.fillMaxWidth().height(40.dp)
                     ) {
-                        Row(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Icon(Icons.Default.History, null, Modifier.size(11.dp))
-                            Text(h, fontSize = 11.sp)
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(Icons.Default.TrendingUp, null, Modifier.size(13.dp), tint = RED.copy(0.6f))
+                            Text(s, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
-                }
-                item {
-                    Surface(
-                        onClick  = { onIntent(SearchIntent.ClearHistory) },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = SEL_RED, contentColor = RED.copy(0.7f), focusedContentColor = RED),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(28.dp)
-                    ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text("Clear history", fontSize = 11.sp) } }
                 }
             }
         }
 
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(RED.copy(0.7f), RED.copy(0.12f), Color.Transparent))))
+        // ── Search history chips ──
+        AnimatedVisibility(
+            visible = state.query.isBlank() && state.searchHistory.isNotEmpty(),
+            enter   = expandVertically(tween(180)) + fadeIn(tween(150)),
+            exit    = shrinkVertically(tween(130)) + fadeOut(tween(110))
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text("Recent", color = DIM.copy(0.45f), fontSize = 10.sp, modifier = Modifier.padding(end = 4.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(state.searchHistory) { h ->
+                        Surface(
+                            onClick  = { onIntent(SearchIntent.UpdateQuery(h)) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = DIM3,
+                                focusedContainerColor = SURFACE,
+                                contentColor          = DIM,
+                                focusedContentColor   = WHITE
+                            ),
+                            border   = ClickableSurfaceDefaults.border(
+                                border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, DIM2),            shape = RoundedCornerShape(50)),
+                                focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.55f)), shape = RoundedCornerShape(50))
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Row(
+                                Modifier.padding(horizontal = 10.dp).fillMaxHeight(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(Icons.Default.History, null, Modifier.size(10.dp))
+                                Text(h, fontSize = 11.sp)
+                            }
+                        }
+                    }
+                    item {
+                        Surface(
+                            onClick  = { onIntent(SearchIntent.ClearHistory) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = Color.Transparent,
+                                focusedContainerColor = RED_DIM,
+                                contentColor          = RED.copy(0.6f),
+                                focusedContentColor   = RED
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                            modifier = Modifier.height(28.dp)
+                        ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text("Clear", fontSize = 11.sp) } }
+                    }
+                }
+            }
+        }
+
+        // ── Bottom line ──
+        Box(
+            Modifier.fillMaxWidth().height(1.dp)
+                .background(Brush.horizontalGradient(listOf(RED.copy(0.8f), RED.copy(0.15f), Color.Transparent, Color.Transparent)))
+        )
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  SOURCE TAB ROW  (with filter button)
-// ═════════════════════════════════════════════════════════════════
+// ═══ TAB ROW ═══════════════════════════════════════════════════════
 private data class TabDef(val src: SearchSource, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val accent: Color)
 
 @Composable
-private fun SourceTabRow(
-    selected:       SearchSource,
-    filtersActive:  Boolean,
-    firstTabFR:     FocusRequester,
-    firstResultFR:  FocusRequester,
-    onSelect:       (SearchSource) -> Unit,
-    onToggleFilter: () -> Unit
+private fun TabRow(
+    state:         SearchState,
+    firstTabFR:    FocusRequester,
+    firstResultFR: FocusRequester,
+    onIntent:      (SearchIntent) -> Unit
 ) {
     val tabs = remember {
         listOf(
-            TabDef(SearchSource.ALL,    "All",      Icons.Default.GridView,   Color(0xFFB0BEC5)),
-            TabDef(SearchSource.MOVIES, "Movies",   Icons.Default.Movie,      Color(0xFFFFD700)),
-            TabDef(SearchSource.SERIES, "Series",   Icons.Default.Tv,         Color(0xFF80DEEA)),
-            TabDef(SearchSource.FUZER,  "💎 Fuzer", Icons.Default.CloudQueue, FUZER_BLUE)
+            TabDef(SearchSource.ALL,    "All",      Icons.Default.Apps,       Color(0xFFB0BEC5)),
+            TabDef(SearchSource.MOVIES, "Movies",   Icons.Default.Movie,      GOLD),
+            TabDef(SearchSource.SERIES, "Series",   Icons.Default.LiveTv,     ACCENT_BLUE),
+            TabDef(SearchSource.FUZER,  "Fuzer",    Icons.Default.CloudQueue, ACCENT_PINK)
         )
     }
+    val selected = state.source
+    val filtersActive = state.filters.isActive
 
-    Column {
-        Row(
-            Modifier.fillMaxWidth().height(50.dp).background(PANEL_BG).padding(horizontal = 20.dp)
-                .onPreviewKeyEvent { ev ->
-                    if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
-                        { runCatching { firstResultFR.requestFocus() }; true }
-                    else false
-                },
-            verticalAlignment     = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            tabs.forEachIndexed { idx, tab ->
-                val isSel  = selected == tab.src
-                val accent = tab.accent
-                Surface(
-                    onClick  = { onSelect(tab.src) },
-                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                    colors   = ClickableSurfaceDefaults.colors(
-                        containerColor        = if (isSel) accent.copy(0.15f) else Color.Transparent,
-                        focusedContainerColor = if (isSel) accent.copy(0.25f) else Color(0x14FFFFFF),
-                        contentColor          = if (isSel) WHITE else DIM,
-                        focusedContentColor   = WHITE),
-                    border   = ClickableSurfaceDefaults.border(
-                        border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) accent.copy(0.6f) else Color.Transparent), shape = RoundedCornerShape(8.dp)),
-                        focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.8f)),                                   shape = RoundedCornerShape(8.dp))
-                    ),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    modifier = Modifier.height(36.dp).let { if (idx == 0) it.focusRequester(firstTabFR) else it }
-                ) {
-                    Row(Modifier.padding(horizontal = 14.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(tab.icon, null, Modifier.size(14.dp), tint = if (isSel) accent else DIM)
-                        Text(tab.label, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, softWrap = false)
-                    }
-                }
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            // Filter toggle button
-            Surface(
-                onClick  = onToggleFilter,
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                colors   = ClickableSurfaceDefaults.colors(
-                    containerColor        = if (filtersActive) RED.copy(0.18f) else DIM3,
-                    focusedContainerColor = if (filtersActive) RED.copy(0.30f) else DIM2,
-                    contentColor          = if (filtersActive) RED else DIM,
-                    focusedContentColor   = WHITE),
-                border   = ClickableSurfaceDefaults.border(
-                    focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, RED.copy(0.7f)), shape = RoundedCornerShape(8.dp))
-                ),
-                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                modifier = Modifier.height(36.dp)
-            ) {
-                Row(Modifier.padding(horizontal = 12.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Icon(Icons.Default.Tune, null, Modifier.size(14.dp))
-                    Text("Filters", fontSize = 11.sp, softWrap = false)
-                    if (filtersActive) {
-                        Box(Modifier.size(6.dp).clip(CircleShape).background(RED))
-                    }
-                }
-            }
-
-            if (selected == SearchSource.FUZER) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                    Box(Modifier.size(6.dp).clip(CircleShape).background(FUZER_BLUE))
-                    Text("fuzer.xyz", color = FUZER_BLUE.copy(0.6f), fontSize = 10.sp)
-                }
-            }
-        }
-        Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3))
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-//  FILTER PANEL
-// ═════════════════════════════════════════════════════════════════
-@Composable
-private fun FilterPanel(
-    filters:  SearchFilters,
-    isFuzer:  Boolean,
-    onUpdate: (SearchFilters) -> Unit,
-    onClear:  () -> Unit
-) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(Color(0xFF0A0A0C))
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+    Row(
+        Modifier.fillMaxWidth().height(52.dp)
+            .background(SURFACE)
+            .padding(horizontal = 24.dp)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
+                    { runCatching { firstResultFR.requestFocus() }; true }
+                else false
+            },
+        verticalAlignment     = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // Row 1: Genre chips
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Genre", color = DIM, fontSize = 11.sp, modifier = Modifier.width(50.dp))
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(GENRES) { g ->
-                    val sel = filters.genre == g
-                    Surface(
-                        onClick  = { onUpdate(filters.copy(genre = if (sel) null else g)) },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(
-                            containerColor        = if (sel) RED.copy(0.25f) else DIM3,
-                            focusedContainerColor = if (sel) RED.copy(0.40f) else Color(0x22FFFFFF),
-                            contentColor          = if (sel) WHITE else DIM,
-                            focusedContentColor   = WHITE),
-                        border   = ClickableSurfaceDefaults.border(
-                            border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, if (sel) RED.copy(0.8f) else Color.Transparent), shape = RoundedCornerShape(50)),
-                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.8f)), shape = RoundedCornerShape(50))
-                        ),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(28.dp)
-                    ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text(g, fontSize = 11.sp) } }
+        tabs.forEachIndexed { idx, tab ->
+            val isSel = selected == tab.src
+            val animBg by animateColorAsState(if (isSel) tab.accent.copy(0.14f) else Color.Transparent, tween(200), label = "bg")
+            Surface(
+                onClick  = { onIntent(SearchIntent.SelectSource(tab.src)) },
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = animBg,
+                    focusedContainerColor = tab.accent.copy(0.22f),
+                    contentColor          = if (isSel) WHITE else DIM,
+                    focusedContentColor   = WHITE
+                ),
+                border   = ClickableSurfaceDefaults.border(
+                    border        = if (isSel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, tab.accent.copy(0.55f)), shape = RoundedCornerShape(10.dp))
+                                   else Border.None,
+                    focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, tab.accent.copy(0.85f)), shape = RoundedCornerShape(10.dp))
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                modifier = Modifier.height(36.dp)
+                    .let { if (idx == 0) it.focusRequester(firstTabFR) else it }
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 16.dp).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(tab.icon, null, Modifier.size(14.dp), tint = if (isSel) tab.accent else DIM.copy(0.6f))
+                    Text(tab.label, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, softWrap = false)
+                    // Fuzer live dot
+                    if (tab.src == SearchSource.FUZER && state.isFuzerLoading) {
+                        val inf = rememberInfiniteTransition(label = "fz")
+                        val a by inf.animateFloat(0.2f, 1f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "fa")
+                        Box(Modifier.size(5.dp).clip(CircleShape).background(ACCENT_PINK.copy(a)))
+                    } else if (tab.src == SearchSource.FUZER && state.fuzerResults.isNotEmpty()) {
+                        Box(Modifier.size(5.dp).clip(CircleShape).background(ACCENT_PINK))
+                    }
                 }
             }
         }
 
-        // Row 2: Quality chips
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Quality", color = DIM, fontSize = 11.sp, modifier = Modifier.width(50.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(QualityFilter.ANY to "Any", QualityFilter.HD to "HD", QualityFilter.FHD to "FHD (1080p)", QualityFilter.UHD to "4K").forEach { (q, label) ->
-                    val sel = filters.quality == q
-                    val accent = when(q) { QualityFilter.UHD -> Color(0xFFCC2200); QualityFilter.FHD -> FUZER_BLUE; QualityFilter.HD -> Color(0xFF388E3C); else -> DIM }
-                    Surface(
-                        onClick  = { onUpdate(filters.copy(quality = q)) },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(
-                            containerColor        = if (sel) accent.copy(0.25f) else DIM3,
-                            focusedContainerColor = if (sel) accent.copy(0.38f) else Color(0x22FFFFFF),
-                            contentColor          = if (sel) WHITE else DIM,
-                            focusedContentColor   = WHITE),
-                        border   = ClickableSurfaceDefaults.border(
-                            border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, if (sel) accent.copy(0.8f) else Color.Transparent), shape = RoundedCornerShape(50)),
-                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(0.8f)), shape = RoundedCornerShape(50))
-                        ),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(28.dp)
-                    ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text(label, fontSize = 11.sp) } }
+        Spacer(Modifier.weight(1f))
+
+        // ── Filter toggle ──
+        Surface(
+            onClick  = { onIntent(SearchIntent.ToggleFilters) },
+            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+            colors   = ClickableSurfaceDefaults.colors(
+                containerColor        = if (filtersActive) RED.copy(0.16f) else DIM3,
+                focusedContainerColor = RED.copy(0.28f),
+                contentColor          = if (filtersActive) RED else DIM,
+                focusedContentColor   = WHITE
+            ),
+            border   = ClickableSurfaceDefaults.border(
+                border        = if (filtersActive) Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)), shape = RoundedCornerShape(10.dp))
+                               else Border.None,
+                focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, RED.copy(0.8f)), shape = RoundedCornerShape(10.dp))
+            ),
+            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+            modifier = Modifier.height(36.dp)
+        ) {
+            Row(
+                Modifier.padding(horizontal = 14.dp).fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(Icons.Default.Tune, null, Modifier.size(14.dp))
+                Text(
+                    if (filtersActive) "Filtered" else "Filter",
+                    fontSize = 12.sp,
+                    fontWeight = if (filtersActive) FontWeight.Bold else FontWeight.Normal,
+                    softWrap = false
+                )
+                if (filtersActive) {
+                    Box(Modifier.size(6.dp).clip(CircleShape).background(RED))
                 }
-            }
-        }
-
-        // Row 3: Min Rating chips
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Rating", color = DIM, fontSize = 11.sp, modifier = Modifier.width(50.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf(0f to "Any", 6f to "6+", 7f to "7+", 8f to "8+", 9f to "9+").forEach { (v, label) ->
-                    val sel = filters.minRating == v
-                    Surface(
-                        onClick  = { onUpdate(filters.copy(minRating = v)) },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(
-                            containerColor        = if (sel) GOLD.copy(0.22f) else DIM3,
-                            focusedContainerColor = if (sel) GOLD.copy(0.35f) else Color(0x22FFFFFF),
-                            contentColor          = if (sel) GOLD else DIM,
-                            focusedContentColor   = WHITE),
-                        border   = ClickableSurfaceDefaults.border(
-                            border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, if (sel) GOLD.copy(0.7f) else Color.Transparent), shape = RoundedCornerShape(50)),
-                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, GOLD.copy(0.7f)), shape = RoundedCornerShape(50))
-                        ),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(28.dp)
-                    ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text(if (v == 0f) label else "★ $label", fontSize = 11.sp) } }
-                }
-            }
-        }
-
-        // Row 4 (Fuzer only): Dubbed toggle + Clear
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (isFuzer) {
-                Text("🎤 Dubbed", color = DIM, fontSize = 11.sp, modifier = Modifier.width(70.dp))
-                Surface(
-                    onClick  = { onUpdate(filters.copy(dubbedOnly = !filters.dubbedOnly)) },
-                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                    colors   = ClickableSurfaceDefaults.colors(
-                        containerColor        = if (filters.dubbedOnly) FUZER_PINK.copy(0.25f) else DIM3,
-                        focusedContainerColor = if (filters.dubbedOnly) FUZER_PINK.copy(0.40f) else Color(0x22FFFFFF),
-                        contentColor          = if (filters.dubbedOnly) WHITE else DIM,
-                        focusedContentColor   = WHITE),
-                    border   = ClickableSurfaceDefaults.border(
-                        border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, if (filters.dubbedOnly) FUZER_PINK.copy(0.8f) else Color.Transparent), shape = RoundedCornerShape(50)),
-                        focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, FUZER_PINK), shape = RoundedCornerShape(50))
-                    ),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    modifier = Modifier.height(28.dp)
-                ) { Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text(if (filters.dubbedOnly) "✔ Dubbed Only" else "Dubbed Only", fontSize = 11.sp) } }
-
-                Spacer(Modifier.width(8.dp))
-            }
-
-            Spacer(Modifier.weight(1f))
-
-            if (filters.isActive) {
-                Surface(
-                    onClick  = onClear,
-                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                    colors   = ClickableSurfaceDefaults.colors(containerColor = SEL_RED, focusedContainerColor = RED.copy(0.3f), contentColor = RED, focusedContentColor = WHITE),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    modifier = Modifier.height(28.dp)
-                ) { Box(Modifier.padding(horizontal = 12.dp).fillMaxHeight(), Alignment.Center) { Text("Clear All Filters", fontSize = 11.sp) } }
             }
         }
     }
+
     Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3))
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  RESULTS GRID
-// ═════════════════════════════════════════════════════════════════
+// ═══ FILTER SIDEBAR ════════════════════════════════════════════════
+@Composable
+private fun FilterSidebar(
+    filters:       SearchFilters,
+    isFuzer:       Boolean,
+    firstFilterFR: FocusRequester,
+    firstResultFR: FocusRequester,
+    onUpdate:      (SearchFilters) -> Unit,
+    onClear:       () -> Unit,
+    onClose:       () -> Unit
+) {
+    var firstSet by remember { mutableStateOf(false) }
+
+    Column(
+        Modifier
+            .width(240.dp)
+            .fillMaxHeight()
+            .background(Color(0xFF0A0A0F))
+            .border(
+                width = 1.dp,
+                brush = Brush.verticalGradient(listOf(RED.copy(0.3f), Color.Transparent)),
+                shape = RoundedCornerShape(topEnd = 0.dp, bottomEnd = 0.dp)
+            )
+            .padding(vertical = 20.dp)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionRight)
+                    { runCatching { firstResultFR.requestFocus() }; true }
+                else false
+            }
+    ) {
+        // Header
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Default.Tune, null, Modifier.size(16.dp), tint = RED)
+                Text("Filters", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                if (filters.isActive) {
+                    Box(
+                        Modifier.clip(CircleShape).background(RED).padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) { Text("ON", color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black) }
+                }
+            }
+            Surface(
+                onClick  = onClose,
+                shape    = ClickableSurfaceDefaults.shape(CircleShape),
+                colors   = ClickableSurfaceDefaults.colors(containerColor = DIM3, focusedContainerColor = DIM2, contentColor = DIM, focusedContentColor = WHITE),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
+                modifier = Modifier.size(28.dp)
+            ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(12.dp)) } }
+        }
+
+        Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3).padding(horizontal = 16.dp))
+        Spacer(Modifier.height(12.dp))
+
+        // ── Genre ──
+        FilterSection("Genre") {
+            Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                GENRES.forEachIndexed { idx, g ->
+                    val sel  = filters.genre == g
+                    val emoji = GENRE_EMOJI[g] ?: ""
+                    Surface(
+                        onClick  = { onUpdate(filters.copy(genre = if (sel) null else g)) },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (sel) RED.copy(0.18f) else Color.Transparent,
+                            focusedContainerColor = if (sel) RED.copy(0.30f) else DIM3,
+                            contentColor          = if (sel) WHITE else DIM,
+                            focusedContentColor   = WHITE
+                        ),
+                        border   = ClickableSurfaceDefaults.border(
+                            border        = if (sel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.7f)), shape = RoundedCornerShape(8.dp))
+                                           else Border.None,
+                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)), shape = RoundedCornerShape(8.dp))
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.03f),
+                        modifier = Modifier.fillMaxWidth().height(34.dp)
+                            .let { if (idx == 0) it.focusRequester(firstFilterFR) else it }
+                    ) {
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(emoji, fontSize = 13.sp)
+                            Text(g, fontSize = 12.sp, modifier = Modifier.weight(1f))
+                            if (sel) Icon(Icons.Default.Check, null, Modifier.size(12.dp), tint = RED)
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // ── Quality ──
+        FilterSection("Quality") {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(QualityFilter.ANY to "Any", QualityFilter.HD to "HD", QualityFilter.FHD to "1080p", QualityFilter.UHD to "4K").forEach { (q, lbl) ->
+                    val sel   = filters.quality == q
+                    val acnt  = when (q) { QualityFilter.UHD -> Color(0xFFFF3D00); QualityFilter.FHD -> ACCENT_BLUE; QualityFilter.HD -> ACCENT_GREEN; else -> DIM }
+                    Surface(
+                        onClick  = { onUpdate(filters.copy(quality = q)) },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (sel) acnt.copy(0.2f) else DIM3,
+                            focusedContainerColor = acnt.copy(0.32f),
+                            contentColor          = if (sel) acnt else DIM,
+                            focusedContentColor   = WHITE
+                        ),
+                        border   = ClickableSurfaceDefaults.border(
+                            border        = if (sel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, acnt.copy(0.8f)), shape = RoundedCornerShape(8.dp)) else Border.None,
+                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, acnt), shape = RoundedCornerShape(8.dp))
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                        modifier = Modifier.weight(1f).height(34.dp)
+                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(lbl, fontSize = 10.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) } }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // ── Rating ──
+        FilterSection("Min Rating") {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(0f to "Any", 6f to "6+", 7f to "7+", 8f to "8+", 9f to "9+").forEach { (v, lbl) ->
+                    val sel = filters.minRating == v
+                    Surface(
+                        onClick  = { onUpdate(filters.copy(minRating = v)) },
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (sel) GOLD.copy(0.18f) else DIM3,
+                            focusedContainerColor = GOLD.copy(0.28f),
+                            contentColor          = if (sel) GOLD else DIM,
+                            focusedContentColor   = WHITE
+                        ),
+                        border   = ClickableSurfaceDefaults.border(
+                            border        = if (sel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, GOLD.copy(0.7f)), shape = RoundedCornerShape(8.dp)) else Border.None,
+                            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, GOLD.copy(0.8f)), shape = RoundedCornerShape(8.dp))
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                        modifier = Modifier.weight(1f).height(34.dp)
+                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(if (v == 0f) lbl else "\u2605$lbl", fontSize = 10.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) } }
+                }
+            }
+        }
+
+        // ── Dubbed (Fuzer only) ──
+        if (isFuzer) {
+            Spacer(Modifier.height(8.dp))
+            FilterSection("\uD83C\uDFA4 Hebrew") {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(false to "All", true to "Dubbed").forEach { (v, lbl) ->
+                        val sel = filters.dubbedOnly == v
+                        Surface(
+                            onClick  = { onUpdate(filters.copy(dubbedOnly = v)) },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = if (sel) ACCENT_PINK.copy(0.18f) else DIM3,
+                                focusedContainerColor = ACCENT_PINK.copy(0.28f),
+                                contentColor          = if (sel) ACCENT_PINK else DIM,
+                                focusedContentColor   = WHITE
+                            ),
+                            border   = ClickableSurfaceDefaults.border(
+                                border        = if (sel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, ACCENT_PINK.copy(0.7f)), shape = RoundedCornerShape(8.dp)) else Border.None,
+                                focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, ACCENT_PINK), shape = RoundedCornerShape(8.dp))
+                            ),
+                            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+                            modifier = Modifier.weight(1f).height(34.dp)
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(lbl, fontSize = 11.sp, fontWeight = if (sel) FontWeight.Bold else FontWeight.Normal) } }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.weight(1f))
+
+        // ── Clear All ──
+        if (filters.isActive) {
+            Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                Surface(
+                    onClick  = onClear,
+                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors   = ClickableSurfaceDefaults.colors(
+                        containerColor        = RED_DIM,
+                        focusedContainerColor = RED.copy(0.28f),
+                        contentColor          = RED,
+                        focusedContentColor   = WHITE
+                    ),
+                    border   = ClickableSurfaceDefaults.border(
+                        border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.4f)), shape = RoundedCornerShape(10.dp)),
+                        focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED), shape = RoundedCornerShape(10.dp))
+                    ),
+                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+                    modifier = Modifier.fillMaxWidth().height(40.dp)
+                ) {
+                    Row(
+                        Modifier.fillMaxSize(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(Icons.Default.FilterAltOff, null, Modifier.size(14.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Clear All Filters", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+    // Right border line
+    Box(Modifier.width(1.dp).fillMaxHeight().background(Brush.verticalGradient(listOf(RED.copy(0.25f), Color.Transparent))))
+}
+
+@Composable
+private fun FilterSection(title: String, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(
+            title,
+            color = DIM.copy(0.55f),
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 1.sp,
+            modifier = Modifier.padding(horizontal = 16.dp)
+        )
+        content()
+    }
+}
+
+// ═══ RESULTS GRID ══════════════════════════════════════════════════
 @Composable
 private fun ResultsGrid(
     results:       List<SearchResult>,
@@ -601,10 +854,10 @@ private fun ResultsGrid(
     onResultClick: (SearchResult) -> Unit
 ) {
     LazyVerticalGrid(
-        columns               = GridCells.Adaptive(if (isFuzer) 160.dp else 138.dp),
-        contentPadding        = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement   = Arrangement.spacedBy(14.dp),
+        columns               = GridCells.Adaptive(minSize = if (isFuzer) 168.dp else 148.dp),
+        contentPadding        = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement   = Arrangement.spacedBy(16.dp),
         modifier              = Modifier.fillMaxSize()
     ) {
         itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
@@ -618,9 +871,7 @@ private fun ResultsGrid(
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  MEDIA CARD
-// ═════════════════════════════════════════════════════════════════
+// ═══ MEDIA CARD ════════════════════════════════════════════════════
 @Composable
 private fun MediaCard(
     result:   SearchResult,
@@ -630,38 +881,52 @@ private fun MediaCard(
 ) {
     val ctx     = LocalContext.current
     var focused by remember { mutableStateOf(false) }
-    val zoom    by animateFloatAsState(if (focused) 1.06f else 1f, tween(180, easing = FastOutSlowInEasing), label = "z")
+    val zoom    by animateFloatAsState(
+        targetValue = if (focused) 1.07f else 1f,
+        animationSpec = tween(180, easing = FastOutSlowInEasing),
+        label = "z"
+    )
+    val accent = if (isFuzer) ACCENT_PINK else RED
 
     val qBadge: String? = when {
-        result.qualityTag.isNotBlank() -> result.qualityTag
+        result.qualityTag.isNotBlank()                    -> result.qualityTag
         result.title.contains("4K",    ignoreCase = true) ||
         result.title.contains("2160p", ignoreCase = true) -> "4K"
         result.title.contains("1080p", ignoreCase = true) -> "FHD"
         result.title.contains("720p",  ignoreCase = true) -> "HD"
         else -> null
     }
-    val isDubbed = isFuzer && result.title.contains("מדובב", ignoreCase = true)
+    val isDubbed = isFuzer && result.title.contains("\u05de\u05d3\u05d5\u05d1\u05d1", ignoreCase = true)
 
     Column(modifier, horizontalAlignment = Alignment.Start) {
-        Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).zIndex(if (focused) 8f else 0f)) {
+        Box(
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f)
+                .zIndex(if (focused) 10f else 0f)
+        ) {
             Surface(
                 onClick  = onClick,
-                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(9.dp)),
-                colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = CARD_BG,
+                    focusedContainerColor = CARD_BG
+                ),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(
                     border        = Border.None,
-                    focusedBorder = if (isFuzer)
-                        Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, FUZER_BLUE.copy(0.5f)), shape = RoundedCornerShape(9.dp))
-                    else Border.None
+                    focusedBorder = Border(
+                        border = androidx.compose.foundation.BorderStroke(2.dp, accent.copy(0.65f)),
+                        shape  = RoundedCornerShape(10.dp)
+                    )
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
                     glow        = Glow.None,
-                    focusedGlow = if (isFuzer) Glow(FUZER_BLUE.copy(0.3f), 16.dp) else Glow(Color.Black.copy(0.8f), 20.dp)
+                    focusedGlow = Glow(accent.copy(0.35f), 18.dp)
                 ),
-                modifier = Modifier.fillMaxSize().graphicsLayer(scaleX = zoom, scaleY = zoom)
+                modifier = Modifier.fillMaxSize()
+                    .graphicsLayer(scaleX = zoom, scaleY = zoom)
                     .onFocusChanged { focused = it.isFocused }
             ) {
+                // Poster
                 if (result.posterUrl.isNotBlank()) {
                     AsyncImage(
                         model              = ImageRequest.Builder(ctx).data(result.posterUrl).crossfade(false).build(),
@@ -671,114 +936,208 @@ private fun MediaCard(
                     )
                 } else {
                     Box(
-                        Modifier.fillMaxSize().background(Brush.verticalGradient(
-                            if (isFuzer) listOf(Color(0xFF0A1A2A), Color(0xFF060E14))
-                            else         listOf(Color(0xFF1E1E1E), CARD_BG)
-                        )), Alignment.Center
+                        Modifier.fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    if (isFuzer) listOf(Color(0xFF0A1020), Color(0xFF060B14))
+                                    else         listOf(Color(0xFF1A1A22), CARD_BG)
+                                )
+                            ),
+                        Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            if (isFuzer) Text("💎", fontSize = 28.sp)
+                            Text(if (isFuzer) "\uD83D\uDCBE" else "\uD83C\uDFAC", fontSize = 26.sp)
                             Spacer(Modifier.height(6.dp))
-                            Text(result.title, color = if (isFuzer) FUZER_BLUE.copy(0.7f) else WHITE.copy(0.3f), fontSize = 9.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(8.dp))
+                            Text(
+                                result.title,
+                                color     = WHITE.copy(0.25f),
+                                fontSize  = 9.sp,
+                                textAlign = TextAlign.Center,
+                                modifier  = Modifier.padding(horizontal = 8.dp)
+                            )
                         }
                     }
                 }
 
+                // Bottom gradient for legibility
+                if (focused) {
+                    Box(
+                        Modifier.fillMaxWidth().height(60.dp).align(Alignment.BottomCenter)
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.7f))))
+                    )
+                }
+
+                // Year badge (top-left)
                 if (result.releaseYear.isNotBlank()) {
-                    Box(Modifier.align(Alignment.TopStart).padding(4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xBB000000)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                        Text(result.releaseYear, color = DIM, fontSize = 8.sp)
-                    }
+                    Box(
+                        Modifier.align(Alignment.TopStart).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xCC000000))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) { Text(result.releaseYear, color = DIM.copy(0.8f), fontSize = 8.sp) }
                 }
+
+                // Quality badge (top-right)
                 if (qBadge != null) {
-                    Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(3.dp))
-                        .background(when (qBadge) { "4K" -> Color(0xFFCC2200); "FHD" -> FUZER_BLUE.copy(0.85f); else -> Color(0xFF388E3C) })
-                        .padding(horizontal = 4.dp, vertical = 2.dp)
+                    val qColor = when (qBadge) {
+                        "4K"  -> Color(0xFFFF3D00)
+                        "FHD" -> ACCENT_BLUE
+                        else  -> ACCENT_GREEN
+                    }
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(qColor)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) { Text(qBadge, color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black) }
-                } else if (!isFuzer && result.rating > 0f) {
-                    Box(Modifier.align(Alignment.TopEnd).padding(4.dp).clip(RoundedCornerShape(3.dp)).background(Color(0xBB000000)).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                        Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 8.sp, fontWeight = FontWeight.Bold)
-                    }
+                } else if (result.rating > 0f) {
+                    Box(
+                        Modifier.align(Alignment.TopEnd).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xCC000000))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) { Text("\u2605 %.1f".format(result.rating), color = GOLD, fontSize = 8.sp, fontWeight = FontWeight.SemiBold) }
                 }
+
+                // Dubbed badge (bottom-left, Fuzer)
                 if (isDubbed) {
-                    Box(Modifier.align(Alignment.BottomStart).padding(4.dp).clip(RoundedCornerShape(3.dp)).background(FUZER_PINK).padding(horizontal = 4.dp, vertical = 2.dp)) {
-                        Text("🎤 מדובב", color = WHITE, fontSize = 7.5.sp, fontWeight = FontWeight.Bold)
-                    }
+                    Box(
+                        Modifier.align(Alignment.BottomStart).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(ACCENT_PINK)
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) { Text("\uD83C\uDFA4 DUB", color = WHITE, fontSize = 7.5.sp, fontWeight = FontWeight.Bold) }
                 }
-                if (isFuzer && focused) {
-                    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, FUZER_BLUE.copy(0.12f)))))
+
+                // Genre tag (bottom-right)
+                if (focused && result.genre.isNotBlank()) {
+                    Box(
+                        Modifier.align(Alignment.BottomEnd).padding(5.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xBB000000))
+                            .padding(horizontal = 5.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            (GENRE_EMOJI[result.genre] ?: "") + " " + result.genre,
+                            color    = WHITE.copy(0.85f),
+                            fontSize = 8.sp
+                        )
+                    }
                 }
             }
         }
-        Spacer(Modifier.height(4.dp))
-        Text(result.title, color = if (focused) (if (isFuzer) FUZER_BLUE else WHITE) else DIM, fontSize = 10.sp, fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        Text(if (isFuzer) "Fuzer" else if (result.type == MediaType.TV_SHOW) "TV Show" else "Movie", color = if (isFuzer) FUZER_BLUE.copy(0.4f) else WHITE.copy(0.22f), fontSize = 9.sp)
+
+        Spacer(Modifier.height(5.dp))
+        Text(
+            result.title,
+            color      = if (focused) WHITE else DIM.copy(0.75f),
+            fontSize   = 10.5.sp,
+            fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
+            maxLines   = 1,
+            overflow   = TextOverflow.Ellipsis
+        )
+        Text(
+            when {
+                isFuzer                        -> "\uD83D\uDCBE Fuzer"
+                result.type == MediaType.TV_SHOW -> "TV"
+                else                             -> "Movie"
+            },
+            color    = if (isFuzer) ACCENT_PINK.copy(0.5f) else DIM.copy(0.3f),
+            fontSize = 9.sp
+        )
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  SHIMMER
-// ═════════════════════════════════════════════════════════════════
+// ═══ SHIMMER ═══════════════════════════════════════════════════════
 @Composable
 private fun ShimmerGrid() {
     val inf = rememberInfiniteTransition(label = "sh")
-    val p   by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart), label = "sp")
+    val p by inf.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart),
+        label = "sp"
+    )
     val shimmer = Brush.linearGradient(
-        listOf(Color(0xFF111111), Color(0xFF1E1E1E), Color(0xFF111111)),
-        start = androidx.compose.ui.geometry.Offset(p * 1400f - 700f, 0f),
-        end   = androidx.compose.ui.geometry.Offset(p * 1400f, 300f)
+        listOf(Color(0xFF0F0F14), Color(0xFF1A1A24), Color(0xFF0F0F14)),
+        start = Offset(p * 1600f - 800f, 0f),
+        end   = Offset(p * 1600f, 400f)
     )
     LazyVerticalGrid(
-        columns               = GridCells.Adaptive(138.dp),
-        contentPadding        = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-        verticalArrangement   = Arrangement.spacedBy(14.dp),
+        columns               = GridCells.Adaptive(148.dp),
+        contentPadding        = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement   = Arrangement.spacedBy(16.dp),
         modifier              = Modifier.fillMaxSize()
     ) {
-        items(16) {
-            Column {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(9.dp)).background(shimmer))
-                Spacer(Modifier.height(4.dp))
-                Box(Modifier.fillMaxWidth(0.7f).height(9.dp).clip(RoundedCornerShape(3.dp)).background(shimmer))
+        items(18) {
+            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth(0.65f).height(10.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth(0.4f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
             }
         }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  EMPTY STATE
-// ═════════════════════════════════════════════════════════════════
+// ═══ EMPTY STATE ═══════════════════════════════════════════════════
 @Composable
 private fun EmptyState(query: String, source: SearchSource) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(if (source == SearchSource.FUZER) "💎" else "🎬", fontSize = 52.sp)
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            modifier = Modifier.padding(32.dp)
+        ) {
+            val emoji = when (source) {
+                SearchSource.FUZER  -> "\uD83D\uDCBE"
+                SearchSource.MOVIES -> "\uD83C\uDFAC"
+                SearchSource.SERIES -> "\uD83D\uDCFA"
+                else                -> if (query.isNotBlank()) "\uD83D\uDD0D" else "\uD83C\uDF1F"
+            }
+            Text(emoji, fontSize = 56.sp)
             Text(
-                if (query.isNotBlank()) "No results for \"$query\""
-                else if (source == SearchSource.FUZER) "Browse Fuzer library"
-                else "Start searching",
-                color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold
+                when {
+                    query.isNotBlank() -> "No results for \u201c$query\u201d"
+                    source == SearchSource.FUZER -> "Fuzer Torrent Search"
+                    else -> "Discover Something Great"
+                },
+                color      = WHITE,
+                fontSize   = 20.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign  = TextAlign.Center
             )
             Text(
-                if (source == SearchSource.FUZER) "Type to search Israeli content on Fuzer"
-                else "Use the search bar above ↑",
-                color = if (source == SearchSource.FUZER) FUZER_BLUE.copy(0.6f) else DIM, fontSize = 12.sp
+                when {
+                    query.isNotBlank() -> "Try a different keyword or adjust filters"
+                    source == SearchSource.FUZER -> "Type to search Hebrew content on Fuzer"
+                    else -> "Search above or browse by genre with filters"
+                },
+                color     = DIM.copy(0.5f),
+                fontSize  = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier  = Modifier.widthIn(max = 380.dp)
             )
         }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-//  FUZER ERROR
-// ═════════════════════════════════════════════════════════════════
+// ═══ FUZER ERROR ═══════════════════════════════════════════════════
 @Composable
-private fun FuzerErrorState(message: String) {
+private fun FuzerError(message: String) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.padding(40.dp)) {
-            Box(Modifier.size(64.dp).clip(CircleShape).background(FUZER_BLUE.copy(0.1f)), Alignment.Center) {
-                Icon(Icons.Default.CloudOff, null, Modifier.size(30.dp), tint = FUZER_BLUE.copy(0.6f))
-            }
-            Text("Fuzer Unavailable", color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(message, color = DIM, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 480.dp))
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.padding(40.dp)
+        ) {
+            Box(
+                Modifier.size(72.dp).clip(CircleShape)
+                    .background(ACCENT_PINK.copy(0.08f))
+                    .border(1.dp, ACCENT_PINK.copy(0.3f), CircleShape),
+                Alignment.Center
+            ) { Icon(Icons.Default.CloudOff, null, Modifier.size(32.dp), tint = ACCENT_PINK.copy(0.7f)) }
+            Text("Fuzer Unavailable", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Text(message, color = DIM.copy(0.6f), fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 440.dp))
         }
     }
 }
