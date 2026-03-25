@@ -5,11 +5,6 @@ import android.content.Context
 import android.opengl.GLES20
 import android.os.Build
 
-// ╔═══════════════════════════════════════════════════════════════════
-// DeviceProfile — detects hardware tier at runtime, drives anim config.
-// forceLowTier: override for Lite UI Mode set via SettingsViewModel.
-// ╚═══════════════════════════════════════════════════════════════════
-
 object DeviceProfile {
 
     enum class Tier { LOW, MID, HIGH }
@@ -24,7 +19,6 @@ object DeviceProfile {
         val lazyBeyondBounds: Int
     )
 
-    // ── Manufacturer / SoC flags (set during init, usable anywhere) ───────────────
     var isXiaomi:  Boolean = false; private set
     var isMeCool:  Boolean = false; private set
     var isAmlogic: Boolean = false; private set
@@ -41,18 +35,29 @@ object DeviceProfile {
     var totalRamMb: Int = 0
         private set
 
-    // ✅ Set to true by SettingsViewModel when Lite UI mode is toggled ON.
+    // ✅ Set by SettingsViewModel when Lite UI mode is toggled ON.
     var forceLowTier: Boolean = false
         set(value) {
             field = value
-            animConfig = buildConfig(if (value) Tier.LOW else tier)
+            animConfig = buildConfig(effectiveTier())
         }
+
+    // ✅ Set by SettingsViewModel when Reduce Motion is toggled ON.
+    // Zeroes ALL animation durations regardless of tier — no visual change on strong devices
+    // beyond skipping transitions (they were already fast there).
+    var forceReduceMotion: Boolean = false
+        set(value) {
+            field = value
+            animConfig = buildConfig(effectiveTier())
+        }
+
+    private fun effectiveTier(): Tier =
+        if (forceLowTier) Tier.LOW else tier
 
     fun init(context: Context) {
         gpuRenderer = readGpuRenderer()
         totalRamMb  = readTotalRam(context)
 
-        // ── Manufacturer detection ──────────────────────────────────────────
         val manufacturer = Build.MANUFACTURER.lowercase()
         val hardware     = Build.HARDWARE.lowercase()
         val model        = Build.MODEL.lowercase()
@@ -68,7 +73,7 @@ object DeviceProfile {
                     hardware.contains("s905x")
 
         tier       = detectTier(gpuRenderer, totalRamMb)
-        animConfig = buildConfig(tier)
+        animConfig = buildConfig(effectiveTier())
     }
 
     private fun readGpuRenderer(): String = try {
@@ -84,36 +89,23 @@ object DeviceProfile {
 
     private fun detectTier(gpu: String, ramMb: Int): Tier {
         val g = gpu.lowercase()
-
-        // ── Amlogic S905 / S912 — Vivante GPU → always LOW ───────────────────────
         if (g.contains("vivante")) return Tier.LOW
-
-        // ── MeCool smart tier (Amlogic SoC) ──────────────────────────────────
         if (isMeCool || isAmlogic) {
             val model = Build.MODEL.lowercase()
             return when {
-                // KM7 / S922X (4 GB+) → HIGH
                 (model.contains("km7") || g.contains("s922")) && ramMb >= 4000 -> Tier.HIGH
-                // KM6 / S905X4 (2 GB+) → MID
                 (model.contains("km6") || g.contains("s905x4")) && ramMb >= 2000 -> Tier.MID
-                // KM2 / older → LOW
                 else -> Tier.LOW
             }
         }
-
-        // ── Xiaomi smart tier ──────────────────────────────────────────────
         if (isXiaomi) {
             val model = Build.MODEL.lowercase()
             return when {
-                // Mi Box S / Mi Box 4K → HIGH
                 model.contains("mi box") && ramMb >= 2000 -> Tier.HIGH
-                // Mi TV Stick 4K → MID
                 model.contains("mi stick") || model.contains("tv stick") -> Tier.MID
                 else -> Tier.MID
             }
         }
-
-        // ── Generic GPU-based tier ─────────────────────────────────────────
         return when {
             g.contains("tegra")                               -> Tier.HIGH
             g.contains("adreno 6") || g.contains("adreno 7") -> Tier.HIGH
@@ -128,38 +120,51 @@ object DeviceProfile {
         }
     }
 
-    private fun buildConfig(t: Tier): AnimConfig = when (t) {
-        Tier.HIGH -> AnimConfig(
-            rowFadeDuration   = 200,
-            backdropDuration  = 500,
-            heroFadeDuration  = 350,
-            crossfadeDuration = 200,
-            enableRowFade     = true,
-            enableParallax    = true,
-            lazyBeyondBounds  = 2
-        )
-        Tier.MID -> AnimConfig(
-            rowFadeDuration   = 120,
-            backdropDuration  = 300,
-            heroFadeDuration  = 200,
-            crossfadeDuration = 100,
-            enableRowFade     = true,
-            enableParallax    = false,
-            lazyBeyondBounds  = 1
-        )
-        Tier.LOW -> AnimConfig(
+    private fun buildConfig(t: Tier): AnimConfig {
+        // forceReduceMotion → zero everything, regardless of tier
+        if (forceReduceMotion) return AnimConfig(
             rowFadeDuration   = 0,
-            backdropDuration  = 150,
+            backdropDuration  = 0,
             heroFadeDuration  = 0,
             crossfadeDuration = 0,
             enableRowFade     = false,
             enableParallax    = false,
             lazyBeyondBounds  = 0
         )
+        return when (t) {
+            Tier.HIGH -> AnimConfig(
+                rowFadeDuration   = 200,
+                backdropDuration  = 500,
+                heroFadeDuration  = 350,
+                crossfadeDuration = 200,
+                enableRowFade     = true,
+                enableParallax    = true,
+                lazyBeyondBounds  = 2
+            )
+            Tier.MID -> AnimConfig(
+                rowFadeDuration   = 120,
+                backdropDuration  = 300,
+                heroFadeDuration  = 200,
+                crossfadeDuration = 100,
+                enableRowFade     = true,
+                enableParallax    = false,
+                lazyBeyondBounds  = 1
+            )
+            Tier.LOW -> AnimConfig(
+                rowFadeDuration   = 0,
+                backdropDuration  = 150,
+                heroFadeDuration  = 0,
+                crossfadeDuration = 0,
+                enableRowFade     = false,
+                enableParallax    = false,
+                lazyBeyondBounds  = 0
+            )
+        }
     }
 
     fun debugInfo(): String =
         "Tier=${if (forceLowTier) "LOW (forced)" else tier.name} | " +
+        "ReduceMotion=$forceReduceMotion | " +
         "GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
         "Xiaomi=$isXiaomi | MeCool=$isMeCool | Amlogic=$isAmlogic | " +
         "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
