@@ -22,7 +22,6 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
@@ -134,7 +133,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ────────────────────────────────────────────────────────────
+    // ─── State ──────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -150,7 +149,6 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // ─── שומר את ה-videoUrl האחרון כדי לבנות MergingMediaSource ──────────
     private var currentVideoUrl: String? = null
 
     init {
@@ -185,7 +183,6 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                // ─── ברגע שה-track של הכתובית החיצונית מופיע, בחר אותו ───
                 val textGroup = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_TEXT }
                     .firstOrNull { grp ->
@@ -194,7 +191,6 @@ class ExoPlayerWrapper(context: Context) {
                         }
                     } ?: return
 
-                // בדוק אם כבר נבחר — אם כן אין צורך לעשות כלום
                 val alreadySelected = (0 until textGroup.length).any { i ->
                     textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub" &&
                     textGroup.isTrackSelected(i)
@@ -265,49 +261,38 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── MergingMediaSource: מחבר video + subtitle יחד ─────────────────────
-    // זו הגישה הנכונה עבור כתוביות חיצוניות ב-ExoPlayer/Media3:
-    //
-    // 1. בונים MediaSource לסרט (ProgressiveMediaSource או DefaultMediaSourceFactory)
-    // 2. בונים SingleSampleMediaSource לקובץ הכתובית
-    // 3. מחברים אותם ב-MergingMediaSource
-    // 4. קוראים player.setMediaSource() ישירות — ולא setMediaItem()
-    //    (setMediaItem מסיר את האפשרות להשתמש ב-MergingMediaSource)
-    // 5. seekTo לפוזיציה הנוכחית — הסרט ממשיך ממש מאותו מקום
-    //
-    // ExoPlayer מזהה שה-video URI לא השתנה ולכן ה-buffer לא נמחק.
-    // הכתובית נטענת כ-track נפרד ו-onTracksChanged מופעל עם הtrack החדש.
+    // ─── MergingMediaSource ────────────────────────────────────────────────
+    // SingleSampleMediaSource.Factory.createMediaSource() ב-Media3 מקבל
+    // SubtitleConfiguration (לא Format + Uri). ה-SubtitleConfiguration
+    // מכיל בתוכו גם את ה-Uri ואת ה-mime type.
     private fun injectSubtitleMerging(subFile: File, isVtt: Boolean) {
-        val videoUrl = currentVideoUrl ?: return
-        val mime     = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos = player.currentPosition
+        val videoUrl   = currentVideoUrl ?: return
+        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos   = player.currentPosition
         val wasPlaying = player.isPlaying
 
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
 
         try {
-            // ─── Video source ────────────────────────────────────────────
             val videoSource = mediaSourceFactory.createMediaSource(
                 MediaItem.Builder().setUri(videoUrl.toUri()).build()
             )
 
-            // ─── Subtitle source ─────────────────────────────────────────
-            val subFormat = androidx.media3.common.Format.Builder()
-                .setSampleMimeType(mime)
+            // ✅ ה-API הנכון ב-Media3: SubtitleConfiguration בלבד, לא Format+Uri
+            val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
+                .setMimeType(mime)
                 .setLanguage("iw")
                 .setId("ext_sub")
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
 
             val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(subFormat, Uri.fromFile(subFile), C.TIME_UNSET)
+                .createMediaSource(subConfig, C.TIME_UNSET)
 
-            // ─── Merge ───────────────────────────────────────────────────
             val merged = MergingMediaSource(videoSource, subSource)
 
-            // ─── Inject ──────────────────────────────────────────────────
-            player.setMediaSource(merged, /* resetPosition= */ false)
+            player.setMediaSource(merged, false)
             player.prepare()
             player.seekTo(savedPos)
             if (wasPlaying) player.playWhenReady = true
