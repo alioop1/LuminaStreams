@@ -21,6 +21,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
@@ -131,7 +134,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ─────────────────────────────────────────────────────────────
+    // ─── State ────────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -144,12 +147,11 @@ class ExoPlayerWrapper(context: Context) {
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
-    // ✅ currentCues — מקבל עדכון מ-onCues בכל פעם שיש כתוביות (embedded או חיצוניות)
-    // PlayerScreen אוסף את ה-StateFlow הזה ומעביר ל-SubtitleView.setCues(...)
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    private var pendingSubtitle: Pair<File, Boolean>? = null
+    // ─── שומר את ה-videoUrl האחרון כדי לבנות MergingMediaSource ──────────
+    private var currentVideoUrl: String? = null
 
     init {
         player.addListener(object : Player.Listener {
@@ -158,11 +160,6 @@ class ExoPlayerWrapper(context: Context) {
                 _isPlaying.value = p
             }
 
-            // ✅ onCues מופעל ע"י ExoPlayer לכל סוגי הכתוביות:
-            //    - embedded (HLS/DASH manifest text tracks)
-            //    - חיצוניות שנטענו דרך SubtitleConfiguration ב-MediaItem
-            // אנחנו רק שמים את ה-cues ב-StateFlow; ה-SubtitleView יקרא setCues מתוך
-            // AndroidView update בכל recomposition.
             override fun onCues(cueGroup: CueGroup) {
                 _currentCues.value = cueGroup.cues
             }
@@ -188,7 +185,7 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                val pending = pendingSubtitle ?: return
+                // ─── ברגע שה-track של הכתובית החיצונית מופיע, בחר אותו ───
                 val textGroup = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_TEXT }
                     .firstOrNull { grp ->
@@ -197,7 +194,13 @@ class ExoPlayerWrapper(context: Context) {
                         }
                     } ?: return
 
-                pendingSubtitle = null
+                // בדוק אם כבר נבחר — אם כן אין צורך לעשות כלום
+                val alreadySelected = (0 until textGroup.length).any { i ->
+                    textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub" &&
+                    textGroup.isTrackSelected(i)
+                }
+                if (alreadySelected) return
+
                 val idx = (0 until textGroup.length).firstOrNull { i ->
                     textGroup.mediaTrackGroup.getFormat(i).id == "ext_sub"
                 } ?: 0
@@ -213,6 +216,7 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String) {
+        currentVideoUrl        = videoUrl
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
@@ -233,7 +237,7 @@ class ExoPlayerWrapper(context: Context) {
     ) {
         if (subtitleUrl.startsWith("file://")) {
             val f = File(Uri.parse(subtitleUrl).path!!)
-            injectSubtitle(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            injectSubtitleMerging(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
@@ -249,7 +253,7 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { injectSubtitle(file, ext == "vtt") }
+                        withContext(Dispatchers.Main) { injectSubtitleMerging(file, ext == "vtt") }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -261,35 +265,56 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    private fun injectSubtitle(subFile: File, isVtt: Boolean) {
-        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos   = player.currentPosition
+    // ─── MergingMediaSource: מחבר video + subtitle יחד ─────────────────────
+    // זו הגישה הנכונה עבור כתוביות חיצוניות ב-ExoPlayer/Media3:
+    //
+    // 1. בונים MediaSource לסרט (ProgressiveMediaSource או DefaultMediaSourceFactory)
+    // 2. בונים SingleSampleMediaSource לקובץ הכתובית
+    // 3. מחברים אותם ב-MergingMediaSource
+    // 4. קוראים player.setMediaSource() ישירות — ולא setMediaItem()
+    //    (setMediaItem מסיר את האפשרות להשתמש ב-MergingMediaSource)
+    // 5. seekTo לפוזיציה הנוכחית — הסרט ממשיך ממש מאותו מקום
+    //
+    // ExoPlayer מזהה שה-video URI לא השתנה ולכן ה-buffer לא נמחק.
+    // הכתובית נטענת כ-track נפרד ו-onTracksChanged מופעל עם הtrack החדש.
+    private fun injectSubtitleMerging(subFile: File, isVtt: Boolean) {
+        val videoUrl = currentVideoUrl ?: return
+        val mime     = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos = player.currentPosition
         val wasPlaying = player.isPlaying
 
-        val subConf = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
-            .setMimeType(mime)
-            .setLanguage("iw")
-            .setId("ext_sub")
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
-            .build()
+        _subtitleApplied.value = false
+        _currentCues.value     = emptyList()
 
-        val currentUri = player.currentMediaItem?.localConfiguration?.uri
-        if (currentUri == null) {
-            pendingSubtitle = Pair(subFile, isVtt)
-            return
+        try {
+            // ─── Video source ────────────────────────────────────────────
+            val videoSource = mediaSourceFactory.createMediaSource(
+                MediaItem.Builder().setUri(videoUrl.toUri()).build()
+            )
+
+            // ─── Subtitle source ─────────────────────────────────────────
+            val subFormat = androidx.media3.common.Format.Builder()
+                .setSampleMimeType(mime)
+                .setLanguage("iw")
+                .setId("ext_sub")
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
+
+            val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
+                .createMediaSource(subFormat, Uri.fromFile(subFile), C.TIME_UNSET)
+
+            // ─── Merge ───────────────────────────────────────────────────
+            val merged = MergingMediaSource(videoSource, subSource)
+
+            // ─── Inject ──────────────────────────────────────────────────
+            player.setMediaSource(merged, /* resetPosition= */ false)
+            player.prepare()
+            player.seekTo(savedPos)
+            if (wasPlaying) player.playWhenReady = true
+
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
-
-        pendingSubtitle = Pair(subFile, isVtt)
-
-        val newItem = MediaItem.Builder()
-            .setUri(currentUri)
-            .setSubtitleConfigurations(listOf(subConf))
-            .build()
-
-        player.setMediaItem(newItem, false)
-        player.prepare()
-        player.seekTo(savedPos)
-        if (wasPlaying) player.playWhenReady = true
     }
 
     fun play()  { player.play() }
