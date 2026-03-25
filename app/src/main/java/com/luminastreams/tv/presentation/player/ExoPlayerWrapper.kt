@@ -19,6 +19,9 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
@@ -35,7 +38,7 @@ import java.net.URL
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
-    private val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+    private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
     private val audioPassthrough  = prefs.getBoolean("audio_passthrough", false)
     private val hwAcceleration    = prefs.getBoolean("hw_accel", true)
@@ -43,12 +46,11 @@ class ExoPlayerWrapper(context: Context) {
     private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
 
     val useYellowSubtitles: Boolean = prefs.getBoolean("yellow_subs", false)
-
     val subtitleFontScale: Float = when (prefs.getString("subtitle_font_scale", "medium")) {
-        "small"   -> 0.75f
-        "large"   -> 1.30f
-        "xlarge"  -> 1.60f
-        else      -> 1.00f
+        "small"  -> 0.75f
+        "large"  -> 1.30f
+        "xlarge" -> 1.60f
+        else     -> 1.00f
     }
 
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
@@ -68,26 +70,20 @@ class ExoPlayerWrapper(context: Context) {
     val trackSelector = DefaultTrackSelector(appContext).apply {
         val builder = buildUponParameters()
             .setPreferredVideoMimeTypes(
-                MimeTypes.VIDEO_DOLBY_VISION,
-                MimeTypes.VIDEO_H265,
-                MimeTypes.VIDEO_H264,
-                MimeTypes.VIDEO_AV1
+                MimeTypes.VIDEO_DOLBY_VISION, MimeTypes.VIDEO_H265,
+                MimeTypes.VIDEO_H264, MimeTypes.VIDEO_AV1
             )
             .setPreferredAudioMimeTypes(
-                MimeTypes.AUDIO_E_AC3_JOC,
-                MimeTypes.AUDIO_E_AC3,
-                MimeTypes.AUDIO_AC3,
-                MimeTypes.AUDIO_AAC
+                MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
+                MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
             .setTunnelingEnabled(
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                !DeviceProfile.isXiaomi &&
-                !DeviceProfile.isMeCool &&
-                !DeviceProfile.isAmlogic
+                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic
             )
+            // עברית מובנית נבחרת אוטומטית אם יש טראק מובנה
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
-
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
             "en" -> builder.setPreferredAudioLanguages("eng", "en")
@@ -96,24 +92,20 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params)
     }
 
-    private val loadControl: DefaultLoadControl = if (preAllocateBuffer) {
+    private val loadControl = if (preAllocateBuffer) {
         DefaultLoadControl.Builder()
             .setBufferDurationsMs(30_000, 120_000, 5_000, 10_000)
-            .setTargetBufferBytes(64 * 1024 * 1024)
-            .build()
+            .setTargetBufferBytes(64 * 1024 * 1024).build()
     } else {
         DefaultLoadControl.Builder()
             .setBufferDurationsMs(15_000, 50_000, 2_500, 5_000)
-            .setTargetBufferBytes(20 * 1024 * 1024)
-            .build()
+            .setTargetBufferBytes(20 * 1024 * 1024).build()
     }
 
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .setAllowCrossProtocolRedirects(true)
-
     private val dataSourceFactory = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
-
     private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
         .setDataSourceFactory(dataSourceFactory)
         .setSubtitleParserFactory(androidx.media3.extractor.text.DefaultSubtitleParserFactory())
@@ -126,28 +118,27 @@ class ExoPlayerWrapper(context: Context) {
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
                 .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
-                .build(),
-            true
+                .build(), true
         )
         .setHandleAudioBecomingNoisy(true)
         .build()
         .also { exo ->
             if (audioPassthrough) {
                 try {
-                    val offloadPrefsClass = Class.forName("androidx.media3.exoplayer.audio.AudioOffloadPreferences")
-                    val builderClass = offloadPrefsClass.getClasses().firstOrNull { it.simpleName == "Builder" }
-                    if (builderClass != null) {
-                        val offloadBuilder = builderClass.getDeclaredConstructor().newInstance()
-                        val setMode = builderClass.getMethod("setAudioOffloadMode", Int::class.java)
-                        setMode.invoke(offloadBuilder, 1)
-                        val buildMethod = builderClass.getMethod("build")
-                        val offloadPrefs = buildMethod.invoke(offloadBuilder)
-                        val setPrefs = exo.javaClass.getMethod("setAudioOffloadPreferences", offloadPrefsClass)
-                        setPrefs.invoke(exo, offloadPrefs)
+                    val cls  = Class.forName("androidx.media3.exoplayer.audio.AudioOffloadPreferences")
+                    val bldr = cls.getClasses().firstOrNull { it.simpleName == "Builder" }
+                    if (bldr != null) {
+                        val ob  = bldr.getDeclaredConstructor().newInstance()
+                        bldr.getMethod("setAudioOffloadMode", Int::class.java).invoke(ob, 1)
+                        val op  = bldr.getMethod("build").invoke(ob)
+                        exo.javaClass.getMethod("setAudioOffloadPreferences", cls).invoke(exo, op)
                     }
                 } catch (_: Exception) {}
             }
         }
+
+    // שומרים את ה-URL המקורי של הסרט לשימוש כשמחילים כתוביות
+    private var currentVideoUrl: String? = null
 
     private val _isPlaying     = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -158,122 +149,82 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentTracks = MutableStateFlow(Tracks.EMPTY)
     val currentTracks: StateFlow<Tracks> = _currentTracks.asStateFlow()
 
-    // ✅ true כשהכתובית הוחלה בהצלחה (PlayerScreen מאזין לזה)
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
-    // ── pending subtitle track selection after replaceMediaItem ──────────────
-    // שומר את ה-URI של הכתובית שממתינה לבחירה ב-onTracksChanged הבא
-    private var pendingSubtitleUri: String? = null
-
     init {
         player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
-                _isPlaying.value = isPlayingNow
-            }
+            override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
 
             override fun onPlayerError(error: PlaybackException) {
-                val message = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed — try a different source."
-                    PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error — try a different source."
+                _playerError.value = when (error.errorCode) {
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
+                    PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED  -> "Network connection failed."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
                     PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
-                        player.seekToDefaultPosition()
-                        player.prepare()
-                        return
+                        player.seekToDefaultPosition(); player.prepare(); return
                     }
                     else -> "Playback error (${error.errorCode})"
                 }
-                _playerError.value = message
-                _isPlaying.value   = false
+                _isPlaying.value = false
             }
 
-            override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_ENDED) _isPlaying.value = false
+            override fun onPlaybackStateChanged(s: Int) {
+                if (s == Player.STATE_ENDED) _isPlaying.value = false
             }
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
-
-                // ✅ הבאג הקריטי תוקן כאן:
-                // אחרי replaceMediaItem, ExoPlayer מודיע onTracksChanged כשהטראקים
-                // כבר נטענו. רק עכשיו אפשר לעשות override מדויק לטראק הכתובית.
-                val uri = pendingSubtitleUri ?: return
-                pendingSubtitleUri = null
-
-                val textGroup = tracks.groups
-                    .filter { it.type == C.TRACK_TYPE_TEXT }
-                    .firstOrNull { group ->
-                        // מחפשים את הטראק עם ה-URI שלנו
-                        (0 until group.length).any { i ->
-                            group.mediaTrackGroup.getFormat(i).id == "external_sub"
-                        }
-                    } ?: return
-
-                // מוצאים את ה-index המדויק
-                val trackIndex = (0 until textGroup.length).firstOrNull { i ->
-                    textGroup.mediaTrackGroup.getFormat(i).id == "external_sub"
-                } ?: 0
-
-                // ✅ Override מפורש — זה בלבד מבטיח שהכתובית תוצג
-                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                    .setOverrideForType(
-                        TrackSelectionOverride(textGroup.mediaTrackGroup, trackIndex)
-                    )
-                    .build()
-
-                _subtitleApplied.value = true
             }
         })
     }
 
     fun prepareStream(videoUrl: String) {
+        currentVideoUrl        = videoUrl
+        _playerError.value     = null
+        _subtitleApplied.value = false
         try {
-            _playerError.value     = null
-            _subtitleApplied.value = false
-            pendingSubtitleUri     = null
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
             player.playWhenReady = true
         } catch (e: Exception) {
-            _playerError.value = "Failed to prepare stream: ${e.message}"
+            _playerError.value = "Failed to prepare: ${e.message}"
         }
     }
 
-    /**
-     * מוריד כתובית מ-URL ומחיל אותה.
-     * ✅ retry עד [maxRetries] פעמים כשהרשת נכשלת.
-     * ✅ תומך .srt ו-.vtt.
-     */
+    // ╔═══════════════════════════════════════════════════════════════════
+    // applySubtitle — הגישה הנכונה: MergingMediaSource
+    //
+    // במקום replaceMediaItem (שגורם ל-race condition עם onTracksChanged
+    // ולא עובד ב-HLS/DASH), אנחנו בונים מקור חדש שממזג
+    // את הסרט + את קובץ הכתובית, ומשתמשים בו יחד עם
+    // setOverrideForType מידי אחרי ה-prepare.
+    // ╚═══════════════════════════════════════════════════════════════════
     fun applySubtitle(
         subtitleUrl: String,
-        lang: String = "heb",
-        isVtt: Boolean = false,
+        lang: String    = "heb",
+        isVtt: Boolean  = false,
         maxRetries: Int = 2
     ) {
         if (subtitleUrl.startsWith("file://")) {
-            applyLocalSubtitle(subtitleUrl, lang, isVtt)
+            applyLocalSubtitle(File(Uri.parse(subtitleUrl).path!!), isVtt)
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
             var lastError: Exception? = null
             repeat(maxRetries + 1) { attempt ->
                 try {
-                    val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
-                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    connection.connectTimeout = 12_000
-                    connection.readTimeout    = 12_000
-                    if (connection.responseCode in 200..299) {
-                        val bytes   = connection.inputStream.readBytes()
-                        val ext     = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
-                        val subFile = File(appContext.cacheDir, "lumina_sub.$ext")
-                        subFile.writeBytes(bytes)
-                        withContext(Dispatchers.Main) {
-                            applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, ext == "vtt")
-                        }
+                    val conn = URL(subtitleUrl).openConnection() as HttpURLConnection
+                    conn.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    conn.connectTimeout = 12_000
+                    conn.readTimeout    = 12_000
+                    if (conn.responseCode in 200..299) {
+                        val bytes = conn.inputStream.readBytes()
+                        val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
+                        val file  = File(appContext.cacheDir, "lumina_sub.$ext")
+                        file.writeBytes(bytes)
+                        withContext(Dispatchers.Main) { applyLocalSubtitle(file, ext == "vtt") }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -285,47 +236,71 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    private fun applyLocalSubtitle(localUriStr: String, lang: String, isVtt: Boolean) {
-        val current = player.currentMediaItem ?: return
-        val mime    = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-
-        val savedPos   = player.currentPosition
+    /**
+     * הגישה נכונה לכתוביות חיצוניות ב-ExoPlayer/Media3:
+     *
+     * 1. בונים SingleSampleMediaSource מקובץ ה-SRT/VTT המקומי
+     * 2. בונים מקור סרט חדש (ProgressiveMediaSource או DefaultMediaSourceFactory)
+     * 3. ממזגים ב-MergingMediaSource — כך ExoPlayer רואה את
+     *    הסרט + הכתובית יחד במקור אחד
+     * 4. setSource עם המקור הממוזג + seekTo למיקום הנוכחי
+     * 5. לאחר שה-prepare בוצע, מגדירים setOverrideForType מידי
+     */
+    private fun applyLocalSubtitle(subFile: File, isVtt: Boolean) {
+        val videoUrl = currentVideoUrl ?: return
+        val mime     = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos = player.currentPosition
         val wasPlaying = player.isPlaying
 
-        val conf = MediaItem.SubtitleConfiguration.Builder(Uri.parse(localUriStr))
-            .setMimeType(mime)
-            .setLanguage("iw")
-            // ✅ id ייחודי — משמש ב-onTracksChanged לזיהוי הטראק המדויק
-            .setId("external_sub")
-            // ✅ DEFAULT + FORCED — מבטיח שהטראק יהיה נגיש לבחירה
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED)
-            .build()
-
-        // ✅ שומרים את ה-URI לפני replaceMediaItem — onTracksChanged יקרא לו
-        pendingSubtitleUri = localUriStr
-
-        // replaceMediaItem יגרום ל-onTracksChanged שם נעשה את ה-override
-        player.replaceMediaItem(
-            player.currentMediaItemIndex,
-            current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
+        // 1. מקור וידאו
+        val videoSource = mediaSourceFactory.createMediaSource(
+            MediaItem.Builder().setUri(videoUrl.toUri()).build()
         )
 
-        // ✅ seekTo + play אחרי replaceMediaItem — מבטיח שה-position נשמר
+        // 2. מקור כתובית
+        val subFormat = androidx.media3.common.Format.Builder()
+            .setId("ext_sub")
+            .setSampleMimeType(mime)
+            .setLanguage("iw")
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .build()
+        val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
+            .createMediaSource(androidx.media3.common.MediaItem.SubtitleConfiguration
+                .Builder(Uri.fromFile(subFile))
+                .setMimeType(mime)
+                .setLanguage("iw")
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build(),
+                C.TIME_UNSET
+            )
+
+        // 3. מזגים ב-MergingMediaSource
+        val merged = MergingMediaSource(videoSource, subSource)
+
+        // 4. עדכון את הנגן
+        player.stop()
+        player.setMediaSource(merged)
+        player.prepare()
         player.seekTo(savedPos)
-        if (wasPlaying) player.play()
+        if (wasPlaying) player.playWhenReady = true
+
+        // 5. override מידי — עובד כי ExoPlayer מכבד setTrackSelectionParameters
+        //    גם לפני שהטראקים נטענו, ויישםש בהם כשהוא יודע מה לבחור
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setPreferredTextLanguages("iw", "heb", "he")
+            .build()
+
+        _subtitleApplied.value = true
     }
 
     fun play()  { player.play() }
     fun pause() { player.pause() }
-
     fun seekTo(pos: Long) {
         try { player.seekTo(pos.coerceIn(0, player.duration.coerceAtLeast(0))) }
         catch (_: Exception) {}
     }
-
     fun clearError() { _playerError.value = null }
-
-    fun release() {
-        try { player.release() } catch (_: Exception) {}
-    }
+    fun release() { try { player.release() } catch (_: Exception) {} }
 }
