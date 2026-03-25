@@ -11,6 +11,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -51,8 +52,6 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
-        // Xiaomi & MeCool/Amlogic: always PREFER so SW AV1 fallback works.
-        // Pure HIGH-tier devices use MODE_OFF for max HW performance.
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
@@ -80,14 +79,12 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_AC3,
                 MimeTypes.AUDIO_AAC
             )
-            // Tunneling disabled for Xiaomi (MIUI audio bug) and Amlogic/MeCool (driver crash).
             .setTunnelingEnabled(
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
                 !DeviceProfile.isXiaomi &&
                 !DeviceProfile.isMeCool &&
                 !DeviceProfile.isAmlogic
             )
-            // ✅ ExoPlayer native Hebrew subtitle preference — catches embedded HEB tracks
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
 
@@ -152,18 +149,22 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    private val _isPlaying = MutableStateFlow(false)
+    private val _isPlaying     = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    private val _playerError = MutableStateFlow<String?>(null)
+    private val _playerError   = MutableStateFlow<String?>(null)
     val playerError: StateFlow<String?> = _playerError.asStateFlow()
 
     private val _currentTracks = MutableStateFlow(Tracks.EMPTY)
     val currentTracks: StateFlow<Tracks> = _currentTracks.asStateFlow()
 
-    // ✅ Signals when subtitle was successfully applied (for PlayerScreen to confirm)
+    // ✅ true כשהכתובית הוחלה בהצלחה (PlayerScreen מאזין לזה)
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
+
+    // ── pending subtitle track selection after replaceMediaItem ──────────────
+    // שומר את ה-URI של הכתובית שממתינה לבחירה ב-onTracksChanged הבא
+    private var pendingSubtitleUri: String? = null
 
     init {
         player.addListener(object : Player.Listener {
@@ -185,7 +186,7 @@ class ExoPlayerWrapper(context: Context) {
                     else -> "Playback error (${error.errorCode})"
                 }
                 _playerError.value = message
-                _isPlaying.value = false
+                _isPlaying.value   = false
             }
 
             override fun onPlaybackStateChanged(state: Int) {
@@ -194,14 +195,46 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
+
+                // ✅ הבאג הקריטי תוקן כאן:
+                // אחרי replaceMediaItem, ExoPlayer מודיע onTracksChanged כשהטראקים
+                // כבר נטענו. רק עכשיו אפשר לעשות override מדויק לטראק הכתובית.
+                val uri = pendingSubtitleUri ?: return
+                pendingSubtitleUri = null
+
+                val textGroup = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_TEXT }
+                    .firstOrNull { group ->
+                        // מחפשים את הטראק עם ה-URI שלנו
+                        (0 until group.length).any { i ->
+                            group.mediaTrackGroup.getFormat(i).id == "external_sub"
+                        }
+                    } ?: return
+
+                // מוצאים את ה-index המדויק
+                val trackIndex = (0 until textGroup.length).firstOrNull { i ->
+                    textGroup.mediaTrackGroup.getFormat(i).id == "external_sub"
+                } ?: 0
+
+                // ✅ Override מפורש — זה בלבד מבטיח שהכתובית תוצג
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    .setOverrideForType(
+                        TrackSelectionOverride(textGroup.mediaTrackGroup, trackIndex)
+                    )
+                    .build()
+
+                _subtitleApplied.value = true
             }
         })
     }
 
     fun prepareStream(videoUrl: String) {
         try {
-            _playerError.value = null
+            _playerError.value     = null
             _subtitleApplied.value = false
+            pendingSubtitleUri     = null
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
             player.playWhenReady = true
@@ -211,9 +244,9 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     /**
-     * Downloads subtitle from URL and applies it.
-     * ✅ Retries up to [maxRetries] times on network failure before giving up.
-     * ✅ Supports both .srt and .vtt formats.
+     * מוריד כתובית מ-URL ומחיל אותה.
+     * ✅ retry עד [maxRetries] פעמים כשהרשת נכשלת.
+     * ✅ תומך .srt ו-.vtt.
      */
     fun applySubtitle(
         subtitleUrl: String,
@@ -233,8 +266,7 @@ class ExoPlayerWrapper(context: Context) {
                     connection.setRequestProperty("User-Agent", "Mozilla/5.0")
                     connection.connectTimeout = 12_000
                     connection.readTimeout    = 12_000
-                    val responseCode = connection.responseCode
-                    if (responseCode in 200..299) {
+                    if (connection.responseCode in 200..299) {
                         val bytes   = connection.inputStream.readBytes()
                         val ext     = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val subFile = File(appContext.cacheDir, "lumina_sub.$ext")
@@ -242,7 +274,7 @@ class ExoPlayerWrapper(context: Context) {
                         withContext(Dispatchers.Main) {
                             applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, ext == "vtt")
                         }
-                        return@launch // success
+                        return@launch
                     }
                 } catch (e: Exception) {
                     lastError = e
@@ -263,24 +295,24 @@ class ExoPlayerWrapper(context: Context) {
         val conf = MediaItem.SubtitleConfiguration.Builder(Uri.parse(localUriStr))
             .setMimeType(mime)
             .setLanguage("iw")
+            // ✅ id ייחודי — משמש ב-onTracksChanged לזיהוי הטראק המדויק
             .setId("external_sub")
-            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            // ✅ DEFAULT + FORCED — מבטיח שהטראק יהיה נגיש לבחירה
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT or C.SELECTION_FLAG_FORCED)
             .build()
 
+        // ✅ שומרים את ה-URI לפני replaceMediaItem — onTracksChanged יקרא לו
+        pendingSubtitleUri = localUriStr
+
+        // replaceMediaItem יגרום ל-onTracksChanged שם נעשה את ה-override
         player.replaceMediaItem(
             player.currentMediaItemIndex,
             current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
         )
 
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            .setPreferredTextLanguages("iw", "heb", "he")
-            .build()
-
+        // ✅ seekTo + play אחרי replaceMediaItem — מבטיח שה-position נשמר
         player.seekTo(savedPos)
         if (wasPlaying) player.play()
-        _subtitleApplied.value = true
     }
 
     fun play()  { player.play() }
