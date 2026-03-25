@@ -115,6 +115,8 @@ fun PlayerScreen(
     val isPlaying     by exo.isPlaying.collectAsState()
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
+    // ✅ currentCues — מגיע מ-onCues דרך StateFlow, עובד לכל סוגי הכתוביות
+    val currentCues   by exo.currentCues.collectAsState()
 
     var surfaceReady      by remember { mutableStateOf(false) }
     var prepared          by remember { mutableStateOf(false) }
@@ -202,7 +204,7 @@ fun PlayerScreen(
             var waitMs = 0
             while (!exo.subtitleApplied.value && waitMs < 2500) { delay(200); waitMs += 200 }
             if (exo.subtitleApplied.value) {
-                subtitleApplied = true
+                subtitleApplied   = true
                 selectedWebSubUrl = sub.url
                 break
             }
@@ -275,10 +277,10 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video + SubtitleView ─────────────────────────────────────────
-        // ✅ SubtitleView.setPlayer(player) — הדרך הנכונה ב-Media3!
-        // במקום onCues ידני, נותנים ל-ExoPlayer לנהל את ה-cues ישירות.
-        // זה כולל גם כתוביות embedded וגם כתוביות חיצוניות.
+        // ── Video Surface + SubtitleView ──────────────────────────────────────
+        // ✅ אין setPlayer() — SubtitleView מקבל cues דרך setCues(currentCues)
+        // currentCues מגיע מ-onCues() ב-ExoPlayerWrapper דרך StateFlow.
+        // זה עובד לכל סוגי הכתוביות: embedded + חיצוניות שנטענות ב-SubtitleConfiguration.
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -324,21 +326,22 @@ fun PlayerScreen(
                         setApplyEmbeddedFontSizes(false)
                         setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                         setBottomPaddingFraction(0.08f)
-                        // ✅ THE FIX: setPlayer במקום addListener + onCues ידני
-                        // ExoPlayer ינהל את כל ה-cue delivery אוטומטית
-                        setPlayer(exo.player)
+                        // ✅ אין setPlayer() כאן — cues מגיעים דרך update למטה
                     }
                     addView(surfaceView)
                     addView(subtitleView)
                 }
             },
             update = { frameLayout ->
-                val sv = frameLayout.getChildAt(0) as? SurfaceView
-                sv?.let { exo.player.setVideoSurfaceView(it) }
+                val sv  = frameLayout.getChildAt(0) as? SurfaceView
+                val sub = frameLayout.getChildAt(1) as? SubtitleView
+                sv?.let  { exo.player.setVideoSurfaceView(it) }
+                // ✅ setCues מופעל בכל recomposition כש-currentCues משתנה
+                sub?.setCues(currentCues)
             }
         )
 
-        // ── Resume Dialog ────────────────────────────────────────────────
+        // ── Resume Dialog ─────────────────────────────────────────────────────
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -390,7 +393,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Error overlay ────────────────────────────────────────────────
+        // ── Error Overlay ─────────────────────────────────────────────────────
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
@@ -427,7 +430,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Controls overlay ─────────────────────────────────────────────
+        // ── Controls Overlay ──────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -521,7 +524,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Side Panel ──────────────────────────────────────────────────
+        // ── Side Panel ────────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = activeMenu != ActiveMenu.NONE && error == null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
@@ -600,7 +603,7 @@ fun PlayerScreen(
     }
 }
 
-// ── Side Panel Header ─────────────────────────────────────────────────
+// ── Side Panel Header ──────────────────────────────────────────────────
 
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
@@ -619,7 +622,7 @@ private fun SidePanelHeader(title: String, subtitle: String) {
     }
 }
 
-// ── Track List UI ─────────────────────────────────────────────────────
+// ── Track List UI ──────────────────────────────────────────────────────
 
 @Composable
 private fun TrackListUi(
@@ -684,7 +687,7 @@ private fun TrackListUi(
     }
 }
 
-// ── Track Item Card ───────────────────────────────────────────────────
+// ── Track Item Card ────────────────────────────────────────────────────
 
 @Composable
 private fun TrackItemCard(
@@ -722,7 +725,7 @@ private fun TrackItemCard(
     }
 }
 
-// ── Premium Badge ─────────────────────────────────────────────────────
+// ── Premium Badge ──────────────────────────────────────────────────────
 
 @Composable
 private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
@@ -749,7 +752,7 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
-// ── Progress Bar ──────────────────────────────────────────────────────
+// ── Progress Bar ───────────────────────────────────────────────────────
 
 @Composable
 fun PlayerProgressControls(
@@ -825,7 +828,7 @@ fun PlayerProgressControls(
     }
 }
 
-// ── Control Pill ──────────────────────────────────────────────────────
+// ── Control Pill ───────────────────────────────────────────────────────
 
 @Composable
 fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
@@ -845,7 +848,7 @@ fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, 
     }
 }
 
-// ── Format Time ───────────────────────────────────────────────────────
+// ── Format Time ────────────────────────────────────────────────────────
 
 fun formatTime(ms: Long): String {
     val s   = ms / 1000

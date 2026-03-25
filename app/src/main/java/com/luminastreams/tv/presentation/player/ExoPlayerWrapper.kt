@@ -13,6 +13,8 @@ import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.text.Cue
+import androidx.media3.common.text.CueGroup
 import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
@@ -129,26 +131,41 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ────────────────────────────────────────────────────────────
-    private val _isPlaying      = MutableStateFlow(false)
-    val isPlaying: StateFlow<Boolean>   = _isPlaying.asStateFlow()
+    // ─── State ─────────────────────────────────────────────────────────────
+    private val _isPlaying       = MutableStateFlow(false)
+    val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
-    private val _playerError    = MutableStateFlow<String?>(null)
+    private val _playerError     = MutableStateFlow<String?>(null)
     val playerError: StateFlow<String?> = _playerError.asStateFlow()
 
-    private val _currentTracks  = MutableStateFlow(Tracks.EMPTY)
+    private val _currentTracks   = MutableStateFlow(Tracks.EMPTY)
     val currentTracks: StateFlow<Tracks> = _currentTracks.asStateFlow()
 
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
-    // ─── Pending subtitle (url + isVtt) שממתינה להזרקה ───────────────────
-    // כשה-player מגיע ל-STATE_READY אחרי prepareStream, אנחנו מזריקים אותה.
+    // ✅ currentCues — מקבל עדכון מ-onCues בכל פעם שיש כתוביות (embedded או חיצוניות)
+    // PlayerScreen אוסף את ה-StateFlow הזה ומעביר ל-SubtitleView.setCues(...)
+    private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
+    val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
+
     private var pendingSubtitle: Pair<File, Boolean>? = null
 
     init {
         player.addListener(object : Player.Listener {
-            override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
+
+            override fun onIsPlayingChanged(p: Boolean) {
+                _isPlaying.value = p
+            }
+
+            // ✅ onCues מופעל ע"י ExoPlayer לכל סוגי הכתוביות:
+            //    - embedded (HLS/DASH manifest text tracks)
+            //    - חיצוניות שנטענו דרך SubtitleConfiguration ב-MediaItem
+            // אנחנו רק שמים את ה-cues ב-StateFlow; ה-SubtitleView יקרא setCues מתוך
+            // AndroidView update בכל recomposition.
+            override fun onCues(cueGroup: CueGroup) {
+                _currentCues.value = cueGroup.cues
+            }
 
             override fun onPlayerError(error: PlaybackException) {
                 _playerError.value = when (error.errorCode) {
@@ -171,9 +188,6 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                // ─── ניסיון override מיד כש-onTracksChanged נקרא ───────────
-                // עובד רק לכתוביות embedded (HLS manifested tracks).
-                // לכתוביות חיצוניות — ראה injectSubtitle().
                 val pending = pendingSubtitle ?: return
                 val textGroup = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_TEXT }
@@ -198,11 +212,10 @@ class ExoPlayerWrapper(context: Context) {
         })
     }
 
-    // ─── prepareStream: שומר pending subtitle אם קיים ─────────────────────
-    // אחרי prepare, נזריק את הכתובית ב-injectSubtitle()
     fun prepareStream(videoUrl: String) {
         _playerError.value     = null
         _subtitleApplied.value = false
+        _currentCues.value     = emptyList()
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -212,7 +225,6 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── applySubtitle: מוריד + מזריק ─────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -249,26 +261,9 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── injectSubtitle: הגישה הנכונה ─────────────────────────────────────
-    //
-    // ExoPlayer/Media3 + HLS/DASH: אי אפשר להוסיף כתובית חיצונית ל-stream
-    // פעיל דרך replaceMediaItem בלבד. הדרך הנכונה:
-    //
-    // 1. בונים MediaItem חדש עם SubtitleConfiguration
-    // 2. קוראים setMediaItem (ולא stop!) — ExoPlayer מחזיק את ה-stream
-    //    ממשיך מאותו position דרך seekTo
-    // 3. prepare() + seekTo(savedPos) + play()
-    //
-    // זה **שונה** מ-MergingMediaSource כי אנחנו לא יוצרים MediaSource חדש
-    // — אנחנו רק מעדכנים את ה-MediaItem שעליו ExoPlayer כבר עובד.
-    // ExoPlayer מזהה שה-URI לא השתנה ומנסה לעשות seamless transition.
-    //
-    // NOTE: אם ה-URL של הסרט פג תוקף (Stremio token) — יהיה שגיאת 1004.
-    // במקרה כזה אנחנו שומרים את הכתובית ב-pendingSubtitle ומנסים שוב
-    // אחרי שהמשתמש טוען source חדש.
     private fun injectSubtitle(subFile: File, isVtt: Boolean) {
-        val mime     = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos = player.currentPosition
+        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val savedPos   = player.currentPosition
         val wasPlaying = player.isPlaying
 
         val subConf = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
@@ -280,15 +275,10 @@ class ExoPlayerWrapper(context: Context) {
 
         val currentUri = player.currentMediaItem?.localConfiguration?.uri
         if (currentUri == null) {
-            // player עוד לא מוכן — שמור ל-later (לא בשימוש בגרסה הנוכחית)
             pendingSubtitle = Pair(subFile, isVtt)
             return
         }
 
-        // ─── הגישה: setMediaItem עם SubtitleConfiguration ──────────────────
-        // ExoPlayer בודק אם ה-URI השתנה:
-        // - אם לא השתנה → seamless (ממשיך מאותו position)
-        // - אם השתנה    → re-buffer (הסרט נטען מחדש)
         pendingSubtitle = Pair(subFile, isVtt)
 
         val newItem = MediaItem.Builder()
@@ -296,7 +286,7 @@ class ExoPlayerWrapper(context: Context) {
             .setSubtitleConfigurations(listOf(subConf))
             .build()
 
-        player.setMediaItem(newItem, /* resetPosition= */ false)
+        player.setMediaItem(newItem, false)
         player.prepare()
         player.seekTo(savedPos)
         if (wasPlaying) player.playWhenReady = true
@@ -310,6 +300,7 @@ class ExoPlayerWrapper(context: Context) {
     }
     fun clearError() { _playerError.value = null }
     fun release() {
+        _currentCues.value = emptyList()
         try { player.release() } catch (_: Exception) {}
     }
 }
