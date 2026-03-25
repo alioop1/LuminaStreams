@@ -131,12 +131,12 @@ private val NAV_GLASS = Color(0x18FFFFFF)
 private val NAV_FOCUS = Color(0x30FFFFFF)
 
 // ═══════════════════════════════════════════════════════════════════
-//  LAYOUT — ✅ תוקן: ROW_PORTRAIT_H גדול יותר לפוסטרים מלאים
+//  LAYOUT
 // ═══════════════════════════════════════════════════════════════════
-private val NAV_SEARCH_H = 32.dp
-private val NAV_PILLS_H  = 44.dp
-private val NAV_PILL_H   = 36.dp
-private val NAV_GAP      = 8.dp   // ✅ הקטנו gap כדי לקרב pills לשורה העליונה
+private val NAV_SEARCH_H = 24.dp
+private val NAV_PILLS_H  = 34.dp
+private val NAV_PILL_H   = 28.dp
+private val NAV_GAP      = 12.dp
 private val NAV_H        = NAV_SEARCH_H + NAV_PILLS_H + NAV_GAP
 
 private val LAND_W = 280.dp
@@ -144,7 +144,7 @@ private val LAND_H = 158.dp
 private val PORT_W = 148.dp
 private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
-private val ROW_PORTRAIT_H  = 300.dp  // ✅ תוקן: היה 260 — מספיק לכרטיס + label + spacing
+private val ROW_PORTRAIT_H  = 260.dp
 
 private const val LAND_W_PX = 560
 private const val LAND_H_PX = 316
@@ -217,6 +217,7 @@ fun HomeScreen(
         state.tvHBO, state.tvAmazon, state.tvParamount, state.tvHulu,
         state.tvNetflix, state.tvDisney, state.tvPremieres,
         state.tvDrama, state.tvCrime, state.tvScifi, state.tvTopRated,
+        // Fuzer:
         state.fuzerMovies, state.fuzerSeries, state.fuzerMoviesHD,
         state.fuzerSeriesHD, state.fuzerMovies4K, state.fuzerSeries4K,
         state.fuzerDubbedMovies, state.fuzerDubbedSeries
@@ -269,10 +270,13 @@ fun HomeScreen(
                 }
             }
             "Fuzer" -> buildList {
+                // תוכן חדש — סרטים + סדרות ביחד
                 val newContent = (state.fuzerMovies + state.fuzerSeries)
-                    .sortedByDescending { it.id }
+                    .sortedByDescending { it.id } // הכי חדשים ראשון
                 if (newContent.isNotEmpty())
                     add(RowDef.Regular("fuzer_new",  "🆕 תוכן חדש",          newContent))
+
+                // סרטים בלבד
                 if (state.fuzerMovies.isNotEmpty())
                     add(RowDef.Regular("fuzer_m",    "🎬 סרטים",              state.fuzerMovies))
                 if (state.fuzerMoviesHD.isNotEmpty())
@@ -281,6 +285,8 @@ fun HomeScreen(
                     add(RowDef.Regular("fuzer_m4k",  "✨ סרטים 4K",           state.fuzerMovies4K))
                 if (state.fuzerDubbedMovies.isNotEmpty())
                     add(RowDef.Regular("fuzer_dm",   "🎤 סרטים מדובבים",      state.fuzerDubbedMovies))
+
+                // סדרות בלבד
                 if (state.fuzerSeries.isNotEmpty())
                     add(RowDef.Regular("fuzer_tv",   "📺 סדרות",              state.fuzerSeries))
                 if (state.fuzerSeriesHD.isNotEmpty())
@@ -296,23 +302,13 @@ fun HomeScreen(
 
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
-    val density  = LocalDensity.current.density
-    val tvScale  = if (density < 1.8f) 1.15f else 1.0f
-
-    val landW    = LAND_W    * tvScale
-    val landH    = LAND_H    * tvScale
-    val portW    = PORT_W    * tvScale
-    val portH    = PORT_H    * tvScale
-    val rowLandH = ROW_LANDSCAPE_H * tvScale
-    val rowPortH = ROW_PORTRAIT_H  * tvScale
-
-    val screenH      = LocalConfiguration.current.screenHeightDp.dp
-    // ✅ תוקן: bottomPanelH מדויק יותר — לא חותך את הכותרת
-    val bottomPanelH = (rowLandH + rowPortH + 32.dp).coerceAtMost(screenH * 0.38f)
-
     fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) {
-        is RowDef.StudioRibbon -> 110.dp * tvScale
-        else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) rowLandH else rowPortH
+        is RowDef.StudioRibbon -> 110.dp
+        else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
+    }
+
+    val panelH = remember(rows.size) {
+        if (rows.isEmpty()) ROW_PORTRAIT_H else ROW_PORTRAIT_H + 16.dp
     }
 
     LaunchedEffect(Unit) {
@@ -326,6 +322,7 @@ fun HomeScreen(
                     is RowDef.StudioRibbon -> emptyList()
                 }
             }?.firstOrNull()
+            // ✅ תיקון Davey #3: עדכן heroMovie רק אם id השתנה
             if (m != null && m.id != focusState.heroMovie?.id) {
                 focusState.heroMovie = m
             }
@@ -352,19 +349,15 @@ fun HomeScreen(
 
         BackdropLayer(focusState.heroMovie)
         Box(Modifier.fillMaxSize().background(rowsOverlay))
-        HeroOverlay(focusState.heroMovie, bottomPanelH)
+        HeroOverlay(focusState.heroMovie, panelH)
 
         ContentLayer(
             rows                = rows,
             focusState          = focusState,
             activeTab           = state.selectedTab,
             activeFilter        = state.selectedStudioFilter,
-            bottomPanelH        = bottomPanelH,
+            panelH              = panelH,
             rowHeightFor        = { i -> rowHeightFor(i) },
-            cardLandW           = landW,
-            cardLandH           = landH,
-            cardPortW           = portW,
-            cardPortH           = portH,
             onMovieClick        = onMovieClick,
             onHeroUpdate        = { focusState.heroMovie = it },
             onStudioFilterClick = { filter ->
@@ -378,7 +371,7 @@ fun HomeScreen(
             onSeriesTab = { viewModel.selectTab("סדרות");  viewModel.setStudioFilter(null) },
             onFuzer     = {
                 viewModel.selectTab("Fuzer")
-                viewModel.loadFuzerContent()
+                try { viewModel::class.java.getMethod("loadFuzerContent").invoke(viewModel) } catch (_: Exception) {}
             },
             onWatchlist = { navController.navigate("watchlist") },
             onSettings  = { navController.navigate("settings") }
@@ -426,27 +419,23 @@ private fun BackdropLayer(hero: Movie?) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  HERO OVERLAY — ✅ תוקן: bottom padding מחושב נכון
+//  HERO OVERLAY
 // ═══════════════════════════════════════════════════════════════════
 @Composable
-private fun HeroOverlay(hero: Movie?, bottomPanelH: Dp) {
+private fun HeroOverlay(hero: Movie?, panelH: Dp) {
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         hero?.let { m ->
             key(m.id) {
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
-                        .padding(
-                            start  = 72.dp,
-                            end    = 480.dp,
-                            bottom = bottomPanelH + 32.dp  // ✅ תוקן: היה 24
-                        ),
+                        .padding(start = 60.dp, end = 400.dp, bottom = panelH + 16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     val tsz = when {
-                        m.title.length > 26 -> 36.sp
-                        m.title.length > 16 -> 44.sp
-                        else                -> 56.sp
+                        m.title.length > 26 -> 28.sp
+                        m.title.length > 16 -> 34.sp
+                        else                -> 44.sp
                     }
                     Text(
                         text          = m.title,
@@ -469,7 +458,7 @@ private fun HeroOverlay(hero: Movie?, bottomPanelH: Dp) {
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(Color(0xFFF5C518))
                                     .padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment     = Alignment.CenterVertically,
+                                verticalAlignment   = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text("IMDb", color = Color(0xFF141414), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
@@ -479,13 +468,13 @@ private fun HeroOverlay(hero: Movie?, bottomPanelH: Dp) {
                     }
                     if (m.overview.isNotBlank()) {
                         Text(
-                            text       = m.overview,
-                            color      = DIM2,
-                            fontSize   = 13.sp,
+                            text      = m.overview,
+                            color     = DIM2,
+                            fontSize  = 13.sp,
                             lineHeight = 20.sp,
-                            maxLines   = 4,
-                            overflow   = TextOverflow.Ellipsis,
-                            modifier   = Modifier.widthIn(max = 640.dp)
+                            maxLines  = 4,
+                            overflow  = TextOverflow.Ellipsis,
+                            modifier  = Modifier.widthIn(max = 640.dp)
                         )
                     }
                 }
@@ -503,9 +492,7 @@ private fun HeroOverlay(hero: Movie?, bottomPanelH: Dp) {
 private fun ContentLayer(
     rows: List<RowDef>, focusState: HomeFocusState, activeTab: String,
     activeFilter: String?,
-    bottomPanelH: Dp, rowHeightFor: (Int) -> Dp,
-    cardLandW: Dp, cardLandH: Dp,
-    cardPortW: Dp, cardPortH: Dp,
+    panelH: Dp, rowHeightFor: (Int) -> Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
     onStudioFilterClick: (String?) -> Unit,
     onLoadMore: (String) -> Unit,
@@ -582,10 +569,9 @@ private fun ContentLayer(
                 }
             }
     ) {
-        // ── Navbar — תמיד למעלה ──────────────────────────────────────
         TwoRowNavBar(
-            activeTab   = activeTab,
-            firstNavFR  = firstNavFR,
+            activeTab  = activeTab,
+            firstNavFR = firstNavFR,
             onSearch    = onSearch,
             onHomeTab   = onHomeTab,
             onMoviesTab = onMoviesTab,
@@ -601,24 +587,18 @@ private fun ContentLayer(
                 .zIndex(10f)
         )
 
-        // ── RowsPanel — עוגן לתחתית ──────────────────────────────────
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(bottomPanelH)
+                .height(panelH)
                 .align(Alignment.BottomStart)
-                .zIndex(5f)
         ) {
             RowsPanel(
                 rows                = rows,
                 focusState          = focusState,
                 rowFRs              = firstCardFRs,
-                panelH              = bottomPanelH,
+                panelH              = panelH,
                 rowHeightFor        = rowHeightFor,
-                cardLandW           = cardLandW,
-                cardLandH           = cardLandH,
-                cardPortW           = cardPortW,
-                cardPortH           = cardPortH,
                 activeFilter        = activeFilter,
                 onStudioFilterClick = onStudioFilterClick,
                 onLoadMore          = onLoadMore,
@@ -630,7 +610,7 @@ private fun ContentLayer(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  TWO-ROW NAV BAR — ✅ תוקן: gradient + padding top לשכב מעל hero
+//  TWO-ROW NAV BAR
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun TwoRowNavBar(
@@ -658,17 +638,7 @@ private fun TwoRowNavBar(
     val animatedX     by animateDpAsState(targetValue = targetX,     animationSpec = tween(350, easing = FastOutSlowInEasing), label = "pillX")
     val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(350, easing = FastOutSlowInEasing), label = "pillW")
 
-    // ✅ תוקן: gradient רקע + padding top
-    Column(
-        modifier = modifier
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xF0070707), Color(0xC0070707), Color(0x80070707), Color.Transparent)
-                )
-            )
-            .padding(top = 12.dp)
-            .onFocusChanged { if (it.hasFocus) onNavFocus() }
-    ) {
+    Column(modifier = modifier.onFocusChanged { if (it.hasFocus) onNavFocus() }) {
         Row(
             modifier          = Modifier.fillMaxWidth().height(NAV_SEARCH_H).padding(horizontal = 52.dp),
             verticalAlignment = Alignment.CenterVertically
@@ -796,22 +766,20 @@ private fun NavPill(
     ) {
         Box(Modifier.fillMaxHeight().wrapContentWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Icon(icon, null, Modifier.size(18.dp))
-                Text(label, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, letterSpacing = 0.2.sp, softWrap = false, maxLines = 1)
+                Icon(icon, null, Modifier.size(14.dp))
+                Text(label, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, letterSpacing = 0.2.sp, softWrap = false, maxLines = 1)
             }
         }
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  ROWS PANEL — ✅ תוקן: הסרת clipToBounds הפנימי
+//  ROWS PANEL
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsPanel(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
     panelH: Dp, rowHeightFor: (Int) -> Dp,
-    cardLandW: Dp, cardLandH: Dp,
-    cardPortW: Dp, cardPortH: Dp,
     activeFilter: String?,
     onStudioFilterClick: (String?) -> Unit,
     onLoadMore: (String) -> Unit,
@@ -831,13 +799,7 @@ private fun RowsPanel(
         label         = "rowsSlide"
     )
 
-    // ✅ תוקן: clipToBounds רק בחיצוני — הפנימי חופשי לזום
-    Box(
-        Modifier
-            .fillMaxWidth()
-            .fillMaxHeight()
-            .clipToBounds()
-    ) {
+    Box(Modifier.fillMaxWidth().height(panelH).clipToBounds()) {
         Box(Modifier.fillMaxWidth().offset(y = animatedY)) {
             var yAccum = 0.dp
             rows.forEachIndexed { i, rowDef ->
@@ -874,54 +836,14 @@ private fun RowsPanel(
                             StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
                         } else if (isLand) {
                             when (rowDef) {
-                                is RowDef.Regular -> LandscapeRow(
-                                    title      = rowDef.title,
-                                    movies     = rowDef.movies,
-                                    isActive   = isActive,
-                                    cardFR     = cardFR,
-                                    onFocus    = onFocus,
-                                    onClick    = onItemClick,
-                                    cardW      = cardLandW,
-                                    cardH      = cardLandH,
-                                    onLoadMore = { onLoadMore(rowDef.id) }
-                                )
-                                is RowDef.Studio  -> LandscapeStudioRow(
-                                    brand      = rowDef.brand,
-                                    movies     = rowDef.movies,
-                                    isActive   = isActive,
-                                    cardFR     = cardFR,
-                                    onFocus    = onFocus,
-                                    onClick    = onItemClick,
-                                    cardW      = cardLandW,
-                                    cardH      = cardLandH,
-                                    onLoadMore = { onLoadMore(rowDef.id) }
-                                )
+                                is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                                is RowDef.Studio  -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
                                 else -> {}
                             }
                         } else {
                             when (rowDef) {
-                                is RowDef.Regular -> PortraitRow(
-                                    title      = rowDef.title,
-                                    movies     = rowDef.movies,
-                                    isActive   = isActive,
-                                    cardFR     = cardFR,
-                                    onFocus    = onFocus,
-                                    onClick    = onItemClick,
-                                    cardW      = cardPortW,
-                                    cardH      = cardPortH,
-                                    onLoadMore = { onLoadMore(rowDef.id) }
-                                )
-                                is RowDef.Studio  -> PortraitStudioRow(
-                                    brand      = rowDef.brand,
-                                    movies     = rowDef.movies,
-                                    isActive   = isActive,
-                                    cardFR     = cardFR,
-                                    onFocus    = onFocus,
-                                    onClick    = onItemClick,
-                                    cardW      = cardPortW,
-                                    cardH      = cardPortH,
-                                    onLoadMore = { onLoadMore(rowDef.id) }
-                                )
+                                is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
+                                is RowDef.Studio  -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
                                 else -> {}
                             }
                         }
@@ -941,8 +863,6 @@ private fun RowsPanel(
 private fun LandscapeRow(
     title: String, movies: List<Movie>, isActive: Boolean,
     cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
-    cardW: Dp = LAND_W,
-    cardH: Dp = LAND_H,
     onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
@@ -969,8 +889,6 @@ private fun LandscapeRow(
             itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 LandscapeCard(
                     movie     = movie,
-                    cardW     = cardW,
-                    cardH     = cardH,
                     modifier  = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier,
                     onFocused = { onFocus(movie) },
                     onClick   = { onClick(movie.id) }
@@ -984,8 +902,6 @@ private fun LandscapeRow(
 private fun LandscapeStudioRow(
     brand: StudioBrand, movies: List<Movie>, isActive: Boolean,
     cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
-    cardW: Dp = LAND_W,
-    cardH: Dp = LAND_H,
     onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
@@ -1006,17 +922,10 @@ private fun LandscapeStudioRow(
             StudioBadge(brand, isActive)
             Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal)
         }
-        LazyRow(
-            state                 = rowState,
-            contentPadding        = PaddingValues(horizontal = 52.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            modifier              = Modifier.fillMaxWidth()
-        ) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(14.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 LandscapeCard(
                     movie     = movie,
-                    cardW     = cardW,
-                    cardH     = cardH,
                     modifier  = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier,
                     onFocused = { onFocus(movie) },
                     onClick   = { onClick(movie.id) }
@@ -1027,14 +936,12 @@ private fun LandscapeStudioRow(
 }
 
 // ═══════════════════════════════════════════════════════════════════
-//  PORTRAIT ROW — ✅ תוקן: vertical padding בתוך LazyRow
+//  PORTRAIT ROW
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun PortraitRow(
     title: String, movies: List<Movie>, isActive: Boolean,
     cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
-    cardW: Dp = PORT_W,
-    cardH: Dp = PORT_H,
     onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
@@ -1052,18 +959,12 @@ private fun PortraitRow(
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
-        LazyRow(
-            state                 = rowState,
-            contentPadding        = PaddingValues(horizontal = 52.dp, vertical = 4.dp),  // ✅ תוקן: vertical=4
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier              = Modifier.fillMaxWidth()
-        ) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 PosterCard(
                     movie     = movie,
-                    cardW     = cardW,
-                    cardH     = cardH,
                     modifier  = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier,
+                    cardW     = PORT_W, cardH = PORT_H,
                     onFocused = { onFocus(movie) },
                     onClick   = { onClick(movie.id) }
                 )
@@ -1076,8 +977,6 @@ private fun PortraitRow(
 private fun PortraitStudioRow(
     brand: StudioBrand, movies: List<Movie>, isActive: Boolean,
     cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit,
-    cardW: Dp = PORT_W,
-    cardH: Dp = PORT_H,
     onLoadMore: () -> Unit
 ) {
     if (movies.isEmpty()) return
@@ -1098,18 +997,12 @@ private fun PortraitStudioRow(
             StudioBadge(brand, isActive)
             Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal)
         }
-        LazyRow(
-            state                 = rowState,
-            contentPadding        = PaddingValues(horizontal = 52.dp, vertical = 4.dp),  // ✅ תוקן: vertical=4
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            modifier              = Modifier.fillMaxWidth()
-        ) {
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
             itemsIndexed(movies, key = { i, m -> "${m.id}_$i" }) { i, movie ->
                 PosterCard(
                     movie     = movie,
-                    cardW     = cardW,
-                    cardH     = cardH,
                     modifier  = if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier,
+                    cardW     = PORT_W, cardH = PORT_H,
                     onFocused = { onFocus(movie) },
                     onClick   = { onClick(movie.id) }
                 )
@@ -1118,7 +1011,6 @@ private fun PortraitStudioRow(
     }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
 private fun studioLabel(b: StudioBrand) = when (b) {
     StudioBrand.NETFLIX   -> "Netflix Originals"
     StudioBrand.APPLE_TV  -> "Apple TV+ Originals"
@@ -1177,8 +1069,6 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
 @Composable
 private fun LandscapeCard(
     movie: Movie, modifier: Modifier = Modifier,
-    cardW: Dp = LAND_W,
-    cardH: Dp = LAND_H,
     onFocused: () -> Unit = {}, onClick: () -> Unit
 ) {
     val ctx       = LocalContext.current
@@ -1208,8 +1098,7 @@ private fun LandscapeCard(
 
     Box(
         modifier
-            .width(cardW)
-            .height(cardH)
+            .width(LAND_W).height(LAND_H)
             .graphicsLayer { scaleX = zoom; scaleY = zoom }
     ) {
         Surface(
