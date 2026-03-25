@@ -19,6 +19,7 @@ import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -50,9 +51,17 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
+        // Xiaomi & MeCool/Amlogic: always PREFER so SW AV1 fallback works.
+        // Pure HIGH-tier devices use MODE_OFF for max HW performance.
         setExtensionRendererMode(
-            if (hwAcceleration) DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-            else DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            when {
+                !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+            }
         )
         setEnableDecoderFallback(true)
     }
@@ -71,7 +80,16 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_AC3,
                 MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(true)
+            // Tunneling disabled for Xiaomi (MIUI audio bug) and Amlogic/MeCool (driver crash).
+            .setTunnelingEnabled(
+                DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
+                !DeviceProfile.isXiaomi &&
+                !DeviceProfile.isMeCool &&
+                !DeviceProfile.isAmlogic
+            )
+            // ✅ ExoPlayer native Hebrew subtitle preference — catches embedded HEB tracks
+            .setPreferredTextLanguages("iw", "heb", "he")
+            .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
 
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
@@ -89,6 +107,7 @@ class ExoPlayerWrapper(context: Context) {
     } else {
         DefaultLoadControl.Builder()
             .setBufferDurationsMs(15_000, 50_000, 2_500, 5_000)
+            .setTargetBufferBytes(20 * 1024 * 1024)
             .build()
     }
 
@@ -142,6 +161,10 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentTracks = MutableStateFlow(Tracks.EMPTY)
     val currentTracks: StateFlow<Tracks> = _currentTracks.asStateFlow()
 
+    // ✅ Signals when subtitle was successfully applied (for PlayerScreen to confirm)
+    private val _subtitleApplied = MutableStateFlow(false)
+    val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
+
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
@@ -150,8 +173,8 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onPlayerError(error: PlaybackException) {
                 val message = when (error.errorCode) {
-                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED      -> "Decoder init failed — try a different source."
-                    PlaybackException.ERROR_CODE_DECODING_FAILED          -> "Decoding error — try a different source."
+                    PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed — try a different source."
+                    PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error — try a different source."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED  -> "Network connection failed."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
                     PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
@@ -178,6 +201,7 @@ class ExoPlayerWrapper(context: Context) {
     fun prepareStream(videoUrl: String) {
         try {
             _playerError.value = null
+            _subtitleApplied.value = false
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
             player.playWhenReady = true
@@ -186,36 +210,46 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ── כתוביות: הורדה + החלה ─────────────────────────────────────────────────
-    // הבעיה הישנה: replaceMediaItem קורה לפני שהקובץ נכתב, ו-seekTo מאפס.
-    // התיקון:
-    //   1. מוריד לקובץ זמני
-    //   2. קורא applyLocalSubtitle רק אחרי שהכתיבה הצליחה
-    //   3. שומר את ה-position לפני ה-replace ומחזיר אחרי
-    fun applySubtitle(subtitleUrl: String, lang: String = "heb", isVtt: Boolean = false) {
+    /**
+     * Downloads subtitle from URL and applies it.
+     * ✅ Retries up to [maxRetries] times on network failure before giving up.
+     * ✅ Supports both .srt and .vtt formats.
+     */
+    fun applySubtitle(
+        subtitleUrl: String,
+        lang: String = "heb",
+        isVtt: Boolean = false,
+        maxRetries: Int = 2
+    ) {
         if (subtitleUrl.startsWith("file://")) {
             applyLocalSubtitle(subtitleUrl, lang, isVtt)
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
-            try {
-                val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
-                connection.setRequestProperty("User-Agent", "Mozilla/5.0")
-                connection.connectTimeout = 10_000
-                connection.readTimeout    = 10_000
-                val responseCode = connection.responseCode
-                if (responseCode in 200..299) {
-                    val bytes   = connection.inputStream.readBytes()
-                    val ext     = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
-                    val subFile = File(appContext.cacheDir, "lumina_sub.$ext")
-                    subFile.writeBytes(bytes)
-                    withContext(Dispatchers.Main) {
-                        applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, ext == "vtt")
+            var lastError: Exception? = null
+            repeat(maxRetries + 1) { attempt ->
+                try {
+                    val connection = URL(subtitleUrl).openConnection() as HttpURLConnection
+                    connection.setRequestProperty("User-Agent", "Mozilla/5.0")
+                    connection.connectTimeout = 12_000
+                    connection.readTimeout    = 12_000
+                    val responseCode = connection.responseCode
+                    if (responseCode in 200..299) {
+                        val bytes   = connection.inputStream.readBytes()
+                        val ext     = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
+                        val subFile = File(appContext.cacheDir, "lumina_sub.$ext")
+                        subFile.writeBytes(bytes)
+                        withContext(Dispatchers.Main) {
+                            applyLocalSubtitle(Uri.fromFile(subFile).toString(), lang, ext == "vtt")
+                        }
+                        return@launch // success
                     }
+                } catch (e: Exception) {
+                    lastError = e
+                    if (attempt < maxRetries) kotlinx.coroutines.delay(1_500L * (attempt + 1))
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
+            lastError?.printStackTrace()
         }
     }
 
@@ -223,9 +257,8 @@ class ExoPlayerWrapper(context: Context) {
         val current = player.currentMediaItem ?: return
         val mime    = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
 
-        // שמירת המיקום לפני ה-replace
-        val savedPos     = player.currentPosition
-        val wasPlaying   = player.isPlaying
+        val savedPos   = player.currentPosition
+        val wasPlaying = player.isPlaying
 
         val conf = MediaItem.SubtitleConfiguration.Builder(Uri.parse(localUriStr))
             .setMimeType(mime)
@@ -234,13 +267,11 @@ class ExoPlayerWrapper(context: Context) {
             .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
             .build()
 
-        // replace + שחזור מיקום
         player.replaceMediaItem(
             player.currentMediaItemIndex,
             current.buildUpon().setSubtitleConfigurations(listOf(conf)).build()
         )
 
-        // אחרי replace חייבים לבקש מחדש את הטראק ולחזור למיקום
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
@@ -249,6 +280,7 @@ class ExoPlayerWrapper(context: Context) {
 
         player.seekTo(savedPos)
         if (wasPlaying) player.play()
+        _subtitleApplied.value = true
     }
 
     fun play()  { player.play() }
