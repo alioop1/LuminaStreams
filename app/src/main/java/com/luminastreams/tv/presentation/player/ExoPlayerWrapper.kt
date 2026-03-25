@@ -42,10 +42,12 @@ class ExoPlayerWrapper(context: Context) {
     private val appContext = context.applicationContext
     private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    private val audioPassthrough  = prefs.getBoolean("audio_passthrough", false)
-    private val hwAcceleration    = prefs.getBoolean("hw_accel", true)
-    private val preAllocateBuffer = prefs.getBoolean("pre_buffer", false)
-    private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
+    private val audioPassthrough   = prefs.getBoolean("audio_passthrough",    false)
+    private val hwAcceleration     = prefs.getBoolean("hw_accel",             true)
+    private val preAllocateBuffer  = prefs.getBoolean("pre_buffer",           false)
+    private val audioLangPref      = prefs.getString("preferred_audio_lang",  "original") ?: "original"
+    // ✅ REAL: skip embedded text tracks entirely — reduces CPU & bandwidth on weak streamers
+    private val skipEmbeddedSubs   = prefs.getBoolean("subtitle_cache_only",  false)
 
     val useYellowSubtitles: Boolean = prefs.getBoolean("yellow_subs", false)
     val subtitleFontScale: Float = when (prefs.getString("subtitle_font_scale", "medium")) {
@@ -85,6 +87,8 @@ class ExoPlayerWrapper(context: Context) {
             )
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            // ✅ REAL: subtitle_cache_only — disable ExoPlayer embedded text track parsing
+            .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
             "en" -> builder.setPreferredAudioLanguages("eng", "en")
@@ -146,9 +150,6 @@ class ExoPlayerWrapper(context: Context) {
     private val _subtitleApplied = MutableStateFlow(false)
     val subtitleApplied: StateFlow<Boolean> = _subtitleApplied.asStateFlow()
 
-    // currentCues מוזן עכשיו מ-2 מקורות:
-    // 1. onCues מ-ExoPlayer (כתוביות embedded)
-    // 2. ה-ticker הפנימי שלנו (כתוביות מורדות)
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
@@ -160,19 +161,10 @@ class ExoPlayerWrapper(context: Context) {
 
     init {
         player.addListener(object : Player.Listener {
-
-            override fun onIsPlayingChanged(p: Boolean) {
-                _isPlaying.value = p
-            }
-
-            // onCues רק לכתוביות embedded — כתוביות מורדות מושמעות דרך ה-ticker
+            override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
             override fun onCues(cueGroup: CueGroup) {
-                // אם יש כתוביות מורדות פעילות — אל תדרוס אתן עם embedded
-                if (parsedSubs.isEmpty()) {
-                    _currentCues.value = cueGroup.cues
-                }
+                if (parsedSubs.isEmpty()) _currentCues.value = cueGroup.cues
             }
-
             override fun onPlayerError(error: PlaybackException) {
                 _playerError.value = when (error.errorCode) {
                     PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
@@ -186,14 +178,10 @@ class ExoPlayerWrapper(context: Context) {
                 }
                 _isPlaying.value = false
             }
-
             override fun onPlaybackStateChanged(s: Int) {
                 if (s == Player.STATE_ENDED) _isPlaying.value = false
             }
-
-            override fun onTracksChanged(tracks: Tracks) {
-                _currentTracks.value = tracks
-            }
+            override fun onTracksChanged(tracks: Tracks) { _currentTracks.value = tracks }
         })
     }
 
@@ -212,7 +200,6 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── applySubtitle ─────────────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -237,9 +224,7 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) {
-                            loadAndStartTicker(file, ext == "vtt")
-                        }
+                        withContext(Dispatchers.Main) { loadAndStartTicker(file, ext == "vtt") }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -251,32 +236,18 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── Parser + Ticker ───────────────────────────────────────────
-    //
-    // מפעיל פרסר SRT/VTT פנימי והופך את הכתוביות ל-Cue objects.
-    // אחרכך coroutine ticker קורא את player.currentPosition
-    // כל 200ms ומעדכן את _currentCues לפי הזמן.
-    // אין כאן שינוי ב-MediaSource / URL — אפס סיכון ל-1004.
     private fun loadAndStartTicker(subFile: File, isVtt: Boolean) {
         stopSubTicker()
         _currentCues.value = emptyList()
-
         val text = subFile.readText(Charsets.UTF_8)
         parsedSubs = if (isVtt) parseVtt(text) else parseSrt(text)
-
         if (parsedSubs.isEmpty()) return
-
         _subtitleApplied.value = true
-
         subTickerJob = scope.launch {
             while (isActive) {
                 val pos = player.currentPosition
                 val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                _currentCues.value = active.map { entry ->
-                    Cue.Builder()
-                        .setText(entry.text)
-                        .build()
-                }
+                _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
                 delay(200)
             }
         }
@@ -290,9 +261,7 @@ class ExoPlayerWrapper(context: Context) {
         _subtitleApplied.value = false
     }
 
-    // ─── SRT Parser ────────────────────────────────────────────────
     private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})""")
-
     private fun parseTimeMs(s: String): Long {
         val m = srtTimeRegex.find(s) ?: return -1
         val (h, min, sec, ms) = m.destructured
@@ -312,14 +281,12 @@ class ExoPlayerWrapper(context: Context) {
             val end   = parseTimeMs(parts[1].trim())
             if (start < 0 || end < 0) continue
             val textLines = lines.dropWhile { "-->" !in it }.drop(1)
-            val txt = textLines.joinToString("\n").trim()
-                .replace(Regex("<[^>]+>"), "")  // הסר HTML tags
+            val txt = textLines.joinToString("\n").trim().replace(Regex("<[^>]+>"), "")
             if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
         }
         return entries
     }
 
-    // ─── VTT Parser ────────────────────────────────────────────────
     private fun parseVtt(text: String): List<SubEntry> {
         val entries = mutableListOf<SubEntry>()
         val cleaned = text.replace("\r\n", "\n").removePrefix("\uFEFF")
@@ -334,8 +301,7 @@ class ExoPlayerWrapper(context: Context) {
             val end   = parseTimeMs(parts[1].trim())
             if (start < 0 || end < 0) continue
             val textLines = lines.dropWhile { "-->" !in it }.drop(1)
-            val txt = textLines.joinToString("\n").trim()
-                .replace(Regex("<[^>]+>"), "")
+            val txt = textLines.joinToString("\n").trim().replace(Regex("<[^>]+>"), "")
             if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
         }
         return entries

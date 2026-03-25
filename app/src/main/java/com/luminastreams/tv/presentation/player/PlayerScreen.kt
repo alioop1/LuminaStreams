@@ -6,6 +6,7 @@
 
 package com.luminastreams.tv.presentation.player
 
+import android.app.Activity
 import android.content.Context
 import android.view.KeyEvent
 import android.view.SurfaceView
@@ -66,8 +67,6 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 import android.graphics.Color as AndroidColor
 
-// ── Icons ─────────────────────────────────────────────────────────────
-
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -115,7 +114,6 @@ fun PlayerScreen(
     val isPlaying     by exo.isPlaying.collectAsState()
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
-    // ✅ currentCues — מגיע מ-onCues דרך StateFlow, עובד לכל סוגי הכתוביות
     val currentCues   by exo.currentCues.collectAsState()
 
     var surfaceReady      by remember { mutableStateOf(false) }
@@ -140,10 +138,32 @@ fun PlayerScreen(
 
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId) }
 
+    // ✅ REAL: AFR — switch display refresh rate to match content on playback start
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
             prepared = true
             exo.prepareStream(videoUrl)
+
+            val afrEnabled = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+                .getBoolean("afr", false)
+            if (afrEnabled) {
+                val activity = context as? Activity
+                activity?.window?.let { win ->
+                    val display = win.decorView.display
+                    if (display != null) {
+                        val modes = display.supportedModes
+                        // prefer the mode closest to 24 Hz (cinema) with the same resolution
+                        val currentMode = display.mode
+                        val best = modes
+                            .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+                            .minByOrNull { kotlin.math.abs(it.refreshRate - 24f) }
+                        if (best != null) {
+                            win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
+                        }
+                    }
+                }
+            }
+
             delay(3000)
             if (isPlaying) showControls = false
         }
@@ -277,10 +297,6 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ── Video Surface + SubtitleView ──────────────────────────────────────
-        // ✅ אין setPlayer() — SubtitleView מקבל cues דרך setCues(currentCues)
-        // currentCues מגיע מ-onCues() ב-ExoPlayerWrapper דרך StateFlow.
-        // זה עובד לכל סוגי הכתוביות: embedded + חיצוניות שנטענות ב-SubtitleConfiguration.
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
@@ -326,7 +342,6 @@ fun PlayerScreen(
                         setApplyEmbeddedFontSizes(false)
                         setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                         setBottomPaddingFraction(0.08f)
-                        // ✅ אין setPlayer() כאן — cues מגיעים דרך update למטה
                     }
                     addView(surfaceView)
                     addView(subtitleView)
@@ -336,12 +351,10 @@ fun PlayerScreen(
                 val sv  = frameLayout.getChildAt(0) as? SurfaceView
                 val sub = frameLayout.getChildAt(1) as? SubtitleView
                 sv?.let  { exo.player.setVideoSurfaceView(it) }
-                // ✅ setCues מופעל בכל recomposition כש-currentCues משתנה
                 sub?.setCues(currentCues)
             }
         )
 
-        // ── Resume Dialog ─────────────────────────────────────────────────────
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -393,7 +406,6 @@ fun PlayerScreen(
             }
         }
 
-        // ── Error Overlay ─────────────────────────────────────────────────────
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
@@ -430,7 +442,6 @@ fun PlayerScreen(
             }
         }
 
-        // ── Controls Overlay ──────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -452,7 +463,6 @@ fun PlayerScreen(
                         Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
                     }
                 }
-
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -475,7 +485,6 @@ fun PlayerScreen(
                     Spacer(Modifier.width(16.dp))
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
-
                 Column(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)
                 ) {
@@ -524,7 +533,6 @@ fun PlayerScreen(
             }
         }
 
-        // ── Side Panel ────────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = activeMenu != ActiveMenu.NONE && error == null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
@@ -603,8 +611,6 @@ fun PlayerScreen(
     }
 }
 
-// ── Side Panel Header ──────────────────────────────────────────────────
-
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
     Column {
@@ -621,8 +627,6 @@ private fun SidePanelHeader(title: String, subtitle: String) {
         Spacer(Modifier.height(20.dp))
     }
 }
-
-// ── Track List UI ──────────────────────────────────────────────────────
 
 @Composable
 private fun TrackListUi(
@@ -687,8 +691,6 @@ private fun TrackListUi(
     }
 }
 
-// ── Track Item Card ────────────────────────────────────────────────────
-
 @Composable
 private fun TrackItemCard(
     title:      String,
@@ -725,8 +727,6 @@ private fun TrackItemCard(
     }
 }
 
-// ── Premium Badge ──────────────────────────────────────────────────────
-
 @Composable
 private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
     Box(
@@ -739,8 +739,6 @@ private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false)
     }
 }
 
-// ── Utils ──────────────────────────────────────────────────────────────
-
 private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "heb", "he" -> "\uD83C\uDDEE\uD83C\uDDF1"
     "eng", "en" -> "\uD83C\uDDFA\uD83C\uDDF8"
@@ -751,8 +749,6 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     "ger", "de" -> "\uD83C\uDDE9\uD83C\uDDEA"
     else        -> "\uD83C\uDF10"
 }
-
-// ── Progress Bar ───────────────────────────────────────────────────────
 
 @Composable
 fun PlayerProgressControls(
@@ -828,8 +824,6 @@ fun PlayerProgressControls(
     }
 }
 
-// ── Control Pill ───────────────────────────────────────────────────────
-
 @Composable
 fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Surface(
@@ -847,8 +841,6 @@ fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, 
         }
     }
 }
-
-// ── Format Time ────────────────────────────────────────────────────────
 
 fun formatTime(ms: Long): String {
     val s   = ms / 1000
