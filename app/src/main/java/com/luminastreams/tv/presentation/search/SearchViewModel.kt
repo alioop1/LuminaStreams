@@ -3,7 +3,6 @@ package com.luminastreams.tv.presentation.search
 import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.Immutable
-import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.data.remote.FuzerEngine
@@ -16,48 +15,63 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 
-enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
+// ── Enums & Models ────────────────────────────────────────────────────────────
 
-// Quality filter values
+enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
 enum class QualityFilter { ANY, HD, FHD, UHD }
+enum class SortOrder { RELEVANCE, RATING, YEAR }
 
 @Immutable
 data class SearchFilters(
-    val genre:       String?       = null,   // null = any
-    val minYear:     Int           = 1970,
-    val maxYear:     Int           = 2026,
-    val minRating:   Float         = 0f,
-    val quality:     QualityFilter = QualityFilter.ANY,
-    val dubbedOnly:  Boolean       = false   // Fuzer only
+    val genre:      String?       = null,
+    val minRating:  Float         = 0f,
+    val quality:    QualityFilter = QualityFilter.ANY,
+    val dubbedOnly: Boolean       = false,
+    val sort:       SortOrder     = SortOrder.RELEVANCE
 ) {
     val isActive: Boolean get() =
-        genre != null || minYear > 1970 || maxYear < 2026 || minRating > 0f ||
-        quality != QualityFilter.ANY || dubbedOnly
+        genre != null || minRating > 0f ||
+        quality != QualityFilter.ANY || dubbedOnly ||
+        sort != SortOrder.RELEVANCE
 }
+
+// Smart chip shown in the dynamic filter tray
+@Immutable
+data class FilterChip(
+    val id:      String,
+    val label:   String,
+    val emoji:   String = "",
+    val isActive: Boolean = false
+)
 
 @Immutable
 data class SearchState(
-    val query:              String          = "",
-    val source:             SearchSource    = SearchSource.ALL,
-    val filters:            SearchFilters   = SearchFilters(),
-    val showFilters:        Boolean         = false,
+    val query:                String             = "",
+    val source:               SearchSource       = SearchSource.ALL,
+    val filters:              SearchFilters      = SearchFilters(),
+    val showFilters:          Boolean            = false,
 
-    // TMDB
-    val tmdbResults:        List<SearchResult> = emptyList(),
-    val isTmdbLoading:      Boolean            = false,
+    // Results
+    val tmdbResults:          List<SearchResult> = emptyList(),
+    val fuzerResults:         List<SearchResult> = emptyList(),
+    val discoveryResults:     List<SearchResult> = emptyList(),
 
-    // Fuzer
-    val fuzerResults:       List<SearchResult> = emptyList(),
-    val isFuzerLoading:     Boolean            = false,
-    val fuzerError:         String?            = null,
+    // Loading
+    val isTmdbLoading:        Boolean            = false,
+    val isFuzerLoading:       Boolean            = false,
+    val isDiscoveryLoading:   Boolean            = false,
 
-    // Discovery (no query)
-    val discoveryResults:   List<SearchResult> = emptyList(),
-    val isDiscoveryLoading: Boolean            = false,
+    val fuzerError:           String?            = null,
 
-    // UI helpers
-    val searchHistory:           List<String> = emptyList(),
-    val autocompleteSuggestions: List<String> = emptyList()
+    // Smart suggestions (inline, like tvOS)
+    val suggestions:          List<String>       = emptyList(),
+    val searchHistory:        List<String>       = emptyList(),
+
+    // Dynamic filter chips generated from actual results
+    val visibleFilterChips:   List<FilterChip>   = emptyList(),
+
+    // Last focused result index — restores focus on back
+    val lastFocusedIndex:     Int                = 0
 ) {
     private fun applyFilters(list: List<SearchResult>): List<SearchResult> {
         var r = list
@@ -65,22 +79,22 @@ data class SearchState(
             r = r.filter { it.genre.equals(filters.genre, ignoreCase = true) }
         if (filters.minRating > 0f)
             r = r.filter { it.rating >= filters.minRating }
-        if (filters.minYear > 1970 || filters.maxYear < 2026)
-            r = r.filter { yr ->
-                val y = yr.releaseYear.toIntOrNull() ?: return@filter true
-                y in filters.minYear..filters.maxYear
-            }
         if (filters.quality != QualityFilter.ANY) {
-            val qStr = when (filters.quality) {
+            val tag = when (filters.quality) {
                 QualityFilter.HD  -> "HD"
                 QualityFilter.FHD -> "FHD"
                 QualityFilter.UHD -> "4K"
-                else              -> ""
+                else -> ""
             }
-            r = r.filter { it.qualityTag.equals(qStr, ignoreCase = true) }
+            r = r.filter { it.qualityTag.equals(tag, ignoreCase = true) }
         }
         if (filters.dubbedOnly)
             r = r.filter { it.title.contains("\u05de\u05d3\u05d5\u05d1\u05d1", ignoreCase = true) }
+        r = when (filters.sort) {
+            SortOrder.RATING    -> r.sortedByDescending { it.rating }
+            SortOrder.YEAR      -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
+            SortOrder.RELEVANCE -> r
+        }
         return r
     }
 
@@ -102,31 +116,34 @@ data class SearchState(
 }
 
 sealed interface SearchIntent {
-    data class UpdateQuery(val query: String)     : SearchIntent
-    data class SelectSource(val source: SearchSource) : SearchIntent
-    data class UpdateFilters(val filters: SearchFilters) : SearchIntent
-    object ToggleFilters   : SearchIntent
-    object ClearFilters    : SearchIntent
-    object ClearHistory    : SearchIntent
-    data class RemoveHistoryItem(val item: String) : SearchIntent
+    data class UpdateQuery(val query: String)              : SearchIntent
+    data class SelectSource(val source: SearchSource)     : SearchIntent
+    data class UpdateFilters(val filters: SearchFilters)  : SearchIntent
+    data class ApplyChip(val chipId: String)              : SearchIntent
+    data class SetLastFocused(val index: Int)             : SearchIntent
+    object ToggleFilters  : SearchIntent
+    object ClearFilters   : SearchIntent
+    object ClearHistory   : SearchIntent
+    data class RemoveHistoryItem(val item: String)        : SearchIntent
 }
+
+// ── ViewModel ─────────────────────────────────────────────────────────────────
 
 @OptIn(FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
 
-    private val _state      = MutableStateFlow(SearchState())
+    private val _state = MutableStateFlow(SearchState())
     val state: StateFlow<SearchState> = _state.asStateFlow()
 
-    private val queryFlow     = MutableStateFlow("")
-    private val historyPrefs  = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
-
-    // Single shared instance — keeps cookies alive for whole session
-    private val fuzerEngine   = FuzerEngine()
+    private val queryFlow    = MutableStateFlow("")
+    private val historyPrefs = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
+    private val fuzerEngine  = FuzerEngine()
 
     private val popularTerms = listOf(
         "Avatar", "Avengers", "Batman", "Spider-Man", "Superman",
         "Matrix", "Inception", "Interstellar", "Joker", "Star Wars",
-        "Harry Potter", "Lord of the Rings", "Deadpool", "Breaking Bad"
+        "Harry Potter", "Lord of the Rings", "Deadpool", "Breaking Bad",
+        "Game of Thrones", "Stranger Things", "The Crown", "Squid Game"
     )
 
     init {
@@ -135,35 +152,42 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         loadDiscovery()
     }
 
-    // ─────────────────────────────────────────────────────────────
     fun onIntent(intent: SearchIntent) {
         when (intent) {
             is SearchIntent.UpdateQuery      -> handleQueryUpdate(intent.query)
             is SearchIntent.SelectSource     -> handleSourceChange(intent.source)
-            is SearchIntent.UpdateFilters    -> _state.update { it.copy(filters = intent.filters) }
+            is SearchIntent.UpdateFilters    -> {
+                _state.update { it.copy(filters = intent.filters) }
+                rebuildFilterChips()
+            }
+            is SearchIntent.ApplyChip        -> handleChipTap(intent.chipId)
             is SearchIntent.ToggleFilters    -> _state.update { it.copy(showFilters = !it.showFilters) }
-            is SearchIntent.ClearFilters     -> _state.update { it.copy(filters = SearchFilters()) }
+            is SearchIntent.ClearFilters     -> {
+                _state.update { it.copy(filters = SearchFilters()) }
+                rebuildFilterChips()
+            }
             is SearchIntent.ClearHistory     -> clearHistory()
             is SearchIntent.RemoveHistoryItem-> removeHistoryItem(intent.item)
+            is SearchIntent.SetLastFocused   -> _state.update { it.copy(lastFocusedIndex = intent.index) }
         }
     }
 
-    // ─── Source change ────────────────────────────────────────────
+    // ── Source change ─────────────────────────────────────────────
     private fun handleSourceChange(src: SearchSource) {
-        _state.update { it.copy(source = src) }
-        // Always refresh Fuzer when switching to it and there's a query
+        _state.update { it.copy(source = src, lastFocusedIndex = 0) }
+        rebuildFilterChips()
         if (src == SearchSource.FUZER) {
             val q = _state.value.query
             if (q.isNotBlank()) viewModelScope.launch { runFuzerSearch(q) }
         }
     }
 
-    // ─── Query update ─────────────────────────────────────────────
+    // ── Query update ──────────────────────────────────────────────
     private fun handleQueryUpdate(newQuery: String) {
         _state.update {
             it.copy(
-                query = newQuery,
-                autocompleteSuggestions = buildSuggestions(newQuery)
+                query       = newQuery,
+                suggestions = buildSuggestions(newQuery)
             )
         }
         if (newQuery.isBlank()) {
@@ -172,6 +196,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 fuzerResults = emptyList(),
                 fuzerError   = null
             ) }
+            rebuildFilterChips()
             return
         }
         queryFlow.value = newQuery
@@ -181,29 +206,28 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         if (q.length < 2) return emptyList()
         val hist    = _state.value.searchHistory.filter { it.contains(q, ignoreCase = true) }
         val popular = popularTerms.filter { it.contains(q, ignoreCase = true) }
-        return (hist + popular).distinct().take(6)
+        return (hist + popular).distinct().take(5)
     }
 
-    // ─── Query observer — debounced ───────────────────────────────
+    // ── Query observer — debounced ────────────────────────────────
     private fun observeQuery() {
         viewModelScope.launch {
             queryFlow
-                .debounce(380)
+                .debounce(360)
                 .distinctUntilChanged()
                 .filter { it.isNotBlank() }
                 .collectLatest { q ->
                     saveToHistory(q)
-                    // Always run both in parallel — Fuzer loads in background
-                    // regardless of active tab so switching is instant
                     coroutineScope {
                         launch { runTmdbSearch(q) }
-                        launch { runFuzerSearch(q) }   // always, not conditional
+                        launch { runFuzerSearch(q) }
                     }
+                    rebuildFilterChips()
                 }
         }
     }
 
-    // ─── TMDB ─────────────────────────────────────────────────────
+    // ── TMDB ─────────────────────────────────────────────────────
     private suspend fun runTmdbSearch(query: String) {
         _state.update { it.copy(isTmdbLoading = true) }
         try {
@@ -212,9 +236,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             val enc  = URLEncoder.encode(query, "UTF-8")
             val key  = "9ab4a284f0c028007b78925852196b79"
             val base = "https://image.tmdb.org/t/p"
-            val p1   = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 1) }
-            val p2   = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 2) }
-            _state.update { it.copy(tmdbResults = (p1 + p2).distinctBy { r -> r.id }, isTmdbLoading = false) }
+            val p1 = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 1) }
+            val p2 = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 2) }
+            _state.update { it.copy(
+                tmdbResults   = (p1 + p2).distinctBy { r -> r.id },
+                isTmdbLoading = false
+            ) }
         } catch (_: Exception) {
             _state.update { it.copy(tmdbResults = emptyList(), isTmdbLoading = false) }
         }
@@ -227,37 +254,44 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 .openConnection() as HttpURLConnection
             con.connectTimeout = 6000; con.readTimeout = 9000
             if (con.responseCode != 200) return emptyList()
-            val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: return emptyList()
+            val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+                .optJSONArray("results") ?: return emptyList()
             for (i in 0 until arr.length()) {
                 val j  = arr.getJSONObject(i)
                 val mt = j.optString("media_type")
                 if (mt != "movie" && mt != "tv") continue
-                val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                            else             j.optString("title").ifBlank { j.optString("original_title") }
+                val title = if (mt == "tv")
+                    j.optString("name").ifBlank { j.optString("original_name") }
+                else
+                    j.optString("title").ifBlank { j.optString("original_title") }
                 out += SearchResult(
                     id          = "${mt}_${j.optInt("id")}",
                     title       = title,
-                    posterUrl   = j.optString("poster_path").let   { p -> if (p.isNotBlank() && p!="null") "$base/w342$p" else "" },
-                    backdropUrl = j.optString("backdrop_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w780$p" else "" },
+                    posterUrl   = j.optString("poster_path").let { p ->
+                        if (p.isNotBlank() && p != "null") "$base/w342$p" else ""
+                    },
+                    backdropUrl = j.optString("backdrop_path").let { p ->
+                        if (p.isNotBlank() && p != "null") "$base/w780$p" else ""
+                    },
                     type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
                     rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                    releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4),
-                    genre       = j.optJSONArray("genre_ids")?.optInt(0)?.let { tmdbGenreName(it) } ?: ""
+                    releaseYear = (if (mt == "tv") j.optString("first_air_date")
+                                   else j.optString("release_date")).take(4),
+                    genre       = j.optJSONArray("genre_ids")?.optInt(0)
+                        ?.let { tmdbGenreName(it) } ?: ""
                 )
             }
         } catch (_: Exception) {}
         return out
     }
 
-    // ─── Fuzer ────────────────────────────────────────────────────
-    // suspend + explicit Dispatchers.IO — loginIfNeeded() blocks network
+    // ── Fuzer ────────────────────────────────────────────────────
     private suspend fun runFuzerSearch(query: String) {
         _state.update { it.copy(isFuzerLoading = true, fuzerError = null) }
         try {
-            val raw: List<com.luminastreams.tv.domain.model.Movie> =
-                withContext(Dispatchers.IO) {
-                    fuzerEngine.search(query).getOrElse { emptyList() }
-                }
+            val raw = withContext(Dispatchers.IO) {
+                fuzerEngine.search(query).getOrElse { emptyList() }
+            }
             val mapped = raw.map { m ->
                 val qTag = when {
                     m.title.contains("4K",    ignoreCase = true) ||
@@ -288,7 +322,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // ─── Discovery ────────────────────────────────────────────────
+    // ── Discovery ─────────────────────────────────────────────────
     private fun loadDiscovery() {
         viewModelScope.launch {
             _state.update { it.copy(isDiscoveryLoading = true) }
@@ -297,10 +331,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val base = "https://image.tmdb.org/t/p"
                 val p1 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 1) }
                 val p2 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 2) }
+                val results = (p1 + p2).distinctBy { r -> r.id }
                 _state.update { it.copy(
-                    discoveryResults   = (p1 + p2).distinctBy { r -> r.id },
+                    discoveryResults   = results,
                     isDiscoveryLoading = false
                 ) }
+                rebuildFilterChips()
             } catch (_: Exception) {
                 _state.update { it.copy(isDiscoveryLoading = false) }
             }
@@ -311,26 +347,36 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val out = mutableListOf<SearchResult>()
         for (mt in listOf("movie", "tv")) {
             try {
-                val con = URL("https://api.themoviedb.org/3/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=popularity.desc")
-                    .openConnection() as HttpURLConnection
+                val con = URL(
+                    "https://api.themoviedb.org/3/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=popularity.desc"
+                ).openConnection() as HttpURLConnection
                 con.connectTimeout = 6000; con.readTimeout = 9000
                 if (con.responseCode != 200) continue
-                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() }).optJSONArray("results") ?: continue
+                val arr = JSONObject(con.inputStream.bufferedReader().use { it.readText() })
+                    .optJSONArray("results") ?: continue
                 for (i in 0 until arr.length()) {
                     val j = arr.getJSONObject(i)
-                    val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                                else             j.optString("title").ifBlank { j.optString("original_title") }
-                    val poster = j.optString("poster_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w342$p" else "" }
+                    val title = if (mt == "tv")
+                        j.optString("name").ifBlank { j.optString("original_name") }
+                    else
+                        j.optString("title").ifBlank { j.optString("original_title") }
+                    val poster = j.optString("poster_path").let { p ->
+                        if (p.isNotBlank() && p != "null") "$base/w342$p" else ""
+                    }
                     if (poster.isBlank()) continue
                     out += SearchResult(
                         id          = "${mt}_${j.optInt("id")}",
                         title       = title,
                         posterUrl   = poster,
-                        backdropUrl = j.optString("backdrop_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w780$p" else "" },
+                        backdropUrl = j.optString("backdrop_path").let { p ->
+                            if (p.isNotBlank() && p != "null") "$base/w780$p" else ""
+                        },
                         type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
                         rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                        releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4),
-                        genre       = j.optJSONArray("genre_ids")?.optInt(0)?.let { tmdbGenreName(it) } ?: ""
+                        releaseYear = (if (mt == "tv") j.optString("first_air_date")
+                                       else j.optString("release_date")).take(4),
+                        genre       = j.optJSONArray("genre_ids")?.optInt(0)
+                            ?.let { tmdbGenreName(it) } ?: ""
                     )
                 }
             } catch (_: Exception) {}
@@ -338,7 +384,75 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return out
     }
 
-    // ─── History ──────────────────────────────────────────────────
+    // ── Smart filter chip builder ─────────────────────────────────
+    // Builds ONLY chips that make sense given current source + results
+    private fun rebuildFilterChips() {
+        val st      = _state.value
+        val results = st.activeResults.ifEmpty { st.discoveryResults }
+        val chips   = mutableListOf<FilterChip>()
+
+        if (st.source == SearchSource.FUZER) {
+            // Fuzer-specific chips
+            chips += FilterChip("dubbed", "Dubbed", "\uD83C\uDFA4", st.filters.dubbedOnly)
+            val has4K  = results.any { it.qualityTag == "4K" }
+            val hasFHD = results.any { it.qualityTag == "FHD" }
+            val hasHD  = results.any { it.qualityTag == "HD" }
+            if (has4K)  chips += FilterChip("q_4k",  "4K",   "\u2728", st.filters.quality == QualityFilter.UHD)
+            if (hasFHD) chips += FilterChip("q_fhd", "1080p","\uD83D\uDCFD", st.filters.quality == QualityFilter.FHD)
+            if (hasHD)  chips += FilterChip("q_hd",  "720p", "\uD83D\uDCFA", st.filters.quality == QualityFilter.HD)
+        } else {
+            // TMDB: sort chips
+            chips += FilterChip("sort_rel",    "Relevant",  "\uD83D\uDD0D", st.filters.sort == SortOrder.RELEVANCE)
+            chips += FilterChip("sort_rating", "Top Rated", "\u2605",       st.filters.sort == SortOrder.RATING)
+            chips += FilterChip("sort_year",   "Latest",    "\uD83D\uDD52", st.filters.sort == SortOrder.YEAR)
+
+            // Rating threshold
+            if (results.any { it.rating >= 8f })
+                chips += FilterChip("r8", "8+ \u2605", "", st.filters.minRating >= 8f)
+            if (results.any { it.rating >= 7f })
+                chips += FilterChip("r7", "7+ \u2605", "", st.filters.minRating >= 7f && st.filters.minRating < 8f)
+
+            // Genre chips — only genres that actually appear in results (top 5)
+            val topGenres = results
+                .filter { it.genre.isNotBlank() }
+                .groupBy { it.genre }
+                .entries.sortedByDescending { it.value.size }
+                .take(5)
+                .map { it.key }
+            topGenres.forEach { g ->
+                chips += FilterChip(
+                    "g_$g", g,
+                    GENRE_EMOJI[g] ?: "",
+                    st.filters.genre == g
+                )
+            }
+        }
+        _state.update { it.copy(visibleFilterChips = chips) }
+    }
+
+    private fun handleChipTap(chipId: String) {
+        val f = _state.value.filters
+        val updated = when (chipId) {
+            "dubbed"      -> f.copy(dubbedOnly = !f.dubbedOnly)
+            "q_4k"        -> f.copy(quality = if (f.quality == QualityFilter.UHD) QualityFilter.ANY else QualityFilter.UHD)
+            "q_fhd"       -> f.copy(quality = if (f.quality == QualityFilter.FHD) QualityFilter.ANY else QualityFilter.FHD)
+            "q_hd"        -> f.copy(quality = if (f.quality == QualityFilter.HD)  QualityFilter.ANY else QualityFilter.HD)
+            "sort_rel"    -> f.copy(sort = SortOrder.RELEVANCE)
+            "sort_rating" -> f.copy(sort = SortOrder.RATING)
+            "sort_year"   -> f.copy(sort = SortOrder.YEAR)
+            "r8"          -> f.copy(minRating = if (f.minRating >= 8f) 0f else 8f)
+            "r7"          -> f.copy(minRating = if (f.minRating >= 7f && f.minRating < 8f) 0f else 7f)
+            else          -> {
+                // genre chip
+                val g = chipId.removePrefix("g_")
+                f.copy(genre = if (f.genre == g) null else g)
+            }
+        }
+        _state.update { it.copy(filters = updated) }
+        rebuildFilterChips()
+    }
+
+    // ── History ───────────────────────────────────────────────────
     private fun saveToHistory(q: String) {
         val h = (listOf(q) + _state.value.searchHistory).distinct().take(8)
         historyPrefs.edit().putString("history_items", h.joinToString("||")).apply()
@@ -358,7 +472,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(searchHistory = h) }
     }
 
-    // ─── TMDB genre id → name ─────────────────────────────────────
+    // ── TMDB genre map ────────────────────────────────────────────
     private fun tmdbGenreName(id: Int): String = when (id) {
         28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
         80 -> "Crime"; 99 -> "Documentary"; 18 -> "Drama"; 10751 -> "Family"
@@ -371,3 +485,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         else -> ""
     }
 }
+
+// Genre emoji map (shared)
+val GENRE_EMOJI = mapOf(
+    "Action" to "\uD83D\uDCA5", "Adventure" to "\uD83C\uDFD4", "Animation" to "\uD83C\uDFA8",
+    "Comedy" to "\uD83D\uDE02", "Crime" to "\uD83D\uDD2B", "Documentary" to "\uD83C\uDFAC",
+    "Drama" to "\uD83C\uDFAD", "Family" to "\uD83C\uDFE0", "Fantasy" to "\u2728",
+    "History" to "\uD83C\uDFDB", "Horror" to "\uD83D\uDC7B", "Music" to "\uD83C\uDFB5",
+    "Mystery" to "\uD83D\uDD0D", "Romance" to "\u2764", "Sci-Fi" to "\uD83D\uDE80",
+    "Thriller" to "\uD83D\uDDE1", "War" to "\uD83C\uDF0D", "Western" to "\uD83E\uDD20",
+    "Action & Adventure" to "\uD83D\uDCA5", "Kids" to "\uD83C\uDF1F",
+    "Sci-Fi & Fantasy" to "\uD83D\uDE80"
+)
