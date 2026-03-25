@@ -21,8 +21,6 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.exoplayer.source.MergingMediaSource
-import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
@@ -133,7 +131,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ──────────────────────────────────────────────────────────
+    // ─── State ────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -148,8 +146,6 @@ class ExoPlayerWrapper(context: Context) {
 
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
-
-    private var currentVideoUrl: String? = null
 
     init {
         player.addListener(object : Player.Listener {
@@ -183,6 +179,7 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
+                // בחר אוטומטית את ה-track של הכתובית החיצונית ברגע שהיא מופיעת
                 val textGroup = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_TEXT }
                     .firstOrNull { grp ->
@@ -212,7 +209,6 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String) {
-        currentVideoUrl        = videoUrl
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
@@ -225,6 +221,7 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
+    // ─── applySubtitle: מוריד + מזריק ──────────────────────────────────────
     fun applySubtitle(
         subtitleUrl: String,
         lang: String    = "heb",
@@ -233,7 +230,7 @@ class ExoPlayerWrapper(context: Context) {
     ) {
         if (subtitleUrl.startsWith("file://")) {
             val f = File(Uri.parse(subtitleUrl).path!!)
-            injectSubtitleMerging(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            injectSubtitle(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
         CoroutineScope(Dispatchers.IO).launch {
@@ -249,7 +246,7 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { injectSubtitleMerging(file, ext == "vtt") }
+                        withContext(Dispatchers.Main) { injectSubtitle(file, ext == "vtt") }
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -261,25 +258,28 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // ─── MergingMediaSource ────────────────────────────────────────────────
-    // SingleSampleMediaSource.Factory.createMediaSource() ב-Media3 מקבל
-    // SubtitleConfiguration (לא Format + Uri). ה-SubtitleConfiguration
-    // מכיל בתוכו גם את ה-Uri ואת ה-mime type.
-    private fun injectSubtitleMerging(subFile: File, isVtt: Boolean) {
-        val videoUrl   = currentVideoUrl ?: return
-        val mime       = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        val savedPos   = player.currentPosition
-        val wasPlaying = player.isPlaying
+    // ─── injectSubtitle: replaceMediaItem ───────────────────────────────────
+    //
+    // הגישה הנכונה לכתוביות חיצוניות שלא גורמות טעינת מחדש של ה-stream:
+    //
+    // player.replaceMediaItem(index, newMediaItem)
+    //
+    // replaceMediaItem מעדכן את ה-MediaItem במקום הנכון בתוך רשימת
+    // ה-MediaItems בלי להפסיק את הנגינה. ExoPlayer רואה שה-URI
+    // זהה לא השתנה, ולכן הוא משאיר את ה-buffer ומוסיף רקאת את
+    // ה-SubtitleConfiguration אל ה-MediaItem.
+    //
+    // חשוב: אין כאן קריאה ל-prepare() ואין טעינת URL מחדש =
+    // לא יהיה שגיאת 1004 ב-token-based URLs כמו Stremio.
+    private fun injectSubtitle(subFile: File, isVtt: Boolean) {
+        val mime        = if (isVtt) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        val currentItem = player.currentMediaItem ?: return
+        val currentIdx  = player.currentMediaItemIndex
 
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
 
         try {
-            val videoSource = mediaSourceFactory.createMediaSource(
-                MediaItem.Builder().setUri(videoUrl.toUri()).build()
-            )
-
-            // ✅ ה-API הנכון ב-Media3: SubtitleConfiguration בלבד, לא Format+Uri
             val subConfig = MediaItem.SubtitleConfiguration.Builder(Uri.fromFile(subFile))
                 .setMimeType(mime)
                 .setLanguage("iw")
@@ -287,15 +287,12 @@ class ExoPlayerWrapper(context: Context) {
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
 
-            val subSource = SingleSampleMediaSource.Factory(dataSourceFactory)
-                .createMediaSource(subConfig, C.TIME_UNSET)
+            // ✅ replaceMediaItem שומר את ה-buffer, לא מתחבר מחדש ל-URL
+            val newItem = currentItem.buildUpon()
+                .setSubtitleConfigurations(listOf(subConfig))
+                .build()
 
-            val merged = MergingMediaSource(videoSource, subSource)
-
-            player.setMediaSource(merged, false)
-            player.prepare()
-            player.seekTo(savedPos)
-            if (wasPlaying) player.playWhenReady = true
+            player.replaceMediaItem(currentIdx, newItem)
 
         } catch (e: Exception) {
             e.printStackTrace()
