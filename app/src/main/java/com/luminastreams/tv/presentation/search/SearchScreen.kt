@@ -118,31 +118,28 @@ fun SearchScreen(
                 } else false
             }
     ) {
-        // ── Top bar ──────────────────────────────────────────────
         SearchTopBar(
-            state    = state,
-            backFR   = backFR,
-            inputFR  = inputFR,
+            state      = state,
+            backFR     = backFR,
+            inputFR    = inputFR,
             firstTabFR = firstTabFR,
-            onBack   = onNavigateBack,
-            onIntent = onIntent
+            onBack     = onNavigateBack,
+            onIntent   = onIntent
         )
 
-        // ── Source tabs ──────────────────────────────────────────
         SourceTabRow(
-            selected     = state.source,
-            firstTabFR   = firstTabFR,
-            firstResultFR= firstResultFR,
-            onSelect     = { onIntent(SearchIntent.SelectSource(it)) }
+            selected      = state.source,
+            firstTabFR    = firstTabFR,
+            firstResultFR = firstResultFR,
+            onSelect      = { onIntent(SearchIntent.SelectSource(it)) }
         )
 
-        // ── Content ──────────────────────────────────────────────
         Box(Modifier.weight(1f).fillMaxWidth()) {
             when {
-                state.isLoading                  -> ShimmerGrid()
+                state.isLoading                                                -> ShimmerGrid()
                 state.source == SearchSource.FUZER && state.fuzerError != null -> FuzerError(state.fuzerError!!)
-                state.activeResults.isEmpty()    -> EmptyState(state.query, state.source)
-                else                             -> ResultsGrid(
+                state.activeResults.isEmpty()                                  -> EmptyState(state.query, state.source)
+                else                                                           -> ResultsGrid(
                     results       = state.activeResults,
                     isFuzer       = state.source == SearchSource.FUZER,
                     firstResultFR = firstResultFR,
@@ -154,21 +151,23 @@ fun SearchScreen(
 }
 
 // ══════════════════════════════════════════════════════════
-//  TOP BAR — search bar + history + autocomplete
+//  TOP BAR
 // ══════════════════════════════════════════════════════════
 @Composable
 private fun SearchTopBar(
-    state:       SearchState,
-    backFR:      FocusRequester,
-    inputFR:     FocusRequester,
-    firstTabFR:  FocusRequester,
-    onBack:      () -> Unit,
-    onIntent:    (SearchIntent) -> Unit
+    state:      SearchState,
+    backFR:     FocusRequester,
+    inputFR:    FocusRequester,
+    firstTabFR: FocusRequester,
+    onBack:     () -> Unit,
+    onIntent:   (SearchIntent) -> Unit
 ) {
     val context = LocalContext.current
     val view    = androidx.compose.ui.platform.LocalView.current
-    val imm     = remember { context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                    as android.view.inputmethod.InputMethodManager }
+    val imm     = remember {
+        context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+            as android.view.inputmethod.InputMethodManager
+    }
 
     var showAutocomplete by remember { mutableStateOf(false) }
     var inputFocused     by remember { mutableStateOf(false) }
@@ -176,11 +175,7 @@ private fun SearchTopBar(
 
     LaunchedEffect(Unit) { while (true) { delay(3000); hintIdx = (hintIdx + 1) % SEARCH_HINTS.size } }
 
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(PANEL_BG)
-    ) {
+    Column(Modifier.fillMaxWidth().background(PANEL_BG)) {
         Row(
             Modifier
                 .fillMaxWidth()
@@ -189,7 +184,7 @@ private fun SearchTopBar(
             verticalAlignment     = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // Back
+            // Back button
             Surface(
                 onClick  = onBack,
                 shape    = ClickableSurfaceDefaults.shape(CircleShape),
@@ -200,7 +195,11 @@ private fun SearchTopBar(
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
                 modifier = Modifier.size(36.dp).focusRequester(backFR)
                     .focusProperties { down = inputFR }
-            ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp)) } }
+            ) {
+                Box(Modifier.fillMaxSize(), Alignment.Center) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp))
+                }
+            }
 
             // Logo
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -222,16 +221,22 @@ private fun SearchTopBar(
                     .height(40.dp)
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (inputFocused) Color(0xFF181818) else Color(0xFF0F0F0F))
-                    .border(if (inputFocused) 1.5.dp else 1.dp,
-                            if (inputFocused) RED.copy(0.65f) else DIM2,
-                            RoundedCornerShape(10.dp))
+                    .border(
+                        if (inputFocused) 1.5.dp else 1.dp,
+                        if (inputFocused) RED.copy(0.65f) else DIM2,
+                        RoundedCornerShape(10.dp)
+                    )
                     .padding(horizontal = 12.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    Modifier.fillMaxSize(),
+                    verticalAlignment     = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     Icon(Icons.Default.Search, null, Modifier.size(14.dp),
                         tint = if (inputFocused) RED else DIM)
+
                     BasicTextField(
                         value           = state.query,
                         onValueChange   = {
@@ -251,7 +256,10 @@ private fun SearchTopBar(
                                 if (state.query.isEmpty()) {
                                     AnimatedContent(
                                         targetState   = hintIdx,
-                                        transitionSpec = { fadeIn(tween(300)) + slideInVertically { 6 } togetherWith fadeOut(tween(200)) + slideOutVertically { -6 } },
+                                        transitionSpec = {
+                                            fadeIn(tween(300)) + slideInVertically { 6 } togetherWith
+                                            fadeOut(tween(200)) + slideOutVertically { -6 }
+                                        },
                                         label = "hint"
                                     ) { i -> Text(SEARCH_HINTS[i], color = DIM.copy(0.35f), fontSize = 13.sp) }
                                 }
@@ -268,25 +276,33 @@ private fun SearchTopBar(
                             .onPreviewKeyEvent { ev ->
                                 when {
                                     ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionCenter -> {
-                                        imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT); true
+                                        imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                                        true
                                     }
                                     ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown -> {
                                         showAutocomplete = false
-                                        runCatching { firstTabFR.requestFocus() }; true
+                                        runCatching { firstTabFR.requestFocus() }
+                                        true
                                     }
                                     else -> false
                                 }
                             }
                     )
+
                     AnimatedVisibility(state.query.isNotEmpty(), enter = fadeIn(), exit = fadeOut()) {
                         Surface(
-                            onClick  = { onIntent(SearchIntent.UpdateQuery(""))
-                                         showAutocomplete = false },
+                            onClick  = { onIntent(SearchIntent.UpdateQuery("")); showAutocomplete = false },
                             shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = DIM2, focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor = DIM2, focusedContainerColor = RED,
+                                contentColor   = WHITE, focusedContentColor   = WHITE),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
                             modifier = Modifier.size(20.dp)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.Default.Close, null, Modifier.size(9.dp)) } }
+                        ) {
+                            Box(Modifier.fillMaxSize(), Alignment.Center) {
+                                Icon(Icons.Default.Close, null, Modifier.size(9.dp))
+                            }
+                        }
                     }
                 }
             }
@@ -301,7 +317,8 @@ private fun SearchTopBar(
                 transitionSpec = { fadeIn(tween(150)) togetherWith fadeOut(tween(100)) },
                 label = "cnt"
             ) { t ->
-                Text(t, color = DIM, fontSize = 12.sp, modifier = Modifier.widthIn(min = 28.dp),
+                Text(t, color = DIM, fontSize = 12.sp,
+                    modifier = Modifier.widthIn(min = 28.dp),
                     textAlign = TextAlign.Center)
             }
         }
@@ -319,10 +336,7 @@ private fun SearchTopBar(
             ) {
                 state.autocompleteSuggestions.forEach { s ->
                     Surface(
-                        onClick  = {
-                            onIntent(SearchIntent.UpdateQuery(s))
-                            showAutocomplete = false
-                        },
+                        onClick  = { onIntent(SearchIntent.UpdateQuery(s)); showAutocomplete = false },
                         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(6.dp)),
                         colors   = ClickableSurfaceDefaults.colors(
                             containerColor = Color.Transparent, focusedContainerColor = DIM3,
@@ -330,9 +344,11 @@ private fun SearchTopBar(
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                         modifier = Modifier.fillMaxWidth().height(32.dp)
                     ) {
-                        Row(Modifier.fillMaxSize().padding(horizontal = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
                             Icon(Icons.Default.History, null, Modifier.size(11.dp), tint = DIM)
                             Text(s, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
@@ -341,7 +357,7 @@ private fun SearchTopBar(
             }
         }
 
-        // Search history (when query empty)
+        // History chips (when query is empty)
         AnimatedVisibility(
             visible = state.query.isBlank() && state.searchHistory.isNotEmpty(),
             enter   = expandVertically(tween(180)) + fadeIn(tween(150)),
@@ -360,15 +376,23 @@ private fun SearchTopBar(
                             containerColor = DIM3, focusedContainerColor = Color(0xFF1E1E28),
                             contentColor   = DIM,  focusedContentColor   = WHITE),
                         border   = ClickableSurfaceDefaults.border(
-                            border        = Border(androidx.compose.foundation.BorderStroke(1.dp, DIM2), RoundedCornerShape(50)),
-                            focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)), RoundedCornerShape(50))
+                            border        = Border(
+                                border = androidx.compose.foundation.BorderStroke(1.dp, DIM2),
+                                shape  = RoundedCornerShape(50)
+                            ),
+                            focusedBorder = Border(
+                                border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)),
+                                shape  = RoundedCornerShape(50)
+                            )
                         ),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                         modifier = Modifier.height(28.dp)
                     ) {
-                        Row(Modifier.padding(horizontal = 10.dp).fillMaxHeight(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(
+                            Modifier.padding(horizontal = 10.dp).fillMaxHeight(),
+                            verticalAlignment     = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             Icon(Icons.Default.History, null, Modifier.size(11.dp))
                             Text(h, fontSize = 11.sp)
                         }
@@ -392,7 +416,7 @@ private fun SearchTopBar(
             }
         }
 
-        // Bottom gradient line
+        // Bottom accent line
         Box(
             Modifier.fillMaxWidth().height(1.dp)
                 .background(Brush.horizontalGradient(listOf(RED.copy(0.7f), RED.copy(0.12f), Color.Transparent)))
@@ -403,7 +427,12 @@ private fun SearchTopBar(
 // ══════════════════════════════════════════════════════════
 //  SOURCE TAB ROW
 // ══════════════════════════════════════════════════════════
-private data class TabDef(val src: SearchSource, val label: String, val icon: androidx.compose.ui.graphics.vector.ImageVector, val accent: Color)
+private data class TabDef(
+    val src:    SearchSource,
+    val label:  String,
+    val icon:   androidx.compose.ui.graphics.vector.ImageVector,
+    val accent: Color
+)
 
 @Composable
 private fun SourceTabRow(
@@ -414,9 +443,9 @@ private fun SourceTabRow(
 ) {
     val tabs = remember {
         listOf(
-            TabDef(SearchSource.ALL,    "All",     Icons.Default.GridView,   Color(0xFFB0BEC5)),
-            TabDef(SearchSource.MOVIES, "Movies",  Icons.Default.Movie,      Color(0xFFFFD700)),
-            TabDef(SearchSource.SERIES, "Series",  Icons.Default.Tv,         Color(0xFF80DEEA)),
+            TabDef(SearchSource.ALL,    "All",      Icons.Default.GridView,   Color(0xFFB0BEC5)),
+            TabDef(SearchSource.MOVIES, "Movies",   Icons.Default.Movie,      Color(0xFFFFD700)),
+            TabDef(SearchSource.SERIES, "Series",   Icons.Default.Tv,         Color(0xFF80DEEA)),
             TabDef(SearchSource.FUZER,  "💎 Fuzer", Icons.Default.CloudQueue, Color(0xFF00B0FF))
         )
     }
@@ -436,7 +465,7 @@ private fun SourceTabRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         tabs.forEachIndexed { idx, tab ->
-            val isSel = selected == tab.src
+            val isSel  = selected == tab.src
             val accent = if (tab.src == SearchSource.FUZER) FUZER_BLUE else tab.accent
 
             Surface(
@@ -449,8 +478,14 @@ private fun SourceTabRow(
                     focusedContentColor   = WHITE
                 ),
                 border   = ClickableSurfaceDefaults.border(
-                    border        = Border(androidx.compose.foundation.BorderStroke(1.dp,   if (isSel) accent.copy(0.6f) else Color.Transparent), RoundedCornerShape(8.dp)),
-                    focusedBorder = Border(androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.8f)), RoundedCornerShape(8.dp))
+                    border        = Border(
+                        border = androidx.compose.foundation.BorderStroke(1.dp, if (isSel) accent.copy(0.6f) else Color.Transparent),
+                        shape  = RoundedCornerShape(8.dp)
+                    ),
+                    focusedBorder = Border(
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.8f)),
+                        shape  = RoundedCornerShape(8.dp)
+                    )
                 ),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                 modifier = Modifier
@@ -462,8 +497,7 @@ private fun SourceTabRow(
                     verticalAlignment     = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(tab.icon, null, Modifier.size(14.dp),
-                        tint = if (isSel) accent else DIM)
+                    Icon(tab.icon, null, Modifier.size(14.dp), tint = if (isSel) accent else DIM)
                     Text(
                         tab.label,
                         fontSize   = 12.sp,
@@ -476,7 +510,6 @@ private fun SourceTabRow(
 
         Spacer(Modifier.weight(1f))
 
-        // Fuzer login status dot
         if (selected == SearchSource.FUZER) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
                 Box(Modifier.size(6.dp).clip(CircleShape).background(FUZER_BLUE))
@@ -506,10 +539,10 @@ private fun ResultsGrid(
     ) {
         itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
             MediaCard(
-                result        = result,
-                isFuzer       = isFuzer,
-                modifier      = if (idx == 0) Modifier.focusRequester(firstResultFR) else Modifier,
-                onClick       = { onResultClick(result) }
+                result   = result,
+                isFuzer  = isFuzer,
+                modifier = if (idx == 0) Modifier.focusRequester(firstResultFR) else Modifier,
+                onClick  = { onResultClick(result) }
             )
         }
     }
@@ -533,15 +566,12 @@ private fun MediaCard(
         label         = "zoom"
     )
 
-    // Quality badge parsing for Fuzer
-    val qualityBadge: String? = if (isFuzer) {
-        when {
-            result.title.contains("4K", ignoreCase = true) ||
-            result.title.contains("2160p", ignoreCase = true) -> "4K"
-            result.title.contains("1080p", ignoreCase = true) -> "FHD"
-            result.title.contains("720p",  ignoreCase = true) -> "HD"
-            else -> null
-        }
+    val qualityBadge: String? = if (isFuzer) when {
+        result.title.contains("4K",    ignoreCase = true) ||
+        result.title.contains("2160p", ignoreCase = true) -> "4K"
+        result.title.contains("1080p", ignoreCase = true) -> "FHD"
+        result.title.contains("720p",  ignoreCase = true) -> "HD"
+        else -> null
     } else null
 
     val isDubbed = isFuzer && result.title.contains("מדובב", ignoreCase = true)
@@ -554,18 +584,22 @@ private fun MediaCard(
             Surface(
                 onClick  = onClick,
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(9.dp)),
-                colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor = CARD_BG, focusedContainerColor = CARD_BG),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
                 border   = ClickableSurfaceDefaults.border(
-                    Border.None,
-                    if (isFuzer)
-                        Border(androidx.compose.foundation.BorderStroke(1.5.dp, FUZER_BLUE.copy(0.5f)), RoundedCornerShape(9.dp))
+                    border        = Border.None,
+                    focusedBorder = if (isFuzer)
+                        Border(
+                            border = androidx.compose.foundation.BorderStroke(1.5.dp, FUZER_BLUE.copy(0.5f)),
+                            shape  = RoundedCornerShape(9.dp)
+                        )
                     else Border.None
                 ),
                 glow     = ClickableSurfaceDefaults.glow(
-                    Glow.None,
-                    if (isFuzer) Glow(FUZER_BLUE.copy(0.3f), 16.dp)
-                    else Glow(Color.Black.copy(0.8f), 20.dp)
+                    glow        = Glow.None,
+                    focusedGlow = if (isFuzer) Glow(FUZER_BLUE.copy(0.3f), 16.dp)
+                                  else         Glow(Color.Black.copy(0.8f), 20.dp)
                 ),
                 modifier = Modifier
                     .fillMaxSize()
@@ -580,14 +614,11 @@ private fun MediaCard(
                         modifier           = Modifier.fillMaxSize()
                     )
                 } else {
-                    // Fuzer no-poster fallback
                     Box(
                         Modifier.fillMaxSize()
                             .background(Brush.verticalGradient(
-                                if (isFuzer)
-                                    listOf(Color(0xFF0A1A2A), Color(0xFF060E14))
-                                else
-                                    listOf(Color(0xFF1E1E1E), CARD_BG)
+                                if (isFuzer) listOf(Color(0xFF0A1A2A), Color(0xFF060E14))
+                                else         listOf(Color(0xFF1E1E1E), CARD_BG)
                             )),
                         Alignment.Center
                     ) {
@@ -596,17 +627,16 @@ private fun MediaCard(
                             Spacer(Modifier.height(6.dp))
                             Text(
                                 result.title,
-                                color    = if (isFuzer) FUZER_BLUE.copy(0.7f) else WHITE.copy(0.3f),
-                                fontSize = 9.sp,
+                                color     = if (isFuzer) FUZER_BLUE.copy(0.7f) else WHITE.copy(0.3f),
+                                fontSize  = 9.sp,
                                 textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(8.dp)
+                                modifier  = Modifier.padding(8.dp)
                             )
                         }
                     }
                 }
 
-                // ── Overlay badges ──────────────────────────────
-                // Year (top-start)
+                // Year badge (top-start)
                 if (result.releaseYear.isNotBlank()) {
                     Box(
                         Modifier.align(Alignment.TopStart).padding(4.dp)
@@ -616,7 +646,7 @@ private fun MediaCard(
                     ) { Text(result.releaseYear, color = DIM, fontSize = 8.sp) }
                 }
 
-                // Rating or Quality badge (top-end)
+                // Quality / Rating badge (top-end)
                 if (qualityBadge != null) {
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(4.dp)
@@ -637,7 +667,7 @@ private fun MediaCard(
                     ) { Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 8.sp, fontWeight = FontWeight.Bold) }
                 }
 
-                // Dubbed badge (bottom-start, Fuzer only)
+                // Dubbed badge (bottom-start)
                 if (isDubbed) {
                     Box(
                         Modifier.align(Alignment.BottomStart).padding(4.dp)
@@ -647,7 +677,7 @@ private fun MediaCard(
                     ) { Text("🎤 מדובב", color = WHITE, fontSize = 7.5.sp, fontWeight = FontWeight.Bold) }
                 }
 
-                // Fuzer corner glow overlay when focused
+                // Focused tint overlay (Fuzer only)
                 if (isFuzer && focused) {
                     Box(
                         Modifier.fillMaxSize()
@@ -682,7 +712,11 @@ private fun MediaCard(
 @Composable
 private fun ShimmerGrid() {
     val inf = rememberInfiniteTransition(label = "sh")
-    val p   by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart), label = "sp")
+    val p   by inf.animateFloat(
+        0f, 1f,
+        infiniteRepeatable(tween(1100, easing = LinearEasing), RepeatMode.Restart),
+        label = "sp"
+    )
     val shimmer = Brush.linearGradient(
         listOf(Color(0xFF111111), Color(0xFF1E1E1E), Color(0xFF111111)),
         start = androidx.compose.ui.geometry.Offset(p * 1400f - 700f, 0f),
@@ -711,7 +745,10 @@ private fun ShimmerGrid() {
 @Composable
 private fun EmptyState(query: String, source: SearchSource) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
             Text(if (source == SearchSource.FUZER) "💎" else "🎬", fontSize = 52.sp)
             Text(
                 if (query.isNotBlank()) "No results for \"$query\""
@@ -722,7 +759,7 @@ private fun EmptyState(query: String, source: SearchSource) {
             Text(
                 if (source == SearchSource.FUZER) "Type to search Israeli content on Fuzer"
                 else "Use the search bar above ↑",
-                color = if (source == SearchSource.FUZER) FUZER_BLUE.copy(0.6f) else DIM,
+                color    = if (source == SearchSource.FUZER) FUZER_BLUE.copy(0.6f) else DIM,
                 fontSize = 12.sp
             )
         }
@@ -738,13 +775,22 @@ private fun FuzerError(message: String) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.padding(40.dp)
+            modifier            = Modifier.padding(40.dp)
         ) {
-            Box(Modifier.size(64.dp).clip(CircleShape).background(FUZER_BLUE.copy(0.1f)), Alignment.Center) {
+            Box(
+                Modifier.size(64.dp).clip(CircleShape).background(FUZER_BLUE.copy(0.1f)),
+                Alignment.Center
+            ) {
                 Icon(Icons.Default.CloudOff, null, Modifier.size(30.dp), tint = FUZER_BLUE.copy(0.6f))
             }
             Text("Fuzer Unavailable", color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text(message, color = DIM, fontSize = 12.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 480.dp))
+            Text(
+                message,
+                color    = DIM,
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.widthIn(max = 480.dp)
+            )
         }
     }
 }
