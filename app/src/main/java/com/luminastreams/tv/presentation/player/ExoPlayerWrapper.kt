@@ -7,12 +7,14 @@ import android.net.Uri
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
+import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.datasource.DefaultDataSource
@@ -46,7 +48,6 @@ class ExoPlayerWrapper(context: Context) {
     private val hwAcceleration     = prefs.getBoolean("hw_accel",             true)
     private val preAllocateBuffer  = prefs.getBoolean("pre_buffer",           false)
     private val audioLangPref      = prefs.getString("preferred_audio_lang",  "original") ?: "original"
-    // ✅ REAL: skip embedded text tracks entirely — reduces CPU & bandwidth on weak streamers
     private val skipEmbeddedSubs   = prefs.getBoolean("subtitle_cache_only",  false)
 
     val useYellowSubtitles: Boolean = prefs.getBoolean("yellow_subs", false)
@@ -56,6 +57,12 @@ class ExoPlayerWrapper(context: Context) {
         "xlarge" -> 1.60f
         else     -> 1.00f
     }
+
+    // ─── AFR: fps מהתוכן האמיתי ────────────────────────────────────
+    // מתעדכן מ-onVideoSizeChanged + onTracksChanged כשה-video track נבחר.
+    // 0f = טרם ידוע. PlayerScreen מאזין ומחיל display mode בהתאם.
+    private val _contentFrameRate = MutableStateFlow(0f)
+    val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
@@ -87,7 +94,6 @@ class ExoPlayerWrapper(context: Context) {
             )
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
-            // ✅ REAL: subtitle_cache_only — disable ExoPlayer embedded text track parsing
             .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
@@ -162,9 +168,38 @@ class ExoPlayerWrapper(context: Context) {
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
+
             override fun onCues(cueGroup: CueGroup) {
                 if (parsedSubs.isEmpty()) _currentCues.value = cueGroup.cues
             }
+
+            // ─── AFR: קורא fps מה-Format של ה-video track שנבחר ──────
+            // onTracksChanged נקרא אחרי שה-track selection סופית —
+            // כאן ה-format מכיל frameRate אמיתי מה-manifest/container.
+            override fun onTracksChanged(tracks: Tracks) {
+                _currentTracks.value = tracks
+                val fps = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+                    .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
+                    .firstOrNull { it.frameRate > 0f }
+                    ?.frameRate
+                if (fps != null && fps > 0f) _contentFrameRate.value = fps
+            }
+
+            // onVideoSizeChanged — backup אם ה-format לא מגיע מ-onTracksChanged
+            // (קורה עם חלק מה-HLS streams שמגיעים ללא frameRate ב-manifest)
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (_contentFrameRate.value <= 0f) {
+                    // נסה לקרוא מה-currentTracks שוב — ייתכן שהתעדכנו
+                    val fps = player.currentTracks.groups
+                        .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+                        .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
+                        .firstOrNull { it.frameRate > 0f }
+                        ?.frameRate
+                    if (fps != null && fps > 0f) _contentFrameRate.value = fps
+                }
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 _playerError.value = when (error.errorCode) {
                     PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
@@ -178,10 +213,10 @@ class ExoPlayerWrapper(context: Context) {
                 }
                 _isPlaying.value = false
             }
+
             override fun onPlaybackStateChanged(s: Int) {
                 if (s == Player.STATE_ENDED) _isPlaying.value = false
             }
-            override fun onTracksChanged(tracks: Tracks) { _currentTracks.value = tracks }
         })
     }
 
@@ -191,6 +226,7 @@ class ExoPlayerWrapper(context: Context) {
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
+        _contentFrameRate.value = 0f   // reset fps בין סטרימים
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()

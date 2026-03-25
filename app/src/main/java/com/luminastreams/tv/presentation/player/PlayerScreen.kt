@@ -65,6 +65,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
+import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 
 val CustomSubtitlesIcon: ImageVector
@@ -100,6 +101,49 @@ private val DIM     = Color(0xAAFFFFFF)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
 
+// ─── AFR helper ────────────────────────────────────────────────────────────
+// בוחר את ה-display mode שהכי קרוב ל-fps של התוכן,
+// תוך שמירה על אותה רזולוציה פיזית כמו ה-mode הנוכחי.
+// מנרמל fps: 23.976→24, 29.97→30, 59.94→60 לפני ההשוואה.
+private fun applyAfrForContent(activity: Activity, contentFps: Float) {
+    val win     = activity.window ?: return
+    val display = win.decorView.display ?: return
+    val current = display.mode
+
+    // עגל fps נפוצים (23.976, 29.97, 59.94 …)
+    val targetFps = when {
+        contentFps in 23.9f..24.1f -> 24f
+        contentFps in 25f..25.1f   -> 25f
+        contentFps in 29.9f..30.1f -> 30f
+        contentFps in 47.9f..48.1f -> 48f
+        contentFps in 49.9f..50.1f -> 50f
+        contentFps in 59.9f..60.1f -> 60f
+        else -> contentFps
+    }
+
+    // מועדפות: מצב עם אותה רזולוציה + הכי קרוב ל-targetFps
+    // אם אין — קח כל מצב שמכיל את ה-fps כ-multiple (60→30, 60→24 וכו')
+    val sameRes = display.supportedModes.filter {
+        it.physicalWidth  == current.physicalWidth &&
+        it.physicalHeight == current.physicalHeight
+    }
+
+    val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) }
+        ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) }
+        ?: return
+
+    // אל תעשה שינוי מיותר אם כבר אותו mode
+    if (best.modeId == current.modeId) return
+
+    win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
+}
+
+// ─── Restore display mode ──────────────────────────────────────────────────
+private fun restoreDisplayMode(activity: Activity) {
+    val win = activity.window ?: return
+    win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
+}
+
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
@@ -115,6 +159,13 @@ fun PlayerScreen(
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
     val currentCues   by exo.currentCues.collectAsState()
+
+    // ─── AFR: fps מהתוכן ──────────────────────────────────────────
+    val contentFps    by exo.contentFrameRate.collectAsState()
+    val afrEnabled    = remember {
+        context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+            .getBoolean("afr", false)
+    }
 
     var surfaceReady      by remember { mutableStateOf(false) }
     var prepared          by remember { mutableStateOf(false) }
@@ -138,34 +189,31 @@ fun PlayerScreen(
 
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId) }
 
-    // ✅ REAL: AFR — switch display refresh rate to match content on playback start
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
             prepared = true
             exo.prepareStream(videoUrl)
-
-            val afrEnabled = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-                .getBoolean("afr", false)
-            if (afrEnabled) {
-                val activity = context as? Activity
-                activity?.window?.let { win ->
-                    val display = win.decorView.display
-                    if (display != null) {
-                        val modes = display.supportedModes
-                        // prefer the mode closest to 24 Hz (cinema) with the same resolution
-                        val currentMode = display.mode
-                        val best = modes
-                            .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
-                            .minByOrNull { kotlin.math.abs(it.refreshRate - 24f) }
-                        if (best != null) {
-                            win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
-                        }
-                    }
-                }
-            }
-
             delay(3000)
             if (isPlaying) showControls = false
+        }
+    }
+
+    // ─── AFR: מחיל display mode כשה-fps מהתוכן מתעדכן ────────────
+    // contentFps מגיע מ-ExoPlayer onTracksChanged/onVideoSizeChanged.
+    // מחכה ש-fps יהיה ידוע (>0) ו-AFR מופעל.
+    LaunchedEffect(contentFps) {
+        if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
+        val activity = context as? Activity ?: return@LaunchedEffect
+        applyAfrForContent(activity, contentFps)
+    }
+
+    // ─── AFR: מחזיר display mode לברירת מחדל ביציאה ──────────────
+    DisposableEffect(Unit) {
+        onDispose {
+            exo.release()
+            if (afrEnabled) {
+                (context as? Activity)?.let { restoreDisplayMode(it) }
+            }
         }
     }
 
@@ -250,8 +298,6 @@ fun PlayerScreen(
             delay(5000); showControls = false
         }
     }
-
-    DisposableEffect(Unit) { onDispose { exo.release() } }
 
     BackHandler {
         when {
