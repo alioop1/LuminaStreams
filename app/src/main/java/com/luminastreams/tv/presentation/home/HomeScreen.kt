@@ -270,13 +270,11 @@ fun HomeScreen(
                 }
             }
             "Fuzer" -> buildList {
-                // תוכן חדש — סרטים + סדרות ביחד
                 val newContent = (state.fuzerMovies + state.fuzerSeries)
-                    .sortedByDescending { it.id } // הכי חדשים ראשון
+                    .sortedByDescending { it.id }
                 if (newContent.isNotEmpty())
                     add(RowDef.Regular("fuzer_new",  "🆕 תוכן חדש",          newContent))
 
-                // סרטים בלבד
                 if (state.fuzerMovies.isNotEmpty())
                     add(RowDef.Regular("fuzer_m",    "🎬 סרטים",              state.fuzerMovies))
                 if (state.fuzerMoviesHD.isNotEmpty())
@@ -286,7 +284,6 @@ fun HomeScreen(
                 if (state.fuzerDubbedMovies.isNotEmpty())
                     add(RowDef.Regular("fuzer_dm",   "🎤 סרטים מדובבים",      state.fuzerDubbedMovies))
 
-                // סדרות בלבד
                 if (state.fuzerSeries.isNotEmpty())
                     add(RowDef.Regular("fuzer_tv",   "📺 סדרות",              state.fuzerSeries))
                 if (state.fuzerSeriesHD.isNotEmpty())
@@ -322,7 +319,6 @@ fun HomeScreen(
                     is RowDef.StudioRibbon -> emptyList()
                 }
             }?.firstOrNull()
-            // ✅ תיקון Davey #3: עדכן heroMovie רק אם id השתנה
             if (m != null && m.id != focusState.heroMovie?.id) {
                 focusState.heroMovie = m
             }
@@ -371,7 +367,7 @@ fun HomeScreen(
             onSeriesTab = { viewModel.selectTab("סדרות");  viewModel.setStudioFilter(null) },
             onFuzer     = {
                 viewModel.selectTab("Fuzer")
-                try { viewModel::class.java.getMethod("loadFuzerContent").invoke(viewModel) } catch (_: Exception) {}
+                viewModel.loadFuzerContent()
             },
             onWatchlist = { navController.navigate("watchlist") },
             onSettings  = { navController.navigate("settings") }
@@ -735,7 +731,6 @@ private fun NavPill(
 ) {
     val density      = LocalDensity.current
     val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
-    var measured     by remember { mutableStateOf(false) }
 
     Surface(
         onClick = onClick,
@@ -757,10 +752,7 @@ private fun NavPill(
             .height(NAV_PILL_H)
             .wrapContentWidth()
             .onGloballyPositioned { coords ->
-                if (!measured) {
-                    measured = true
-                    onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
-                }
+                onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
             }
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
