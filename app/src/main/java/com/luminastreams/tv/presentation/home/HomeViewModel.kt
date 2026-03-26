@@ -3,6 +3,7 @@ package com.luminastreams.tv.presentation.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
@@ -18,6 +19,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
+import java.util.Collections
 import java.util.concurrent.TimeUnit
 
 class HomeViewModel : ViewModel() {
@@ -26,12 +28,21 @@ class HomeViewModel : ViewModel() {
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
     private val pageMap = mutableMapOf<String, Int>()
-    private val loadingSet = mutableSetOf<String>()
+    // fix: use thread-safe set — loadMore runs on Dispatchers.IO
+    private val loadingSet: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
     private val fuzerEngine = FuzerEngine()
 
     private val imgBase = "https://image.tmdb.org/t/p"
     private val base = "https://api.themoviedb.org/3"
+
+    // fix: choose backdrop size based on device tier so LOW/MID devices
+    // don't waste bandwidth & memory on full 1280px images.
+    private val backdropSize: String get() = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.HIGH -> "w1280"
+        DeviceProfile.Tier.MID  -> "w780"
+        DeviceProfile.Tier.LOW  -> "w500"
+    }
 
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
@@ -52,7 +63,7 @@ class HomeViewModel : ViewModel() {
         else loadAll()
     }
 
-    // ── Endless Scroll Pagination ──────────────────────────────────
+    // ── Endless Scroll Pagination —————————————————————————————
     fun loadMore(id: String) {
         if (id == "ribbon" || id.startsWith("fuzer") || loadingSet.contains(id)) return
         loadingSet.add(id)
@@ -142,7 +153,6 @@ class HomeViewModel : ViewModel() {
             _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
             try {
                 coroutineScope {
-                    // Use FuzerCats constants instead of magic numbers
                     val movies       = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES,        1).getOrElse { emptyList() } }
                     val series       = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES,        1).getOrElse { emptyList() } }
                     val moviesHd     = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD,     1).getOrElse { emptyList() } }
@@ -180,7 +190,7 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Load all rows ──────────────────────────────────────────────
+    // ── Load all rows —————————————————————————————————
     private fun loadAll() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoading = true, error = null) }
@@ -274,7 +284,7 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // ── Fetch helper ───────────────────────────────────────────────
+    // ── Fetch helper —————————————————————————————————
     private suspend fun fetch(url: String, mediaType: String): List<Movie> =
         withContext(Dispatchers.IO) {
             try {
@@ -306,7 +316,8 @@ class HomeViewModel : ViewModel() {
                         id               = "${mt}_${j.optInt("id")}",
                         title            = title,
                         posterUrl        = poster,
-                        backdropUrl      = "$imgBase/w1280$backdropRaw",
+                        // fix: use tier-appropriate backdrop size (1280/780/500)
+                        backdropUrl      = "$imgBase/$backdropSize$backdropRaw",
                         overview         = j.optString("overview"),
                         year             = date.take(4).toIntOrNull() ?: 0,
                         genre            = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
