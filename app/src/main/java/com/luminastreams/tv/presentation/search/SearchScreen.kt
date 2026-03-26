@@ -52,7 +52,7 @@ import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.model.SearchResult
 import kotlinx.coroutines.delay
 
-// ═══ PALETTE ═══════════════════════════════════════════════════════
+// ═══ PALETTE ═════════════════════════════════════════════════════
 private val BG           = Color(0xFF060608)
 private val SURFACE      = Color(0xFF0D0D10)
 private val CARD_BG      = Color(0xFF13131A)
@@ -89,7 +89,7 @@ private val GENRE_EMOJI = mapOf(
     "Western" to "\uD83E\uDD20"
 )
 
-// ═══ ROOT ══════════════════════════════════════════════════════════
+// ═══ ROOT ═════════════════════════════════════════════════════════
 @Composable
 fun SearchScreen(
     state:          SearchState,
@@ -112,7 +112,6 @@ fun SearchScreen(
     }
     LaunchedEffect(Unit) { delay(120); runCatching { backFR.requestFocus() } }
 
-    // When filter panel opens, auto-focus first filter chip
     LaunchedEffect(state.showFilters) {
         if (state.showFilters) delay(260).also { runCatching { firstFilterFR.requestFocus() } }
     }
@@ -129,7 +128,6 @@ fun SearchScreen(
                 } else false
             }
     ) {
-        // Ambient backdrop glow when results exist
         if (state.activeResults.isNotEmpty()) {
             Box(
                 Modifier.fillMaxWidth().height(240.dp).align(Alignment.TopCenter)
@@ -146,7 +144,6 @@ fun SearchScreen(
         }
 
         Row(Modifier.fillMaxSize()) {
-            // ── LEFT SIDEBAR (filters) ───────────────────────────
             AnimatedVisibility(
                 visible = state.showFilters,
                 enter   = slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { -it } + fadeIn(tween(200)),
@@ -163,7 +160,6 @@ fun SearchScreen(
                 )
             }
 
-            // ── MAIN CONTENT ─────────────────────────────────────
             Column(Modifier.weight(1f).fillMaxHeight()) {
                 TopBar(
                     state      = state,
@@ -263,8 +259,8 @@ private fun TopBar(
             // ── Divider ──
             Box(Modifier.width(1.dp).height(24.dp).background(DIM2))
 
-            // ── Search field ──
-            val inputShape = RoundedCornerShape(14.dp)
+            // ── Search field (pill shape) ──
+            val inputShape = RoundedCornerShape(50)
             Box(
                 Modifier.weight(1f).height(44.dp)
                     .clip(inputShape)
@@ -277,11 +273,10 @@ private fun TopBar(
                         color = if (inputFocused) RED.copy(0.7f) else DIM2,
                         shape = inputShape
                     )
-                    .padding(horizontal = 14.dp),
+                    .padding(horizontal = 18.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
                 Row(Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    // Animated icon
                     val iconColor by animateColorAsState(
                         if (inputFocused) RED else DIM.copy(0.5f), tween(200), label = "ic"
                     )
@@ -337,7 +332,6 @@ private fun TopBar(
                             }
                     )
 
-                    // Clear button
                     AnimatedVisibility(state.query.isNotEmpty(), enter = fadeIn(tween(120)) + scaleIn(tween(120)), exit = fadeOut(tween(100)) + scaleOut(tween(100))) {
                         Surface(
                             onClick  = { onIntent(SearchIntent.UpdateQuery(""))
@@ -368,7 +362,7 @@ private fun TopBar(
             ) { t ->
                 Box(
                     Modifier.widthIn(min = 44.dp).height(28.dp)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(50))
                         .background(if (state.activeResults.isNotEmpty() && !state.isLoading) RED_DIM else DIM3)
                         .padding(horizontal = 10.dp),
                     Alignment.Center
@@ -393,9 +387,9 @@ private fun TopBar(
                 Modifier.fillMaxWidth()
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 6.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(16.dp))
                     .background(Color(0xFF0E0E16))
-                    .border(1.dp, DIM2, RoundedCornerShape(12.dp))
+                    .border(1.dp, DIM2, RoundedCornerShape(16.dp))
             ) {
                 state.autocompleteSuggestions.forEachIndexed { i, s ->
                     if (i > 0) Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3))
@@ -551,7 +545,6 @@ private fun TabRow(
                 ) {
                     Icon(tab.icon, null, Modifier.size(14.dp), tint = if (isSel) tab.accent else DIM.copy(0.6f))
                     Text(tab.label, fontSize = 12.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, softWrap = false)
-                    // Fuzer live dot
                     if (tab.src == SearchSource.FUZER && state.isFuzerLoading) {
                         val inf = rememberInfiniteTransition(label = "fz")
                         val a by inf.animateFloat(0.2f, 1f, infiniteRepeatable(tween(600, easing = LinearEasing), RepeatMode.Reverse), label = "fa")
@@ -565,7 +558,6 @@ private fun TabRow(
 
         Spacer(Modifier.weight(1f))
 
-        // ── Filter toggle ──
         Surface(
             onClick  = { onIntent(SearchIntent.ToggleFilters) },
             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
@@ -605,7 +597,7 @@ private fun TabRow(
     Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3))
 }
 
-// ═══ FILTER SIDEBAR ════════════════════════════════════════════════
+// ═══ FILTER SIDEBAR ════════════════════════════════════════════════════
 @Composable
 private fun FilterSidebar(
     filters:       SearchFilters,
@@ -635,7 +627,6 @@ private fun FilterSidebar(
                 else false
             }
     ) {
-        // Header
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp).padding(bottom = 16.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -662,7 +653,6 @@ private fun FilterSidebar(
         Box(Modifier.fillMaxWidth().height(1.dp).background(DIM3).padding(horizontal = 16.dp))
         Spacer(Modifier.height(12.dp))
 
-        // ── Genre ──
         FilterSection("Genre") {
             Column(Modifier.padding(horizontal = 8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 GENRES.forEachIndexed { idx, g ->
@@ -702,7 +692,6 @@ private fun FilterSidebar(
 
         Spacer(Modifier.height(8.dp))
 
-        // ── Quality ──
         FilterSection("Quality") {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -733,7 +722,6 @@ private fun FilterSidebar(
 
         Spacer(Modifier.height(8.dp))
 
-        // ── Rating ──
         FilterSection("Min Rating") {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 8.dp),
@@ -761,7 +749,6 @@ private fun FilterSidebar(
             }
         }
 
-        // ── Dubbed (Fuzer only) ──
         if (isFuzer) {
             Spacer(Modifier.height(8.dp))
             FilterSection("\uD83C\uDFA4 Hebrew") {
@@ -794,7 +781,6 @@ private fun FilterSidebar(
 
         Spacer(Modifier.weight(1f))
 
-        // ── Clear All ──
         if (filters.isActive) {
             Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
                 Surface(
@@ -826,7 +812,6 @@ private fun FilterSidebar(
             }
         }
     }
-    // Right border line
     Box(Modifier.width(1.dp).fillMaxHeight().background(Brush.verticalGradient(listOf(RED.copy(0.25f), Color.Transparent))))
 }
 
@@ -845,7 +830,7 @@ private fun FilterSection(title: String, content: @Composable () -> Unit) {
     }
 }
 
-// ═══ RESULTS GRID ══════════════════════════════════════════════════
+// ═══ RESULTS GRID ════════════════════════════════════════════════════
 @Composable
 private fun ResultsGrid(
     results:       List<SearchResult>,
@@ -871,7 +856,7 @@ private fun ResultsGrid(
     }
 }
 
-// ═══ MEDIA CARD ════════════════════════════════════════════════════
+// ═══ MEDIA CARD ══════════════════════════════════════════════════════
 @Composable
 private fun MediaCard(
     result:   SearchResult,
@@ -926,7 +911,6 @@ private fun MediaCard(
                     .graphicsLayer(scaleX = zoom, scaleY = zoom)
                     .onFocusChanged { focused = it.isFocused }
             ) {
-                // Poster
                 if (result.posterUrl.isNotBlank()) {
                     AsyncImage(
                         model              = ImageRequest.Builder(ctx).data(result.posterUrl).crossfade(false).build(),
@@ -959,7 +943,6 @@ private fun MediaCard(
                     }
                 }
 
-                // Bottom gradient for legibility
                 if (focused) {
                     Box(
                         Modifier.fillMaxWidth().height(60.dp).align(Alignment.BottomCenter)
@@ -967,7 +950,6 @@ private fun MediaCard(
                     )
                 }
 
-                // Year badge (top-left)
                 if (result.releaseYear.isNotBlank()) {
                     Box(
                         Modifier.align(Alignment.TopStart).padding(5.dp)
@@ -977,7 +959,6 @@ private fun MediaCard(
                     ) { Text(result.releaseYear, color = DIM.copy(0.8f), fontSize = 8.sp) }
                 }
 
-                // Quality badge (top-right)
                 if (qBadge != null) {
                     val qColor = when (qBadge) {
                         "4K"  -> Color(0xFFFF3D00)
@@ -999,7 +980,6 @@ private fun MediaCard(
                     ) { Text("\u2605 %.1f".format(result.rating), color = GOLD, fontSize = 8.sp, fontWeight = FontWeight.SemiBold) }
                 }
 
-                // Dubbed badge (bottom-left, Fuzer)
                 if (isDubbed) {
                     Box(
                         Modifier.align(Alignment.BottomStart).padding(5.dp)
@@ -1009,7 +989,6 @@ private fun MediaCard(
                     ) { Text("\uD83C\uDFA4 DUB", color = WHITE, fontSize = 7.5.sp, fontWeight = FontWeight.Bold) }
                 }
 
-                // Genre tag (bottom-right)
                 if (focused && result.genre.isNotBlank()) {
                     Box(
                         Modifier.align(Alignment.BottomEnd).padding(5.dp)
@@ -1079,7 +1058,7 @@ private fun ShimmerGrid() {
     }
 }
 
-// ═══ EMPTY STATE ═══════════════════════════════════════════════════
+// ═══ EMPTY STATE ═════════════════════════════════════════════════════
 @Composable
 private fun EmptyState(query: String, source: SearchSource) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -1121,7 +1100,7 @@ private fun EmptyState(query: String, source: SearchSource) {
     }
 }
 
-// ═══ FUZER ERROR ═══════════════════════════════════════════════════
+// ═══ FUZER ERROR ═════════════════════════════════════════════════════
 @Composable
 private fun FuzerError(message: String) {
     Box(Modifier.fillMaxSize(), Alignment.Center) {
