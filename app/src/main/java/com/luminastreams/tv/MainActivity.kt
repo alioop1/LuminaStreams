@@ -55,7 +55,10 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        window.colorMode = ActivityInfo.COLOR_MODE_HDR
+        // fix: guard HDR colorMode behind API 26 — below it the constant doesn't exist
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.colorMode = ActivityInfo.COLOR_MODE_HDR
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.attributes = window.attributes.also {
                 it.preferMinimalPostProcessing = true
@@ -195,7 +198,6 @@ fun AppNavHostContainer(
                     viewModel      = vm,
                     isRtl          = false,
                     onNavigateBack = { navController.popBackStack() }
-                    // ✅ Fixed: onToggleLanguage removed — no longer a parameter
                 )
             }
         }
