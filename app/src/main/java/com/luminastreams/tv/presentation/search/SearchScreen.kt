@@ -72,6 +72,31 @@ private val HINTS = listOf(
     "What are you in the mood for?"
 )
 
+// ── Discovery categories (Stremio-style) ──────────────────────────────────────
+private data class DiscoveryCategory(
+    val id:     String,
+    val label:  String,
+    val emoji:  String,
+    val color:  Color
+)
+
+private val DISCOVERY_CATS = listOf(
+    DiscoveryCategory("sort_seeds",  "Popular",    "\uD83D\uDD25", Color(0xFFE03E3E)),
+    DiscoveryCategory("q_4k",        "4K",          "\u2728",       Color(0xFF6C63FF)),
+    DiscoveryCategory("q_fhd",       "1080p",       "\uD83D\uDCFA", Color(0xFF4F8EF7)),
+    DiscoveryCategory("q_hd",        "720p",        "\uD83D\uDCF9", Color(0xFF34C97A)),
+    DiscoveryCategory("dubbed",      "Dubbed",      "\uD83C\uDDEE\uD83C\uDDF1", Color(0xFF34C97A)),
+    DiscoveryCategory("g_action",    "Action",      "\uD83D\uDCA5", Color(0xFFFF6B35)),
+    DiscoveryCategory("g_comedy",    "Comedy",      "\uD83D\uDE02", Color(0xFFFFB830)),
+    DiscoveryCategory("g_drama",     "Drama",       "\uD83C\uDFAD", Color(0xFF9B59B6)),
+    DiscoveryCategory("g_horror",    "Horror",      "\uD83D\uDC7B", Color(0xFF8B0000)),
+    DiscoveryCategory("g_scifi",     "Sci-Fi",      "\uD83D\uDE80", Color(0xFF00BCD4)),
+    DiscoveryCategory("g_animation", "Animation",  "\uD83C\uDFA8", Color(0xFFFF4081)),
+    DiscoveryCategory("g_thriller",  "Thriller",   "\uD83D\uDD2A", Color(0xFF607D8B)),
+    DiscoveryCategory("r7",          "IMDb 7+",     "\u2B50",       Color(0xFFFFB830)),
+    DiscoveryCategory("r8",          "IMDb 8+",     "\uD83C\uDFC6", Color(0xFFFF9800))
+)
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 @Composable
 fun SearchScreen(
@@ -84,7 +109,7 @@ fun SearchScreen(
     val inputFR       = remember { FocusRequester() }
     val firstSugFR    = remember { FocusRequester() }
     val firstScopeFR  = remember { FocusRequester() }
-    val firstChipFR   = remember { FocusRequester() }
+    val firstDiscFR   = remember { FocusRequester() }
     val firstResultFR = remember { FocusRequester() }
     val gridState     = rememberLazyGridState()
 
@@ -100,16 +125,17 @@ fun SearchScreen(
         if (state.lastFocusedIndex > 0) gridState.animateScrollToItem(state.lastFocusedIndex)
     }
 
-    Box(Modifier.fillMaxSize().background(BG)
-        .onPreviewKeyEvent { ev ->
-            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
-                when {
-                    state.showFilters        -> { onIntent(SearchIntent.ToggleFilters); true }
-                    state.query.isNotBlank() -> { onIntent(SearchIntent.UpdateQuery(""));  true }
-                    else -> false
-                }
-            } else false
-        }
+    Box(
+        Modifier.fillMaxSize().background(BG)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    when {
+                        state.showFilters        -> { onIntent(SearchIntent.ToggleFilters); true }
+                        state.query.isNotBlank() -> { onIntent(SearchIntent.UpdateQuery(""));  true }
+                        else -> false
+                    }
+                } else false
+            }
     ) {
         Column(Modifier.fillMaxSize()) {
             SearchHeader(
@@ -131,7 +157,7 @@ fun SearchScreen(
                     history      = state.searchHistory,
                     firstSugFR   = firstSugFR,
                     firstScopeFR = firstScopeFR,
-                    onPick = {
+                    onPick       = {
                         onIntent(SearchIntent.UpdateQuery(it))
                         runCatching { firstResultFR.requestFocus() }
                     }
@@ -140,25 +166,21 @@ fun SearchScreen(
             ScopeTabRow(
                 source        = state.source,
                 firstScopeFR  = firstScopeFR,
-                firstChipFR   = firstChipFR,
-                firstResultFR = firstResultFR,
+                nextFR        = firstDiscFR,
                 isFuzerActive = state.isFuzerLoading || state.fuzerResults.isNotEmpty(),
                 onSelect      = { onIntent(SearchIntent.SelectSource(it)) }
             )
-            AnimatedVisibility(
-                visible = state.visibleFilterChips.isNotEmpty(),
-                enter   = expandVertically(tween(200)) + fadeIn(tween(160)),
-                exit    = shrinkVertically(tween(150)) + fadeOut(tween(100))
-            ) {
-                FilterChipRow(
-                    chips         = state.visibleFilterChips,
-                    filtersActive = state.filters.isActive,
-                    firstChipFR   = firstChipFR,
-                    firstResultFR = firstResultFR,
-                    onChipTap     = { onIntent(SearchIntent.ApplyChip(it)) },
-                    onClearAll    = { onIntent(SearchIntent.ClearFilters) }
-                )
-            }
+
+            // Discovery bar — shows when query is blank OR as filter row when typing
+            DiscoveryBar(
+                chips         = state.visibleFilterChips,
+                filtersActive = state.filters.isActive,
+                firstDiscFR   = firstDiscFR,
+                firstResultFR = firstResultFR,
+                onChipTap     = { onIntent(SearchIntent.ApplyChip(it)) },
+                onClearAll    = { onIntent(SearchIntent.ClearFilters) }
+            )
+
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     state.isLoading -> ShimmerGrid()
@@ -207,9 +229,7 @@ private fun SearchHeader(
         Box(
             Modifier.fillMaxWidth().height(1.dp)
                 .align(Alignment.BottomCenter)
-                .background(Brush.horizontalGradient(
-                    listOf(Color.Transparent, SEP, SEP, Color.Transparent)
-                ))
+                .background(Brush.horizontalGradient(listOf(Color.Transparent, SEP, SEP, Color.Transparent)))
         )
         Column(Modifier.fillMaxWidth()) {
             Row(
@@ -217,6 +237,7 @@ private fun SearchHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp)
             ) {
+                // Back button
                 Surface(
                     onClick  = onBack,
                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -238,11 +259,13 @@ private fun SearchHeader(
                     }
                 }
 
+                // Logo
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                     Box(Modifier.size(4.dp, 24.dp).clip(RoundedCornerShape(2.dp)).background(RED))
                     Text("LUMINA", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 2.5.sp)
                 }
 
+                // Search pill
                 val fieldRadius = RoundedCornerShape(28.dp)
                 val fieldBorder by animateColorAsState(
                     if (inputFocused) FOCUS_BORDER.copy(0.8f) else SEP, tween(180), label = "fb"
@@ -328,11 +351,12 @@ private fun SearchHeader(
                     }
                 }
 
+                // Count pill
                 AnimatedContent(
                     targetState = when {
-                        state.isLoading -> "..."
+                        state.isLoading               -> "..."
                         state.activeResults.isEmpty() -> ""
-                        else -> "${state.activeResults.size}"
+                        else                          -> "${state.activeResults.size}"
                     },
                     transitionSpec = { fadeIn(tween(160)) togetherWith fadeOut(tween(120)) },
                     label = "cnt"
@@ -347,6 +371,7 @@ private fun SearchHeader(
                 }
             }
 
+            // History strip
             AnimatedVisibility(
                 visible = state.query.isBlank() && state.searchHistory.isNotEmpty(),
                 enter   = expandVertically(tween(180)) + fadeIn(tween(160)),
@@ -360,11 +385,11 @@ private fun SearchHeader(
                     Icon(Icons.Default.History, null, Modifier.size(12.dp), tint = LABEL3)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         itemsIndexed(state.searchHistory) { _, h ->
-                            Chip(label = h, isActive = false, accent = TINT,
+                            SmallChip(label = h, accent = TINT, isActive = false,
                                 onClick = { onIntent(SearchIntent.UpdateQuery(h)) })
                         }
                         item {
-                            Chip(label = "Clear", isActive = false, accent = RED,
+                            SmallChip(label = "Clear", accent = RED, isActive = false,
                                 onClick = { onIntent(SearchIntent.ClearHistory) })
                         }
                     }
@@ -372,6 +397,263 @@ private fun SearchHeader(
             }
         }
     }
+}
+
+// ── SCOPE TABS ────────────────────────────────────────────────────────────────
+private data class ScopeDef(
+    val src:   SearchSource,
+    val label: String,
+    val icon:  androidx.compose.ui.graphics.vector.ImageVector
+)
+
+@Composable
+private fun ScopeTabRow(
+    source:        SearchSource,
+    firstScopeFR:  FocusRequester,
+    nextFR:        FocusRequester,
+    isFuzerActive: Boolean,
+    onSelect:      (SearchSource) -> Unit
+) {
+    val scopes = remember {
+        listOf(
+            ScopeDef(SearchSource.ALL,    "All",    Icons.Default.GridView),
+            ScopeDef(SearchSource.MOVIES, "Movies", Icons.Default.Movie),
+            ScopeDef(SearchSource.SERIES, "Series", Icons.Default.LiveTv),
+            ScopeDef(SearchSource.FUZER,  "Fuzer",  Icons.Default.CloudQueue)
+        )
+    }
+    Row(
+        Modifier.fillMaxWidth().height(54.dp)
+            .background(SURFACE).padding(horizontal = 48.dp)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
+                    { runCatching { nextFR.requestFocus() }; true }
+                else false
+            },
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        scopes.forEachIndexed { idx, scope ->
+            val isSel  = source == scope.src
+            val accent = when (scope.src) {
+                SearchSource.FUZER  -> FUZER
+                SearchSource.MOVIES -> GOLD
+                SearchSource.SERIES -> TINT
+                else                -> LABEL
+            }
+            val tabAlpha by animateFloatAsState(if (isSel) 1f else 0f, tween(200), label = "ta")
+            Column(
+                Modifier.let { if (idx == 0) it.focusRequester(firstScopeFR) else it },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Surface(
+                    onClick  = { onSelect(scope.src) },
+                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors   = ClickableSurfaceDefaults.colors(
+                        containerColor        = if (isSel) accent.copy(0.15f) else Color.Transparent,
+                        focusedContainerColor = accent.copy(0.22f),
+                        contentColor          = if (isSel) accent else LABEL3,
+                        focusedContentColor   = accent
+                    ),
+                    border   = ClickableSurfaceDefaults.border(
+                        border        = if (isSel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(0.4f)), shape = RoundedCornerShape(10.dp)) else Border.None,
+                        focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.7f)), shape = RoundedCornerShape(10.dp))
+                    ),
+                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+                    modifier = Modifier.height(40.dp)
+                ) {
+                    Row(
+                        Modifier.padding(horizontal = 18.dp).fillMaxHeight(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(scope.icon, null, Modifier.size(14.dp))
+                        Text(scope.label, fontSize = 13.sp,
+                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
+                            softWrap = false)
+                        if (scope.src == SearchSource.FUZER && isFuzerActive) {
+                            val inf = rememberInfiniteTransition(label = "fz")
+                            val a by inf.animateFloat(0.3f, 1f,
+                                infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse), label = "fa")
+                            Box(Modifier.size(5.dp).clip(CircleShape).background(FUZER.copy(a)))
+                        }
+                    }
+                }
+                Box(Modifier.width(28.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(accent.copy(tabAlpha)))
+            }
+        }
+    }
+    Box(Modifier.fillMaxWidth().height(1.dp).background(SEP))
+}
+
+// ── DISCOVERY BAR (Stremio-style) ──────────────────────────────────────────────
+@Composable
+private fun DiscoveryBar(
+    chips:         List<FilterChip>,
+    filtersActive: Boolean,
+    firstDiscFR:   FocusRequester,
+    firstResultFR: FocusRequester,
+    onChipTap:     (String) -> Unit,
+    onClearAll:    () -> Unit
+) {
+    // Map active chip ids for quick lookup
+    val activeIds = remember(chips) { chips.filter { it.isActive }.map { it.id }.toSet() }
+
+    Column(
+        Modifier.fillMaxWidth()
+            .background(BG)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
+                    { runCatching { firstResultFR.requestFocus() }; true }
+                else false
+            }
+    ) {
+        // Section header row
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 48.dp).padding(top = 16.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(Icons.Default.Explore, null, Modifier.size(14.dp), tint = TINT)
+                Text("Discover", color = LABEL2, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp)
+            }
+            AnimatedVisibility(filtersActive,
+                enter = fadeIn(tween(140)), exit = fadeOut(tween(100))
+            ) {
+                SmallChip(
+                    label   = "\u00d7 Clear",
+                    accent  = RED,
+                    isActive = false,
+                    onClick  = onClearAll
+                )
+            }
+        }
+
+        // Horizontal discovery cards
+        LazyRow(
+            contentPadding        = PaddingValues(horizontal = 48.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            modifier              = Modifier.fillMaxWidth()
+        ) {
+            itemsIndexed(DISCOVERY_CATS) { idx, cat ->
+                val isActive = activeIds.contains(cat.id)
+                DiscoveryCard(
+                    cat      = cat,
+                    isActive = isActive,
+                    modifier = if (idx == 0) Modifier.focusRequester(firstDiscFR) else Modifier,
+                    onClick  = { onChipTap(cat.id) }
+                )
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(SEP))
+    }
+}
+
+// ── DISCOVERY CARD ─────────────────────────────────────────────────────────────
+@Composable
+private fun DiscoveryCard(
+    cat:      DiscoveryCategory,
+    isActive: Boolean,
+    modifier: Modifier = Modifier,
+    onClick:  () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bgAlpha by animateFloatAsState(
+        if (isActive) 0.22f else if (focused) 0.15f else 0.08f, tween(180), label = "ba"
+    )
+    val borderColor by animateColorAsState(
+        if (isActive) cat.color.copy(0.8f)
+        else if (focused) cat.color.copy(0.5f)
+        else cat.color.copy(0.18f),
+        tween(180), label = "bc"
+    )
+    val scale by animateFloatAsState(
+        if (focused) 1.06f else 1f,
+        spring(stiffness = Spring.StiffnessMedium), label = "sc"
+    )
+
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = cat.color.copy(bgAlpha),
+            focusedContainerColor = cat.color.copy(bgAlpha),
+            contentColor          = if (isActive) cat.color else LABEL2,
+            focusedContentColor   = cat.color
+        ),
+        border   = ClickableSurfaceDefaults.border(
+            border        = Border(border = androidx.compose.foundation.BorderStroke(
+                if (isActive) 1.5.dp else 1.dp, borderColor), shape = RoundedCornerShape(14.dp)),
+            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(
+                2.dp, cat.color.copy(0.9f)), shape = RoundedCornerShape(14.dp))
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier = modifier
+            .height(62.dp)
+            .widthIn(min = 80.dp)
+            .graphicsLayer(scaleX = scale, scaleY = scale)
+            .onFocusChanged { focused = it.isFocused }
+    ) {
+        Column(
+            Modifier.padding(horizontal = 14.dp, vertical = 8.dp).fillMaxHeight(),
+            verticalArrangement   = Arrangement.Center,
+            horizontalAlignment   = Alignment.CenterHorizontally
+        ) {
+            Text(cat.emoji, fontSize = 18.sp)
+            Spacer(Modifier.height(3.dp))
+            Text(
+                cat.label,
+                fontSize   = 10.sp,
+                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                color      = if (isActive) cat.color else LABEL2,
+                softWrap   = false
+            )
+        }
+    }
+}
+
+// ── SMALL CHIP ─────────────────────────────────────────────────────────────────
+@Composable
+private fun SmallChip(
+    label:    String,
+    accent:   Color,
+    isActive: Boolean,
+    modifier: Modifier = Modifier,
+    onClick:  () -> Unit
+) {
+    val radius = RoundedCornerShape(50)
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(radius),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = if (isActive) accent.copy(0.18f) else CARD,
+            focusedContainerColor = if (isActive) accent.copy(0.28f) else CARD2,
+            contentColor          = if (isActive) accent else LABEL2,
+            focusedContentColor   = accent
+        ),
+        border   = ClickableSurfaceDefaults.border(
+            border        = Border(border = androidx.compose.foundation.BorderStroke(
+                if (isActive) 1.5.dp else 1.dp,
+                if (isActive) accent.copy(0.6f) else SEP
+            ), shape = radius),
+            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.8f)), shape = radius)
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        modifier = modifier.height(26.dp)
+    ) {
+        Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) {
+            Text(label, fontSize = 11.sp,
+                fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal,
+                softWrap = false)
+        }
+    }
+}
+
+@Composable
+private fun Divider(modifier: Modifier = Modifier) {
+    Box(modifier.fillMaxWidth().height(1.dp).background(SEP))
 }
 
 // ── SUGGESTION RAIL ───────────────────────────────────────────────────────────
@@ -427,201 +709,6 @@ private fun SuggestionRail(
     }
 }
 
-// ── SCOPE TABS ───────────────────────────────────────────────────────────────
-private data class ScopeDef(
-    val src:   SearchSource,
-    val label: String,
-    val icon:  androidx.compose.ui.graphics.vector.ImageVector
-)
-
-@Composable
-private fun ScopeTabRow(
-    source:        SearchSource,
-    firstScopeFR:  FocusRequester,
-    firstChipFR:   FocusRequester,
-    firstResultFR: FocusRequester,
-    isFuzerActive: Boolean,
-    onSelect:      (SearchSource) -> Unit
-) {
-    val scopes = remember {
-        listOf(
-            ScopeDef(SearchSource.ALL,    "All",    Icons.Default.GridView),
-            ScopeDef(SearchSource.MOVIES, "Movies", Icons.Default.Movie),
-            ScopeDef(SearchSource.SERIES, "Series", Icons.Default.LiveTv),
-            ScopeDef(SearchSource.FUZER,  "Fuzer",  Icons.Default.CloudQueue)
-        )
-    }
-    Row(
-        Modifier.fillMaxWidth().height(54.dp)
-            .background(SURFACE)
-            .padding(horizontal = 48.dp)
-            .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
-                    { runCatching { firstChipFR.requestFocus() }; true }
-                else false
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
-    ) {
-        scopes.forEachIndexed { idx, scope ->
-            val isSel  = source == scope.src
-            val accent = when (scope.src) {
-                SearchSource.FUZER  -> FUZER
-                SearchSource.MOVIES -> GOLD
-                SearchSource.SERIES -> TINT
-                else                -> LABEL
-            }
-            val tabAlpha by animateFloatAsState(if (isSel) 1f else 0f, tween(200), label = "ta")
-            Column(
-                Modifier.let { if (idx == 0) it.focusRequester(firstScopeFR) else it },
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(
-                    onClick  = { onSelect(scope.src) },
-                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors   = ClickableSurfaceDefaults.colors(
-                        containerColor        = if (isSel) accent.copy(0.15f) else Color.Transparent,
-                        focusedContainerColor = accent.copy(0.22f),
-                        contentColor          = if (isSel) accent else LABEL3,
-                        focusedContentColor   = accent
-                    ),
-                    border   = ClickableSurfaceDefaults.border(
-                        border        = if (isSel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(0.4f)), shape = RoundedCornerShape(10.dp))
-                                        else Border.None,
-                        focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.7f)), shape = RoundedCornerShape(10.dp))
-                    ),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-                    modifier = Modifier.height(40.dp)
-                ) {
-                    Row(
-                        Modifier.padding(horizontal = 18.dp).fillMaxHeight(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Icon(scope.icon, null, Modifier.size(14.dp))
-                        Text(
-                            scope.label, fontSize = 13.sp,
-                            fontWeight = if (isSel) FontWeight.SemiBold else FontWeight.Normal,
-                            softWrap = false
-                        )
-                        if (scope.src == SearchSource.FUZER && isFuzerActive) {
-                            val inf = rememberInfiniteTransition(label = "fz")
-                            val a by inf.animateFloat(
-                                0.3f, 1f,
-                                infiniteRepeatable(tween(700, easing = LinearEasing), RepeatMode.Reverse),
-                                label = "fa"
-                            )
-                            Box(Modifier.size(5.dp).clip(CircleShape).background(FUZER.copy(a)))
-                        }
-                    }
-                }
-                Box(Modifier.width(28.dp).height(2.dp).clip(RoundedCornerShape(1.dp)).background(accent.copy(tabAlpha)))
-            }
-        }
-    }
-    Divider()
-}
-
-// ── FILTER CHIP ROW ───────────────────────────────────────────────────────────
-@Composable
-private fun FilterChipRow(
-    chips:         List<FilterChip>,
-    filtersActive: Boolean,
-    firstChipFR:   FocusRequester,
-    firstResultFR: FocusRequester,
-    onChipTap:     (String) -> Unit,
-    onClearAll:    () -> Unit
-) {
-    Row(
-        Modifier.fillMaxWidth().height(52.dp)
-            .background(BG)
-            .padding(horizontal = 48.dp)
-            .onPreviewKeyEvent { ev ->
-                if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown)
-                    { runCatching { firstResultFR.requestFocus() }; true }
-                else false
-            },
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        LazyRow(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            itemsIndexed(chips) { idx, chip ->
-                val accent = chipAccent(chip.id)
-                Chip(
-                    label     = if (chip.emoji.isNotEmpty()) "${chip.emoji} ${chip.label}" else chip.label,
-                    isActive  = chip.isActive,
-                    accent    = accent,
-                    modifier  = if (idx == 0) Modifier.focusRequester(firstChipFR) else Modifier,
-                    onClick   = { onChipTap(chip.id) },
-                    showCheck = chip.isActive
-                )
-            }
-        }
-        AnimatedVisibility(filtersActive,
-            enter = fadeIn(tween(140)) + scaleIn(tween(140)),
-            exit  = fadeOut(tween(100)) + scaleOut(tween(100))
-        ) {
-            Chip(label = "Clear all", isActive = false, accent = RED, onClick = onClearAll)
-        }
-    }
-    Divider()
-}
-
-// ── CHIP ──────────────────────────────────────────────────────────────────────
-@Composable
-private fun Chip(
-    label:     String,
-    isActive:  Boolean,
-    accent:    Color,
-    modifier:  Modifier = Modifier,
-    onClick:   () -> Unit,
-    showCheck: Boolean = false
-) {
-    val radius = RoundedCornerShape(50)
-    Surface(
-        onClick  = onClick,
-        shape    = ClickableSurfaceDefaults.shape(radius),
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = if (isActive) accent.copy(0.18f) else CARD,
-            focusedContainerColor = if (isActive) accent.copy(0.28f) else CARD2,
-            contentColor          = if (isActive) accent else LABEL2,
-            focusedContentColor   = accent
-        ),
-        border   = ClickableSurfaceDefaults.border(
-            border        = Border(border = androidx.compose.foundation.BorderStroke(
-                if (isActive) 1.5.dp else 1.dp,
-                if (isActive) accent.copy(0.6f) else SEP
-            ), shape = radius),
-            focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, accent.copy(0.8f)), shape = radius)
-        ),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        modifier = modifier.height(30.dp)
-    ) {
-        Row(
-            Modifier.padding(horizontal = 13.dp).fillMaxHeight(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(label, fontSize = 12.sp, fontWeight = if (isActive) FontWeight.SemiBold else FontWeight.Normal, softWrap = false)
-            if (showCheck) Icon(Icons.Default.Check, null, Modifier.size(10.dp))
-        }
-    }
-}
-
-@Composable
-private fun Divider(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().height(1.dp).background(SEP))
-}
-
-private fun chipAccent(id: String): Color = when {
-    id.startsWith("sort") -> TINT
-    id.startsWith("g_")   -> LABEL
-    id.startsWith("q_")   -> GOLD
-    id == "dubbed"         -> FUZER
-    id.startsWith("r")     -> GOLD
-    else                   -> LABEL
-}
-
 // ── RESULT GRID ───────────────────────────────────────────────────────────────
 @Composable
 private fun ResultGrid(
@@ -662,8 +749,7 @@ private fun MediaCard(
     var focused by remember { mutableStateOf(false) }
     val scale   by animateFloatAsState(
         if (focused) 1.04f else 1f,
-        spring(stiffness = Spring.StiffnessMediumLow),
-        label = "sc"
+        spring(stiffness = Spring.StiffnessMediumLow), label = "sc"
     )
     val accent = if (isFuzer) FUZER else TINT
 
@@ -673,7 +759,7 @@ private fun MediaCard(
         result.title.contains("2160p", ignoreCase = true) -> "4K"
         result.title.contains("1080p", ignoreCase = true) -> "FHD"
         result.title.contains("720p",  ignoreCase = true) -> "HD"
-        else -> null
+        else                                              -> null
     }
 
     Column(modifier, horizontalAlignment = Alignment.Start, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -687,8 +773,7 @@ private fun MediaCard(
                     Modifier.fillMaxSize()
                         .shadow(elevation = 20.dp, shape = RoundedCornerShape(16.dp),
                             ambientColor = accent.copy(0.5f), spotColor = accent.copy(0.5f))
-                        .clip(RoundedCornerShape(16.dp))
-                        .background(Color.Transparent)
+                        .clip(RoundedCornerShape(16.dp)).background(Color.Transparent)
                 )
             }
             Surface(
@@ -712,16 +797,14 @@ private fun MediaCard(
                 Box(Modifier.fillMaxSize()) {
                     if (result.posterUrl.isNotBlank()) {
                         AsyncImage(
-                            model = ImageRequest.Builder(ctx)
-                                .data(result.posterUrl).crossfade(true).build(),
+                            model              = ImageRequest.Builder(ctx).data(result.posterUrl).crossfade(true).build(),
                             contentDescription = result.title,
                             contentScale       = ContentScale.Crop,
                             modifier           = Modifier.fillMaxSize().clip(RoundedCornerShape(16.dp))
                         )
                     } else {
                         Box(
-                            Modifier.fillMaxSize()
-                                .background(Brush.verticalGradient(listOf(CARD2, CARD))),
+                            Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(CARD2, CARD))),
                             Alignment.Center
                         ) {
                             Column(horizontalAlignment = Alignment.CenterHorizontally,
@@ -734,37 +817,30 @@ private fun MediaCard(
                         }
                     }
 
-                    // FIX: colorStops requires vararg Pair — use spread operator *arrayOf(...)
                     Box(
                         Modifier.fillMaxSize()
-                            .background(
-                                Brush.verticalGradient(
-                                    colorStops = arrayOf(
-                                        0f   to Color.Transparent,
-                                        0.6f to Color.Transparent,
-                                        1f   to Color.Black.copy(if (focused) 0.7f else 0.4f)
-                                    )
+                            .background(Brush.verticalGradient(
+                                colorStops = arrayOf(
+                                    0f   to Color.Transparent,
+                                    0.6f to Color.Transparent,
+                                    1f   to Color.Black.copy(if (focused) 0.7f else 0.4f)
                                 )
-                            )
+                            ))
                     )
 
                     if (result.releaseYear.isNotBlank()) {
-                        Text(
-                            result.releaseYear, color = WHITE.copy(0.85f), fontSize = 9.sp,
+                        Text(result.releaseYear, color = WHITE.copy(0.85f), fontSize = 9.sp,
                             modifier = Modifier.align(Alignment.TopStart).padding(8.dp)
                                 .clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(0.55f))
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                                .padding(horizontal = 6.dp, vertical = 2.dp))
                     }
 
                     if (qBadge != null) {
                         val badgeColor = when (qBadge) { "4K" -> Color(0xFFFF453A); "FHD" -> TINT; else -> FUZER }
-                        Text(
-                            qBadge, color = WHITE, fontSize = 8.5.sp, fontWeight = FontWeight.Bold,
+                        Text(qBadge, color = WHITE, fontSize = 8.5.sp, fontWeight = FontWeight.Bold,
                             modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
                                 .clip(RoundedCornerShape(6.dp)).background(badgeColor)
-                                .padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                                .padding(horizontal = 6.dp, vertical = 2.dp))
                     } else if (result.rating >= 7f) {
                         Row(
                             Modifier.align(Alignment.TopEnd).padding(8.dp)
@@ -779,27 +855,19 @@ private fun MediaCard(
                     }
 
                     if (isFuzer) {
-                        Text(
-                            "FZ", color = FUZER, fontSize = 7.5.sp, fontWeight = FontWeight.ExtraBold,
+                        Text("FZ", color = FUZER, fontSize = 7.5.sp, fontWeight = FontWeight.ExtraBold,
                             modifier = Modifier.align(Alignment.BottomStart).padding(8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(FUZER.copy(0.15f))
+                                .clip(RoundedCornerShape(4.dp)).background(FUZER.copy(0.15f))
                                 .border(0.5.dp, FUZER.copy(0.4f), RoundedCornerShape(4.dp))
-                                .padding(horizontal = 5.dp, vertical = 2.dp)
-                        )
+                                .padding(horizontal = 5.dp, vertical = 2.dp))
                     }
                 }
             }
         }
 
-        Text(
-            result.title,
-            color      = if (focused) WHITE else LABEL,
-            fontSize   = 13.sp,
+        Text(result.title, color = if (focused) WHITE else LABEL, fontSize = 13.sp,
             fontWeight = if (focused) FontWeight.SemiBold else FontWeight.Normal,
-            maxLines   = 1,
-            overflow   = TextOverflow.Ellipsis
-        )
+            maxLines = 1, overflow = TextOverflow.Ellipsis)
         val sub = buildString {
             append(if (isFuzer) "Fuzer" else if (result.type == MediaType.TV_SHOW) "Series" else "Movie")
             if (result.genre.isNotBlank()) append(" \u00b7 ${result.genre}")
@@ -815,11 +883,7 @@ private fun ShimmerGrid() {
     val p by inf.animateFloat(0f, 1f,
         infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart), label = "sp")
     val shimmer = Brush.linearGradient(
-        colorStops = arrayOf(
-            0f    to CARD,
-            0.45f to CARD2,
-            1f    to CARD
-        ),
+        colorStops = arrayOf(0f to CARD, 0.45f to CARD2, 1f to CARD),
         start = androidx.compose.ui.geometry.Offset(p * 2000f - 1000f, 0f),
         end   = androidx.compose.ui.geometry.Offset(p * 2000f, 600f)
     )
@@ -832,12 +896,9 @@ private fun ShimmerGrid() {
     ) {
         items(18) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f)
-                    .clip(RoundedCornerShape(16.dp)).background(shimmer))
-                Box(Modifier.fillMaxWidth(0.72f).height(12.dp)
-                    .clip(RoundedCornerShape(6.dp)).background(shimmer))
-                Box(Modifier.fillMaxWidth(0.45f).height(10.dp)
-                    .clip(RoundedCornerShape(6.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth(0.72f).height(12.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
+                Box(Modifier.fillMaxWidth(0.45f).height(10.dp).clip(RoundedCornerShape(6.dp)).background(shimmer))
             }
         }
     }

@@ -4,7 +4,6 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
-import okhttp3.MediaType.Companion.toMediaType
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.Charset
@@ -18,7 +17,6 @@ class FuzerEngine {
     private val PASSWORD = "AliooP93"
     private val BASE     = "https://www.fuzer.me"
 
-    // ── Cookie jar ────────────────────────────────────────────────────────────────
     private val cookieJar = object : CookieJar {
         private val store = HashMap<String, MutableList<Cookie>>()
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -32,40 +30,49 @@ class FuzerEngine {
         .cookieJar(cookieJar)
         .followRedirects(true)
         .followSslRedirects(true)
-        .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
+        .connectTimeout(25, TimeUnit.SECONDS)
+        .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
     private var isLoggedIn = false
     private val hashedPassword: String by lazy { md5(PASSWORD) }
 
-    // ── Public API ────────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
 
-            // Fuzer uses a POST form search (input name="query" id="ac_basic")
-            // Submit to /browse.php with POST body: query=<term>&cat=0&searchin=1
+            // Fuzer browse uses ?filnm= for "שם הטורנט" search
+            // Encode query in windows-1255 for Hebrew support
             val encWin = URLEncoder.encode(query, "windows-1255")
             val encUtf = URLEncoder.encode(query, "UTF-8")
 
-            // Try POST first (the real search form), then GET fallbacks
+            val urls = listOf(
+                "$BASE/browse.php?filnm=$encWin&cat=0",
+                "$BASE/browse.php?filnm=$encUtf&cat=0",
+                "$BASE/browse.php?search=$encWin&cat=0",
+                "$BASE/browse.php?query=$encWin&cat=0&searchin=1"
+            )
+
+            for (url in urls) {
+                val html = getHtml(url) ?: continue
+                val movies = parseHtmlToMovies(html)
+                if (movies.isNotEmpty()) return@withContext Result.success(movies)
+            }
+
+            // Last resort: POST with all known field names
             val postBody = FormBody.Builder()
+                .add("filnm",    query)
                 .add("query",    query)
+                .add("search",   query)
                 .add("cat",      "0")
                 .add("searchin", "1")
-                .add("search",   query)
                 .build()
-
-            val postReq = Request.Builder()
-                .url("$BASE/browse.php")
-                .post(postBody)
-                .headers(defaultHeaders("$BASE/browse.php"))
-                .build()
-
             val postHtml = try {
-                val resp  = client.newCall(postReq).execute()
-                val bytes = resp.body?.bytes()
+                val bytes = client.newCall(
+                    Request.Builder().url("$BASE/browse.php")
+                        .post(postBody).headers(defaultHeaders("$BASE/browse.php")).build()
+                ).execute().body?.bytes()
                 if (bytes != null) decodeBody(bytes) else null
             } catch (_: Exception) { null }
 
@@ -74,17 +81,6 @@ class FuzerEngine {
                 if (movies.isNotEmpty()) return@withContext Result.success(movies)
             }
 
-            // Fallback: GET with windows-1255 encoded query
-            val getUrls = listOf(
-                "$BASE/browse.php?query=$encWin&cat=0&searchin=1",
-                "$BASE/browse.php?search=$encWin&cat=0",
-                "$BASE/browse.php?searchstr=$encUtf&cat=0"
-            )
-            for (url in getUrls) {
-                val html = getHtml(url) ?: continue
-                val movies = parseHtmlToMovies(html)
-                if (movies.isNotEmpty()) return@withContext Result.success(movies)
-            }
             Result.success(emptyList())
         } catch (e: Exception) {
             Result.failure(Exception("Fuzer search: ${e.message}"))
@@ -111,21 +107,21 @@ class FuzerEngine {
                 val raw = link.attr("href").replace("&amp;", "&")
                 finalUrl = if (raw.startsWith("http")) raw else "$BASE/$raw"
             }
-            val req = Request.Builder().url(finalUrl)
-                .headers(defaultHeaders("$BASE/browse.php")).build()
-            val bytes = client.newCall(req).execute().body?.bytes()
+            val bytes = client.newCall(
+                Request.Builder().url(finalUrl).headers(defaultHeaders("$BASE/browse.php")).build()
+            ).execute().body?.bytes()
             if (bytes != null && bytes.isNotEmpty() &&
-                !String(bytes.take(50).toByteArray()).contains("html", ignoreCase = true)
-            ) Result.success(bytes)
+                !String(bytes.take(50).toByteArray()).contains("html", ignoreCase = true))
+                Result.success(bytes)
             else Result.failure(Exception("Invalid torrent data"))
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────────────
+    // ── Helpers ───────────────────────────────────────────────────────────
     private fun getHtml(url: String): String? {
-        val req = Request.Builder().url(url)
-            .headers(defaultHeaders("$BASE/browse.php")).build()
-        val resp = client.newCall(req).execute()
+        val resp  = client.newCall(
+            Request.Builder().url(url).headers(defaultHeaders("$BASE/browse.php")).build()
+        ).execute()
         val bytes = resp.body?.bytes() ?: return null
         return decodeBody(bytes)
     }
@@ -147,8 +143,7 @@ class FuzerEngine {
         if (isLoggedIn) return true
         try {
             val checkHtml = client.newCall(
-                Request.Builder().url("$BASE/index.php")
-                    .headers(defaultHeaders(BASE)).build()
+                Request.Builder().url("$BASE/index.php").headers(defaultHeaders(BASE)).build()
             ).execute().body?.string() ?: ""
             if (checkHtml.contains("logout", ignoreCase = true) ||
                 checkHtml.contains("loggout", ignoreCase = true)) {
@@ -156,27 +151,23 @@ class FuzerEngine {
             }
 
             val loginPageHtml = client.newCall(
-                Request.Builder().url("$BASE/login.php")
-                    .headers(defaultHeaders(BASE)).build()
+                Request.Builder().url("$BASE/login.php").headers(defaultHeaders(BASE)).build()
             ).execute().body?.string() ?: ""
-            val tokenDoc = Jsoup.parse(loginPageHtml)
-            val secToken = tokenDoc.select("input[name=securitytoken]").firstOrNull()
-                ?.attr("value") ?: "guest"
-
-            val form = FormBody.Builder()
-                .add("vb_login_username",        USERNAME)
-                .add("vb_login_password",        "")
-                .add("vb_login_md5password",     hashedPassword)
-                .add("vb_login_md5password_utf", hashedPassword)
-                .add("do",            "login")
-                .add("securitytoken", secToken)
-                .add("cookieuser",    "1")
-                .build()
+            val secToken = Jsoup.parse(loginPageHtml)
+                .select("input[name=securitytoken]").firstOrNull()?.attr("value") ?: "guest"
 
             val loginResp = client.newCall(
                 Request.Builder()
                     .url("$BASE/login.php?do=login")
-                    .post(form)
+                    .post(FormBody.Builder()
+                        .add("vb_login_username",        USERNAME)
+                        .add("vb_login_password",        "")
+                        .add("vb_login_md5password",     hashedPassword)
+                        .add("vb_login_md5password_utf", hashedPassword)
+                        .add("do",            "login")
+                        .add("securitytoken", secToken)
+                        .add("cookieuser",    "1")
+                        .build())
                     .headers(defaultHeaders("$BASE/login.php"))
                     .build()
             ).execute()
@@ -186,15 +177,14 @@ class FuzerEngine {
                 loginBody.contains("loggout", ignoreCase = true) ||
                 cookieJar.loadForRequest(
                     HttpUrl.Builder().scheme("https").host("www.fuzer.me").build()
-                ).any { it.name.contains("bbuser", ignoreCase = true) || it.name == "vbulletin_loggedin" }
-            ) {
+                ).any { it.name.contains("bbuser", ignoreCase = true) || it.name == "vbulletin_loggedin" }) {
                 isLoggedIn = true; return true
             }
         } catch (_: Exception) {}
         return false
     }
 
-    // ── Parser ────────────────────────────────────────────────────────────────────
+    // ── Parser ────────────────────────────────────────────────────────────
     private fun parseHtmlToMovies(html: String): List<Movie> {
         val movies = mutableListOf<Movie>()
         val doc    = Jsoup.parse(html)
@@ -205,12 +195,8 @@ class FuzerEngine {
             doc.select("tr").filter { it.select("a[href*=showthread]").isNotEmpty() }
         }
 
-        val seasonRegex = Pattern.compile(
-            "(?i)(?:S|Season|\u05e2\u05d5\u05e0\u05d4)\\s*(\\d{1,2})"
-        )
-        val cutRegex = Pattern.compile(
-            "(?i)(\\b(19|20)\\d{2}\\b|\\bS\\d+E?|\\bSeason|\\b720p|\\b1080p|\\b2160p|\\b4K\\b)"
-        )
+        val seasonRegex = Pattern.compile("(?i)(?:S|Season|\u05e2\u05d5\u05e0\u05d4)\\s*(\\d{1,2})")
+        val cutRegex    = Pattern.compile("(?i)(\\b(19|20)\\d{2}\\b|\\bS\\d+E?|\\bSeason|\\b720p|\\b1080p|\\b2160p|\\b4K\\b)")
 
         for (row in rows) {
             try {
@@ -222,12 +208,8 @@ class FuzerEngine {
                 val threadUrl = if (rawHref.startsWith("http")) rawHref else "$BASE/$rawHref"
 
                 var posterUrl = titleLink.attr("imgsrc").trim()
-                if (posterUrl.isEmpty()) {
-                    posterUrl = row.select("img[src]").firstOrNull()?.attr("src") ?: ""
-                }
-                if (posterUrl.isNotEmpty() && !posterUrl.startsWith("http")) {
-                    posterUrl = "$BASE/$posterUrl"
-                }
+                if (posterUrl.isEmpty()) posterUrl = row.select("img[src]").firstOrNull()?.attr("src") ?: ""
+                if (posterUrl.isNotEmpty() && !posterUrl.startsWith("http")) posterUrl = "$BASE/$posterUrl"
 
                 val quality = when {
                     rawTitle.contains("2160p", true) || rawTitle.contains("4K", true) -> "4K"
@@ -246,9 +228,6 @@ class FuzerEngine {
                     .replace(Regex("\\s+"), " ").trim()
                 if (clean.length < 2) clean = rawTitle.take(60)
 
-                val isTv = seasonRegex.matcher(rawTitle).find() ||
-                        rawTitle.contains("\u05e2\u05d5\u05e0\u05d4", true)
-
                 movies.add(Movie(
                     id              = threadUrl,
                     title           = clean,
@@ -257,7 +236,7 @@ class FuzerEngine {
                     overview        = rawTitle,
                     rating          = 0f,
                     genre           = quality,
-                    mediaType       = if (isTv) "tv" else "movie",
+                    mediaType       = if (seasonRegex.matcher(rawTitle).find() || rawTitle.contains("\u05e2\u05d5\u05e0\u05d4", true)) "tv" else "movie",
                     resolutionBadge = quality,
                     is4K            = quality == "4K"
                 ))
@@ -267,7 +246,6 @@ class FuzerEngine {
     }
 
     private fun md5(input: String): String = try {
-        MessageDigest.getInstance("MD5").digest(input.toByteArray())
-            .joinToString("") { "%02x".format(it) }
+        MessageDigest.getInstance("MD5").digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
     } catch (_: Exception) { "" }
 }
