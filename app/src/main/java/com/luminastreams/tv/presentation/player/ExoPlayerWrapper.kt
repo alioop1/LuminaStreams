@@ -28,6 +28,8 @@ import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,7 +60,7 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
-    // ─── AFR: fps מהתוכן האמיתי ────────────────────────────────────
+    // ─── AFR: fps מהתוכן האמיתי ————————————————————————————————
     // מתעדכן מ-onVideoSizeChanged + onTracksChanged כשה-video track נבחר.
     // 0f = טרם ידוע. PlayerScreen מאזין ומחיל display mode בהתאם.
     private val _contentFrameRate = MutableStateFlow(0f)
@@ -143,7 +145,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ─────────────────────────────────────────────────────
+    // ─── State ————————————————————————————————————
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -159,11 +161,13 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // ─── כתוביות ידניות ───────────────────────────────────────────
+    // ─── כתוביות ידניות —————————————————————————————
     private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
     private var parsedSubs: List<SubEntry> = emptyList()
     private var subTickerJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.Main)
+    // fix: single supervised scope — reused for both ticker and subtitle download.
+    // Cancelled in release() so no coroutines leak after the player is destroyed.
+    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
         player.addListener(object : Player.Listener {
@@ -173,7 +177,7 @@ class ExoPlayerWrapper(context: Context) {
                 if (parsedSubs.isEmpty()) _currentCues.value = cueGroup.cues
             }
 
-            // ─── AFR: קורא fps מה-Format של ה-video track שנבחר ──────
+            // ─── AFR: קורא fps מה-Format של ה-video track שנבחר ——————
             // onTracksChanged נקרא אחרי שה-track selection סופית —
             // כאן ה-format מכיל frameRate אמיתי מה-manifest/container.
             override fun onTracksChanged(tracks: Tracks) {
@@ -190,7 +194,6 @@ class ExoPlayerWrapper(context: Context) {
             // (קורה עם חלק מה-HLS streams שמגיעים ללא frameRate ב-manifest)
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (_contentFrameRate.value <= 0f) {
-                    // נסה לקרוא מה-currentTracks שוב — ייתכן שהתעדכנו
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                         .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
@@ -226,7 +229,7 @@ class ExoPlayerWrapper(context: Context) {
         _playerError.value     = null
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
-        _contentFrameRate.value = 0f   // reset fps בין סטרימים
+        _contentFrameRate.value = 0f
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -247,7 +250,9 @@ class ExoPlayerWrapper(context: Context) {
             loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
-        CoroutineScope(Dispatchers.IO).launch {
+        // fix: use class-level scope (not a new standalone CoroutineScope) so the
+        // download is automatically cancelled when release() is called.
+        scope.launch(Dispatchers.IO) {
             var lastErr: Exception? = null
             repeat(maxRetries + 1) { attempt ->
                 try {
@@ -352,6 +357,8 @@ class ExoPlayerWrapper(context: Context) {
     fun clearError() { _playerError.value = null }
     fun release() {
         stopSubTicker()
+        // fix: cancel scope to terminate any in-flight subtitle downloads
+        scope.cancel()
         try { player.release() } catch (_: Exception) {}
     }
 }
