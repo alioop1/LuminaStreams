@@ -427,7 +427,7 @@ private fun SuggestionRail(
     }
 }
 
-// ── SCOPE TABS ────────────────────────────────────────────────────────────────
+// ── SCOPE TABS ───────────────────────────────────────────────────────────────
 private data class ScopeDef(
     val src:   SearchSource,
     val label: String,
@@ -734,12 +734,12 @@ private fun MediaCard(
                         }
                     }
 
-                    // FIX: use listOf(Pair(...)) instead of arrayOf(...)
+                    // FIX: colorStops requires vararg Pair — use spread operator *arrayOf(...)
                     Box(
                         Modifier.fillMaxSize()
                             .background(
                                 Brush.verticalGradient(
-                                    listOf(
+                                    colorStops = arrayOf(
                                         0f   to Color.Transparent,
                                         0.6f to Color.Transparent,
                                         1f   to Color.Black.copy(if (focused) 0.7f else 0.4f)
@@ -814,11 +814,12 @@ private fun ShimmerGrid() {
     val inf = rememberInfiniteTransition(label = "sh")
     val p by inf.animateFloat(0f, 1f,
         infiniteRepeatable(tween(1400, easing = LinearEasing), RepeatMode.Restart), label = "sp")
-    // FIX: use vararg Pair syntax (0f to CARD, ...) instead of arrayOf
     val shimmer = Brush.linearGradient(
-        0f    to CARD,
-        0.45f to CARD2,
-        1f    to CARD,
+        colorStops = arrayOf(
+            0f    to CARD,
+            0.45f to CARD2,
+            1f    to CARD
+        ),
         start = androidx.compose.ui.geometry.Offset(p * 2000f - 1000f, 0f),
         end   = androidx.compose.ui.geometry.Offset(p * 2000f, 600f)
     )

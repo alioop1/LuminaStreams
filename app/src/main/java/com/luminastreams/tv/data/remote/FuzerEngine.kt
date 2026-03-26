@@ -4,6 +4,7 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.*
+import okhttp3.MediaType.Companion.toMediaType
 import org.jsoup.Jsoup
 import java.net.URLEncoder
 import java.nio.charset.Charset
@@ -17,7 +18,7 @@ class FuzerEngine {
     private val PASSWORD = "AliooP93"
     private val BASE     = "https://www.fuzer.me"
 
-    // ── Cookie jar ────────────────────────────────────────────────────────────
+    // ── Cookie jar ────────────────────────────────────────────────────────────────
     private val cookieJar = object : CookieJar {
         private val store = HashMap<String, MutableList<Cookie>>()
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -38,18 +39,48 @@ class FuzerEngine {
     private var isLoggedIn = false
     private val hashedPassword: String by lazy { md5(PASSWORD) }
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ── Public API ────────────────────────────────────────────────────────────────
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
-            // Encode with windows-1255 for Hebrew support
-            val enc = URLEncoder.encode(query, "windows-1255")
-            // Try both search param names Fuzer uses
-            val urls = listOf(
-                "$BASE/browse.php?search=$enc&cat=0",
-                "$BASE/browse.php?searchstr=$enc&cat=0"
+
+            // Fuzer uses a POST form search (input name="query" id="ac_basic")
+            // Submit to /browse.php with POST body: query=<term>&cat=0&searchin=1
+            val encWin = URLEncoder.encode(query, "windows-1255")
+            val encUtf = URLEncoder.encode(query, "UTF-8")
+
+            // Try POST first (the real search form), then GET fallbacks
+            val postBody = FormBody.Builder()
+                .add("query",    query)
+                .add("cat",      "0")
+                .add("searchin", "1")
+                .add("search",   query)
+                .build()
+
+            val postReq = Request.Builder()
+                .url("$BASE/browse.php")
+                .post(postBody)
+                .headers(defaultHeaders("$BASE/browse.php"))
+                .build()
+
+            val postHtml = try {
+                val resp  = client.newCall(postReq).execute()
+                val bytes = resp.body?.bytes()
+                if (bytes != null) decodeBody(bytes) else null
+            } catch (_: Exception) { null }
+
+            if (postHtml != null) {
+                val movies = parseHtmlToMovies(postHtml)
+                if (movies.isNotEmpty()) return@withContext Result.success(movies)
+            }
+
+            // Fallback: GET with windows-1255 encoded query
+            val getUrls = listOf(
+                "$BASE/browse.php?query=$encWin&cat=0&searchin=1",
+                "$BASE/browse.php?search=$encWin&cat=0",
+                "$BASE/browse.php?searchstr=$encUtf&cat=0"
             )
-            for (url in urls) {
+            for (url in getUrls) {
                 val html = getHtml(url) ?: continue
                 val movies = parseHtmlToMovies(html)
                 if (movies.isNotEmpty()) return@withContext Result.success(movies)
@@ -90,16 +121,18 @@ class FuzerEngine {
         } catch (e: Exception) { Result.failure(e) }
     }
 
-    // ── Internal helpers ──────────────────────────────────────────────────────
+    // ── Internal helpers ──────────────────────────────────────────────────────────────
     private fun getHtml(url: String): String? {
         val req = Request.Builder().url(url)
             .headers(defaultHeaders("$BASE/browse.php")).build()
         val resp = client.newCall(req).execute()
         val bytes = resp.body?.bytes() ?: return null
-        // Fuzer serves windows-1255, try that first; fall back to UTF-8
-        return try { String(bytes, Charset.forName("windows-1255")) }
-        catch (_: Exception) { String(bytes, Charsets.UTF_8) }
+        return decodeBody(bytes)
     }
+
+    private fun decodeBody(bytes: ByteArray): String =
+        try { String(bytes, Charset.forName("windows-1255")) }
+        catch (_: Exception) { String(bytes, Charsets.UTF_8) }
 
     private fun defaultHeaders(referer: String): Headers = Headers.Builder()
         .add("User-Agent",      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36")
@@ -113,7 +146,6 @@ class FuzerEngine {
     private fun loginIfNeeded(): Boolean {
         if (isLoggedIn) return true
         try {
-            // Step 1: Check if already logged in
             val checkHtml = client.newCall(
                 Request.Builder().url("$BASE/index.php")
                     .headers(defaultHeaders(BASE)).build()
@@ -123,16 +155,14 @@ class FuzerEngine {
                 isLoggedIn = true; return true
             }
 
-            // Step 2: Get security token from login page
             val loginPageHtml = client.newCall(
                 Request.Builder().url("$BASE/login.php")
                     .headers(defaultHeaders(BASE)).build()
             ).execute().body?.string() ?: ""
-            val tokenDoc   = Jsoup.parse(loginPageHtml)
-            val secToken   = tokenDoc.select("input[name=securitytoken]").firstOrNull()
+            val tokenDoc = Jsoup.parse(loginPageHtml)
+            val secToken = tokenDoc.select("input[name=securitytoken]").firstOrNull()
                 ?.attr("value") ?: "guest"
 
-            // Step 3: POST login
             val form = FormBody.Builder()
                 .add("vb_login_username",        USERNAME)
                 .add("vb_login_password",        "")
@@ -152,7 +182,6 @@ class FuzerEngine {
             ).execute()
 
             val loginBody = loginResp.body?.string() ?: ""
-
             if (loginBody.contains("logout", ignoreCase = true) ||
                 loginBody.contains("loggout", ignoreCase = true) ||
                 cookieJar.loadForRequest(
@@ -165,16 +194,14 @@ class FuzerEngine {
         return false
     }
 
-    // ── Parser ────────────────────────────────────────────────────────────────
+    // ── Parser ────────────────────────────────────────────────────────────────────
     private fun parseHtmlToMovies(html: String): List<Movie> {
-        val movies  = mutableListOf<Movie>()
-        val doc     = Jsoup.parse(html)
+        val movies = mutableListOf<Movie>()
+        val doc    = Jsoup.parse(html)
 
-        // Fuzer browse table rows — try multiple selectors for resilience
         val rows = doc.select("tr.trow1, tr.trow2, tr.torrent_row").ifEmpty {
-            doc.select("table.torrents tr").drop(1)  // skip header row
+            doc.select("table.torrents tr").drop(1)
         }.ifEmpty {
-            // Last resort: any row containing a showthread link
             doc.select("tr").filter { it.select("a[href*=showthread]").isNotEmpty() }
         }
 
@@ -191,10 +218,9 @@ class FuzerEngine {
                 val rawTitle  = titleLink.text().trim()
                 if (rawTitle.length < 2) continue
 
-                val rawHref = titleLink.attr("href").replace("&amp;", "&")
+                val rawHref   = titleLink.attr("href").replace("&amp;", "&")
                 val threadUrl = if (rawHref.startsWith("http")) rawHref else "$BASE/$rawHref"
 
-                // Poster: imgsrc attr or nearby img
                 var posterUrl = titleLink.attr("imgsrc").trim()
                 if (posterUrl.isEmpty()) {
                     posterUrl = row.select("img[src]").firstOrNull()?.attr("src") ?: ""
@@ -210,7 +236,6 @@ class FuzerEngine {
                     else -> ""
                 }
 
-                // Clean title
                 var clean = rawTitle
                 val cut = cutRegex.matcher(clean)
                 if (cut.find()) clean = clean.substring(0, cut.start())
