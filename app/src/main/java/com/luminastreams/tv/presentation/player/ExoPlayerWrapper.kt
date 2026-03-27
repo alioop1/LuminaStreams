@@ -46,7 +46,9 @@ class ExoPlayerWrapper(context: Context) {
     private val appContext = context.applicationContext
     private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    private val audioPassthrough   = prefs.getBoolean("audio_passthrough",    false)
+    // LG OLED + Sony + Philips → audio passthrough ON by default (Dolby Atmos bitstream)
+    private val audioPassthrough   = prefs.getBoolean("audio_passthrough",
+        DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration     = prefs.getBoolean("hw_accel",             true)
     private val preAllocateBuffer  = prefs.getBoolean("pre_buffer",           false)
     private val audioLangPref      = prefs.getString("preferred_audio_lang",  "original") ?: "original"
@@ -60,11 +62,16 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
-    // ─── AFR: fps מהתוכן האמיתי ————————————————————————————————
-    // מתעדכן מ-onVideoSizeChanged + onTracksChanged כשה-video track נבחר.
-    // 0f = טרם ידוע. PlayerScreen מאזין ומחיל display mode בהתאם.
+    // ─── AFR ─────────────────────────────────────────────────────────
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
+
+    // ─── Dolby badges ─────────────────────────────────────────────────
+    private val _isDolbyVision = MutableStateFlow(false)
+    val isDolbyVision: StateFlow<Boolean> = _isDolbyVision.asStateFlow()
+
+    private val _isDolbyAtmos = MutableStateFlow(false)
+    val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
@@ -72,6 +79,9 @@ class ExoPlayerWrapper(context: Context) {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                // LG/Sony/Philips — use ON so native HDR/DV decoder is preferred
+                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
@@ -91,8 +101,10 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
             .setTunnelingEnabled(
-                DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic
+                // LG + Sony + Philips → tunneling always ON for proper HDR/DV pipeline
+                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
+                (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
+                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
             )
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
@@ -145,7 +157,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ————————————————————————————————————
+    // ─── State ────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -161,12 +173,10 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // ─── כתוביות ידניות —————————————————————————————
+    // ─── כתוביות ידניות ──────────────────────────────────────────────
     private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
     private var parsedSubs: List<SubEntry> = emptyList()
     private var subTickerJob: Job? = null
-    // fix: single supervised scope — reused for both ticker and subtitle download.
-    // Cancelled in release() so no coroutines leak after the player is destroyed.
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
@@ -177,21 +187,35 @@ class ExoPlayerWrapper(context: Context) {
                 if (parsedSubs.isEmpty()) _currentCues.value = cueGroup.cues
             }
 
-            // ─── AFR: קורא fps מה-Format של ה-video track שנבחר ——————
-            // onTracksChanged נקרא אחרי שה-track selection סופית —
-            // כאן ה-format מכיל frameRate אמיתי מה-manifest/container.
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
+
+                // AFR — fps from selected video track
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .firstOrNull { it.frameRate > 0f }
                     ?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
+
+                // Dolby Vision detection
+                val hasDv = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+                    .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
+                    .any { it.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION }
+                _isDolbyVision.value = hasDv
+
+                // Dolby Atmos detection (E-AC3 JOC = Atmos)
+                val hasAtmos = tracks.groups
+                    .filter { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
+                    .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
+                    .any {
+                        it.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC ||
+                        (it.sampleMimeType == MimeTypes.AUDIO_E_AC3 && (it.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0)
+                    }
+                _isDolbyAtmos.value = hasAtmos
             }
 
-            // onVideoSizeChanged — backup אם ה-format לא מגיע מ-onTracksChanged
-            // (קורה עם חלק מה-HLS streams שמגיעים ללא frameRate ב-manifest)
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 if (_contentFrameRate.value <= 0f) {
                     val fps = player.currentTracks.groups
@@ -230,6 +254,8 @@ class ExoPlayerWrapper(context: Context) {
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
         _contentFrameRate.value = 0f
+        _isDolbyVision.value   = false
+        _isDolbyAtmos.value    = false
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -250,8 +276,6 @@ class ExoPlayerWrapper(context: Context) {
             loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
-        // fix: use class-level scope (not a new standalone CoroutineScope) so the
-        // download is automatically cancelled when release() is called.
         scope.launch(Dispatchers.IO) {
             var lastErr: Exception? = null
             repeat(maxRetries + 1) { attempt ->
@@ -357,7 +381,6 @@ class ExoPlayerWrapper(context: Context) {
     fun clearError() { _playerError.value = null }
     fun release() {
         stopSubTicker()
-        // fix: cancel scope to terminate any in-flight subtitle downloads
         scope.cancel()
         try { player.release() } catch (_: Exception) {}
     }

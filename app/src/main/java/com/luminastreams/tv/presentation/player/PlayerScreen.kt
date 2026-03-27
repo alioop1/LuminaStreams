@@ -8,9 +8,11 @@ package com.luminastreams.tv.presentation.player
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.view.KeyEvent
 import android.view.SurfaceView
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -98,19 +100,17 @@ private val CTRL_BG = Color(0x99000000)
 private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
+private val DV_BLUE = Color(0xFF00B4FF)  // Dolby Vision badge color
+private val ATMOS_PURPLE = Color(0xFF7B2FBE) // Dolby Atmos badge color
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
 
 // ─── AFR helper ────────────────────────────────────────────────────────────
-// בוחר את ה-display mode שהכי קרוב ל-fps של התוכן,
-// תוך שמירה על אותה רזולוציה פיזית כמו ה-mode הנוכחי.
-// מנרמל fps: 23.976→24, 29.97→30, 59.94→60 לפני ההשוואה.
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
     val current = display.mode
 
-    // עגל fps נפוצים (23.976, 29.97, 59.94 …)
     val targetFps = when {
         contentFps in 23.9f..24.1f -> 24f
         contentFps in 25f..25.1f   -> 25f
@@ -121,8 +121,6 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         else -> contentFps
     }
 
-    // מועדפות: מצב עם אותה רזולוציה + הכי קרוב ל-targetFps
-    // אם אין — קח כל מצב שמכיל את ה-fps כ-multiple (60→30, 60→24 וכו')
     val sameRes = display.supportedModes.filter {
         it.physicalWidth  == current.physicalWidth &&
         it.physicalHeight == current.physicalHeight
@@ -132,16 +130,45 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) }
         ?: return
 
-    // אל תעשה שינוי מיותר אם כבר אותו mode
     if (best.modeId == current.modeId) return
-
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
 }
 
-// ─── Restore display mode ──────────────────────────────────────────────────
 private fun restoreDisplayMode(activity: Activity) {
     val win = activity.window ?: return
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
+}
+
+// ─── HDR Window setup for Dolby Vision ─────────────────────────────────────
+private fun enableHdrWindow(activity: Activity) {
+    runCatching {
+        // Enable HDR output on the Window (API 31+)
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            activity.window.attributes = activity.window.attributes.also { lp ->
+                lp.layoutInDisplayCutoutMode =
+                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+            // Request HDR color mode
+            val cls = ActivityInfo::class.java
+            val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
+            val hdrMode = colorModeField?.getInt(null) ?: 2
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            val setColorMode = Activity::class.java.getMethod("setRequestedColorMode", Int::class.java)
+            setColorMode.invoke(activity, hdrMode)
+        }
+    }
+}
+
+// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ──────────────────
+private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
+    runCatching {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            // SurfaceView.setHdrOutputMode exists on API 33+
+            val method = SurfaceView::class.java.getMethod("setHdrOutputMode", Int::class.java)
+            // HDR_TYPE_DOLBY_VISION = 3
+            method.invoke(surfaceView, 3)
+        }
+    }
 }
 
 @Composable
@@ -159,8 +186,10 @@ fun PlayerScreen(
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
     val currentCues   by exo.currentCues.collectAsState()
+    val isDolbyVision by exo.isDolbyVision.collectAsState()
+    val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
 
-    // ─── AFR: fps מהתוכן ──────────────────────────────────────────
+    // ─── AFR ──────────────────────────────────────────────────────────
     val contentFps    by exo.contentFrameRate.collectAsState()
     val afrEnabled    = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -187,6 +216,11 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
+    // ─── Enable HDR/DV window on Activity start ────────────────────────
+    LaunchedEffect(Unit) {
+        (context as? Activity)?.let { enableHdrWindow(it) }
+    }
+
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId) }
 
     LaunchedEffect(surfaceReady) {
@@ -198,16 +232,12 @@ fun PlayerScreen(
         }
     }
 
-    // ─── AFR: מחיל display mode כשה-fps מהתוכן מתעדכן ────────────
-    // contentFps מגיע מ-ExoPlayer onTracksChanged/onVideoSizeChanged.
-    // מחכה ש-fps יהיה ידוע (>0) ו-AFR מופעל.
     LaunchedEffect(contentFps) {
         if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
         val activity = context as? Activity ?: return@LaunchedEffect
         applyAfrForContent(activity, contentFps)
     }
 
-    // ─── AFR: מחזיר display mode לברירת מחדל ביציאה ──────────────
     DisposableEffect(Unit) {
         onDispose {
             exo.release()
@@ -357,6 +387,8 @@ fun PlayerScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         keepScreenOn = true
+                        // Apply Dolby Vision HDR output mode on surface
+                        applySurfaceDolbyVision(this)
                         addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                             override fun onViewAttachedToWindow(v: android.view.View) {
                                 exo.player.setVideoSurfaceView(this@apply)
@@ -400,6 +432,22 @@ fun PlayerScreen(
                 sub?.setCues(currentCues)
             }
         )
+
+        // ─── Dolby Vision / Dolby Atmos badges ────────────────────────
+        Row(
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 28.dp, end = 28.dp)
+                .zIndex(50f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            if (isDolbyVision) {
+                DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
+            }
+            if (isDolbyAtmos) {
+                DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            }
+        }
 
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
@@ -657,6 +705,25 @@ fun PlayerScreen(
     }
 }
 
+// ─── Dolby Badge composable ────────────────────────────────────────────────
+@Composable
+private fun DolbyBadge(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(6.dp))
+            .background(color.copy(alpha = 0.85f))
+            .padding(horizontal = 10.dp, vertical = 5.dp)
+    ) {
+        Text(
+            text       = text,
+            color      = Color.White,
+            fontSize   = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
+            letterSpacing = 0.8.sp
+        )
+    }
+}
+
 @Composable
 private fun SidePanelHeader(title: String, subtitle: String) {
     Column {
@@ -695,7 +762,14 @@ private fun TrackListUi(
                 val label    = format.label    ?: ""
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
-                val name     = listOf(lang.uppercase(), label, channels, codec).filter { it.isNotBlank() }.joinToString(" • ")
+                // Show Dolby Atmos / Dolby Vision label in track list
+                val dolbyTag = when (format.sampleMimeType) {
+                    "audio/eac3-joc"               -> "🎵 ATMOS"
+                    "video/dolby-vision"            -> "🎬 DV"
+                    else -> ""
+                }
+                val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)
+                    .filter { it.isNotBlank() }.joinToString(" • ")
                 list.add(Triple(group, i, name))
             }
         }

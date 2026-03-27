@@ -22,6 +22,9 @@ object DeviceProfile {
     var isXiaomi:  Boolean = false; private set
     var isMeCool:  Boolean = false; private set
     var isAmlogic: Boolean = false; private set
+    var isLg:      Boolean = false; private set
+    var isSony:    Boolean = false; private set
+    var isPhilips: Boolean = false; private set
 
     lateinit var tier: Tier
         private set
@@ -35,16 +38,12 @@ object DeviceProfile {
     var totalRamMb: Int = 0
         private set
 
-    // ✅ Set by SettingsViewModel when Lite UI mode is toggled ON.
     var forceLowTier: Boolean = false
         set(value) {
             field = value
             animConfig = buildConfig(effectiveTier())
         }
 
-    // ✅ Set by SettingsViewModel when Reduce Motion is toggled ON.
-    // Zeroes ALL animation durations regardless of tier — no visual change on strong devices
-    // beyond skipping transitions (they were already fast there).
     var forceReduceMotion: Boolean = false
         set(value) {
             field = value
@@ -71,6 +70,12 @@ object DeviceProfile {
                     hardware.contains("s922")     ||
                     hardware.contains("s912")     ||
                     hardware.contains("s905x")
+        isLg      = manufacturer.contains("lge") ||
+                    manufacturer.contains("lg")  ||
+                    model.contains("oled")        ||
+                    model.contains("lg")
+        isSony    = manufacturer.contains("sony")
+        isPhilips = manufacturer.contains("philips") || manufacturer.contains("tp vision")
 
         tier       = detectTier(gpuRenderer, totalRamMb)
         animConfig = buildConfig(effectiveTier())
@@ -89,6 +94,10 @@ object DeviceProfile {
 
     private fun detectTier(gpu: String, ramMb: Int): Tier {
         val g = gpu.lowercase()
+        // LG OLED / NanoCell / QNED — always HIGH
+        if (isLg)      return Tier.HIGH
+        if (isSony)    return Tier.HIGH
+        if (isPhilips) return Tier.HIGH
         if (g.contains("vivante")) return Tier.LOW
         if (isMeCool || isAmlogic) {
             val model = Build.MODEL.lowercase()
@@ -121,7 +130,6 @@ object DeviceProfile {
     }
 
     private fun buildConfig(t: Tier): AnimConfig {
-        // forceReduceMotion → zero everything, regardless of tier
         if (forceReduceMotion) return AnimConfig(
             rowFadeDuration   = 0,
             backdropDuration  = 0,
@@ -167,5 +175,6 @@ object DeviceProfile {
         "ReduceMotion=$forceReduceMotion | " +
         "GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
         "Xiaomi=$isXiaomi | MeCool=$isMeCool | Amlogic=$isAmlogic | " +
+        "LG=$isLg | Sony=$isSony | Philips=$isPhilips | " +
         "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }
