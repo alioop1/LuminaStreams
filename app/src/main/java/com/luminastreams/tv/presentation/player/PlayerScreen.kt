@@ -11,7 +11,6 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.view.KeyEvent
 import android.view.SurfaceView
-import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -65,6 +64,7 @@ import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
@@ -98,30 +98,35 @@ val CustomAudioIcon: ImageVector
         }
     }.build()
 
-private val CTRL_BG = Color(0x99000000)
-private val RED     = Color(0xFFE50914)
-private val WHITE   = Color(0xFFFFFFFF)
-private val DIM     = Color(0xAAFFFFFF)
-private val DV_BLUE = Color(0xFF00B4FF)
+private val CTRL_BG      = Color(0x99000000)
+private val RED          = Color(0xFFE50914)
+private val WHITE        = Color(0xFFFFFFFF)
+private val DIM          = Color(0xAAFFFFFF)
+private val DV_BLUE      = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 
-// ─── Aspect Ratio modes (mirrors KODI) ─────────────────────────────────────
-enum class AspectRatioMode(val label: String, val description: String) {
-    NORMAL("Normal",   "Source native (auto)"),
-    RATIO_16_9("16:9",   "Force 16:9"),
-    RATIO_4_3("4:3",    "Force 4:3"),
-    ZOOM("Zoom",    "Fill screen (crop)"),
-    STRETCH("Stretch", "Stretch to fill")
+// ─── Aspect Ratio modes (KODI-style) ───────────────────────────────────────
+enum class AspectRatioMode(val label: String, val resizeMode: Int) {
+    NATIVE("Native",      AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    FILL("Fill",         AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    ZOOM("Zoom",         AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    FIXED_16_9("16:9",   AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH),
+    FIXED_4_3("4:3",     AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT),
+    FIXED_21_9("21:9",   AspectRatioFrameLayout.RESIZE_MODE_FILL);
+
+    fun next(): AspectRatioMode {
+        val all = entries.toTypedArray()
+        return all[(ordinal + 1) % all.size]
+    }
 }
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
-// ─── AFR helper ────────────────────────────────────────────────────────────
+// ─── AFR helper ─────────────────────────────────────────────────────────────
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
     val current = display.mode
-
     val targetFps = when {
         contentFps in 23.9f..24.1f -> 24f
         contentFps in 25f..25.1f   -> 25f
@@ -131,16 +136,13 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         contentFps in 59.9f..60.1f -> 60f
         else -> contentFps
     }
-
     val sameRes = display.supportedModes.filter {
         it.physicalWidth  == current.physicalWidth &&
         it.physicalHeight == current.physicalHeight
     }
-
     val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) }
         ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) }
         ?: return
-
     if (best.modeId == current.modeId) return
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
 }
@@ -150,7 +152,7 @@ private fun restoreDisplayMode(activity: Activity) {
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
 }
 
-// ─── HDR Window setup for Dolby Vision ─────────────────────────────────────
+// ─── HDR Window setup for Dolby Vision ──────────────────────────────────────
 private fun enableHdrWindow(activity: Activity) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -168,7 +170,7 @@ private fun enableHdrWindow(activity: Activity) {
     }
 }
 
-// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ──────────────────
+// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ───────────────────
 private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -179,76 +181,45 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
 }
 
 /**
- * Apply the correct LayoutParams to the SurfaceView based on the chosen
- * [AspectRatioMode] and the video's intrinsic [videoWidth]×[videoHeight].
- *
- * - NORMAL  → compute the largest box that fits in the container while
- *             preserving the video's native pixel ratio.  This is the
- *             correct fix for Dolby Vision 2.39:1 movies that were
- *             previously being stretched to fill the 16:9 screen.
- * - 16:9    → force 16:9 regardless of source
- * - 4:3     → force 4:3 regardless of source
- * - ZOOM    → crop-to-fill (video fills entire screen, edges clipped)
- * - STRETCH → stretch to fill (distortion allowed)
+ * Apply the chosen AspectRatioMode to an AspectRatioFrameLayout.
+ * For FIXED_16_9 / FIXED_4_3 / FIXED_21_9 we override the layout ratio
+ * explicitly so the ARFL knows exactly what to letterbox/pillarbox to.
  */
-private fun applySurfaceAspectRatio(
-    frameLayout: FrameLayout,
-    surfaceView: SurfaceView,
-    mode: AspectRatioMode,
-    videoWidth: Int,
-    videoHeight: Int
+private fun applyResizeMode(
+    arfl:           AspectRatioFrameLayout,
+    mode:           AspectRatioMode,
+    nativeVideoSize: VideoSize
 ) {
-    val containerW = frameLayout.width.takeIf  { it > 0 } ?: return
-    val containerH = frameLayout.height.takeIf { it > 0 } ?: return
-
-    val (targetW, targetH) = when (mode) {
-        AspectRatioMode.STRETCH -> Pair(containerW, containerH)
-
-        AspectRatioMode.RATIO_16_9 -> {
-            val w = containerW
-            val h = (containerW * 9f / 16f).toInt()
-            if (h <= containerH) Pair(w, h)
-            else Pair((containerH * 16f / 9f).toInt(), containerH)
+    when (mode) {
+        AspectRatioMode.NATIVE -> {
+            // Use the actual video dimensions reported by ExoPlayer.
+            // This is the key fix for Dolby Vision: we never let the layout
+            // stretch or zoom — we always use the real pixel ratio from the track.
+            val w = nativeVideoSize.width.takeIf { it > 0 } ?: 1920
+            val h = nativeVideoSize.height.takeIf { it > 0 } ?: 1080
+            val sar = nativeVideoSize.pixelWidthHeightRatio.takeIf { it > 0f } ?: 1f
+            arfl.setAspectRatio(w.toFloat() / h.toFloat() * sar)
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
-
-        AspectRatioMode.RATIO_4_3 -> {
-            val w = containerW
-            val h = (containerW * 3f / 4f).toInt()
-            if (h <= containerH) Pair(w, h)
-            else Pair((containerH * 4f / 3f).toInt(), containerH)
+        AspectRatioMode.FILL -> {
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
         }
-
         AspectRatioMode.ZOOM -> {
-            // Scale so the video fills the container completely (crop excess)
-            val srcRatio  = if (videoWidth > 0 && videoHeight > 0)
-                videoWidth.toFloat() / videoHeight else containerW.toFloat() / containerH
-            val dstRatio  = containerW.toFloat() / containerH
-            if (srcRatio > dstRatio) {
-                // video is wider → match height, crop sides
-                Pair((containerH * srcRatio).toInt(), containerH)
-            } else {
-                // video is taller → match width, crop top/bottom
-                Pair(containerW, (containerW / srcRatio).toInt())
-            }
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         }
-
-        AspectRatioMode.NORMAL -> {
-            // Use source pixel ratio; fall back to 16:9 if unknown
-            val srcW = if (videoWidth  > 0) videoWidth  else 16
-            val srcH = if (videoHeight > 0) videoHeight else 9
-            val scaleW = containerW.toFloat() / srcW
-            val scaleH = containerH.toFloat() / srcH
-            val scale  = minOf(scaleW, scaleH)   // fit inside — no cropping
-            Pair((srcW * scale).toInt(), (srcH * scale).toInt())
+        AspectRatioMode.FIXED_16_9 -> {
+            arfl.setAspectRatio(16f / 9f)
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+        AspectRatioMode.FIXED_4_3 -> {
+            arfl.setAspectRatio(4f / 3f)
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        }
+        AspectRatioMode.FIXED_21_9 -> {
+            arfl.setAspectRatio(21f / 9f)
+            arfl.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
     }
-
-    val lp = surfaceView.layoutParams as? FrameLayout.LayoutParams
-        ?: FrameLayout.LayoutParams(targetW, targetH)
-    lp.width   = targetW
-    lp.height  = targetH
-    lp.gravity = android.view.Gravity.CENTER
-    surfaceView.layoutParams = lp
 }
 
 @Composable
@@ -268,26 +239,20 @@ fun PlayerScreen(
     val currentCues   by exo.currentCues.collectAsState()
     val isDolbyVision by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
-    val videoSize     by exo.videoSize.collectAsState()
 
-    // ─── AFR ──────────────────────────────────────────────────────────
+    // ─── AFR ────────────────────────────────────────────────────────────
     val contentFps    by exo.contentFrameRate.collectAsState()
     val afrEnabled    = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
             .getBoolean("afr", false)
     }
 
-    // ─── Aspect Ratio – persisted ─────────────────────────────────────
-    val arPrefs = remember { context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE) }
-    var aspectRatioMode by remember {
-        mutableStateOf(
-            try {
-                AspectRatioMode.valueOf(
-                    arPrefs.getString("aspect_ratio", AspectRatioMode.NORMAL.name) ?: AspectRatioMode.NORMAL.name
-                )
-            } catch (_: Exception) { AspectRatioMode.NORMAL }
-        )
-    }
+    // ─── Aspect ratio state ──────────────────────────────────────────────
+    var aspectRatioMode  by remember { mutableStateOf(AspectRatioMode.NATIVE) }
+    // Hold real video dimensions so NATIVE mode always uses them
+    var nativeVideoSize  by remember { mutableStateOf(VideoSize.UNKNOWN) }
+    // Reference to the AspectRatioFrameLayout so we can update it from compose
+    val arflRef          = remember { mutableStateOf<AspectRatioFrameLayout?>(null) }
 
     var surfaceReady      by remember { mutableStateOf(false) }
     var prepared          by remember { mutableStateOf(false) }
@@ -298,21 +263,43 @@ fun PlayerScreen(
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
 
+    // ─── AR badge toast state ─────────────────────────────────────────────
+    var arToastLabel   by remember { mutableStateOf("") }
+    var showArToast    by remember { mutableStateOf(false) }
+
     val watchPrefs    = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
     val progressKey   = remember(imdbId) { "progress_$imdbId" }
     val savedPosition = remember(imdbId) { watchPrefs.getLong(progressKey, -1L) }
     var showResumeDialog by remember { mutableStateOf(false) }
     var resumeHandled    by remember { mutableStateOf(false) }
 
-    // ─── FrameLayout ref for aspect-ratio updates ──────────────────────
-    val frameRef = remember { mutableStateOf<FrameLayout?>(null) }
-
     val backBtnFR   = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ─── Enable HDR/DV window on Activity start ────────────────────────
+    // ─── Capture real video size from ExoPlayer and keep NATIVE mode correct ─
+    DisposableEffect(exo) {
+        val listener = object : Player.Listener {
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    nativeVideoSize = videoSize
+                    // Always reapply current mode so NATIVE refreshes when DV track loads
+                    arflRef.value?.let { arfl ->
+                        applyResizeMode(arfl, aspectRatioMode, videoSize)
+                    }
+                }
+            }
+        }
+        exo.player.addListener(listener)
+        onDispose { exo.player.removeListener(listener) }
+    }
+
+    // ─── Reapply AR mode whenever it changes ─────────────────────────────────
+    LaunchedEffect(aspectRatioMode) {
+        arflRef.value?.let { applyResizeMode(it, aspectRatioMode, nativeVideoSize) }
+    }
+
     LaunchedEffect(Unit) {
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
@@ -332,13 +319,6 @@ fun PlayerScreen(
         if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
         val activity = context as? Activity ?: return@LaunchedEffect
         applyAfrForContent(activity, contentFps)
-    }
-
-    // ─── Re-apply aspect ratio whenever mode or video size changes ─────
-    LaunchedEffect(aspectRatioMode, videoSize) {
-        val fl = frameRef.value ?: return@LaunchedEffect
-        val sv = fl.getChildAt(0) as? SurfaceView ?: return@LaunchedEffect
-        applySurfaceAspectRatio(fl, sv, aspectRatioMode, videoSize.width, videoSize.height)
     }
 
     DisposableEffect(Unit) {
@@ -432,6 +412,11 @@ fun PlayerScreen(
         }
     }
 
+    // ─── AR toast auto-dismiss ────────────────────────────────────────────
+    LaunchedEffect(showArToast) {
+        if (showArToast) { delay(1800); showArToast = false }
+    }
+
     BackHandler {
         when {
             showResumeDialog              -> showResumeDialog = false
@@ -476,77 +461,89 @@ fun PlayerScreen(
                 }
             }
     ) {
+        // ─── Video surface wrapped in AspectRatioFrameLayout ─────────────
         AndroidView(
             modifier = Modifier.fillMaxSize().background(Color.Black),
             factory  = { ctx ->
-                FrameLayout(ctx).apply {
+                // Outer ARFL handles letterboxing / pillarboxing
+                val arfl = AspectRatioFrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    // ── Use SCALE_TO_FIT so ExoPlayer does NOT stretch to fill ──────
-                    // (This is the core fix for Dolby Vision 2.39:1 aspect ratio.)
-                    val surfaceView = SurfaceView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        ).also { it.gravity = android.view.Gravity.CENTER }
-                        keepScreenOn = true
-                        applySurfaceDolbyVision(this)
-                        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
-                            override fun onViewAttachedToWindow(v: View) {
-                                exo.player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                                exo.player.setVideoSurfaceView(this@apply)
-                                surfaceReady = true
-                            }
-                            override fun onViewDetachedFromWindow(v: View) {
-                                surfaceReady = false
-                                exo.player.clearVideoSurface()
-                            }
-                        })
-                    }
-                    val subtitleView = SubtitleView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
-                        setStyle(
-                            CaptionStyleCompat(
-                                textColor,
-                                AndroidColor.TRANSPARENT,
-                                AndroidColor.TRANSPARENT,
-                                CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
-                                AndroidColor.BLACK,
-                                null
-                            )
-                        )
-                        setApplyEmbeddedStyles(false)
-                        setApplyEmbeddedFontSizes(false)
-                        setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
-                        setBottomPaddingFraction(0.08f)
-                    }
-                    addView(surfaceView)
-                    addView(subtitleView)
-                    frameRef.value = this
+                    // Default: FIT so native ratio is preserved immediately
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
+                arflRef.value = arfl
+
+                val surfaceView = SurfaceView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    keepScreenOn = true
+                    applySurfaceDolbyVision(this)
+                    addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(v: android.view.View) {
+                            exo.player.setVideoSurfaceView(this@apply)
+                            surfaceReady = true
+                        }
+                        override fun onViewDetachedFromWindow(v: android.view.View) {
+                            surfaceReady = false
+                            exo.player.clearVideoSurface()
+                        }
+                    })
+                }
+
+                // Wrap everything in a black FrameLayout so letterbox bars are black
+                val outerFrame = FrameLayout(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    setBackgroundColor(android.graphics.Color.BLACK)
+                }
+
+                val subtitleView = SubtitleView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
+                    setStyle(
+                        CaptionStyleCompat(
+                            textColor,
+                            AndroidColor.TRANSPARENT,
+                            AndroidColor.TRANSPARENT,
+                            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
+                            AndroidColor.BLACK,
+                            null
+                        )
+                    )
+                    setApplyEmbeddedStyles(false)
+                    setApplyEmbeddedFontSizes(false)
+                    setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
+                    setBottomPaddingFraction(0.08f)
+                }
+
+                arfl.addView(surfaceView)
+                outerFrame.addView(arfl)
+                outerFrame.addView(subtitleView)   // subtitles sit above ARFL, fill full screen
+                outerFrame
             },
-            update = { fl ->
-                val sv  = fl.getChildAt(0) as? SurfaceView
-                val sub = fl.getChildAt(1) as? SubtitleView
-                sv?.let {
-                    exo.player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
-                    exo.player.setVideoSurfaceView(it)
-                    // Re-apply aspect ratio on any update (e.g. after size change)
-                    fl.post {
-                        applySurfaceAspectRatio(fl, it, aspectRatioMode, videoSize.width, videoSize.height)
-                    }
-                }
+            update = { outerFrame ->
+                val arfl = outerFrame.getChildAt(0) as? AspectRatioFrameLayout
+                val sv   = arfl?.getChildAt(0) as? SurfaceView
+                val sub  = outerFrame.getChildAt(1) as? SubtitleView
+                if (arfl != null) arflRef.value = arfl
+                sv?.let  { exo.player.setVideoSurfaceView(it) }
                 sub?.setCues(currentCues)
+                // Reapply mode on every recompose so it's always in sync
+                arfl?.let { applyResizeMode(it, aspectRatioMode, nativeVideoSize) }
             }
         )
 
-        // ─── Dolby Vision / Dolby Atmos badges ────────────────────────
+        // ─── Dolby Vision / Dolby Atmos badges ──────────────────────────
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -554,11 +551,30 @@ fun PlayerScreen(
                 .zIndex(50f),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (isDolbyVision) {
-                DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
-            }
-            if (isDolbyAtmos) {
-                DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            if (isDolbyVision) DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
+            if (isDolbyAtmos)  DolbyBadge(text = "DOLBY ATMOS",  color = ATMOS_PURPLE)
+        }
+
+        // ─── Aspect Ratio toast ──────────────────────────────────────────
+        AnimatedVisibility(
+            visible  = showArToast,
+            enter    = fadeIn(tween(180)) + scaleIn(tween(180)),
+            exit     = fadeOut(tween(400)),
+            modifier = Modifier.align(Alignment.Center).zIndex(60f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xCC000000))
+                    .padding(horizontal = 32.dp, vertical = 16.dp)
+            ) {
+                Text(
+                    text       = arToastLabel,
+                    color      = WHITE,
+                    fontSize   = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
             }
         }
 
@@ -733,12 +749,16 @@ fun PlayerScreen(
                                 }
                                 activityTick++
                             }
-                            // ─── Aspect Ratio pill ──────────────────────────────────
+                            // ─── Aspect Ratio pill ───────────────────────
                             ControlPill(
                                 icon = Icons.Default.Fullscreen,
-                                text = "Aspect: ${aspectRatioMode.label}"
+                                text = aspectRatioMode.label
                             ) {
-                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
+                                // Cycle to next mode on click
+                                val next = aspectRatioMode.next()
+                                aspectRatioMode = next
+                                arToastLabel    = next.label
+                                showArToast     = true
                                 activityTick++
                             }
                         }
@@ -818,25 +838,7 @@ fun PlayerScreen(
                                 }
                             }
                         }
-                        ActiveMenu.ASPECT_RATIO -> {
-                            SidePanelHeader("Aspect Ratio", "How the video fills the screen")
-                            AspectRatioPanel(
-                                current   = aspectRatioMode,
-                                focusReq  = sideMenuFR,
-                                onSelect  = { mode ->
-                                    aspectRatioMode = mode
-                                    arPrefs.edit().putString("aspect_ratio", mode.name).apply()
-                                    // Immediately apply to the live SurfaceView
-                                    val fl = frameRef.value
-                                    val sv = fl?.getChildAt(0) as? SurfaceView
-                                    if (fl != null && sv != null) {
-                                        fl.post { applySurfaceAspectRatio(fl, sv, mode, videoSize.width, videoSize.height) }
-                                    }
-                                    activeMenu = ActiveMenu.NONE
-                                }
-                            )
-                        }
-                        ActiveMenu.NONE -> {}
+                        ActiveMenu.ASPECT_RATIO, ActiveMenu.NONE -> {}
                     }
                 }
             }
@@ -844,32 +846,7 @@ fun PlayerScreen(
     }
 }
 
-// ─── Aspect Ratio side panel ────────────────────────────────────────────────
-@Composable
-private fun AspectRatioPanel(
-    current:  AspectRatioMode,
-    focusReq: FocusRequester,
-    onSelect: (AspectRatioMode) -> Unit
-) {
-    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.focusGroup()) {
-        itemsIndexed(AspectRatioMode.entries.toList()) { index, mode ->
-            val isFirst = index == 0
-            val isLast  = index == AspectRatioMode.entries.size - 1
-            TrackItemCard(
-                title      = mode.label,
-                subtitle   = mode.description,
-                isSelected = mode == current,
-                modifier   = Modifier
-                    .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
-                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
-                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
-                onClick = { onSelect(mode) }
-            )
-        }
-    }
-}
-
-// ─── Dolby Badge composable ────────────────────────────────────────────────
+// ─── Dolby Badge composable ─────────────────────────────────────────────────
 @Composable
 private fun DolbyBadge(text: String, color: Color) {
     Box(
@@ -879,10 +856,10 @@ private fun DolbyBadge(text: String, color: Color) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text       = text,
-            color      = Color.White,
-            fontSize   = 11.sp,
-            fontWeight = FontWeight.ExtraBold,
+            text          = text,
+            color         = Color.White,
+            fontSize      = 11.sp,
+            fontWeight    = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp
         )
     }
@@ -927,8 +904,8 @@ private fun TrackListUi(
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
                 val dolbyTag = when (format.sampleMimeType) {
-                    "audio/eac3-joc"               -> "🎵 ATMOS"
-                    "video/dolby-vision"            -> "🎬 DV"
+                    "audio/eac3-joc"    -> "🎵 ATMOS"
+                    "video/dolby-vision" -> "🎬 DV"
                     else -> ""
                 }
                 val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)
