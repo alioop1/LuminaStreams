@@ -66,6 +66,12 @@ class ExoPlayerWrapper(context: Context) {
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
+    // ─── Video dimensions (for aspect ratio) ─────────────────────────
+    // Emits width / height (e.g. 1.777 for 16:9, 2.333 for 21:9)
+    // 0 = not yet known
+    private val _videoAspectRatio = MutableStateFlow(0f)
+    val videoAspectRatio: StateFlow<Float> = _videoAspectRatio.asStateFlow()
+
     // ─── Dolby badges ─────────────────────────────────────────────────
     private val _isDolbyVision = MutableStateFlow(false)
     val isDolbyVision: StateFlow<Boolean> = _isDolbyVision.asStateFlow()
@@ -103,8 +109,8 @@ class ExoPlayerWrapper(context: Context) {
             .setTunnelingEnabled(
                 // LG + Sony + Philips → tunneling always ON for proper HDR/DV pipeline
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
-                (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
+                        (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
+                                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
             )
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
@@ -211,12 +217,22 @@ class ExoPlayerWrapper(context: Context) {
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .any {
                         it.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC ||
-                        (it.sampleMimeType == MimeTypes.AUDIO_E_AC3 && (it.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0)
+                                (it.sampleMimeType == MimeTypes.AUDIO_E_AC3 && (it.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0)
                     }
                 _isDolbyAtmos.value = hasAtmos
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
+                // Update aspect ratio from actual decoded frame dimensions.
+                // This is the source of truth — always prefer this over format metadata.
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    val pixelAspect = if (videoSize.pixelWidthHeightRatio > 0f)
+                        videoSize.pixelWidthHeightRatio else 1f
+                    _videoAspectRatio.value =
+                        (videoSize.width.toFloat() * pixelAspect) / videoSize.height.toFloat()
+                }
+
+                // Also update fps if not yet known
                 if (_contentFrameRate.value <= 0f) {
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
@@ -254,6 +270,7 @@ class ExoPlayerWrapper(context: Context) {
         _subtitleApplied.value = false
         _currentCues.value     = emptyList()
         _contentFrameRate.value = 0f
+        _videoAspectRatio.value = 0f
         _isDolbyVision.value   = false
         _isDolbyAtmos.value    = false
         try {

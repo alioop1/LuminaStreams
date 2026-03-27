@@ -63,6 +63,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
@@ -70,6 +71,7 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 
+// ─── Custom icons ─────────────────────────────────────────────────────────
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -96,16 +98,67 @@ val CustomAudioIcon: ImageVector
         }
     }.build()
 
-private val CTRL_BG = Color(0x99000000)
-private val RED     = Color(0xFFE50914)
-private val WHITE   = Color(0xFFFFFFFF)
-private val DIM     = Color(0xAAFFFFFF)
-private val DV_BLUE = Color(0xFF00B4FF)  // Dolby Vision badge color
-private val ATMOS_PURPLE = Color(0xFF7B2FBE) // Dolby Atmos badge color
+// ─── Aspect Ratio ─────────────────────────────────────────────────────────
+/**
+ * KODI-style aspect ratio modes.
+ * [label]       — shown in the selector panel
+ * [description] — subtitle hint
+ * [resizeMode]  — maps to [AspectRatioFrameLayout] constant
+ * [forcedRatio] — non-null forces a specific DAR (width/height); null = use stream ratio
+ */
+enum class AspectRatioMode(
+    val label: String,
+    val description: String,
+    val resizeMode: Int,
+    val forcedRatio: Float? = null
+) {
+    NORMAL(
+        "Normal",
+        "Fit to screen, preserve ratio",
+        AspectRatioFrameLayout.RESIZE_MODE_FIT
+    ),
+    ZOOM(
+        "Zoom",
+        "Crop to fill screen",
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    ),
+    STRETCH(
+        "Stretch",
+        "Stretch to fill screen",
+        AspectRatioFrameLayout.RESIZE_MODE_FILL
+    ),
+    RATIO_16_9(
+        "16:9",
+        "Force 16∶9 widescreen",
+        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
+        16f / 9f
+    ),
+    RATIO_4_3(
+        "4:3",
+        "Force 4∶3 classic TV",
+        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
+        4f / 3f
+    ),
+    RATIO_21_9(
+        "21:9",
+        "CinemaScope ultra-wide",
+        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
+        21f / 9f
+    )
+}
 
-enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
+// ─── Palette ──────────────────────────────────────────────────────────────
+private val CTRL_BG      = Color(0x99000000)
+private val RED          = Color(0xFFE50914)
+private val WHITE        = Color(0xFFFFFFFF)
+private val DIM          = Color(0xAAFFFFFF)
+private val DV_BLUE      = Color(0xFF00B4FF)
+private val ATMOS_PURPLE = Color(0xFF7B2FBE)
+private val AR_ACCENT    = Color(0xFF00E5FF)   // Cyan accent for aspect ratio panel
 
-// ─── AFR helper ────────────────────────────────────────────────────────────
+enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
+
+// ─── AFR helper ───────────────────────────────────────────────────────────
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
@@ -123,7 +176,7 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
 
     val sameRes = display.supportedModes.filter {
         it.physicalWidth  == current.physicalWidth &&
-        it.physicalHeight == current.physicalHeight
+                it.physicalHeight == current.physicalHeight
     }
 
     val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) }
@@ -139,16 +192,14 @@ private fun restoreDisplayMode(activity: Activity) {
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
 }
 
-// ─── HDR Window setup for Dolby Vision ─────────────────────────────────────
+// ─── HDR Window setup for Dolby Vision ────────────────────────────────────
 private fun enableHdrWindow(activity: Activity) {
     runCatching {
-        // Enable HDR output on the Window (API 31+)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             activity.window.attributes = activity.window.attributes.also { lp ->
                 lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
-            // Request HDR color mode
             val cls = ActivityInfo::class.java
             val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
             val hdrMode = colorModeField?.getInt(null) ?: 2
@@ -159,18 +210,17 @@ private fun enableHdrWindow(activity: Activity) {
     }
 }
 
-// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ──────────────────
+// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ─────────────────
 private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            // SurfaceView.setHdrOutputMode exists on API 33+
             val method = SurfaceView::class.java.getMethod("setHdrOutputMode", Int::class.java)
-            // HDR_TYPE_DOLBY_VISION = 3
-            method.invoke(surfaceView, 3)
+            method.invoke(surfaceView, 3) // HDR_TYPE_DOLBY_VISION = 3
         }
     }
 }
 
+// ─── Main PlayerScreen ────────────────────────────────────────────────────
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
@@ -178,22 +228,38 @@ fun PlayerScreen(
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {
-    val context       = LocalContext.current
-    val isRtl         = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val state         by viewModel.state.collectAsState()
-    val exo           = remember { ExoPlayerWrapper(context) }
-    val isPlaying     by exo.isPlaying.collectAsState()
-    val error         by exo.playerError.collectAsState()
-    val currentTracks by exo.currentTracks.collectAsState()
-    val currentCues   by exo.currentCues.collectAsState()
-    val isDolbyVision by exo.isDolbyVision.collectAsState()
-    val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
+    val context          = LocalContext.current
+    val isRtl            = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val state            by viewModel.state.collectAsState()
+    val exo              = remember { ExoPlayerWrapper(context) }
+    val isPlaying        by exo.isPlaying.collectAsState()
+    val error            by exo.playerError.collectAsState()
+    val currentTracks    by exo.currentTracks.collectAsState()
+    val currentCues      by exo.currentCues.collectAsState()
+    val isDolbyVision    by exo.isDolbyVision.collectAsState()
+    val isDolbyAtmos     by exo.isDolbyAtmos.collectAsState()
+    val videoAspectRatio by exo.videoAspectRatio.collectAsState()
 
     // ─── AFR ──────────────────────────────────────────────────────────
-    val contentFps    by exo.contentFrameRate.collectAsState()
-    val afrEnabled    = remember {
+    val contentFps = exo.contentFrameRate.collectAsState()
+    val afrEnabled = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
             .getBoolean("afr", false)
+    }
+
+    // ─── Aspect Ratio state ────────────────────────────────────────────
+    // Hold a reference to the AspectRatioFrameLayout so we can update it imperatively
+    val aspectLayoutRef = remember { mutableStateOf<AspectRatioFrameLayout?>(null) }
+    var selectedAspectRatio by remember { mutableStateOf(AspectRatioMode.NORMAL) }
+
+    // Whenever videoAspectRatio or selectedAspectRatio changes, apply to the view
+    LaunchedEffect(videoAspectRatio, selectedAspectRatio) {
+        val layout = aspectLayoutRef.value ?: return@LaunchedEffect
+        val ratio  = selectedAspectRatio.forcedRatio
+            ?: videoAspectRatio.takeIf { it > 0f }
+            ?: (16f / 9f)   // safe default for DV / unknown content
+        layout.setAspectRatio(ratio)
+        layout.resizeMode = selectedAspectRatio.resizeMode
     }
 
     var surfaceReady      by remember { mutableStateOf(false) }
@@ -216,7 +282,6 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ─── Enable HDR/DV window on Activity start ────────────────────────
     LaunchedEffect(Unit) {
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
@@ -232,18 +297,16 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(contentFps) {
-        if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
+    LaunchedEffect(contentFps.value) {
+        if (!afrEnabled || contentFps.value <= 0f) return@LaunchedEffect
         val activity = context as? Activity ?: return@LaunchedEffect
-        applyAfrForContent(activity, contentFps)
+        applyAfrForContent(activity, contentFps.value)
     }
 
     DisposableEffect(Unit) {
         onDispose {
             exo.release()
-            if (afrEnabled) {
-                (context as? Activity)?.let { restoreDisplayMode(it) }
-            }
+            if (afrEnabled) (context as? Activity)?.let { restoreDisplayMode(it) }
         }
     }
 
@@ -373,67 +436,85 @@ fun PlayerScreen(
                 }
             }
     ) {
+        // ─── Video Surface via AspectRatioFrameLayout ──────────────────────
         AndroidView(
-            modifier = Modifier.fillMaxSize().background(Color.Black),
-            factory  = { ctx ->
-                FrameLayout(ctx).apply {
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+            factory = { ctx ->
+                // AspectRatioFrameLayout keeps the SurfaceView correctly boxed.
+                // It defaults to RESIZE_MODE_FIT (letterboxed 16:9) which fixes
+                // the DV distortion that occurred with raw MATCH_PARENT SurfaceView.
+                val arLayout = AspectRatioFrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    val surfaceView = SurfaceView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        keepScreenOn = true
-                        // Apply Dolby Vision HDR output mode on surface
-                        applySurfaceDolbyVision(this)
-                        addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-                            override fun onViewAttachedToWindow(v: android.view.View) {
-                                exo.player.setVideoSurfaceView(this@apply)
-                                surfaceReady = true
-                            }
-                            override fun onViewDetachedFromWindow(v: android.view.View) {
-                                surfaceReady = false
-                                exo.player.clearVideoSurface()
-                            }
-                        })
-                    }
-                    val subtitleView = SubtitleView(ctx).apply {
-                        layoutParams = FrameLayout.LayoutParams(
-                            ViewGroup.LayoutParams.MATCH_PARENT,
-                            ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
-                        setStyle(
-                            CaptionStyleCompat(
-                                textColor,
-                                AndroidColor.TRANSPARENT,
-                                AndroidColor.TRANSPARENT,
-                                CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW,
-                                AndroidColor.BLACK,
-                                null
-                            )
-                        )
-                        setApplyEmbeddedStyles(false)
-                        setApplyEmbeddedFontSizes(false)
-                        setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
-                        setBottomPaddingFraction(0.08f)
-                    }
-                    addView(surfaceView)
-                    addView(subtitleView)
+                    setAspectRatio(16f / 9f)           // safe default until first frame
+                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
+
+                val surfaceView = SurfaceView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    keepScreenOn = true
+                    applySurfaceDolbyVision(this)
+                    addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                        override fun onViewAttachedToWindow(v: android.view.View) {
+                            exo.player.setVideoSurfaceView(this@apply)
+                            surfaceReady = true
+                        }
+                        override fun onViewDetachedFromWindow(v: android.view.View) {
+                            surfaceReady = false
+                            exo.player.clearVideoSurface()
+                        }
+                    })
+                }
+
+                val subtitleView = SubtitleView(ctx).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
+                    setStyle(
+                        CaptionStyleCompat(
+                            textColor, AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT,
+                            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, AndroidColor.BLACK, null
+                        )
+                    )
+                    setApplyEmbeddedStyles(false)
+                    setApplyEmbeddedFontSizes(false)
+                    setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
+                    setBottomPaddingFraction(0.08f)
+                }
+
+                arLayout.addView(surfaceView)
+                arLayout.addView(subtitleView)
+
+                // Keep a reference so LaunchedEffect can update resize mode later
+                aspectLayoutRef.value = arLayout
+                arLayout
             },
-            update = { frameLayout ->
-                val sv  = frameLayout.getChildAt(0) as? SurfaceView
-                val sub = frameLayout.getChildAt(1) as? SubtitleView
+            update = { arLayout ->
+                val sv  = arLayout.getChildAt(0) as? SurfaceView
+                val sub = arLayout.getChildAt(1) as? SubtitleView
                 sv?.let  { exo.player.setVideoSurfaceView(it) }
                 sub?.setCues(currentCues)
             }
         )
 
-        // ─── Dolby Vision / Dolby Atmos badges ────────────────────────
+// ─── Dolby Vision / Dolby Atmos badges (auto-hide after 4s) ─────
+        val showDvBadge = remember { mutableStateOf(isDolbyVision) }
+        val showAtmosBadge = remember { mutableStateOf(isDolbyAtmos) }
+        LaunchedEffect(isDolbyVision) {
+            if (isDolbyVision) { showDvBadge.value = true; delay(4000); showDvBadge.value = false }
+        }
+        LaunchedEffect(isDolbyAtmos) {
+            if (isDolbyAtmos) { showAtmosBadge.value = true; delay(4000); showAtmosBadge.value = false }
+        }
         Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -441,14 +522,39 @@ fun PlayerScreen(
                 .zIndex(50f),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            if (isDolbyVision) {
-                DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
-            }
-            if (isDolbyAtmos) {
-                DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            AnimatedVisibility(
+                visible = showDvBadge.value,
+                enter = fadeIn(),
+                exit = fadeOut(animationSpec = tween(600))
+            ) { DolbyBadge(text = "DOLBY VISION", color = DV_BLUE) }
+            AnimatedVisibility(
+                visible = showAtmosBadge.value,
+                enter = fadeIn(),
+                exit = fadeOut(animationSpec = tween(600))
+            ) { DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE) }
+        }
+
+        // ─── Aspect Ratio indicator (top-left, fades away) ────────────────
+        if (selectedAspectRatio != AspectRatioMode.NORMAL) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(top = 28.dp, start = 28.dp)
+                    .zIndex(50f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(AR_ACCENT.copy(0.85f))
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                androidx.compose.material3.Text(
+                    text       = "⬛ ${selectedAspectRatio.label}",
+                    color      = Color.Black,
+                    fontSize   = 11.sp,
+                    fontWeight = FontWeight.ExtraBold
+                )
             }
         }
 
+        // ─── Resume dialog ─────────────────────────────────────────────────
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -500,6 +606,7 @@ fun PlayerScreen(
             }
         }
 
+        // ─── Error overlay ─────────────────────────────────────────────────
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
@@ -536,6 +643,7 @@ fun PlayerScreen(
             }
         }
 
+        // ─── Controls overlay ──────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -557,6 +665,8 @@ fun PlayerScreen(
                         Icon(Icons.Default.PlayArrow, null, tint = WHITE, modifier = Modifier.size(44.dp))
                     }
                 }
+
+                // Top-bar with Back button
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -579,6 +689,8 @@ fun PlayerScreen(
                     Spacer(Modifier.width(16.dp))
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
+
+                // Bottom controls
                 Column(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)
                 ) {
@@ -591,6 +703,8 @@ fun PlayerScreen(
                         onDownPressed = { runCatching { firstPillFR.requestFocus() } }
                     )
                     Spacer(Modifier.height(20.dp))
+
+                    // ─── Control pills row ─────────────────────────────────
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
@@ -601,12 +715,21 @@ fun PlayerScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ControlPill(icon = CustomAudioIcon, text = "Audio", modifier = Modifier.focusRequester(firstPillFR)) {
-                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO; activityTick++
+                            // Audio
+                            ControlPill(
+                                icon     = CustomAudioIcon,
+                                text     = "Audio",
+                                modifier = Modifier.focusRequester(firstPillFR)
+                            ) {
+                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
+                                activityTick++
                             }
+                            // Embedded subs
                             ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
-                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS; activityTick++
+                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
+                                activityTick++
                             }
+                            // Web subs
                             ControlPill(
                                 icon = Icons.Default.Search,
                                 text = when {
@@ -620,6 +743,20 @@ fun PlayerScreen(
                                 }
                                 activityTick++
                             }
+                            // Aspect Ratio — KODI-style
+                            ControlPill(
+                                icon = Icons.Default.AspectRatio,
+                                text = if (selectedAspectRatio == AspectRatioMode.NORMAL)
+                                    "Aspect Ratio"
+                                else
+                                    "AR: ${selectedAspectRatio.label}",
+                                accentColor = if (selectedAspectRatio != AspectRatioMode.NORMAL)
+                                    AR_ACCENT else null
+                            ) {
+                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO)
+                                    ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
+                                activityTick++
+                            }
                         }
                         ControlPill(Icons.Default.Close, "Exit") { exo.pause(); onNavigateBack() }
                     }
@@ -627,6 +764,7 @@ fun PlayerScreen(
             }
         }
 
+        // ─── Side panels (Audio / Subs / Aspect Ratio) ────────────────────
         AnimatedVisibility(
             visible  = activeMenu != ActiveMenu.NONE && error == null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
@@ -634,7 +772,10 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize().zIndex(200f)
         ) {
             Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.7f)).clickable(remember { MutableInteractionSource() }, null) { activeMenu = ActiveMenu.NONE },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(0.7f))
+                    .clickable(remember { MutableInteractionSource() }, null) { activeMenu = ActiveMenu.NONE },
                 contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
             ) {
                 Column(
@@ -660,17 +801,34 @@ fun PlayerScreen(
                     when (activeMenu) {
                         ActiveMenu.AUDIO -> {
                             SidePanelHeader("Audio Tracks", "Select language")
-                            TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, trackType = C.TRACK_TYPE_AUDIO, focusReq = sideMenuFR) { activeMenu = ActiveMenu.NONE }
+                            TrackListUi(
+                                exo       = exo,
+                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO },
+                                trackType = C.TRACK_TYPE_AUDIO,
+                                focusReq  = sideMenuFR
+                            ) { activeMenu = ActiveMenu.NONE }
                         }
                         ActiveMenu.EMBEDDED_SUBS -> {
                             SidePanelHeader("Embedded Subtitles", "From video file")
-                            TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, trackType = C.TRACK_TYPE_TEXT, focusReq = sideMenuFR) { activeMenu = ActiveMenu.NONE }
+                            TrackListUi(
+                                exo       = exo,
+                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT },
+                                trackType = C.TRACK_TYPE_TEXT,
+                                focusReq  = sideMenuFR
+                            ) { activeMenu = ActiveMenu.NONE }
                         }
                         ActiveMenu.WEB_SUBS -> {
-                            SidePanelHeader("Web Subtitles", if (state.availableSubtitles.isNotEmpty()) "${state.availableSubtitles.size} online" else "")
+                            SidePanelHeader(
+                                title    = "Web Subtitles",
+                                subtitle = if (state.availableSubtitles.isNotEmpty())
+                                    "${state.availableSubtitles.size} online" else ""
+                            )
                             if (state.availableSubtitles.isEmpty()) {
                                 Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
-                                    Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 15.sp)
+                                    Text(
+                                        if (state.isSubtitlesLoading) "Searching..." else "No subtitles found",
+                                        color = DIM, fontSize = 15.sp
+                                    )
                                 }
                             } else {
                                 LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.focusGroup()) {
@@ -697,6 +855,16 @@ fun PlayerScreen(
                                 }
                             }
                         }
+                        ActiveMenu.ASPECT_RATIO -> {
+                            AspectRatioPanel(
+                                selected  = selectedAspectRatio,
+                                focusReq  = sideMenuFR,
+                                onSelect  = { mode ->
+                                    selectedAspectRatio = mode
+                                    activeMenu = ActiveMenu.NONE
+                                }
+                            )
+                        }
                         ActiveMenu.NONE -> {}
                     }
                 }
@@ -705,7 +873,147 @@ fun PlayerScreen(
     }
 }
 
-// ─── Dolby Badge composable ────────────────────────────────────────────────
+// ─── Aspect Ratio Panel ────────────────────────────────────────────────────
+@Composable
+private fun AspectRatioPanel(
+    selected: AspectRatioMode,
+    focusReq: FocusRequester,
+    onSelect: (AspectRatioMode) -> Unit
+) {
+    SidePanelHeader(
+        title    = "Aspect Ratio",
+        subtitle = "Current: ${selected.label}",
+        accentColor = AR_ACCENT
+    )
+
+    LazyColumn(
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier            = Modifier.focusGroup()
+    ) {
+        itemsIndexed(AspectRatioMode.entries) { index, mode ->
+            val isFirst = index == 0
+            val isLast  = index == AspectRatioMode.entries.size - 1
+
+            AspectRatioCard(
+                mode       = mode,
+                isSelected = mode == selected,
+                modifier   = Modifier
+                    .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
+                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                onClick    = { onSelect(mode) }
+            )
+        }
+    }
+}
+
+@Composable
+private fun AspectRatioCard(
+    mode:       AspectRatioMode,
+    isSelected: Boolean,
+    modifier:   Modifier = Modifier,
+    onClick:    () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    val containerBg by animateColorAsState(
+        targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
+        animationSpec = tween(200),
+        label         = "arBg"
+    )
+    val accentColor = if (isSelected || focused) AR_ACCENT else WHITE.copy(0.45f)
+
+    Surface(
+        onClick  = onClick,
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent, focusedContainerColor = Color.Transparent,
+            contentColor   = WHITE,             focusedContentColor   = WHITE
+        ),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
+        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(AR_ACCENT.copy(0.35f), 20.dp)),
+        modifier = modifier.fillMaxWidth().height(72.dp).onFocusChanged { focused = it.isFocused }
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(containerBg, RoundedCornerShape(16.dp))
+                .border(
+                    width = if (isSelected) 1.5.dp else 0.dp,
+                    color = if (isSelected) AR_ACCENT.copy(0.7f) else Color.Transparent,
+                    shape = RoundedCornerShape(16.dp)
+                )
+                .padding(horizontal = 20.dp)
+        ) {
+            Row(
+                modifier              = Modifier.fillMaxSize(),
+                verticalAlignment     = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                // Visual ratio preview box
+                AspectRatioPreviewBox(mode, accentColor)
+
+                Spacer(Modifier.width(16.dp))
+
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text       = mode.label,
+                        color      = WHITE,
+                        fontSize   = 17.sp,
+                        fontWeight = if (isSelected || focused) FontWeight.Black else FontWeight.Bold
+                    )
+                    Text(
+                        text     = mode.description,
+                        color    = DIM,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                if (isSelected) {
+                    Icon(
+                        Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint     = AR_ACCENT,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Small visual rectangle that previews the aspect ratio shape */
+@Composable
+private fun AspectRatioPreviewBox(mode: AspectRatioMode, color: Color) {
+    val (w, h) = when (mode) {
+        AspectRatioMode.NORMAL,
+        AspectRatioMode.ZOOM,
+        AspectRatioMode.STRETCH,
+        AspectRatioMode.RATIO_16_9 -> 32.dp to 18.dp
+        AspectRatioMode.RATIO_4_3  -> 24.dp to 18.dp
+        AspectRatioMode.RATIO_21_9 -> 42.dp to 18.dp
+    }
+    val icon = when (mode) {
+        AspectRatioMode.NORMAL  -> "⬜"   // boxed
+        AspectRatioMode.ZOOM    -> "🔍"
+        AspectRatioMode.STRETCH -> "↔"
+        else                    -> null
+    }
+    Box(
+        modifier = Modifier
+            .width(w)
+            .height(h)
+            .border(1.5.dp, color, RoundedCornerShape(3.dp)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (icon != null) {
+            androidx.compose.material3.Text(icon, fontSize = 9.sp)
+        }
+    }
+}
+
+// ─── Reusable components ──────────────────────────────────────────────────
 @Composable
 private fun DolbyBadge(text: String, color: Color) {
     Box(
@@ -714,29 +1022,29 @@ private fun DolbyBadge(text: String, color: Color) {
             .background(color.copy(alpha = 0.85f))
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
-        Text(
-            text       = text,
-            color      = Color.White,
-            fontSize   = 11.sp,
-            fontWeight = FontWeight.ExtraBold,
-            letterSpacing = 0.8.sp
-        )
+        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
     }
 }
 
 @Composable
-private fun SidePanelHeader(title: String, subtitle: String) {
+private fun SidePanelHeader(
+    title:       String,
+    subtitle:    String,
+    accentColor: Color = RED
+) {
     Column {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(4.dp).height(36.dp).background(RED, RoundedCornerShape(2.dp)))
+            Box(Modifier.width(4.dp).height(36.dp).background(accentColor, RoundedCornerShape(2.dp)))
             Spacer(Modifier.width(14.dp))
             Column {
-                Text(title, color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                Text(title,    color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black)
                 if (subtitle.isNotEmpty()) Text(subtitle, color = DIM, fontSize = 13.sp)
             }
         }
         Spacer(Modifier.height(24.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(RED.copy(0.6f), Color(0x08FFFFFF)))))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(
+            Brush.horizontalGradient(listOf(accentColor.copy(0.6f), Color(0x08FFFFFF)))
+        ))
         Spacer(Modifier.height(20.dp))
     }
 }
@@ -762,10 +1070,9 @@ private fun TrackListUi(
                 val label    = format.label    ?: ""
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
-                // Show Dolby Atmos / Dolby Vision label in track list
                 val dolbyTag = when (format.sampleMimeType) {
-                    "audio/eac3-joc"               -> "🎵 ATMOS"
-                    "video/dolby-vision"            -> "🎬 DV"
+                    "audio/eac3-joc"    -> "🎵 ATMOS"
+                    "video/dolby-vision"-> "🎬 DV"
                     else -> ""
                 }
                 val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)
@@ -821,7 +1128,7 @@ private fun TrackItemCard(
 ) {
     var focused by remember { mutableStateOf(false) }
     val containerBg by animateColorAsState(
-        targetValue = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
+        targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
         animationSpec = tween(200), label = "bgAnim"
     )
     Surface(
@@ -870,6 +1177,7 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
+// ─── Progress controls ─────────────────────────────────────────────────────
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
@@ -905,8 +1213,7 @@ fun PlayerProgressControls(
         Spacer(Modifier.height(10.dp))
         Box(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(28.dp)
+                .fillMaxWidth().height(28.dp)
                 .focusRequester(seekFR)
                 .focusable()
                 .onFocusChanged { seekFocused = it.isFocused }
@@ -944,14 +1251,36 @@ fun PlayerProgressControls(
     }
 }
 
+// ─── ControlPill ──────────────────────────────────────────────────────────
 @Composable
-fun ControlPill(icon: ImageVector, text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun ControlPill(
+    icon:        ImageVector,
+    text:        String,
+    modifier:    Modifier = Modifier,
+    accentColor: Color?   = null,       // non-null highlights the pill when active
+    onClick:     () -> Unit
+) {
+    val highlightColor = accentColor ?: RED
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x55000000), focusedContainerColor = RED, contentColor = WHITE, focusedContentColor = WHITE),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = if (accentColor != null) highlightColor.copy(0.18f) else Color(0x55000000),
+            focusedContainerColor = highlightColor,
+            contentColor          = if (accentColor != null) highlightColor else WHITE,
+            focusedContentColor   = WHITE
+        ),
+        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border = ClickableSurfaceDefaults.border(
+            border = if (accentColor != null)
+                androidx.tv.material3.Border(
+                    androidx.compose.foundation.BorderStroke(1.dp, highlightColor.copy(0.55f)),
+                    shape = RoundedCornerShape(50)
+                )
+            else androidx.tv.material3.Border.None,
+            focusedBorder = androidx.tv.material3.Border.None
+        ),
+        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(highlightColor.copy(0.5f), 16.dp)),
         modifier = modifier
     ) {
         Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
