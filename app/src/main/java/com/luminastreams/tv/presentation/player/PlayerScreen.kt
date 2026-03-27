@@ -100,7 +100,6 @@ private val CTRL_BG = Color(0x99000000)
 private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
-private val DV_BLUE = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
@@ -182,7 +181,6 @@ fun PlayerScreen(
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
     val currentCues   by exo.currentCues.collectAsState()
-    val isDolbyVision by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
 
     val contentFps    by exo.contentFrameRate.collectAsState()
@@ -211,17 +209,8 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ─── Dolby badges: show briefly then auto-hide ─────────────────────
-    var showDvBadge    by remember { mutableStateOf(false) }
+    // ─── Atmos badge only: show briefly then auto-hide ────────────────
     var showAtmosBadge by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isDolbyVision) {
-        if (isDolbyVision) {
-            showDvBadge = true
-            delay(5_000)
-            showDvBadge = false
-        }
-    }
 
     LaunchedEffect(isDolbyAtmos) {
         if (isDolbyAtmos) {
@@ -446,9 +435,9 @@ fun PlayerScreen(
             }
         )
 
-        // ─── Dolby badges: auto-hide after 5 seconds ───────────────────
+        // ─── Atmos badge only (DV badge removed — TV shows its own logo) ──
         AnimatedVisibility(
-            visible  = showDvBadge || showAtmosBadge,
+            visible  = showAtmosBadge,
             enter    = fadeIn(tween(400)),
             exit     = fadeOut(tween(800)),
             modifier = Modifier
@@ -456,10 +445,7 @@ fun PlayerScreen(
                 .padding(top = 28.dp, end = 28.dp)
                 .zIndex(50f)
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (showDvBadge)    DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
-                if (showAtmosBadge) DolbyBadge(text = "DOLBY ATMOS",  color = ATMOS_PURPLE)
-            }
+            DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
         }
 
         if (showResumeDialog) {
