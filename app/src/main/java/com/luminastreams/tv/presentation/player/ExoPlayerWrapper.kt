@@ -61,11 +61,9 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
-    // ─── AFR ─────────────────────────────────────────────────────────
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
-    // ─── Dolby badges ─────────────────────────────────────────────────
     private val _isDolbyVision = MutableStateFlow(false)
     val isDolbyVision: StateFlow<Boolean> = _isDolbyVision.asStateFlow()
 
@@ -76,10 +74,10 @@ class ExoPlayerWrapper(context: Context) {
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // LG/Sony/Philips — use PREFER so native decoder wins without forcing extension
+                // LG/Sony/Philips — OFF: native decoder only, fixes DolbyVision stretch/color-space bug
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
@@ -155,7 +153,6 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -190,8 +187,7 @@ class ExoPlayerWrapper(context: Context) {
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                    .firstOrNull { it.frameRate > 0f }
-                    ?.frameRate
+                    .firstOrNull { it.frameRate > 0f }?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
 
                 val hasDv = tracks.groups
@@ -215,8 +211,7 @@ class ExoPlayerWrapper(context: Context) {
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                         .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                        .firstOrNull { it.frameRate > 0f }
-                        ?.frameRate
+                        .firstOrNull { it.frameRate > 0f }?.frameRate
                     if (fps != null && fps > 0f) _contentFrameRate.value = fps
                 }
             }
