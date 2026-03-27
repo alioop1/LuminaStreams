@@ -46,7 +46,6 @@ class ExoPlayerWrapper(context: Context) {
     private val appContext = context.applicationContext
     private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    // LG OLED + Sony + Philips → audio passthrough ON by default (Dolby Atmos bitstream)
     private val audioPassthrough   = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration     = prefs.getBoolean("hw_accel",             true)
@@ -79,9 +78,9 @@ class ExoPlayerWrapper(context: Context) {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // LG/Sony/Philips — use ON so native HDR/DV decoder is preferred
+                // LG/Sony/Philips — use PREFER so native decoder wins without forcing extension
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
@@ -101,7 +100,6 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
             .setTunnelingEnabled(
-                // LG + Sony + Philips → tunneling always ON for proper HDR/DV pipeline
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
                 (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
                 !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
@@ -173,7 +171,6 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // ─── כתוביות ידניות ──────────────────────────────────────────────
     private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
     private var parsedSubs: List<SubEntry> = emptyList()
     private var subTickerJob: Job? = null
@@ -190,7 +187,6 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                // AFR — fps from selected video track
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
@@ -198,14 +194,12 @@ class ExoPlayerWrapper(context: Context) {
                     ?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
 
-                // Dolby Vision detection
                 val hasDv = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .any { it.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION }
                 _isDolbyVision.value = hasDv
 
-                // Dolby Atmos detection (E-AC3 JOC = Atmos)
                 val hasAtmos = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }

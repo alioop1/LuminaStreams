@@ -100,8 +100,8 @@ private val CTRL_BG = Color(0x99000000)
 private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
-private val DV_BLUE = Color(0xFF00B4FF)  // Dolby Vision badge color
-private val ATMOS_PURPLE = Color(0xFF7B2FBE) // Dolby Atmos badge color
+private val DV_BLUE = Color(0xFF00B4FF)
+private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
 
@@ -142,13 +142,11 @@ private fun restoreDisplayMode(activity: Activity) {
 // ─── HDR Window setup for Dolby Vision ─────────────────────────────────────
 private fun enableHdrWindow(activity: Activity) {
     runCatching {
-        // Enable HDR output on the Window (API 31+)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             activity.window.attributes = activity.window.attributes.also { lp ->
                 lp.layoutInDisplayCutoutMode =
                     WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
-            // Request HDR color mode
             val cls = ActivityInfo::class.java
             val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
             val hdrMode = colorModeField?.getInt(null) ?: 2
@@ -163,9 +161,7 @@ private fun enableHdrWindow(activity: Activity) {
 private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
-            // SurfaceView.setHdrOutputMode exists on API 33+
             val method = SurfaceView::class.java.getMethod("setHdrOutputMode", Int::class.java)
-            // HDR_TYPE_DOLBY_VISION = 3
             method.invoke(surfaceView, 3)
         }
     }
@@ -189,7 +185,6 @@ fun PlayerScreen(
     val isDolbyVision by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
 
-    // ─── AFR ──────────────────────────────────────────────────────────
     val contentFps    by exo.contentFrameRate.collectAsState()
     val afrEnabled    = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -216,7 +211,26 @@ fun PlayerScreen(
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ─── Enable HDR/DV window on Activity start ────────────────────────
+    // ─── Dolby badges: show briefly then auto-hide ─────────────────────
+    var showDvBadge    by remember { mutableStateOf(false) }
+    var showAtmosBadge by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isDolbyVision) {
+        if (isDolbyVision) {
+            showDvBadge = true
+            delay(5_000)
+            showDvBadge = false
+        }
+    }
+
+    LaunchedEffect(isDolbyAtmos) {
+        if (isDolbyAtmos) {
+            showAtmosBadge = true
+            delay(5_000)
+            showAtmosBadge = false
+        }
+    }
+
     LaunchedEffect(Unit) {
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
@@ -387,7 +401,6 @@ fun PlayerScreen(
                             ViewGroup.LayoutParams.MATCH_PARENT
                         )
                         keepScreenOn = true
-                        // Apply Dolby Vision HDR output mode on surface
                         applySurfaceDolbyVision(this)
                         addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                             override fun onViewAttachedToWindow(v: android.view.View) {
@@ -433,19 +446,19 @@ fun PlayerScreen(
             }
         )
 
-        // ─── Dolby Vision / Dolby Atmos badges ────────────────────────
-        Row(
+        // ─── Dolby badges: auto-hide after 5 seconds ───────────────────
+        AnimatedVisibility(
+            visible  = showDvBadge || showAtmosBadge,
+            enter    = fadeIn(tween(400)),
+            exit     = fadeOut(tween(800)),
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 28.dp, end = 28.dp)
-                .zIndex(50f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                .zIndex(50f)
         ) {
-            if (isDolbyVision) {
-                DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
-            }
-            if (isDolbyAtmos) {
-                DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (showDvBadge)    DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
+                if (showAtmosBadge) DolbyBadge(text = "DOLBY ATMOS",  color = ATMOS_PURPLE)
             }
         }
 
@@ -715,10 +728,10 @@ private fun DolbyBadge(text: String, color: Color) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text       = text,
-            color      = Color.White,
-            fontSize   = 11.sp,
-            fontWeight = FontWeight.ExtraBold,
+            text          = text,
+            color         = Color.White,
+            fontSize      = 11.sp,
+            fontWeight    = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp
         )
     }
@@ -762,10 +775,9 @@ private fun TrackListUi(
                 val label    = format.label    ?: ""
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
-                // Show Dolby Atmos / Dolby Vision label in track list
                 val dolbyTag = when (format.sampleMimeType) {
-                    "audio/eac3-joc"               -> "🎵 ATMOS"
-                    "video/dolby-vision"            -> "🎬 DV"
+                    "audio/eac3-joc"    -> "🎵 ATMOS"
+                    "video/dolby-vision" -> "🎬 DV"
                     else -> ""
                 }
                 val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)
