@@ -11,6 +11,7 @@ import android.content.Context
 import android.content.pm.ActivityInfo
 import android.view.KeyEvent
 import android.view.SurfaceView
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -63,6 +64,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
+import androidx.media3.common.VideoSize
 import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
@@ -100,9 +102,19 @@ private val CTRL_BG = Color(0x99000000)
 private val RED     = Color(0xFFE50914)
 private val WHITE   = Color(0xFFFFFFFF)
 private val DIM     = Color(0xAAFFFFFF)
+private val DV_BLUE = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 
-enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS }
+// ─── Aspect Ratio modes (mirrors KODI) ─────────────────────────────────────
+enum class AspectRatioMode(val label: String, val description: String) {
+    NORMAL("Normal",   "Source native (auto)"),
+    RATIO_16_9("16:9",   "Force 16:9"),
+    RATIO_4_3("4:3",    "Force 4:3"),
+    ZOOM("Zoom",    "Fill screen (crop)"),
+    STRETCH("Stretch", "Stretch to fill")
+}
+
+enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
 // ─── AFR helper ────────────────────────────────────────────────────────────
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
@@ -166,6 +178,79 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     }
 }
 
+/**
+ * Apply the correct LayoutParams to the SurfaceView based on the chosen
+ * [AspectRatioMode] and the video's intrinsic [videoWidth]×[videoHeight].
+ *
+ * - NORMAL  → compute the largest box that fits in the container while
+ *             preserving the video's native pixel ratio.  This is the
+ *             correct fix for Dolby Vision 2.39:1 movies that were
+ *             previously being stretched to fill the 16:9 screen.
+ * - 16:9    → force 16:9 regardless of source
+ * - 4:3     → force 4:3 regardless of source
+ * - ZOOM    → crop-to-fill (video fills entire screen, edges clipped)
+ * - STRETCH → stretch to fill (distortion allowed)
+ */
+private fun applySurfaceAspectRatio(
+    frameLayout: FrameLayout,
+    surfaceView: SurfaceView,
+    mode: AspectRatioMode,
+    videoWidth: Int,
+    videoHeight: Int
+) {
+    val containerW = frameLayout.width.takeIf  { it > 0 } ?: return
+    val containerH = frameLayout.height.takeIf { it > 0 } ?: return
+
+    val (targetW, targetH) = when (mode) {
+        AspectRatioMode.STRETCH -> Pair(containerW, containerH)
+
+        AspectRatioMode.RATIO_16_9 -> {
+            val w = containerW
+            val h = (containerW * 9f / 16f).toInt()
+            if (h <= containerH) Pair(w, h)
+            else Pair((containerH * 16f / 9f).toInt(), containerH)
+        }
+
+        AspectRatioMode.RATIO_4_3 -> {
+            val w = containerW
+            val h = (containerW * 3f / 4f).toInt()
+            if (h <= containerH) Pair(w, h)
+            else Pair((containerH * 4f / 3f).toInt(), containerH)
+        }
+
+        AspectRatioMode.ZOOM -> {
+            // Scale so the video fills the container completely (crop excess)
+            val srcRatio  = if (videoWidth > 0 && videoHeight > 0)
+                videoWidth.toFloat() / videoHeight else containerW.toFloat() / containerH
+            val dstRatio  = containerW.toFloat() / containerH
+            if (srcRatio > dstRatio) {
+                // video is wider → match height, crop sides
+                Pair((containerH * srcRatio).toInt(), containerH)
+            } else {
+                // video is taller → match width, crop top/bottom
+                Pair(containerW, (containerW / srcRatio).toInt())
+            }
+        }
+
+        AspectRatioMode.NORMAL -> {
+            // Use source pixel ratio; fall back to 16:9 if unknown
+            val srcW = if (videoWidth  > 0) videoWidth  else 16
+            val srcH = if (videoHeight > 0) videoHeight else 9
+            val scaleW = containerW.toFloat() / srcW
+            val scaleH = containerH.toFloat() / srcH
+            val scale  = minOf(scaleW, scaleH)   // fit inside — no cropping
+            Pair((srcW * scale).toInt(), (srcH * scale).toInt())
+        }
+    }
+
+    val lp = surfaceView.layoutParams as? FrameLayout.LayoutParams
+        ?: FrameLayout.LayoutParams(targetW, targetH)
+    lp.width   = targetW
+    lp.height  = targetH
+    lp.gravity = android.view.Gravity.CENTER
+    surfaceView.layoutParams = lp
+}
+
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
@@ -181,12 +266,27 @@ fun PlayerScreen(
     val error         by exo.playerError.collectAsState()
     val currentTracks by exo.currentTracks.collectAsState()
     val currentCues   by exo.currentCues.collectAsState()
+    val isDolbyVision by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos  by exo.isDolbyAtmos.collectAsState()
+    val videoSize     by exo.videoSize.collectAsState()
 
+    // ─── AFR ──────────────────────────────────────────────────────────
     val contentFps    by exo.contentFrameRate.collectAsState()
     val afrEnabled    = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
             .getBoolean("afr", false)
+    }
+
+    // ─── Aspect Ratio – persisted ─────────────────────────────────────
+    val arPrefs = remember { context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE) }
+    var aspectRatioMode by remember {
+        mutableStateOf(
+            try {
+                AspectRatioMode.valueOf(
+                    arPrefs.getString("aspect_ratio", AspectRatioMode.NORMAL.name) ?: AspectRatioMode.NORMAL.name
+                )
+            } catch (_: Exception) { AspectRatioMode.NORMAL }
+        )
     }
 
     var surfaceReady      by remember { mutableStateOf(false) }
@@ -204,22 +304,15 @@ fun PlayerScreen(
     var showResumeDialog by remember { mutableStateOf(false) }
     var resumeHandled    by remember { mutableStateOf(false) }
 
+    // ─── FrameLayout ref for aspect-ratio updates ──────────────────────
+    val frameRef = remember { mutableStateOf<FrameLayout?>(null) }
+
     val backBtnFR   = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    // ─── Atmos badge only: show briefly then auto-hide ────────────────
-    var showAtmosBadge by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isDolbyAtmos) {
-        if (isDolbyAtmos) {
-            showAtmosBadge = true
-            delay(5_000)
-            showAtmosBadge = false
-        }
-    }
-
+    // ─── Enable HDR/DV window on Activity start ────────────────────────
     LaunchedEffect(Unit) {
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
@@ -239,6 +332,13 @@ fun PlayerScreen(
         if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
         val activity = context as? Activity ?: return@LaunchedEffect
         applyAfrForContent(activity, contentFps)
+    }
+
+    // ─── Re-apply aspect ratio whenever mode or video size changes ─────
+    LaunchedEffect(aspectRatioMode, videoSize) {
+        val fl = frameRef.value ?: return@LaunchedEffect
+        val sv = fl.getChildAt(0) as? SurfaceView ?: return@LaunchedEffect
+        applySurfaceAspectRatio(fl, sv, aspectRatioMode, videoSize.width, videoSize.height)
     }
 
     DisposableEffect(Unit) {
@@ -384,19 +484,22 @@ fun PlayerScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    // ── Use SCALE_TO_FIT so ExoPlayer does NOT stretch to fill ──────
+                    // (This is the core fix for Dolby Vision 2.39:1 aspect ratio.)
                     val surfaceView = SurfaceView(ctx).apply {
                         layoutParams = FrameLayout.LayoutParams(
                             ViewGroup.LayoutParams.MATCH_PARENT,
                             ViewGroup.LayoutParams.MATCH_PARENT
-                        )
+                        ).also { it.gravity = android.view.Gravity.CENTER }
                         keepScreenOn = true
                         applySurfaceDolbyVision(this)
-                        addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-                            override fun onViewAttachedToWindow(v: android.view.View) {
+                        addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                            override fun onViewAttachedToWindow(v: View) {
+                                exo.player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
                                 exo.player.setVideoSurfaceView(this@apply)
                                 surfaceReady = true
                             }
-                            override fun onViewDetachedFromWindow(v: android.view.View) {
+                            override fun onViewDetachedFromWindow(v: View) {
                                 surfaceReady = false
                                 exo.player.clearVideoSurface()
                             }
@@ -425,27 +528,38 @@ fun PlayerScreen(
                     }
                     addView(surfaceView)
                     addView(subtitleView)
+                    frameRef.value = this
                 }
             },
-            update = { frameLayout ->
-                val sv  = frameLayout.getChildAt(0) as? SurfaceView
-                val sub = frameLayout.getChildAt(1) as? SubtitleView
-                sv?.let  { exo.player.setVideoSurfaceView(it) }
+            update = { fl ->
+                val sv  = fl.getChildAt(0) as? SurfaceView
+                val sub = fl.getChildAt(1) as? SubtitleView
+                sv?.let {
+                    exo.player.videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT
+                    exo.player.setVideoSurfaceView(it)
+                    // Re-apply aspect ratio on any update (e.g. after size change)
+                    fl.post {
+                        applySurfaceAspectRatio(fl, it, aspectRatioMode, videoSize.width, videoSize.height)
+                    }
+                }
                 sub?.setCues(currentCues)
             }
         )
 
-        // ─── Atmos badge only (DV badge removed — TV shows its own logo) ──
-        AnimatedVisibility(
-            visible  = showAtmosBadge,
-            enter    = fadeIn(tween(400)),
-            exit     = fadeOut(tween(800)),
+        // ─── Dolby Vision / Dolby Atmos badges ────────────────────────
+        Row(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(top = 28.dp, end = 28.dp)
-                .zIndex(50f)
+                .zIndex(50f),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            if (isDolbyVision) {
+                DolbyBadge(text = "DOLBY VISION", color = DV_BLUE)
+            }
+            if (isDolbyAtmos) {
+                DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            }
         }
 
         if (showResumeDialog) {
@@ -619,6 +733,14 @@ fun PlayerScreen(
                                 }
                                 activityTick++
                             }
+                            // ─── Aspect Ratio pill ──────────────────────────────────
+                            ControlPill(
+                                icon = Icons.Default.Fullscreen,
+                                text = "Aspect: ${aspectRatioMode.label}"
+                            ) {
+                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
+                                activityTick++
+                            }
                         }
                         ControlPill(Icons.Default.Close, "Exit") { exo.pause(); onNavigateBack() }
                     }
@@ -696,10 +818,53 @@ fun PlayerScreen(
                                 }
                             }
                         }
+                        ActiveMenu.ASPECT_RATIO -> {
+                            SidePanelHeader("Aspect Ratio", "How the video fills the screen")
+                            AspectRatioPanel(
+                                current   = aspectRatioMode,
+                                focusReq  = sideMenuFR,
+                                onSelect  = { mode ->
+                                    aspectRatioMode = mode
+                                    arPrefs.edit().putString("aspect_ratio", mode.name).apply()
+                                    // Immediately apply to the live SurfaceView
+                                    val fl = frameRef.value
+                                    val sv = fl?.getChildAt(0) as? SurfaceView
+                                    if (fl != null && sv != null) {
+                                        fl.post { applySurfaceAspectRatio(fl, sv, mode, videoSize.width, videoSize.height) }
+                                    }
+                                    activeMenu = ActiveMenu.NONE
+                                }
+                            )
+                        }
                         ActiveMenu.NONE -> {}
                     }
                 }
             }
+        }
+    }
+}
+
+// ─── Aspect Ratio side panel ────────────────────────────────────────────────
+@Composable
+private fun AspectRatioPanel(
+    current:  AspectRatioMode,
+    focusReq: FocusRequester,
+    onSelect: (AspectRatioMode) -> Unit
+) {
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.focusGroup()) {
+        itemsIndexed(AspectRatioMode.entries.toList()) { index, mode ->
+            val isFirst = index == 0
+            val isLast  = index == AspectRatioMode.entries.size - 1
+            TrackItemCard(
+                title      = mode.label,
+                subtitle   = mode.description,
+                isSelected = mode == current,
+                modifier   = Modifier
+                    .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
+                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                onClick = { onSelect(mode) }
+            )
         }
     }
 }
@@ -714,10 +879,10 @@ private fun DolbyBadge(text: String, color: Color) {
             .padding(horizontal = 10.dp, vertical = 5.dp)
     ) {
         Text(
-            text          = text,
-            color         = Color.White,
-            fontSize      = 11.sp,
-            fontWeight    = FontWeight.ExtraBold,
+            text       = text,
+            color      = Color.White,
+            fontSize   = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
             letterSpacing = 0.8.sp
         )
     }
@@ -762,8 +927,8 @@ private fun TrackListUi(
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
                 val dolbyTag = when (format.sampleMimeType) {
-                    "audio/eac3-joc"    -> "🎵 ATMOS"
-                    "video/dolby-vision" -> "🎬 DV"
+                    "audio/eac3-joc"               -> "🎵 ATMOS"
+                    "video/dolby-vision"            -> "🎬 DV"
                     else -> ""
                 }
                 val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)

@@ -61,24 +61,29 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
+    // ─── AFR ─────────────────────────────────────────────────────────
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
+    // ─── Dolby badges ─────────────────────────────────────────────────
     private val _isDolbyVision = MutableStateFlow(false)
     val isDolbyVision: StateFlow<Boolean> = _isDolbyVision.asStateFlow()
 
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
+    // ─── Video size (width × height in pixels) ────────────────────────
+    private val _videoSize = MutableStateFlow(VideoSize.UNKNOWN)
+    val videoSize: StateFlow<VideoSize> = _videoSize.asStateFlow()
+
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // LG/Sony/Philips — OFF: native decoder only, fixes DolbyVision stretch/color-space bug
-                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
@@ -153,6 +158,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
+    // ─── State ────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -187,7 +193,8 @@ class ExoPlayerWrapper(context: Context) {
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                    .firstOrNull { it.frameRate > 0f }?.frameRate
+                    .firstOrNull { it.frameRate > 0f }
+                    ?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
 
                 val hasDv = tracks.groups
@@ -207,11 +214,15 @@ class ExoPlayerWrapper(context: Context) {
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
+                // Expose the real pixel dimensions so the aspect-ratio logic can use them
+                _videoSize.value = videoSize
+
                 if (_contentFrameRate.value <= 0f) {
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                         .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                        .firstOrNull { it.frameRate > 0f }?.frameRate
+                        .firstOrNull { it.frameRate > 0f }
+                        ?.frameRate
                     if (fps != null && fps > 0f) _contentFrameRate.value = fps
                 }
             }
@@ -245,6 +256,7 @@ class ExoPlayerWrapper(context: Context) {
         _contentFrameRate.value = 0f
         _isDolbyVision.value   = false
         _isDolbyAtmos.value    = false
+        _videoSize.value       = VideoSize.UNKNOWN
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
