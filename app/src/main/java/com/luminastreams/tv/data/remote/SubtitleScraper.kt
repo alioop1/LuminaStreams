@@ -16,7 +16,7 @@ import java.util.zip.ZipInputStream
 // תיעוד: https://subdl.com/api-doc
 //
 // זרימה:
-//   1. GET /api/v1/?imdb_id={id}&lang={HE/EN}&subs_per_page=5
+//   1. GET /api/v1/?imdb_id={id}&lang={HE/EN}&subs_per_page=5[&season=X&episode=Y]
 //   2. בוחרים ראשון עם url
 //   3. מורידים ZIP מ-https://dl.subdl.com{url}
 //   4. מחלצים SRT/VTT/SUB → ByteArray
@@ -33,7 +33,9 @@ class SubtitleScraper {
 
     suspend fun fetchSubtitleInMemory(
         imdbId:   String,
-        langCode: String = "heb"
+        langCode: String = "heb",
+        season:   Int?   = null,
+        episode:  Int?   = null
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
             // subdl משתמש ב-ISO 639-1 uppercase
@@ -47,8 +49,15 @@ class SubtitleScraper {
                 else              -> "EN"
             }
 
-            val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
-            val searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
+            val cleanId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+
+            // בניית URL — מוסיפים season/episode רק אם קיימים (סדרות)
+            val searchUrl = buildString {
+                append("$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
+                if (season != null && episode != null) {
+                    append("&season=$season&episode=$episode")
+                }
+            }
 
             val searchConn = openGet(searchUrl)
             if (searchConn.responseCode != 200) {
