@@ -8,6 +8,10 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 
+// subdl.com API — free, no API Key required
+// For series: requires &season=X&episode=Y params in the search URL
+// Docs: https://subdl.com/api-doc
+
 class SubtitleScraper {
 
     companion object {
@@ -36,10 +40,9 @@ class SubtitleScraper {
 
             val cleanId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
 
-            // Build search URL — append season/episode for TV shows
+            // Build search URL — append season/episode for series
             val searchUrl = buildString {
-                append(SEARCH_BASE)
-                append("?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
+                append("$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
                 if (season != null && episode != null) {
                     append("&season=$season&episode=$episode")
                 }
