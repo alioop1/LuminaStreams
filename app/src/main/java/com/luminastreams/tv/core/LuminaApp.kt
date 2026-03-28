@@ -2,7 +2,6 @@ package com.luminastreams.tv.core
 
 import android.app.Application
 import android.content.ComponentCallbacks2
-import android.content.Context
 import android.content.res.Configuration
 import android.util.Log
 import coil.Coil
@@ -22,7 +21,7 @@ class LuminaApp : Application() {
 
         DeviceProfile.init(this)
 
-        val prefs = getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("lumina_settings", MODE_PRIVATE)
         DeviceProfile.forceLowTier      = prefs.getBoolean("lite_ui",       false)
         DeviceProfile.forceReduceMotion = prefs.getBoolean("reduce_motion", false)
 
@@ -85,15 +84,15 @@ class LuminaApp : Application() {
         registerComponentCallbacks(object : ComponentCallbacks2 {
             override fun onTrimMemory(level: Int) {
                 when (level) {
-                    ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
+                    TRIM_MEMORY_UI_HIDDEN -> {
                         Runtime.getRuntime().gc()
                     }
-                    ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW,
-                    ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {
+                    TRIM_MEMORY_RUNNING_LOW,
+                    TRIM_MEMORY_RUNNING_CRITICAL -> {
                         Runtime.getRuntime().gc()
                         Log.w("LuminaApp", "⚠️ Low memory — GC triggered (tier=${DeviceProfile.tier.name})")
                     }
-                    ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                    TRIM_MEMORY_COMPLETE -> {
                         Coil.imageLoader(this@LuminaApp).memoryCache?.clear()
                         Runtime.getRuntime().gc()
                         Log.e("LuminaApp", "🔴 Critical memory — caches cleared (tier=${DeviceProfile.tier.name})")
