@@ -63,19 +63,21 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         val type        = if (season != null && episode != null) "series" else "movie"
         val queryId     = if (type == "series") "$formattedId:$season:$episode" else formattedId
 
-        // ── Stremio add-on proxies (קיים) ─────────────────────────────
+        // ── Stremio add-on proxies (קיים) ─────────────────────────────────────────
         val wizdomUrl   = "https://4b139a4b7f94-wizdom-stremio-v2.baby-beamup.club/subtitles/$type/$queryId.json"
         val ktuvitUrl   = "https://4b139a4b7f94-ktuvit-stremio.baby-beamup.club/subtitles/$type/$queryId.json"
         val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
         val ufoUrl      = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
 
-        val wizdomDeferred    = async { fetchAndParseStremioJson(wizdomUrl,   "Wizdom") }
-        val ktuvitProxyDeferred = async { fetchAndParseStremioJson(ktuvitUrl, "Ktuvit") }
-        val officialDeferred  = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
-        val ufoDeferred       = async { fetchAndParseStremioJson(ufoUrl,      "OS-Community") }
-        val scraperDeferred   = async { fetchFromSubtitleScraper(formattedId) }
+        val wizdomDeferred      = async { fetchAndParseStremioJson(wizdomUrl,   "Wizdom") }
+        val ktuvitProxyDeferred = async { fetchAndParseStremioJson(ktuvitUrl,   "Ktuvit") }
+        val officialDeferred    = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
+        val ufoDeferred         = async { fetchAndParseStremioJson(ufoUrl,      "OS-Community") }
 
-        // ── Direct Ktuvit (חדש) ────────────────────────────────────────
+        // תיקון: מעבירים season + episode ל-SubtitleScraper
+        val scraperDeferred     = async { fetchFromSubtitleScraper(formattedId, season, episode) }
+
+        // ── Direct Ktuvit (חדש) ────────────────────────────────────────────────
         val ktuvitDirectDeferred = async {
             fetchFromKtuvitDirect(formattedId, type, season, episode)
         }
@@ -101,7 +103,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ── Direct Ktuvit.me ─────────────────────────────────────────────
+    // ── Direct Ktuvit.me ─────────────────────────────────────────────────────
     private suspend fun fetchFromKtuvitDirect(
         imdbId: String,
         type: String,
@@ -113,24 +115,20 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
             val email   = prefs.getString("ktuvit_email",    "") ?: ""
             val pass    = prefs.getString("ktuvit_password",  "") ?: ""
 
-            // אם אין credentials — skip
             if (email.isBlank() || pass.isBlank()) return@withContext emptyList()
 
-            // login אם אין cookie
             if (ktuvitDirect.cookie == null) {
                 val ok = ktuvitDirect.login(email, pass)
                 if (!ok) return@withContext emptyList()
             }
 
-            // חפש KtuvitID
             val isSeries = type == "series"
             val ktuvitId = ktuvitDirect.getKtuvitId(
-                name     = "",  // ריק — ה-client ינסה לחפש לפי imdbId בלבד
+                name     = "",
                 isSeries = isSeries,
                 imdbId   = imdbId
             ) ?: return@withContext emptyList()
 
-            // קבל רשימת כתוביות
             val subsList = if (isSeries && season != null && episode != null)
                 ktuvitDirect.getSubsListEpisode(ktuvitId, season, episode)
             else
@@ -138,12 +136,10 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
 
             if (subsList.isEmpty()) return@withContext emptyList()
 
-            // הורד את הכתובית הכי מורדת (top 1) ישירות ל-cache
             val best = subsList.first()
             val file = ktuvitDirect.downloadSubtitle(ktuvitId, best.id, best.fileType)
                 ?: return@withContext emptyList()
 
-            // החזר כ-StremioSubtitle עם file:// URL
             listOf(StremioSubtitle(
                 url    = "file://${file.absolutePath}",
                 lang   = "heb",
@@ -155,7 +151,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         }
     }
 
-    // ── Stremio JSON parser (קיים) ────────────────────────────────────
+    // ── Stremio JSON parser ─────────────────────────────────────────────────
     private suspend fun fetchAndParseStremioJson(
         urlString: String,
         sourceName: String
@@ -187,14 +183,19 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         subtitles
     }
 
-    private suspend fun fetchFromSubtitleScraper(imdbId: String): List<StremioSubtitle> =
-        withContext(Dispatchers.IO) {
-            try {
-                val result = subtitleScraper.fetchSubtitleInMemory(imdbId, "heb")
-                val bytes  = result.getOrNull() ?: return@withContext emptyList()
-                val file   = File(app.cacheDir, "subtitle_${imdbId}_heb.srt")
-                file.writeBytes(bytes)
-                listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
-            } catch (e: Exception) { emptyList() }
-        }
+    // ── SubtitleScraper (subdl.com) ────────────────────────────────────────────
+    private suspend fun fetchFromSubtitleScraper(
+        imdbId:  String,
+        season:  Int? = null,
+        episode: Int? = null
+    ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
+        try {
+            val result = subtitleScraper.fetchSubtitleInMemory(imdbId, "heb", season, episode)
+            val bytes  = result.getOrNull() ?: return@withContext emptyList()
+            val suffix = if (season != null && episode != null) "_s${season}e${episode}" else ""
+            val file   = File(app.cacheDir, "subtitle_${imdbId}${suffix}_heb.srt")
+            file.writeBytes(bytes)
+            listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
+        } catch (e: Exception) { emptyList() }
+    }
 }
