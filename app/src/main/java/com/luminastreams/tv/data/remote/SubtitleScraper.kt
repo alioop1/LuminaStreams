@@ -8,20 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 
-// ── תיקון באג 2 (גרסה שניה) ──────────────────────────────────────────────────
-// הבעיה בגרסה הקודמת: rest.opensubtitles.org הושבת סופית ב-2023.
-// כל קריאה אליו מחזירה 404/410.
-//
-// הפתרון: subdl.com — API חינמי, ללא API Key נדרש, פעיל.
-// תיעוד: https://subdl.com/api-doc
-//
-// זרימה:
-//   1. GET /api/v1/?imdb_id={id}&lang={HE/EN}&subs_per_page=5[&season=X&episode=Y]
-//   2. בוחרים ראשון עם url
-//   3. מורידים ZIP מ-https://dl.subdl.com{url}
-//   4. מחלצים SRT/VTT/SUB → ByteArray
-// ─────────────────────────────────────────────────────────────────────────────
-
 class SubtitleScraper {
 
     companion object {
@@ -38,7 +24,6 @@ class SubtitleScraper {
         episode:  Int?   = null
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            // subdl משתמש ב-ISO 639-1 uppercase
             val sdLang = when (langCode.lowercase().take(3)) {
                 "he", "heb", "iw" -> "HE"
                 "ar", "ara"       -> "AR"
@@ -51,9 +36,10 @@ class SubtitleScraper {
 
             val cleanId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
 
-            // בניית URL — מוסיפים season/episode רק אם קיימים (סדרות)
+            // Build search URL — append season/episode for TV shows
             val searchUrl = buildString {
-                append("$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
+                append(SEARCH_BASE)
+                append("?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
                 if (season != null && episode != null) {
                     append("&season=$season&episode=$episode")
                 }
@@ -76,7 +62,6 @@ class SubtitleScraper {
                 return@withContext Result.failure(Exception("לא נמצאו כתוביות ב-subdl"))
             }
 
-            // בוחרים ראשון עם url
             var downloadPath: String? = null
             for (i in 0 until subtitlesArr.length()) {
                 val link = subtitlesArr.getJSONObject(i).optString("url", "")
@@ -111,9 +96,9 @@ class SubtitleScraper {
 
     private fun openGet(urlString: String): HttpURLConnection {
         val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod       = "GET"
-        conn.connectTimeout      = TIMEOUT_MS
-        conn.readTimeout         = TIMEOUT_MS
+        conn.requestMethod           = "GET"
+        conn.connectTimeout          = TIMEOUT_MS
+        conn.readTimeout             = TIMEOUT_MS
         conn.instanceFollowRedirects = true
         conn.setRequestProperty("User-Agent", USER_AGENT)
         conn.setRequestProperty("Accept",     "application/json, */*")
