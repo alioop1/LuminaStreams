@@ -1,10 +1,10 @@
 package com.luminastreams.tv.presentation.details
 
-import android.annotation.SuppressLint
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.local.WatchlistManager
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
@@ -31,33 +31,32 @@ import java.util.concurrent.ConcurrentHashMap
 
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(
-    val name: String?     = null,
-    val title: String?    = null,
-    val url: String?      = null,
+    val name    : String? = null,
+    val title   : String? = null,
+    val url     : String? = null,
     val infoHash: String? = null
 )
 
 interface DynamicTorrentioApi {
     @Headers("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
     @GET
-    suspend fun getStreamsDynamic(
-        // שימוש ב- @Url עוקף את הקידוד האוטומטי ומונע שיבוש של הכתובת לשרתי Torrentio
-        @retrofit2.http.Url url: String
-    ): retrofit2.Response<TorrentioResponse>
+    suspend fun getStreamsDynamic(@retrofit2.http.Url url: String): retrofit2.Response<TorrentioResponse>
 }
 
-@SuppressLint("StaticFieldLeak")
 class DetailsViewModel(
     private val repository: MediaRepository,
-    private val context: Context
+    // FIX: always store applicationContext to prevent Activity memory leak
+    context: Context
 ) : ViewModel() {
+
+    // Safe: applicationContext has the lifetime of the process, not a single Activity
+    private val appContext: Context = context.applicationContext
 
     private val _state = MutableStateFlow(DetailsScreenState())
     val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
 
     private val rdManager        = RealDebridManager()
-    private val watchlistManager = WatchlistManager(context)
-
+    private val watchlistManager = WatchlistManager(appContext)
 
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder()
         .baseUrl("https://torrentio.strem.fun/")
@@ -69,10 +68,14 @@ class DetailsViewModel(
     private var scrapingJob: Job? = null
 
     private fun getRdToken(): String =
-        context.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE)
             .getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ── Tier-aware image helpers ───────────────────────────────────────────────
+    private fun backdropUrl(path: String?): String = Constants.backdropUrl(path)
+    private fun posterUrl(path: String?): String   = Constants.posterUrl(path)
+
+    // ── Public API ─────────────────────────────────────────────────────────────
     fun onEvent(event: DetailsEvent) {
         when (event) {
             is DetailsEvent.LoadInitialData      -> loadData(event.fullId)
@@ -85,7 +88,7 @@ class DetailsViewModel(
         }
     }
 
-    // ── Load data ─────────────────────────────────────────────────────────────
+    // ── Load data ──────────────────────────────────────────────────────────────
     private fun loadData(fullId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoadingData = true, errorData = null) }
@@ -125,7 +128,7 @@ class DetailsViewModel(
         }
     }
 
-    // ── Fuzer direct play ─────────────────────────────────────────────────────
+    // ── Fuzer direct play ──────────────────────────────────────────────────────
     private fun playFuzerDirect(torrentUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val token = getRdToken()
@@ -133,22 +136,13 @@ class DetailsViewModel(
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("טוקן Real-Debrid חסר — עבור להגדרות")) }
                 return@launch
             }
-
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מוריד קובץ טורנט...")) }
-
             val torrentBytes = FuzerEngine.downloadTorrentFile(torrentUrl).getOrElse { e ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאה בהורדת הטורנט: ${e.message}")) }
                 return@launch
             }
-
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מעלה ל-Real-Debrid...")) }
-
-            rdManager.resolveTorrentFileToStream(
-                torrentBytes = torrentBytes,
-                apiToken     = token,
-                season       = null,
-                episode      = null
-            ) { progress ->
+            rdManager.resolveTorrentFileToStream(torrentBytes, token) { progress ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("ממיר ב-RD: ${progress.toInt()}%")) }
             }.fold(
                 onSuccess = { url -> _state.update { it.copy(readyToPlayUrl = url, scrapingStatus = ScrapingStatus.Idle) } },
@@ -157,7 +151,7 @@ class DetailsViewModel(
         }
     }
 
-    // ── Load Movie ────────────────────────────────────────────────────────────
+    // ── Load Movie ─────────────────────────────────────────────────────────────
     private suspend fun loadMovie(id: String) {
         repository.getMovieFullDetails(id).fold(
             onSuccess = { dto ->
@@ -183,8 +177,9 @@ class DetailsViewModel(
                             imdbId         = scrapeId,
                             title          = dto.title,
                             overview       = dto.overview ?: "",
-                            posterUrl      = "${Constants.IMAGE_W780}${dto.posterPath}",
-                            backdropUrl    = "${Constants.IMAGE_W1280}${dto.backdropPath}",
+                            // Tier-aware: Shield gets /original/, low-end gets w780
+                            posterUrl      = posterUrl(dto.posterPath),
+                            backdropUrl    = backdropUrl(dto.backdropPath),
                             logoUrl        = null,
                             isSeries       = false,
                             releaseDate    = dto.releaseDate?.take(4) ?: "",
@@ -209,7 +204,7 @@ class DetailsViewModel(
         )
     }
 
-    // ── Load TV Show ──────────────────────────────────────────────────────────
+    // ── Load TV Show ───────────────────────────────────────────────────────────
     private suspend fun loadTvShow(id: String) {
         repository.getTvFullDetails(id).fold(
             onSuccess = { dto ->
@@ -234,8 +229,8 @@ class DetailsViewModel(
                             imdbId         = scrapeId,
                             title          = dto.name,
                             overview       = dto.overview ?: "",
-                            posterUrl      = "${Constants.IMAGE_W780}${dto.posterPath}",
-                            backdropUrl    = "${Constants.IMAGE_W1280}${dto.backdropPath}",
+                            posterUrl      = posterUrl(dto.posterPath),
+                            backdropUrl    = backdropUrl(dto.backdropPath),
                             logoUrl        = null,
                             isSeries       = true,
                             releaseDate    = dto.firstAirDate?.take(4) ?: "",
@@ -261,20 +256,18 @@ class DetailsViewModel(
         )
     }
 
-    // ── Network helpers ───────────────────────────────────────────────────────
+    // ── Network helpers ────────────────────────────────────────────────────────
     private suspend fun fetchRealTrailer(imdbId: String, type: String): String? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(1_500) {
                 try {
                     val conn = (URL("https://v3-cinemeta.strem.io/meta/$type/$imdbId.json")
                         .openConnection() as HttpURLConnection).apply {
-                        requestMethod  = "GET"
-                        connectTimeout = 1_000
-                        readTimeout    = 1_000
+                        requestMethod  = "GET"; connectTimeout = 1_000; readTimeout = 1_000
                     }
                     if (conn.responseCode == 200) {
-                        val body = conn.inputStream.bufferedReader().use { it.readText() }
-                        val id   = JSONObject(body).optJSONObject("meta")?.optString("trailer", "")
+                        val id = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                            .optJSONObject("meta")?.optString("trailer", "")
                         if (!id.isNullOrEmpty()) return@withTimeoutOrNull id
                     }
                 } catch (_: Exception) {}
@@ -289,9 +282,7 @@ class DetailsViewModel(
                 try {
                     val conn = (URL("https://v3-cinemeta.strem.io/catalog/$type/top/genre=$genre.json")
                         .openConnection() as HttpURLConnection).apply {
-                        requestMethod  = "GET"
-                        connectTimeout = 1_000
-                        readTimeout    = 1_000
+                        requestMethod  = "GET"; connectTimeout = 1_000; readTimeout = 1_000
                     }
                     if (conn.responseCode == 200) {
                         val metas = JSONObject(
@@ -316,7 +307,7 @@ class DetailsViewModel(
             recs
         }
 
-    // ── Episodes ──────────────────────────────────────────────────────────────
+    // ── Episodes ───────────────────────────────────────────────────────────────
     private fun fetchEpisodesForSeason(seasonNum: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isEpisodesLoading = true, selectedSeason = seasonNum) }
@@ -349,9 +340,7 @@ class DetailsViewModel(
                 try {
                     val conn = (URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json")
                         .openConnection() as HttpURLConnection).apply {
-                        requestMethod  = "GET"
-                        connectTimeout = 1_500
-                        readTimeout    = 1_500
+                        requestMethod  = "GET"; connectTimeout = 1_500; readTimeout = 1_500
                     }
                     if (conn.responseCode == 200) {
                         val videos = JSONObject(
@@ -380,19 +369,17 @@ class DetailsViewModel(
             list.sortedBy { it.episodeNumber }
         }
 
-    // ── Stream scraping ───────────────────────────────────────────────────────
-
-    // מוודא שיש לנו מזהה IMDb תקין גם כשהמקור הוא TMDB
+    // ── Stream scraping ────────────────────────────────────────────────────────
     private suspend fun resolveImdbId(id: String, tmdbType: String): String {
         if (id.startsWith("tt")) return id
         val tmdbId = id.replace("tmdb:", "")
         return withContext(Dispatchers.IO) {
             try {
-                val url = URL("https://api.themoviedb.org/3/$tmdbType/$tmdbId/external_ids?api_key=${Constants.TMDB_API_KEY}")
+                val url  = URL("https://api.themoviedb.org/3/$tmdbType/$tmdbId/external_ids?api_key=${Constants.TMDB_API_KEY}")
                 val conn = url.openConnection() as HttpURLConnection
                 if (conn.responseCode == 200) {
-                    val body = conn.inputStream.bufferedReader().use { it.readText() }
-                    val imdb = JSONObject(body).optString("imdb_id", "")
+                    val imdb = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                        .optString("imdb_id", "")
                     if (imdb.startsWith("tt")) return@withContext imdb
                 }
             } catch (_: Exception) {}
@@ -411,11 +398,10 @@ class DetailsViewModel(
         scrapingJob = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(scrapingStatus = ScrapingStatus.Searching, availableStreams = emptyList()) }
 
-            val queryType = if (season != null && episode != null) "series" else "movie"
-            val actualScrapeId = resolveImdbId(scrapeId, if (queryType == "series") "tv" else "movie")
-            val queryId = (if (season != null && episode != null) "$actualScrapeId:$season:$episode" else actualScrapeId).trim()
-
-            val cacheKey = queryId
+            val queryType       = if (season != null && episode != null) "series" else "movie"
+            val actualScrapeId  = resolveImdbId(scrapeId, if (queryType == "series") "tv" else "movie")
+            val queryId         = (if (season != null && episode != null) "$actualScrapeId:$season:$episode" else actualScrapeId).trim()
+            val cacheKey        = queryId
 
             streamCache[cacheKey]?.let { cached ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached) }
@@ -423,11 +409,9 @@ class DetailsViewModel(
             }
 
             try {
-                // הרכבת הכתובת המלאה מראש! מונע מ-Retrofit לקדד ולהרוס סימנים כמו ":"
                 val configStr = "realdebrid=$token"
-                val fullUrl = "https://torrentio.strem.fun/$configStr/stream/$queryType/$queryId.json"
-
-                val response = dynamicTorrentio.getStreamsDynamic(fullUrl)
+                val fullUrl   = "https://torrentio.strem.fun/$configStr/stream/$queryType/$queryId.json"
+                val response  = dynamicTorrentio.getStreamsDynamic(fullUrl)
 
                 if (!response.isSuccessful || response.body()?.streams.isNullOrEmpty()) {
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("לא נמצאו מקורות עבור תוכן זה.")) }
@@ -459,8 +443,8 @@ class DetailsViewModel(
                 }
                     .sortedByDescending { it.sortScore }
                     .let { list ->
-                        if (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
-                                .getBoolean("force_hdr", false)) {
+                        val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+                        if (prefs.getBoolean("force_hdr", false)) {
                             val hdr = list.filter { src ->
                                 val u = "${src.filename} ${src.releaseGroup}".uppercase()
                                 u.contains("HDR") || u.contains("DV") || u.contains(".DV.") ||
@@ -470,8 +454,8 @@ class DetailsViewModel(
                         } else list
                     }
                     .let { list ->
-                        when (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
-                            .getString("max_quality", "4K") ?: "4K") {
+                        val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+                        when (prefs.getString("max_quality", "4K") ?: "4K") {
                             "1080p" -> list.filter { it.quality != StreamQuality.UHD_4K }
                             "720p"  -> list.filter { it.quality.priority <= 6 }
                             else    -> list
@@ -497,7 +481,7 @@ class DetailsViewModel(
         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) }
     }
 
-    // ── RealDebrid resolve ────────────────────────────────────────────────────
+    // ── RealDebrid resolve ─────────────────────────────────────────────────────
     private fun processRealDebridLink(stream: AdvancedStreamSource) {
         if (stream.directUrl?.startsWith("http") == true) {
             _state.update { it.copy(readyToPlayUrl = stream.directUrl) }
@@ -509,15 +493,9 @@ class DetailsViewModel(
             val token = getRdToken()
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
             try {
-                rdManager.resolveMagnetToStream(
-                    "magnet:?xt=urn:btih:${stream.infoHash}", token
-                ).fold(
-                    onSuccess = { url ->
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) }
-                    },
-                    onFailure = {
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("Failed to resolve secure link")) }
-                    }
+                rdManager.resolveMagnetToStream("magnet:?xt=urn:btih:${stream.infoHash}", token).fold(
+                    onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
+                    onFailure = { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("Failed to resolve secure link")) } }
                 )
             } catch (e: Exception) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("Network error: ${e.message}")) }
@@ -525,7 +503,7 @@ class DetailsViewModel(
         }
     }
 
-    // ── Watchlist ─────────────────────────────────────────────────────────────
+    // ── Watchlist ──────────────────────────────────────────────────────────────
     private fun handleToggleFavorite() {
         val info = _state.value.mediaInfo
         val movie = Movie(

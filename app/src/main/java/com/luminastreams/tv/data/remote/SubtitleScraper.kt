@@ -11,17 +11,19 @@ import java.util.zip.ZipInputStream
 class SubtitleScraper {
 
     companion object {
-        private const val SEARCH_BASE = "https://api.subdl.com/api/v1/"
+        // FIX: was "https://api.subdl.com/api/v1/" which produced a malformed URL
+        // "https://api.subdl.com/api/v1/?imdb_id=..." — missing the /subtitles endpoint.
+        private const val SEARCH_BASE = "https://api.subdl.com/api/v1/subtitles"
         private const val DL_BASE     = "https://dl.subdl.com"
         private const val USER_AGENT  = "Mozilla/5.0 (Android TV; Android 12) LuminaStreams/1.0"
-        private const val TIMEOUT_MS  = 10_000
+        private const val TIMEOUT_MS  = 12_000
     }
 
     suspend fun fetchSubtitleInMemory(
-        imdbId:   String,
-        season:   Int? = null,
-        episode:  Int? = null,
-        langCode: String = "heb"
+        imdbId   : String,
+        season   : Int?    = null,
+        episode  : Int?    = null,
+        langCode : String  = "heb"
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
             val sdLang = when (langCode.lowercase().take(3)) {
@@ -35,9 +37,8 @@ class SubtitleScraper {
             }
 
             val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+            // Correct URL: https://api.subdl.com/api/v1/subtitles?imdb_id=...&lang=...
             var searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
-
-            // תוספת קריטית לסדרות - משרשרים עונה ופרק לכתובת החיפוש!
             if (season != null && episode != null) {
                 searchUrl += "&season_number=$season&episode_number=$episode"
             }
@@ -93,9 +94,9 @@ class SubtitleScraper {
 
     private fun openGet(urlString: String): HttpURLConnection {
         val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod       = "GET"
-        conn.connectTimeout      = TIMEOUT_MS
-        conn.readTimeout         = TIMEOUT_MS
+        conn.requestMethod           = "GET"
+        conn.connectTimeout          = TIMEOUT_MS
+        conn.readTimeout             = TIMEOUT_MS
         conn.instanceFollowRedirects = true
         conn.setRequestProperty("User-Agent", USER_AGENT)
         conn.setRequestProperty("Accept",     "application/json, */*")

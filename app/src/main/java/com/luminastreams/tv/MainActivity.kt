@@ -55,7 +55,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        // fix: guard HDR colorMode behind API 26 — below it the constant doesn't exist
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
         }
@@ -97,10 +96,10 @@ fun AppNavHostContainer(
     val application = context.applicationContext as Application
 
     NavHost(
-        navController    = navController,
-        startDestination = "home",
-        enterTransition  = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        exitTransition   = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
+        navController      = navController,
+        startDestination   = "home",
+        enterTransition    = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        exitTransition     = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
         popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
         popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
@@ -129,7 +128,8 @@ fun AppNavHostContainer(
                 factory = object : ViewModelProvider.Factory {
                     @Suppress("UNCHECKED_CAST")
                     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        DetailsViewModel(repository, context) as T
+                        // FIX: pass applicationContext — NOT the Activity context — to prevent memory leak
+                        DetailsViewModel(repository, application) as T
                 }
             )
 

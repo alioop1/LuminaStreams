@@ -2,6 +2,8 @@ package com.luminastreams.tv.data.remote
 
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.*
 import org.jsoup.Jsoup
@@ -11,11 +13,11 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
-object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
+object FuzerEngine {
 
-    private val USERNAME = "microxbox93"
-    private val PASSWORD = "AliooP93"
-    private val BASE     = "https://www.fuzer.xyz" // הדומיין המעודכן
+    private const val USERNAME = "microxbox93"
+    private const val PASSWORD = "AliooP93"
+    private const val BASE     = "https://www.fuzer.xyz"
 
     private val cookieJar = object : CookieJar {
         private val store = HashMap<String, MutableList<Cookie>>()
@@ -34,27 +36,26 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
         .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
-    private var isLoggedIn = false
+    // FIX: @Volatile ensures visibility across threads; loginMutex prevents concurrent logins
+    @Volatile private var isLoggedIn = false
+    private val loginMutex = Mutex()
+
     private val hashedPassword: String by lazy { md5(PASSWORD) }
 
-    // ── Public API ────────────────────────────────────────────────────────
+    // ── Public API ─────────────────────────────────────────────────────────────
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
-            if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
+            if (!ensureLogin()) return@withContext Result.failure(Exception("Login failed"))
 
-            // המרת השאילתה - Fuzer בדרך כלל משתמש ב-windows-1255 לעברית
             val enc = try {
                 URLEncoder.encode(query, "windows-1255")
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 URLEncoder.encode(query, "UTF-8")
             }
 
-            // URL החיפוש המדויק
             val searchUrl = "$BASE/browse.php?ref_=basic&query=$enc&matchquery=any"
-            val html = getHtml(searchUrl) ?: return@withContext Result.success(emptyList())
-
-            val movies = parseHtmlToMovies(html)
-            Result.success(movies)
+            val html      = getHtml(searchUrl) ?: return@withContext Result.success(emptyList())
+            Result.success(parseHtmlToMovies(html))
         } catch (e: Exception) {
             Result.failure(Exception("Fuzer search: ${e.message}"))
         }
@@ -62,16 +63,18 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
 
     suspend fun getCategoryPage(catId: Int, page: Int): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
-            if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
+            if (!ensureLogin()) return@withContext Result.failure(Exception("Login failed"))
             val html = getHtml("$BASE/browse.php?cat=$catId&page=$page")
                 ?: return@withContext Result.success(emptyList())
             Result.success(parseHtmlToMovies(html))
-        } catch (_: Exception) { Result.failure(Exception("Fuzer getCategoryPage failed")) }
+        } catch (_: Exception) {
+            Result.failure(Exception("Fuzer getCategoryPage failed"))
+        }
     }
 
     suspend fun downloadTorrentFile(url: String): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
+            if (!ensureLogin()) return@withContext Result.failure(Exception("Login failed"))
             var finalUrl = url
             if (url.contains("showthread.php")) {
                 val html = getHtml(url) ?: return@withContext Result.failure(Exception("Thread fetch failed"))
@@ -87,10 +90,12 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
                 !String(bytes.take(50).toByteArray()).contains("html", ignoreCase = true))
                 Result.success(bytes)
             else Result.failure(Exception("Invalid torrent data"))
-        } catch (e: Exception) { Result.failure(e) }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────
+    // ── Helpers ────────────────────────────────────────────────────────────────
     private fun getHtml(url: String): String? {
         val resp  = client.newCall(
             Request.Builder().url(url).headers(defaultHeaders("$BASE/browse.php")).build()
@@ -104,16 +109,24 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
         catch (_: Exception) { String(bytes, Charsets.UTF_8) }
 
     private fun defaultHeaders(referer: String): Headers = Headers.Builder()
-        .add("User-Agent",      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36")
-        .add("Accept",         "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-        .add("Accept-Language","he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7")
-        .add("Accept-Charset", "windows-1255,utf-8;q=0.7,*;q=0.3")
-        .add("Referer",        referer)
-        .add("Origin",         BASE)
+        .add("User-Agent",       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36")
+        .add("Accept",           "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .add("Accept-Language",  "he-IL,he;q=0.9,en-US;q=0.8,en;q=0.7")
+        .add("Accept-Charset",   "windows-1255,utf-8;q=0.7,*;q=0.3")
+        .add("Referer",          referer)
+        .add("Origin",           BASE)
         .build()
 
-    private fun loginIfNeeded(): Boolean {
-        if (isLoggedIn) return true
+    /**
+     * Thread-safe login check. Uses a Mutex so only one coroutine attempts
+     * login at a time — prevents duplicate login requests on simultaneous calls.
+     */
+    private suspend fun ensureLogin(): Boolean = loginMutex.withLock {
+        if (isLoggedIn) return@withLock true
+        doLogin()
+    }
+
+    private fun doLogin(): Boolean {
         try {
             val checkHtml = client.newCall(
                 Request.Builder().url("$BASE/index.php").headers(defaultHeaders(BASE)).build()
@@ -149,7 +162,7 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
             if (loginBody.contains("logout", ignoreCase = true) ||
                 loginBody.contains("loggout", ignoreCase = true) ||
                 cookieJar.loadForRequest(
-                    HttpUrl.Builder().scheme("https").host("www.fuzer.xyz").build() // תוקן לדומיין החדש
+                    HttpUrl.Builder().scheme("https").host("www.fuzer.xyz").build()
                 ).any { it.name.contains("bbuser", ignoreCase = true) || it.name == "vbulletin_loggedin" }) {
                 isLoggedIn = true; return true
             }
@@ -157,7 +170,7 @@ object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
         return false
     }
 
-    // ── Parser ────────────────────────────────────────────────────────────
+    // ── Parser ─────────────────────────────────────────────────────────────────
     private fun parseHtmlToMovies(html: String): List<Movie> {
         val movies = mutableListOf<Movie>()
         val doc    = Jsoup.parse(html)

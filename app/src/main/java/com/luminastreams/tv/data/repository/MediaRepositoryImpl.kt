@@ -1,7 +1,9 @@
 package com.luminastreams.tv.data.repository
 
 import com.luminastreams.tv.core.Constants
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.api.TmdbApi
+import com.luminastreams.tv.data.api.TmdbMediaDto
 import com.luminastreams.tv.data.api.TmdbMovieDetailsDto
 import com.luminastreams.tv.data.api.TmdbTvDetailsDto
 import com.luminastreams.tv.domain.model.Movie
@@ -16,13 +18,9 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 /**
- * MediaRepositoryImpl — מימוש ה-repository מול TMDB API.
- *
- * תיקונים:
- * 1. TMDB_API_KEY דרך Constants (לא hardcoded)
- * 2. Image URLs דרך Constants
- *
- * Path: app/src/main/java/com/luminastreams/tv/data/repository/MediaRepositoryImpl.kt
+ * MediaRepositoryImpl — TMDB data source.
+ * All image URLs are now tier-aware via Constants.backdropUrl / Constants.posterUrl
+ * so Nvidia Shield gets /original/ quality while 2 GB Mali boxes get w500.
  */
 class MediaRepositoryImpl : MediaRepository {
 
@@ -39,12 +37,14 @@ class MediaRepositoryImpl : MediaRepository {
         .build()
         .create(TmdbApi::class.java)
 
-    // ── Internal mapper ───────────────────────────────────────────────────────
-    private fun com.luminastreams.tv.data.api.TmdbMediaDto.toMovie(type: String) = Movie(
+    // ── Internal mapper — tier-aware images ────────────────────────────────────
+    private fun TmdbMediaDto.toMovie(type: String) = Movie(
         id              = "${type}_${id}",
         title           = title ?: name ?: "Unknown",
-        backdropUrl     = if (backdropPath != null) "${Constants.IMAGE_W1280}$backdropPath" else "",
-        posterUrl       = "${Constants.IMAGE_W500}$posterPath",
+        // Backdrops: original on Shield, w500 on 2 GB boxes
+        backdropUrl     = Constants.backdropUrl(backdropPath),
+        // Posters: w780 on Shield, w342 on low-end
+        posterUrl       = Constants.posterUrl(posterPath),
         overview        = overview ?: "",
         rating          = voteAverage,
         mediaType       = type,
@@ -53,7 +53,7 @@ class MediaRepositoryImpl : MediaRepository {
         resolutionBadge = "4K HDR"
     )
 
-    // ── Public API ────────────────────────────────────────────────────────────
+    // ── Public API ─────────────────────────────────────────────────────────────
     override suspend fun getTrendingMovies(): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             val movies = coroutineScope {
@@ -61,7 +61,7 @@ class MediaRepositoryImpl : MediaRepository {
                 val actionDef   = async { api.discoverMovies(Constants.TMDB_API_KEY, genres = "28,12") }
                 val dramaTvDef  = async { api.discoverTv(Constants.TMDB_API_KEY, genres = "18,80") }
 
-                val results = mutableListOf<com.luminastreams.tv.data.api.TmdbMediaDto>()
+                val results = mutableListOf<TmdbMediaDto>()
                 results.addAll(trendingDef.await().results)
                 results.addAll(actionDef.await().results.map { it.copy(mediaType = "movie") })
                 results.addAll(dramaTvDef.await().results.map { it.copy(mediaType = "tv") })
@@ -102,11 +102,11 @@ class MediaRepositoryImpl : MediaRepository {
         }
 
     override suspend fun discoverMedia(
-        type:    String,
-        genreId: String?,
-        year:    String?,
-        sortBy:  String,
-        page:    Int
+        type    : String,
+        genreId : String?,
+        year    : String?,
+        sortBy  : String,
+        page    : Int
     ): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             val items = api.discoverMedia(

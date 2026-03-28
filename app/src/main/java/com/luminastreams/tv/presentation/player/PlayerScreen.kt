@@ -61,7 +61,6 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
-import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -147,7 +146,6 @@ private val WHITE        = Color(0xFFFFFFFF)
 private val DIM          = Color(0xAAFFFFFF)
 private val DV_BLUE      = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
-private val AR_ACCENT    = Color(0xFF00E5FF)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
