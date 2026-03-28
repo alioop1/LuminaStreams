@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
+import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.TrackSelectionOverride
@@ -70,7 +71,6 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 
-// ─── Custom icons ─────────────────────────────────────────────────────────
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
         path(fill = SolidColor(Color.White)) {
@@ -97,49 +97,20 @@ val CustomAudioIcon: ImageVector
         }
     }.build()
 
-// ─── Aspect Ratio ─────────────────────────────────────────────────────────
 enum class AspectRatioMode(
     val label: String,
     val description: String,
     val resizeMode: Int,
     val forcedRatio: Float? = null
 ) {
-    NORMAL(
-        "Normal",
-        "Fit to screen, preserve ratio",
-        AspectRatioFrameLayout.RESIZE_MODE_FIT
-    ),
-    ZOOM(
-        "Zoom",
-        "Crop to fill screen",
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    ),
-    STRETCH(
-        "Stretch",
-        "Stretch to fill screen",
-        AspectRatioFrameLayout.RESIZE_MODE_FILL
-    ),
-    RATIO_16_9(
-        "16:9",
-        "Force 16∶9 widescreen",
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
-        16f / 9f
-    ),
-    RATIO_4_3(
-        "4:3",
-        "Force 4∶3 classic TV",
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
-        4f / 3f
-    ),
-    RATIO_21_9(
-        "21:9",
-        "CinemaScope ultra-wide",
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH,
-        21f / 9f
-    )
+    NORMAL("Normal", "Fit to screen, preserve ratio", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM("Zoom", "Crop to fill screen", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    STRETCH("Stretch", "Stretch to fill screen", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    RATIO_16_9("16:9", "Force 16∶9 widescreen", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 16f / 9f),
+    RATIO_4_3("4:3", "Force 4∶3 classic TV", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 4f / 3f),
+    RATIO_21_9("21:9", "CinemaScope ultra-wide", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 21f / 9f)
 }
 
-// ─── Palette ──────────────────────────────────────────────────────────────
 private val CTRL_BG      = Color(0x99000000)
 private val RED          = Color(0xFFE50914)
 private val WHITE        = Color(0xFFFFFFFF)
@@ -149,7 +120,6 @@ private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
-// ─── AFR helper ───────────────────────────────────────────────────────────
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
@@ -183,7 +153,6 @@ private fun restoreDisplayMode(activity: Activity) {
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
 }
 
-// ─── HDR Window setup for Dolby Vision ────────────────────────────────────
 private fun enableHdrWindow(activity: Activity) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
@@ -201,7 +170,6 @@ private fun enableHdrWindow(activity: Activity) {
     }
 }
 
-// ─── Apply Dolby Vision HDR type to SurfaceView (API 33+) ─────────────────
 private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
@@ -211,7 +179,6 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     }
 }
 
-// ─── Main PlayerScreen ────────────────────────────────────────────────────
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
@@ -231,7 +198,6 @@ fun PlayerScreen(
     val isDolbyAtmos     by exo.isDolbyAtmos.collectAsState()
     val videoAspectRatio by exo.videoAspectRatio.collectAsState()
 
-    // ─── AFR ──────────────────────────────────────────────────────────
     val contentFps = exo.contentFrameRate.collectAsState()
     val afrEnabled = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -274,7 +240,6 @@ fun PlayerScreen(
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
 
-    // שליפת עונה ופרק שנשמרו ב-DetailsScreen!
     val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
     val episodePref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_episode", -1) }
     val season = if (seasonPref != -1) seasonPref else null
@@ -320,9 +285,9 @@ fun PlayerScreen(
             val dur = exo.player.duration
             if (pos > 10_000L && dur > 0L) {
                 if (pos.toFloat() / dur.toFloat() < 0.95f)
-                    watchPrefs.edit().putLong(progressKey, pos).apply()
+                    watchPrefs.edit { putLong(progressKey, pos) }
                 else
-                    watchPrefs.edit().remove(progressKey).apply()
+                    watchPrefs.edit { remove(progressKey) }
             }
         }
     }
@@ -357,7 +322,7 @@ fun PlayerScreen(
         }
         for (ci in candidates) {
             val sub = subs[ci]
-            exo.applySubtitle(sub.url, sub.lang)
+            exo.applySubtitle(sub.url)
             var waitMs = 0
             while (!exo.subtitleApplied.value && waitMs < 2500) { delay(200); waitMs += 200 }
             if (exo.subtitleApplied.value) {
@@ -583,7 +548,7 @@ fun PlayerScreen(
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit().remove(progressKey).apply() },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit { remove(progressKey) } },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = Color(0xFF3A3A50), contentColor = WHITE, focusedContentColor = WHITE),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -596,7 +561,7 @@ fun PlayerScreen(
 
         if (error != null) {
             val errorFR = remember { FocusRequester() }
-            LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
+            LaunchedEffect(error) { delay(100); runCatching { errorFR.requestFocus() } }
             Box(
                 modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)).zIndex(200f),
                 contentAlignment = Alignment.Center
@@ -820,7 +785,7 @@ fun PlayerScreen(
                                                 .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
                                                 .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
                                             onClick = {
-                                                exo.applySubtitle(sub.url, sub.lang)
+                                                exo.applySubtitle(sub.url)
                                                 selectedWebSubUrl = sub.url
                                                 subtitleApplied   = true
                                                 pendingSubIndex   = null
@@ -1154,7 +1119,6 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
-// ─── Progress controls ─────────────────────────────────────────────────────
 @Composable
 fun PlayerProgressControls(
     exoWrapper:    ExoPlayerWrapper,
@@ -1228,7 +1192,6 @@ fun PlayerProgressControls(
     }
 }
 
-// ─── ControlPill ──────────────────────────────────────────────────────────
 @Composable
 fun ControlPill(
     icon:        ImageVector,
@@ -1250,12 +1213,12 @@ fun ControlPill(
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
         border = ClickableSurfaceDefaults.border(
             border = if (accentColor != null)
-                androidx.tv.material3.Border(
+                Border(
                     androidx.compose.foundation.BorderStroke(1.dp, highlightColor.copy(0.55f)),
                     shape = RoundedCornerShape(50)
                 )
-            else androidx.tv.material3.Border.None,
-            focusedBorder = androidx.tv.material3.Border.None
+            else Border.None,
+            focusedBorder = Border.None
         ),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(highlightColor.copy(0.5f), 16.dp)),
         modifier = modifier

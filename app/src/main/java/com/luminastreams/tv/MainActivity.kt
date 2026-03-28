@@ -55,9 +55,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.colorMode = ActivityInfo.COLOR_MODE_HDR
-        }
+        window.colorMode = ActivityInfo.COLOR_MODE_HDR
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.attributes = window.attributes.also {
                 it.preferMinimalPostProcessing = true
@@ -128,7 +127,6 @@ fun AppNavHostContainer(
                 factory = object : ViewModelProvider.Factory {
                     @Suppress("UNCHECKED_CAST")
                     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        // FIX: pass applicationContext — NOT the Activity context — to prevent memory leak
                         DetailsViewModel(repository, application) as T
                 }
             )

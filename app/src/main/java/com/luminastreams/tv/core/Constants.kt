@@ -41,16 +41,7 @@ object Constants {
         return "$base$path"
     }
 
-    // ── Real-Debrid ───────────────────────────────────────────────────────────
-    const val REAL_DEBRID_CLIENT_ID = "X245A4XAIBGVM"
-    const val REAL_DEBRID_BASE_URL  = "https://api.real-debrid.com/"
-
     // ── SharedPreferences keys ────────────────────────────────────────────────
     const val PREFS_SETTINGS  = "lumina_settings"
-    const val PREFS_WATCHLIST = "lumina_watchlist"
     const val KEY_RD_TOKEN    = "rd_api_token"
-
-    // ── Performance ───────────────────────────────────────────────────────────
-    /** Limits image memory cache to 10 % of heap on 2 GB devices. */
-    const val MAX_MEMORY_PERCENT = 0.10
 }

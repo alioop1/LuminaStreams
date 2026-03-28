@@ -3,7 +3,6 @@
 package com.luminastreams.tv.presentation.player
 
 import android.content.Context
-import android.net.Uri
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
@@ -11,7 +10,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
@@ -108,7 +106,6 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
             // Tunneling: only enable on capable HIGH-tier devices
-            // Enabling tunneling on LOW/MID Amlogic boxes causes black screens
             .setTunnelingEnabled(
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
                         DeviceProfile.isNvidia ||
@@ -130,7 +127,6 @@ class ExoPlayerWrapper(context: Context) {
     private val loadControl: DefaultLoadControl = run {
         val buf = DeviceProfile.bufferConfig
         if (preAllocateBuffer) {
-            // User explicitly requested large pre-buffer (Settings toggle)
             DefaultLoadControl.Builder()
                 .setBufferDurationsMs(30_000, 120_000, 5_000, 10_000)
                 .setTargetBufferBytes(64 * 1024 * 1024)
@@ -151,7 +147,6 @@ class ExoPlayerWrapper(context: Context) {
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .setAllowCrossProtocolRedirects(true)
-        // Longer connect timeout on low-end (slower network stack)
         .setConnectTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20_000 else 10_000)
         .setReadTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30_000 else 15_000)
 
@@ -198,7 +193,6 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    // ── Manual subtitle ticker ─────────────────────────────────────────────────
     private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
     private var parsedSubs   : List<SubEntry> = emptyList()
     private var subTickerJob : Job?           = null
@@ -215,21 +209,18 @@ class ExoPlayerWrapper(context: Context) {
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
 
-                // AFR — fps from selected video track
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .firstOrNull { it.frameRate > 0f }?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
 
-                // Dolby Vision
                 val hasDv = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .any { it.sampleMimeType == MimeTypes.VIDEO_DOLBY_VISION }
                 _isDolbyVision.value = hasDv
 
-                // Dolby Atmos (E-AC3 JOC)
                 val hasAtmos = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_AUDIO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
@@ -298,12 +289,11 @@ class ExoPlayerWrapper(context: Context) {
 
     fun applySubtitle(
         subtitleUrl : String,
-        lang        : String  = "heb",
         isVtt       : Boolean = false,
         maxRetries  : Int     = 2
     ) {
         if (subtitleUrl.startsWith("file://")) {
-            val f = File(Uri.parse(subtitleUrl).path!!)
+            val f = File(subtitleUrl.toUri().path!!)
             loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
             return
         }
@@ -339,7 +329,6 @@ class ExoPlayerWrapper(context: Context) {
         parsedSubs = if (isVtt) parseVtt(text) else parseSrt(text)
         if (parsedSubs.isEmpty()) return
         _subtitleApplied.value = true
-        // Slower tick interval on LOW tier to reduce CPU overhead
         val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
         subTickerJob = scope.launch {
             while (isActive) {
@@ -359,7 +348,7 @@ class ExoPlayerWrapper(context: Context) {
         _subtitleApplied.value = false
     }
 
-    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})""")
+    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,.](\d{3})""")
     private fun parseTimeMs(s: String): Long {
         val m = srtTimeRegex.find(s) ?: return -1
         val (h, min, sec, ms) = m.destructured

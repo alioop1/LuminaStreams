@@ -6,11 +6,6 @@ import android.os.Build
 
 /**
  * Detects hardware tier at app start and exposes animation/quality configs.
- *
- * GPU renderer via GLES20.glGetString() requires an active EGL context that
- * does NOT exist during Application.onCreate() — calling it there always returns
- * null.  We now derive the tier purely from Build properties + RAM, which is
- * reliable at any lifecycle point and covers every TV/streamer class accurately.
  */
 object DeviceProfile {
 
@@ -33,17 +28,15 @@ object DeviceProfile {
     var isLg      : Boolean = false; private set
     var isSony    : Boolean = false; private set
     var isPhilips : Boolean = false; private set
-    var isNvidia  : Boolean = false; private set   // Tegra / Nvidia Shield
-    var isRockchip: Boolean = false; private set   // high-end RK3588 boxes
+    var isNvidia  : Boolean = false; private set
+    var isRockchip: Boolean = false; private set
 
     // ── Read-only state ────────────────────────────────────────────────────────
-    /** Human-readable GPU string; populated from Build.HARDWARE since GLES
-     *  cannot be called before a GL context exists. */
     var gpuRenderer: String = "unknown"; private set
 
     var totalRamMb: Int = 0; private set
 
-    lateinit var tier      : Tier;      private set
+    lateinit var tier      : Tier;       private set
     lateinit var animConfig: AnimConfig; private set
 
     // ── User overrides ─────────────────────────────────────────────────────────
@@ -77,14 +70,13 @@ object DeviceProfile {
         isRockchip = hardware.contains("rockchip") || hardware.contains("rk3588") ||
                 hardware.contains("rk3399")   || board.contains("rk3588")
 
-        // Build a human-readable GPU label from Build.HARDWARE (always available)
         gpuRenderer = buildGpuLabel(manufacturer, hardware, model, board)
 
-        tier       = detectTier(manufacturer, hardware, model, board)
+        tier       = detectTier(hardware, model, board)
         animConfig = buildConfig(effectiveTier())
     }
 
-    // ── GPU label (from Build properties — always valid) ──────────────────────
+    // ── GPU label ──────────────────────────────────────────────────────────────
     private fun buildGpuLabel(mfr: String, hw: String, model: String, board: String): String {
         return when {
             mfr.contains("nvidia")                      -> "Tegra (Nvidia)"
@@ -97,34 +89,30 @@ object DeviceProfile {
             mfr.contains("sony")                        -> "Adreno/PowerVR (Sony)"
             mfr.contains("xiaomi") && model.contains("mi box") -> "Mali-G52 (Mi Box)"
             mfr.contains("xiaomi")                      -> "Mali (Xiaomi)"
-            else                                        -> "${hw}/${Build.CPU_ABI}"
+            else                                        -> "${hw}/${Build.SUPPORTED_ABIS[0]}"
         }
     }
 
-    // ── Tier detection (Build-property based — no GLES needed) ───────────────
-    private fun detectTier(mfr: String, hw: String, model: String, board: String): Tier {
-        // ── Definitively HIGH devices ──
-        if (isNvidia)  return Tier.HIGH   // Tegra X1/X1+/T194 — Shield family
-        if (isLg)      return Tier.HIGH   // OLED/NanoCell/QNED
-        if (isSony)    return Tier.HIGH   // Bravia Android TV
-        if (isPhilips) return Tier.HIGH   // Ambilight / SAPHI
+    // ── Tier detection ─────────────────────────────────────────────────────────
+    private fun detectTier(hw: String, model: String, board: String): Tier {
+        if (isNvidia)  return Tier.HIGH
+        if (isLg)      return Tier.HIGH
+        if (isSony)    return Tier.HIGH
+        if (isPhilips) return Tier.HIGH
 
-        // ── RK3588 (very high-end Android box) ───
         if (hw.contains("rk3588") || board.contains("rk3588")) return Tier.HIGH
 
-        // ── Amlogic subfamily ─────────────────────────────────────────────────
         if (isMeCool || isAmlogic) {
             return when {
-                hw.contains("s922") || model.contains("km7")         -> Tier.HIGH  // S922X: Mali-G52 MP6
-                hw.contains("s905x4")|| model.contains("km6")        -> Tier.MID   // S905X4: Mali-G31
-                hw.contains("s905x3")                                 -> Tier.MID   // S905X3: Mali-G31
+                hw.contains("s922") || model.contains("km7")         -> Tier.HIGH
+                hw.contains("s905x4")|| model.contains("km6")        -> Tier.MID
+                hw.contains("s905x3")                                 -> Tier.MID
                 hw.contains("s905x2")                                 -> Tier.MID
                 totalRamMb >= 3000                                    -> Tier.MID
-                else                                                  -> Tier.LOW   // S905/S912 old Mali-450
+                else                                                  -> Tier.LOW
             }
         }
 
-        // ── Xiaomi ────────────────────────────────────────────────────────────
         if (isXiaomi) {
             return when {
                 model.contains("mi box s") && totalRamMb >= 2000 -> Tier.HIGH
@@ -133,12 +121,10 @@ object DeviceProfile {
             }
         }
 
-        // ── Rockchip mid-range (RK3328 / RK3229) ─────────────────────────────
         if (isRockchip) {
             return if (totalRamMb >= 4000) Tier.MID else Tier.LOW
         }
 
-        // ── Generic RAM-based fallback ─────────────────────────────────────────
         return when {
             totalRamMb >= 6000 -> Tier.HIGH
             totalRamMb >= 3000 -> Tier.HIGH

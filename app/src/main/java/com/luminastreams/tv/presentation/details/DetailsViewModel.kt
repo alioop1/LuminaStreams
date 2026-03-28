@@ -4,7 +4,6 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
-import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.local.WatchlistManager
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
@@ -45,11 +44,9 @@ interface DynamicTorrentioApi {
 
 class DetailsViewModel(
     private val repository: MediaRepository,
-    // FIX: always store applicationContext to prevent Activity memory leak
     context: Context
 ) : ViewModel() {
 
-    // Safe: applicationContext has the lifetime of the process, not a single Activity
     private val appContext: Context = context.applicationContext
 
     private val _state = MutableStateFlow(DetailsScreenState())
@@ -71,11 +68,9 @@ class DetailsViewModel(
         appContext.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE)
             .getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
 
-    // ── Tier-aware image helpers ───────────────────────────────────────────────
     private fun backdropUrl(path: String?): String = Constants.backdropUrl(path)
     private fun posterUrl(path: String?): String   = Constants.posterUrl(path)
 
-    // ── Public API ─────────────────────────────────────────────────────────────
     fun onEvent(event: DetailsEvent) {
         when (event) {
             is DetailsEvent.LoadInitialData      -> loadData(event.fullId)
@@ -88,7 +83,6 @@ class DetailsViewModel(
         }
     }
 
-    // ── Load data ──────────────────────────────────────────────────────────────
     private fun loadData(fullId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoadingData = true, errorData = null) }
@@ -128,7 +122,6 @@ class DetailsViewModel(
         }
     }
 
-    // ── Fuzer direct play ──────────────────────────────────────────────────────
     private fun playFuzerDirect(torrentUrl: String) {
         viewModelScope.launch(Dispatchers.IO) {
             val token = getRdToken()
@@ -151,7 +144,6 @@ class DetailsViewModel(
         }
     }
 
-    // ── Load Movie ─────────────────────────────────────────────────────────────
     private suspend fun loadMovie(id: String) {
         repository.getMovieFullDetails(id).fold(
             onSuccess = { dto ->
@@ -177,7 +169,6 @@ class DetailsViewModel(
                             imdbId         = scrapeId,
                             title          = dto.title,
                             overview       = dto.overview ?: "",
-                            // Tier-aware: Shield gets /original/, low-end gets w780
                             posterUrl      = posterUrl(dto.posterPath),
                             backdropUrl    = backdropUrl(dto.backdropPath),
                             logoUrl        = null,
@@ -204,7 +195,6 @@ class DetailsViewModel(
         )
     }
 
-    // ── Load TV Show ───────────────────────────────────────────────────────────
     private suspend fun loadTvShow(id: String) {
         repository.getTvFullDetails(id).fold(
             onSuccess = { dto ->
@@ -256,7 +246,6 @@ class DetailsViewModel(
         )
     }
 
-    // ── Network helpers ────────────────────────────────────────────────────────
     private suspend fun fetchRealTrailer(imdbId: String, type: String): String? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(1_500) {
@@ -307,7 +296,6 @@ class DetailsViewModel(
             recs
         }
 
-    // ── Episodes ───────────────────────────────────────────────────────────────
     private fun fetchEpisodesForSeason(seasonNum: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isEpisodesLoading = true, selectedSeason = seasonNum) }
@@ -369,7 +357,6 @@ class DetailsViewModel(
             list.sortedBy { it.episodeNumber }
         }
 
-    // ── Stream scraping ────────────────────────────────────────────────────────
     private suspend fun resolveImdbId(id: String, tmdbType: String): String {
         if (id.startsWith("tt")) return id
         val tmdbId = id.replace("tmdb:", "")
@@ -481,7 +468,6 @@ class DetailsViewModel(
         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) }
     }
 
-    // ── RealDebrid resolve ─────────────────────────────────────────────────────
     private fun processRealDebridLink(stream: AdvancedStreamSource) {
         if (stream.directUrl?.startsWith("http") == true) {
             _state.update { it.copy(readyToPlayUrl = stream.directUrl) }
@@ -503,7 +489,6 @@ class DetailsViewModel(
         }
     }
 
-    // ── Watchlist ──────────────────────────────────────────────────────────────
     private fun handleToggleFavorite() {
         val info = _state.value.mediaInfo
         val movie = Movie(

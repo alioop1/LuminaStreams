@@ -36,7 +36,6 @@ object FuzerEngine {
         .readTimeout(25, TimeUnit.SECONDS)
         .build()
 
-    // FIX: @Volatile ensures visibility across threads; loginMutex prevents concurrent logins
     @Volatile private var isLoggedIn = false
     private val loginMutex = Mutex()
 
@@ -117,10 +116,6 @@ object FuzerEngine {
         .add("Origin",           BASE)
         .build()
 
-    /**
-     * Thread-safe login check. Uses a Mutex so only one coroutine attempts
-     * login at a time — prevents duplicate login requests on simultaneous calls.
-     */
     private suspend fun ensureLogin(): Boolean = loginMutex.withLock {
         if (isLoggedIn) return@withLock true
         doLogin()
@@ -231,6 +226,7 @@ object FuzerEngine {
         return movies.distinctBy { it.id }
     }
 
+    @Suppress("SameParameterValue")
     private fun md5(input: String): String = try {
         MessageDigest.getInstance("MD5").digest(input.toByteArray()).joinToString("") { "%02x".format(it) }
     } catch (_: Exception) { "" }

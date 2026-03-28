@@ -1,7 +1,6 @@
 package com.luminastreams.tv.data.repository
 
 import com.luminastreams.tv.core.Constants
-import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.api.TmdbApi
 import com.luminastreams.tv.data.api.TmdbMediaDto
 import com.luminastreams.tv.data.api.TmdbMovieDetailsDto
