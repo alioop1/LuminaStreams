@@ -11,11 +11,11 @@ import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
-class FuzerEngine {
+object FuzerEngine { // שים לב: עכשיו זה object (Singleton)
 
     private val USERNAME = "microxbox93"
     private val PASSWORD = "AliooP93"
-    private val BASE     = "https://www.fuzer.me"
+    private val BASE     = "https://www.fuzer.xyz" // הדומיין המעודכן
 
     private val cookieJar = object : CookieJar {
         private val store = HashMap<String, MutableList<Cookie>>()
@@ -42,46 +42,19 @@ class FuzerEngine {
         try {
             if (!loginIfNeeded()) return@withContext Result.failure(Exception("Login failed"))
 
-            // Fuzer browse uses ?filnm= for "שם הטורנט" search
-            // Encode query in windows-1255 for Hebrew support
-            val encWin = URLEncoder.encode(query, "windows-1255")
-            val encUtf = URLEncoder.encode(query, "UTF-8")
-
-            val urls = listOf(
-                "$BASE/browse.php?filnm=$encWin&cat=0",
-                "$BASE/browse.php?filnm=$encUtf&cat=0",
-                "$BASE/browse.php?search=$encWin&cat=0",
-                "$BASE/browse.php?query=$encWin&cat=0&searchin=1"
-            )
-
-            for (url in urls) {
-                val html = getHtml(url) ?: continue
-                val movies = parseHtmlToMovies(html)
-                if (movies.isNotEmpty()) return@withContext Result.success(movies)
+            // המרת השאילתה - Fuzer בדרך כלל משתמש ב-windows-1255 לעברית
+            val enc = try {
+                URLEncoder.encode(query, "windows-1255")
+            } catch (e: Exception) {
+                URLEncoder.encode(query, "UTF-8")
             }
 
-            // Last resort: POST with all known field names
-            val postBody = FormBody.Builder()
-                .add("filnm",    query)
-                .add("query",    query)
-                .add("search",   query)
-                .add("cat",      "0")
-                .add("searchin", "1")
-                .build()
-            val postHtml = try {
-                val bytes = client.newCall(
-                    Request.Builder().url("$BASE/browse.php")
-                        .post(postBody).headers(defaultHeaders("$BASE/browse.php")).build()
-                ).execute().body?.bytes()
-                if (bytes != null) decodeBody(bytes) else null
-            } catch (_: Exception) { null }
+            // URL החיפוש המדויק
+            val searchUrl = "$BASE/browse.php?ref_=basic&query=$enc&matchquery=any"
+            val html = getHtml(searchUrl) ?: return@withContext Result.success(emptyList())
 
-            if (postHtml != null) {
-                val movies = parseHtmlToMovies(postHtml)
-                if (movies.isNotEmpty()) return@withContext Result.success(movies)
-            }
-
-            Result.success(emptyList())
+            val movies = parseHtmlToMovies(html)
+            Result.success(movies)
         } catch (e: Exception) {
             Result.failure(Exception("Fuzer search: ${e.message}"))
         }
@@ -176,7 +149,7 @@ class FuzerEngine {
             if (loginBody.contains("logout", ignoreCase = true) ||
                 loginBody.contains("loggout", ignoreCase = true) ||
                 cookieJar.loadForRequest(
-                    HttpUrl.Builder().scheme("https").host("www.fuzer.me").build()
+                    HttpUrl.Builder().scheme("https").host("www.fuzer.xyz").build() // תוקן לדומיין החדש
                 ).any { it.name.contains("bbuser", ignoreCase = true) || it.name == "vbulletin_loggedin" }) {
                 isLoggedIn = true; return true
             }
@@ -205,7 +178,7 @@ class FuzerEngine {
                 if (rawTitle.length < 2) continue
 
                 val rawHref   = titleLink.attr("href").replace("&amp;", "&")
-                val threadUrl = if (rawHref.startsWith("http")) rawHref else "$BASE/$rawHref"
+                val threadUrl = if (rawHref.startsWith("http")) rawHref else "$BASE/${rawHref.removePrefix("/")}"
 
                 var posterUrl = titleLink.attr("imgsrc").trim()
                 if (posterUrl.isEmpty()) posterUrl = row.select("img[src]").firstOrNull()?.attr("src") ?: ""
@@ -242,7 +215,7 @@ class FuzerEngine {
                 ))
             } catch (_: Exception) { continue }
         }
-        return movies
+        return movies.distinctBy { it.id }
     }
 
     private fun md5(input: String): String = try {

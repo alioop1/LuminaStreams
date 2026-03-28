@@ -8,20 +8,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 
-// ── תיקון באג 2 (גרסה שניה) ──────────────────────────────────────────────────
-// הבעיה בגרסה הקודמת: rest.opensubtitles.org הושבת סופית ב-2023.
-// כל קריאה אליו מחזירה 404/410.
-//
-// הפתרון: subdl.com — API חינמי, ללא API Key נדרש, פעיל.
-// תיעוד: https://subdl.com/api-doc
-//
-// זרימה:
-//   1. GET /api/v1/?imdb_id={id}&lang={HE/EN}&subs_per_page=5
-//   2. בוחרים ראשון עם url
-//   3. מורידים ZIP מ-https://dl.subdl.com{url}
-//   4. מחלצים SRT/VTT/SUB → ByteArray
-// ─────────────────────────────────────────────────────────────────────────────
-
 class SubtitleScraper {
 
     companion object {
@@ -33,10 +19,11 @@ class SubtitleScraper {
 
     suspend fun fetchSubtitleInMemory(
         imdbId:   String,
+        season:   Int? = null,
+        episode:  Int? = null,
         langCode: String = "heb"
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
-            // subdl משתמש ב-ISO 639-1 uppercase
             val sdLang = when (langCode.lowercase().take(3)) {
                 "he", "heb", "iw" -> "HE"
                 "ar", "ara"       -> "AR"
@@ -48,7 +35,12 @@ class SubtitleScraper {
             }
 
             val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
-            val searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
+            var searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
+
+            // תוספת קריטית לסדרות - משרשרים עונה ופרק לכתובת החיפוש!
+            if (season != null && episode != null) {
+                searchUrl += "&season_number=$season&episode_number=$episode"
+            }
 
             val searchConn = openGet(searchUrl)
             if (searchConn.responseCode != 200) {
@@ -67,7 +59,6 @@ class SubtitleScraper {
                 return@withContext Result.failure(Exception("לא נמצאו כתוביות ב-subdl"))
             }
 
-            // בוחרים ראשון עם url
             var downloadPath: String? = null
             for (i in 0 until subtitlesArr.length()) {
                 val link = subtitlesArr.getJSONObject(i).optString("url", "")

@@ -31,7 +31,6 @@ class HomeViewModel : ViewModel() {
     // fix: use thread-safe set — loadMore runs on Dispatchers.IO
     private val loadingSet: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
 
-    private val fuzerEngine = FuzerEngine()
 
     private val imgBase = "https://image.tmdb.org/t/p"
     private val base = "https://api.themoviedb.org/3"
@@ -152,38 +151,36 @@ class HomeViewModel : ViewModel() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
             try {
-                coroutineScope {
-                    val movies       = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES,        1).getOrElse { emptyList() } }
-                    val series       = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES,        1).getOrElse { emptyList() } }
-                    val moviesHd     = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD,     1).getOrElse { emptyList() } }
-                    val seriesHd     = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES_HD,     1).getOrElse { emptyList() } }
-                    val movies4k     = async { fuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K,     1).getOrElse { emptyList() } }
-                    val series4k     = async { fuzerEngine.getCategoryPage(FuzerCats.SERIES_4K,     1).getOrElse { emptyList() } }
-                    val dubbedMovies = async { fuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
-                    val dubbedSeries = async { fuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
+                // אנו מביאים את המידע בצורה טורית (Sequential) עם השהייה קטנה (Delay)
+                // כדי למנוע ממערכת הפורום לזהות אותנו כהתקפת הצפה (Flood Control)
+                val moviesR       = FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() }
+                delay(300)
+                val seriesR       = FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() }
+                delay(300)
+                val moviesHdR     = FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() }
+                delay(300)
+                val seriesHdR     = FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() }
+                delay(300)
+                val movies4kR     = FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() }
+                delay(300)
+                val series4kR     = FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() }
+                delay(300)
+                val dubbedMoviesR = FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() }
+                delay(300)
+                val dubbedSeriesR = FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() }
 
-                    val moviesR       = movies.await()
-                    val seriesR       = series.await()
-                    val moviesHdR     = moviesHd.await()
-                    val seriesHdR     = seriesHd.await()
-                    val movies4kR     = movies4k.await()
-                    val series4kR     = series4k.await()
-                    val dubbedMoviesR = dubbedMovies.await()
-                    val dubbedSeriesR = dubbedSeries.await()
-
-                    _state.update { s -> s.copy(
-                        fuzerIsLoading    = false,
-                        fuzerItems        = moviesR + seriesR,
-                        fuzerMovies       = moviesR,
-                        fuzerSeries       = seriesR,
-                        fuzerMoviesHD     = moviesHdR,
-                        fuzerSeriesHD     = seriesHdR,
-                        fuzerMovies4K     = movies4kR,
-                        fuzerSeries4K     = series4kR,
-                        fuzerDubbedMovies = dubbedMoviesR,
-                        fuzerDubbedSeries = dubbedSeriesR,
-                    ) }
-                }
+                _state.update { s -> s.copy(
+                    fuzerIsLoading    = false,
+                    fuzerItems        = moviesR + seriesR,
+                    fuzerMovies       = moviesR,
+                    fuzerSeries       = seriesR,
+                    fuzerMoviesHD     = moviesHdR,
+                    fuzerSeriesHD     = seriesHdR,
+                    fuzerMovies4K     = movies4kR,
+                    fuzerSeries4K     = series4kR,
+                    fuzerDubbedMovies = dubbedMoviesR,
+                    fuzerDubbedSeries = dubbedSeriesR,
+                ) }
             } catch (e: Exception) {
                 _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }
             }

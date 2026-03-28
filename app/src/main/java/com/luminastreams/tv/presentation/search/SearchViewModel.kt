@@ -21,6 +21,9 @@ enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
 // Quality filter values
 enum class QualityFilter { ANY, HD, FHD, UHD }
 
+// NEW: Sort options
+enum class SortBy { POPULARITY, RATING, NEWEST }
+
 @Immutable
 data class SearchFilters(
     val genre:       String?       = null,   // null = any
@@ -28,11 +31,12 @@ data class SearchFilters(
     val maxYear:     Int           = 2026,
     val minRating:   Float         = 0f,
     val quality:     QualityFilter = QualityFilter.ANY,
-    val dubbedOnly:  Boolean       = false   // Fuzer only
+    val dubbedOnly:  Boolean       = false,  // Fuzer only
+    val sortBy:      SortBy        = SortBy.POPULARITY // הסינון החדש
 ) {
     val isActive: Boolean get() =
         genre != null || minYear > 1970 || maxYear < 2026 || minRating > 0f ||
-        quality != QualityFilter.ANY || dubbedOnly
+                quality != QualityFilter.ANY || dubbedOnly || sortBy != SortBy.POPULARITY
 }
 
 @Immutable
@@ -61,15 +65,23 @@ data class SearchState(
 ) {
     private fun applyFilters(list: List<SearchResult>): List<SearchResult> {
         var r = list
+
+        // 1. סינון ז'אנר
         if (filters.genre != null)
             r = r.filter { it.genre.equals(filters.genre, ignoreCase = true) }
+
+        // 2. סינון דירוג
         if (filters.minRating > 0f)
             r = r.filter { it.rating >= filters.minRating }
+
+        // 3. סינון שנים
         if (filters.minYear > 1970 || filters.maxYear < 2026)
             r = r.filter { yr ->
                 val y = yr.releaseYear.toIntOrNull() ?: return@filter true
                 y in filters.minYear..filters.maxYear
             }
+
+        // 4. סינון איכות
         if (filters.quality != QualityFilter.ANY) {
             val qStr = when (filters.quality) {
                 QualityFilter.HD  -> "HD"
@@ -79,8 +91,18 @@ data class SearchState(
             }
             r = r.filter { it.qualityTag.equals(qStr, ignoreCase = true) }
         }
+
+        // 5. סינון דיבוב
         if (filters.dubbedOnly)
-            r = r.filter { it.title.contains("\u05de\u05d3\u05d5\u05d1\u05d1", ignoreCase = true) }
+            r = r.filter { it.title.contains("מדובב", ignoreCase = true) }
+
+        // 6. ביצוע המיון (Sorting) החדש שהוספנו
+        r = when (filters.sortBy) {
+            SortBy.RATING -> r.sortedByDescending { it.rating }
+            SortBy.NEWEST -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
+            SortBy.POPULARITY -> r // משאיר את הסדר המקורי (שהוא בדרך כלל לפי פופולריות ב-API)
+        }
+
         return r
     }
 
@@ -119,9 +141,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private val queryFlow     = MutableStateFlow("")
     private val historyPrefs  = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
-
-    // Single shared instance — keeps cookies alive for whole session
-    private val fuzerEngine   = FuzerEngine()
 
     private val popularTerms = listOf(
         "Avatar", "Avengers", "Batman", "Spider-Man", "Superman",
@@ -233,7 +252,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val mt = j.optString("media_type")
                 if (mt != "movie" && mt != "tv") continue
                 val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                            else             j.optString("title").ifBlank { j.optString("original_title") }
+                else             j.optString("title").ifBlank { j.optString("original_title") }
                 out += SearchResult(
                     id          = "${mt}_${j.optInt("id")}",
                     title       = title,
@@ -250,18 +269,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // ─── Fuzer ────────────────────────────────────────────────────
-    // suspend + explicit Dispatchers.IO — loginIfNeeded() blocks network
     private suspend fun runFuzerSearch(query: String) {
         _state.update { it.copy(isFuzerLoading = true, fuzerError = null) }
         try {
             val raw: List<com.luminastreams.tv.domain.model.Movie> =
                 withContext(Dispatchers.IO) {
-                    fuzerEngine.search(query).getOrElse { emptyList() }
+                    FuzerEngine.search(query).getOrElse { emptyList() }
                 }
             val mapped = raw.map { m ->
                 val qTag = when {
                     m.title.contains("4K",    ignoreCase = true) ||
-                    m.title.contains("2160p", ignoreCase = true) -> "4K"
+                            m.title.contains("2160p", ignoreCase = true) -> "4K"
                     m.title.contains("1080p", ignoreCase = true) -> "FHD"
                     m.title.contains("720p",  ignoreCase = true) -> "HD"
                     else -> ""
@@ -319,7 +337,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 for (i in 0 until arr.length()) {
                     val j = arr.getJSONObject(i)
                     val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                                else             j.optString("title").ifBlank { j.optString("original_title") }
+                    else             j.optString("title").ifBlank { j.optString("original_title") }
                     val poster = j.optString("poster_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w342$p" else "" }
                     if (poster.isBlank()) continue
                     out += SearchResult(

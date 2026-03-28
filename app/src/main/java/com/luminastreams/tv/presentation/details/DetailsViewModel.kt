@@ -24,7 +24,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.GET
 import retrofit2.http.Headers
-import retrofit2.http.Path
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
@@ -40,11 +39,10 @@ data class TorrentioStream(
 
 interface DynamicTorrentioApi {
     @Headers("User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36")
-    @GET("{config}/stream/{type}/{id}.json")
+    @GET
     suspend fun getStreamsDynamic(
-        @Path("config", encoded = true) config: String,
-        @Path("type") type: String,
-        @Path("id")   id:   String
+        // שימוש ב- @Url עוקף את הקידוד האוטומטי ומונע שיבוש של הכתובת לשרתי Torrentio
+        @retrofit2.http.Url url: String
     ): retrofit2.Response<TorrentioResponse>
 }
 
@@ -59,7 +57,7 @@ class DetailsViewModel(
 
     private val rdManager        = RealDebridManager()
     private val watchlistManager = WatchlistManager(context)
-    private val fuzerEngine      = FuzerEngine()
+
 
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder()
         .baseUrl("https://torrentio.strem.fun/")
@@ -138,7 +136,7 @@ class DetailsViewModel(
 
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid("מוריד קובץ טורנט...")) }
 
-            val torrentBytes = fuzerEngine.downloadTorrentFile(torrentUrl).getOrElse { e ->
+            val torrentBytes = FuzerEngine.downloadTorrentFile(torrentUrl).getOrElse { e ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("שגיאה בהורדת הטורנט: ${e.message}")) }
                 return@launch
             }
@@ -383,6 +381,25 @@ class DetailsViewModel(
         }
 
     // ── Stream scraping ───────────────────────────────────────────────────────
+
+    // מוודא שיש לנו מזהה IMDb תקין גם כשהמקור הוא TMDB
+    private suspend fun resolveImdbId(id: String, tmdbType: String): String {
+        if (id.startsWith("tt")) return id
+        val tmdbId = id.replace("tmdb:", "")
+        return withContext(Dispatchers.IO) {
+            try {
+                val url = URL("https://api.themoviedb.org/3/$tmdbType/$tmdbId/external_ids?api_key=${Constants.TMDB_API_KEY}")
+                val conn = url.openConnection() as HttpURLConnection
+                if (conn.responseCode == 200) {
+                    val body = conn.inputStream.bufferedReader().use { it.readText() }
+                    val imdb = JSONObject(body).optString("imdb_id", "")
+                    if (imdb.startsWith("tt")) return@withContext imdb
+                }
+            } catch (_: Exception) {}
+            id
+        }
+    }
+
     private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?) {
         cancelActiveScraping()
         val token = getRdToken()
@@ -392,27 +409,28 @@ class DetailsViewModel(
         }
 
         scrapingJob = viewModelScope.launch(Dispatchers.IO) {
-            val cacheKey = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.Searching, availableStreams = emptyList()) }
+
+            val queryType = if (season != null && episode != null) "series" else "movie"
+            val actualScrapeId = resolveImdbId(scrapeId, if (queryType == "series") "tv" else "movie")
+            val queryId = (if (season != null && episode != null) "$actualScrapeId:$season:$episode" else actualScrapeId).trim()
+
+            val cacheKey = queryId
 
             streamCache[cacheKey]?.let { cached ->
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached) }
                 return@launch
             }
 
-            _state.update { it.copy(scrapingStatus = ScrapingStatus.Searching, availableStreams = emptyList()) }
-
             try {
-                val queryType = if (season != null && episode != null) "series" else "movie"
-                val queryId   = if (season != null && episode != null) "$scrapeId:$season:$episode" else scrapeId
+                // הרכבת הכתובת המלאה מראש! מונע מ-Retrofit לקדד ולהרוס סימנים כמו ":"
+                val configStr = "realdebrid=$token"
+                val fullUrl = "https://torrentio.strem.fun/$configStr/stream/$queryType/$queryId.json"
 
-                val response = dynamicTorrentio.getStreamsDynamic(
-                    config = "realdebrid=$token",
-                    type   = queryType,
-                    id     = queryId
-                )
+                val response = dynamicTorrentio.getStreamsDynamic(fullUrl)
 
                 if (!response.isSuccessful || response.body()?.streams.isNullOrEmpty()) {
-                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("No premium sources found.")) }
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("לא נמצאו מקורות עבור תוכן זה.")) }
                     return@launch
                 }
 
@@ -441,7 +459,6 @@ class DetailsViewModel(
                 }
                     .sortedByDescending { it.sortScore }
                     .let { list ->
-                        // ✅ REAL: force_hdr — promote HDR/DV/HDR10+ streams to the top
                         if (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
                                 .getBoolean("force_hdr", false)) {
                             val hdr = list.filter { src ->
@@ -453,17 +470,21 @@ class DetailsViewModel(
                         } else list
                     }
                     .let { list ->
-                        // ✅ REAL: max_quality — filter out streams above the user's chosen ceiling
                         when (context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
                             .getString("max_quality", "4K") ?: "4K") {
                             "1080p" -> list.filter { it.quality != StreamQuality.UHD_4K }
                             "720p"  -> list.filter { it.quality.priority <= 6 }
-                            else    -> list   // "4K" — no filtering
+                            else    -> list
                         }
                     }
 
                 streamCache[cacheKey] = mapped
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }
+
+                if (mapped.isEmpty()) {
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("לא נמצאו מקורות התואמים להגדרות האיכות שלך.")) }
+                } else {
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }
+                }
 
             } catch (e: Exception) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error("Error: ${e.message}")) }

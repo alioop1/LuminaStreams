@@ -17,8 +17,9 @@ class GetMediaDetailsUseCase(private val repository: MediaRepository) {
 
 // ── FetchSubtitlesUseCase ──────────────────────────────────────────────────
 class FetchSubtitlesUseCase(private val scraper: SubtitleScraper) {
-    suspend operator fun invoke(imdbId: String, lang: String): Result<ByteArray> =
-        scraper.fetchSubtitleInMemory(imdbId, lang)
+    // עדכון: תמיכה בהעברת עונה ופרק לסקריפר כדי שיעבוד גם בסדרות
+    suspend operator fun invoke(imdbId: String, season: Int? = null, episode: Int? = null, lang: String = "heb"): Result<ByteArray> =
+        scraper.fetchSubtitleInMemory(imdbId = imdbId, season = season, episode = episode, langCode = lang)
 }
 
 // ── ResolveStreamUseCase ───────────────────────────────────────────────────

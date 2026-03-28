@@ -99,13 +99,6 @@ val CustomAudioIcon: ImageVector
     }.build()
 
 // ─── Aspect Ratio ─────────────────────────────────────────────────────────
-/**
- * KODI-style aspect ratio modes.
- * [label]       — shown in the selector panel
- * [description] — subtitle hint
- * [resizeMode]  — maps to [AspectRatioFrameLayout] constant
- * [forcedRatio] — non-null forces a specific DAR (width/height); null = use stream ratio
- */
 enum class AspectRatioMode(
     val label: String,
     val description: String,
@@ -154,7 +147,7 @@ private val WHITE        = Color(0xFFFFFFFF)
 private val DIM          = Color(0xAAFFFFFF)
 private val DV_BLUE      = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
-private val AR_ACCENT    = Color(0xFF00E5FF)   // Cyan accent for aspect ratio panel
+private val AR_ACCENT    = Color(0xFF00E5FF)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
@@ -215,7 +208,7 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= 33) {
             val method = SurfaceView::class.java.getMethod("setHdrOutputMode", Int::class.java)
-            method.invoke(surfaceView, 3) // HDR_TYPE_DOLBY_VISION = 3
+            method.invoke(surfaceView, 3)
         }
     }
 }
@@ -247,17 +240,14 @@ fun PlayerScreen(
             .getBoolean("afr", false)
     }
 
-    // ─── Aspect Ratio state ────────────────────────────────────────────
-    // Hold a reference to the AspectRatioFrameLayout so we can update it imperatively
     val aspectLayoutRef = remember { mutableStateOf<AspectRatioFrameLayout?>(null) }
     var selectedAspectRatio by remember { mutableStateOf(AspectRatioMode.NORMAL) }
 
-    // Whenever videoAspectRatio or selectedAspectRatio changes, apply to the view
     LaunchedEffect(videoAspectRatio, selectedAspectRatio) {
         val layout = aspectLayoutRef.value ?: return@LaunchedEffect
         val ratio  = selectedAspectRatio.forcedRatio
             ?: videoAspectRatio.takeIf { it > 0f }
-            ?: (16f / 9f)   // safe default for DV / unknown content
+            ?: (16f / 9f)
         layout.setAspectRatio(ratio)
         layout.resizeMode = selectedAspectRatio.resizeMode
     }
@@ -286,7 +276,15 @@ fun PlayerScreen(
         (context as? Activity)?.let { enableHdrWindow(it) }
     }
 
-    LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId) }
+    // שליפת עונה ופרק שנשמרו ב-DetailsScreen!
+    val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
+    val episodePref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_episode", -1) }
+    val season = if (seasonPref != -1) seasonPref else null
+    val episode = if (episodePref != -1) episodePref else null
+
+    LaunchedEffect(videoUrl, imdbId) {
+        viewModel.loadMedia(videoUrl, imdbId, season, episode)
+    }
 
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
@@ -436,21 +434,17 @@ fun PlayerScreen(
                 }
             }
     ) {
-        // ─── Video Surface via AspectRatioFrameLayout ──────────────────────
         AndroidView(
             modifier = Modifier
                 .fillMaxSize()
                 .background(Color.Black),
             factory = { ctx ->
-                // AspectRatioFrameLayout keeps the SurfaceView correctly boxed.
-                // It defaults to RESIZE_MODE_FIT (letterboxed 16:9) which fixes
-                // the DV distortion that occurred with raw MATCH_PARENT SurfaceView.
                 val arLayout = AspectRatioFrameLayout(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    setAspectRatio(16f / 9f)           // safe default until first frame
+                    setAspectRatio(16f / 9f)
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
 
@@ -494,7 +488,6 @@ fun PlayerScreen(
                 arLayout.addView(surfaceView)
                 arLayout.addView(subtitleView)
 
-                // Keep a reference so LaunchedEffect can update resize mode later
                 aspectLayoutRef.value = arLayout
                 arLayout
             },
@@ -506,7 +499,6 @@ fun PlayerScreen(
             }
         )
 
-// ─── Dolby Vision / Dolby Atmos badges (auto-hide after 4s) ─────
         val showDvBadge = remember { mutableStateOf(isDolbyVision) }
         val showAtmosBadge = remember { mutableStateOf(isDolbyAtmos) }
         LaunchedEffect(isDolbyVision) {
@@ -534,7 +526,6 @@ fun PlayerScreen(
             ) { DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE) }
         }
 
-        // ─── Aspect Ratio indicator (top-left, fades away) ────────────────
         if (selectedAspectRatio != AspectRatioMode.NORMAL) {
             Box(
                 modifier = Modifier
@@ -542,19 +533,18 @@ fun PlayerScreen(
                     .padding(top = 28.dp, start = 28.dp)
                     .zIndex(50f)
                     .clip(RoundedCornerShape(6.dp))
-                    .background(AR_ACCENT.copy(0.85f))
+                    .background(Color.Black.copy(0.7f))
                     .padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
                 androidx.compose.material3.Text(
                     text       = "⬛ ${selectedAspectRatio.label}",
-                    color      = Color.Black,
+                    color      = WHITE,
                     fontSize   = 11.sp,
                     fontWeight = FontWeight.ExtraBold
                 )
             }
         }
 
-        // ─── Resume dialog ─────────────────────────────────────────────────
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -606,7 +596,6 @@ fun PlayerScreen(
             }
         }
 
-        // ─── Error overlay ─────────────────────────────────────────────────
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { if (error != null) { delay(100); runCatching { errorFR.requestFocus() } } }
@@ -643,7 +632,6 @@ fun PlayerScreen(
             }
         }
 
-        // ─── Controls overlay ──────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -666,7 +654,6 @@ fun PlayerScreen(
                     }
                 }
 
-                // Top-bar with Back button
                 Row(
                     modifier = Modifier
                         .align(Alignment.TopStart)
@@ -690,7 +677,6 @@ fun PlayerScreen(
                     if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
                 }
 
-                // Bottom controls
                 Column(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)
                 ) {
@@ -704,7 +690,6 @@ fun PlayerScreen(
                     )
                     Spacer(Modifier.height(20.dp))
 
-                    // ─── Control pills row ─────────────────────────────────
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
@@ -715,7 +700,6 @@ fun PlayerScreen(
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // Audio
                             ControlPill(
                                 icon     = CustomAudioIcon,
                                 text     = "Audio",
@@ -724,12 +708,10 @@ fun PlayerScreen(
                                 activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
                                 activityTick++
                             }
-                            // Embedded subs
                             ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
                                 activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
                                 activityTick++
                             }
-                            // Web subs
                             ControlPill(
                                 icon = Icons.Default.Search,
                                 text = when {
@@ -743,15 +725,12 @@ fun PlayerScreen(
                                 }
                                 activityTick++
                             }
-                            // Aspect Ratio — KODI-style
                             ControlPill(
                                 icon = Icons.Default.AspectRatio,
                                 text = if (selectedAspectRatio == AspectRatioMode.NORMAL)
                                     "Aspect Ratio"
                                 else
-                                    "AR: ${selectedAspectRatio.label}",
-                                accentColor = if (selectedAspectRatio != AspectRatioMode.NORMAL)
-                                    AR_ACCENT else null
+                                    "AR: ${selectedAspectRatio.label}"
                             ) {
                                 activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO)
                                     ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
@@ -764,7 +743,6 @@ fun PlayerScreen(
             }
         }
 
-        // ─── Side panels (Audio / Subs / Aspect Ratio) ────────────────────
         AnimatedVisibility(
             visible  = activeMenu != ActiveMenu.NONE && error == null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
@@ -873,7 +851,6 @@ fun PlayerScreen(
     }
 }
 
-// ─── Aspect Ratio Panel ────────────────────────────────────────────────────
 @Composable
 private fun AspectRatioPanel(
     selected: AspectRatioMode,
@@ -883,7 +860,7 @@ private fun AspectRatioPanel(
     SidePanelHeader(
         title    = "Aspect Ratio",
         subtitle = "Current: ${selected.label}",
-        accentColor = AR_ACCENT
+        accentColor = RED
     )
 
     LazyColumn(
@@ -918,9 +895,8 @@ private fun AspectRatioCard(
     val containerBg by animateColorAsState(
         targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
         animationSpec = tween(200),
-        label         = "arBg"
+        label         = "bgAnim"
     )
-    val accentColor = if (isSelected || focused) AR_ACCENT else WHITE.copy(0.45f)
 
     Surface(
         onClick  = onClick,
@@ -930,18 +906,13 @@ private fun AspectRatioCard(
         ),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(AR_ACCENT.copy(0.35f), 20.dp)),
-        modifier = modifier.fillMaxWidth().height(72.dp).onFocusChanged { focused = it.isFocused }
+        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
+        modifier = modifier.fillMaxWidth().height(64.dp).onFocusChanged { focused = it.isFocused }
     ) {
         Box(
             Modifier
                 .fillMaxSize()
                 .background(containerBg, RoundedCornerShape(16.dp))
-                .border(
-                    width = if (isSelected) 1.5.dp else 0.dp,
-                    color = if (isSelected) AR_ACCENT.copy(0.7f) else Color.Transparent,
-                    shape = RoundedCornerShape(16.dp)
-                )
                 .padding(horizontal = 20.dp)
         ) {
             Row(
@@ -949,33 +920,37 @@ private fun AspectRatioCard(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Visual ratio preview box
-                AspectRatioPreviewBox(mode, accentColor)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    AspectRatioPreviewBox(mode, if (focused) RED else Color.Gray)
 
-                Spacer(Modifier.width(16.dp))
+                    Spacer(Modifier.width(16.dp))
 
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text       = mode.label,
-                        color      = WHITE,
-                        fontSize   = 17.sp,
-                        fontWeight = if (isSelected || focused) FontWeight.Black else FontWeight.Bold
-                    )
-                    Text(
-                        text     = mode.description,
-                        color    = DIM,
-                        fontSize = 12.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column {
+                        Text(
+                            text       = mode.label,
+                            color      = WHITE,
+                            fontSize   = 16.sp,
+                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
+                            maxLines   = 1,
+                            overflow   = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text     = mode.description,
+                            color    = DIM,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
 
                 if (isSelected) {
+                    Spacer(Modifier.width(12.dp))
                     Icon(
                         Icons.Default.CheckCircle,
                         contentDescription = null,
-                        tint     = AR_ACCENT,
-                        modifier = Modifier.size(20.dp)
+                        tint     = Color(0xFF4D90FE),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -983,37 +958,41 @@ private fun AspectRatioCard(
     }
 }
 
-/** Small visual rectangle that previews the aspect ratio shape */
 @Composable
 private fun AspectRatioPreviewBox(mode: AspectRatioMode, color: Color) {
     val (w, h) = when (mode) {
         AspectRatioMode.NORMAL,
         AspectRatioMode.ZOOM,
         AspectRatioMode.STRETCH,
-        AspectRatioMode.RATIO_16_9 -> 32.dp to 18.dp
-        AspectRatioMode.RATIO_4_3  -> 24.dp to 18.dp
-        AspectRatioMode.RATIO_21_9 -> 42.dp to 18.dp
+        AspectRatioMode.RATIO_16_9 -> 28.dp to 16.dp
+        AspectRatioMode.RATIO_4_3  -> 22.dp to 16.dp
+        AspectRatioMode.RATIO_21_9 -> 36.dp to 16.dp
     }
-    val icon = when (mode) {
-        AspectRatioMode.NORMAL  -> "⬜"   // boxed
-        AspectRatioMode.ZOOM    -> "🔍"
-        AspectRatioMode.STRETCH -> "↔"
+
+    val vectorIcon = when (mode) {
+        AspectRatioMode.ZOOM    -> Icons.Default.ZoomIn
+        AspectRatioMode.STRETCH -> Icons.Default.OpenInFull
         else                    -> null
     }
+
     Box(
         modifier = Modifier
             .width(w)
             .height(h)
-            .border(1.5.dp, color, RoundedCornerShape(3.dp)),
+            .border(2.dp, color.copy(alpha = 0.8f), RoundedCornerShape(2.dp)),
         contentAlignment = Alignment.Center
     ) {
-        if (icon != null) {
-            androidx.compose.material3.Text(icon, fontSize = 9.sp)
+        if (vectorIcon != null) {
+            Icon(
+                imageVector = vectorIcon,
+                contentDescription = null,
+                tint = color,
+                modifier = Modifier.size(12.dp)
+            )
         }
     }
 }
 
-// ─── Reusable components ──────────────────────────────────────────────────
 @Composable
 private fun DolbyBadge(text: String, color: Color) {
     Box(
@@ -1257,7 +1236,7 @@ fun ControlPill(
     icon:        ImageVector,
     text:        String,
     modifier:    Modifier = Modifier,
-    accentColor: Color?   = null,       // non-null highlights the pill when active
+    accentColor: Color?   = null,
     onClick:     () -> Unit
 ) {
     val highlightColor = accentColor ?: RED

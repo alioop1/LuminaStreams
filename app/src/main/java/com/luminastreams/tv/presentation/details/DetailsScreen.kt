@@ -251,6 +251,9 @@ fun DetailsScreen(
     val context  = LocalContext.current
     val isRtl    = LocalLayoutDirection.current == LayoutDirection.Rtl
 
+    var currentScrapeSeason by remember { mutableStateOf<Int?>(null) }
+    var currentScrapeEpisode by remember { mutableStateOf<Int?>(null) }
+
     var media by remember(state.mediaInfo) { mutableStateOf(state.mediaInfo) }
 
     LaunchedEffect(state.mediaInfo.id) {
@@ -277,11 +280,10 @@ fun DetailsScreen(
         }
     }
 
-    // הגדרת משתני הפוקוס להכוונת הניווט הגיאומטרי בצורה מדויקת
     val playFR         = remember { FocusRequester() }
     val backBtnFR      = remember { FocusRequester() }
     val firstSourceFR  = remember { FocusRequester() }
-    val firstSeasonFR  = remember { FocusRequester() } // למעבר למעלה חזרה לעונות
+    val firstSeasonFR  = remember { FocusRequester() }
     val firstEpisodeFR = remember { FocusRequester() }
     val firstCastFR    = remember { FocusRequester() }
     val firstRecFR     = remember { FocusRequester() }
@@ -293,6 +295,8 @@ fun DetailsScreen(
     LaunchedEffect(state.mediaInfo.id) {
         if (state.mediaInfo.id.startsWith("http")) {
             showSources = false
+            currentScrapeSeason = null
+            currentScrapeEpisode = null
             onEvent(DetailsEvent.InitiateScraping(state.mediaInfo.imdbId))
         }
     }
@@ -300,6 +304,13 @@ fun DetailsScreen(
     LaunchedEffect(state.readyToPlayUrl) {
         state.readyToPlayUrl?.let { url ->
             showSources = false
+
+            // שומרים את העונה והפרק לזיכרון לפני פתיחת הנגן
+            context.getSharedPreferences("player_context", android.content.Context.MODE_PRIVATE).edit()
+                .putInt("current_season", currentScrapeSeason ?: -1)
+                .putInt("current_episode", currentScrapeEpisode ?: -1)
+                .apply()
+
             val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
             onPlayDirectUrl(encodedUrl, media.imdbId)
             onEvent(DetailsEvent.ClearPlayUrl)
@@ -446,8 +457,15 @@ fun DetailsScreen(
                                 Surface(
                                     onClick = {
                                         showSources = true
-                                        if (media.isSeries) onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
-                                        else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                        if (media.isSeries) {
+                                            currentScrapeSeason = state.selectedSeason
+                                            currentScrapeEpisode = 1
+                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
+                                        } else {
+                                            currentScrapeSeason = null
+                                            currentScrapeEpisode = null
+                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                        }
                                     },
                                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                                     colors   = ClickableSurfaceDefaults.colors(containerColor = WH, contentColor = BK, focusedContainerColor = BR, focusedContentColor = WH),
@@ -467,8 +485,15 @@ fun DetailsScreen(
                                     icon  = Icons.AutoMirrored.Filled.List
                                 ) {
                                     showSources = true
-                                    if (media.isSeries) onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
-                                    else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                    if (media.isSeries) {
+                                        currentScrapeSeason = state.selectedSeason
+                                        currentScrapeEpisode = 1
+                                        onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
+                                    } else {
+                                        currentScrapeSeason = null
+                                        currentScrapeEpisode = null
+                                        onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                    }
                                 }
                                 Surface(
                                     onClick  = { onEvent(DetailsEvent.ToggleFavorite) },
@@ -510,8 +535,6 @@ fun DetailsScreen(
                                     colors   = ClickableSurfaceDefaults.colors(containerColor = if (sel) BR else GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
                                     scale    = ClickableSurfaceDefaults.scale(1.05f),
                                     border   = ClickableSurfaceDefaults.border(border = if (sel) Border.None else Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
-                                    // כאן מגדירים את focusRequester לעונה הראשונה (בשביל תנועה למעלה מהפרקים)
-                                    // וגם אכיפת הניווט למטה לפרק הראשון.
                                     modifier = Modifier
                                         .then(if (idx == 0) Modifier.focusRequester(firstSeasonFR) else Modifier)
                                         .focusProperties {
@@ -543,13 +566,14 @@ fun DetailsScreen(
                                         modifier = Modifier
                                             .then(if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier)
                                             .focusProperties {
-                                                // אכיפת ניווט למעלה (לעונות) ולמטה (לשחקנים/המלצות)
                                                 if (media.totalSeasons > 0) up = firstSeasonFR
 
                                                 if (media.cast.isNotEmpty()) down = firstCastFR
                                                 else if (media.recommendations.isNotEmpty()) down = firstRecFR
                                             },
                                         onClick = {
+                                            currentScrapeSeason = ep.seasonNumber
+                                            currentScrapeEpisode = ep.episodeNumber
                                             showSources = true
                                             onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber))
                                         }
@@ -581,7 +605,6 @@ fun DetailsScreen(
                                     modifier = Modifier
                                         .then(if (idx == 0) Modifier.focusRequester(firstCastFR) else Modifier)
                                         .focusProperties {
-                                            // אכיפת ניווט למעלה (לפרקים/עונות) ולמטה (להמלצות)
                                             if (state.episodes.isNotEmpty()) up = firstEpisodeFR
                                             else if (media.totalSeasons > 0) up = firstSeasonFR
 
@@ -619,7 +642,6 @@ fun DetailsScreen(
                                     modifier = Modifier
                                         .then(if (idx == 0) Modifier.focusRequester(firstRecFR) else Modifier)
                                         .focusProperties {
-                                            // אכיפת ניווט למעלה מההמלצות
                                             if (media.cast.isNotEmpty()) up = firstCastFR
                                             else if (state.episodes.isNotEmpty()) up = firstEpisodeFR
                                             else if (media.totalSeasons > 0) up = firstSeasonFR
