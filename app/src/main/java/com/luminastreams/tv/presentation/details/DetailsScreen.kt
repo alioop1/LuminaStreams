@@ -7,12 +7,14 @@
 
 package com.luminastreams.tv.presentation.details
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -21,7 +23,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -59,17 +60,16 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
+import androidx.core.content.edit
 import androidx.core.net.toUri
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import com.luminastreams.tv.ui.components.LoadingIndicator
-
 import com.luminastreams.tv.domain.model.Movie
+import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
-import androidx.compose.foundation.ExperimentalFoundationApi
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -81,7 +81,7 @@ private val BR  = Color(0xFFE50914)
 private val GLD = Color(0xFFFFC107)
 private val TMR = Color(0xFFF44336)
 
-private fun launchTrailer(context: android.content.Context, trailerIdOrUrl: String?, fallbackTitle: String) {
+private fun launchTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle: String) {
     val appCtx = context.applicationContext
     if (!trailerIdOrUrl.isNullOrBlank()) {
         val ytAppIntent = Intent(Intent.ACTION_VIEW, "vnd.youtube:$trailerIdOrUrl".toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -152,20 +152,20 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
     }
 
     val langBadges = buildList {
-        if (combined.contains("HEBREW") || combined.contains("HEB") ||
-            combined.contains("עברית"))                                add("עברית 🇮🇱"  to Color(0xFF1B5E20))
-        if (combined.contains("ENGLISH") || combined.contains(" ENG") ||
-            combined.contains(".ENG."))                                add("English 🇺🇸" to Color(0xFF1A237E))
-        if (combined.contains("ARABIC") || combined.contains("ARA"))  add("عربي 🇸🇦"   to Color(0xFF4E342E))
-        if (combined.contains("FRENCH") || combined.contains("FRE") ||
-            combined.contains(".FR."))                                 add("French 🇫🇷"  to Color(0xFF311B92))
-        if (combined.contains("GERMAN") || combined.contains("GER") ||
-            combined.contains(".DE."))                                 add("Deutsch 🇩🇪" to Color(0xFF37474F))
-        if (combined.contains("SPANISH") || combined.contains("SPA") ||
-            combined.contains(".ES."))                                 add("Español 🇪🇸" to Color(0xFF880E4F))
-        if (combined.contains("MULTI") || combined.contains("DUAL"))  add("Multi 🌍"   to Color(0xFF4A148C))
-        if (combined.contains("HEBDUB") || combined.contains("HEBREW DUB") ||
-            combined.contains("מדובב"))                               add("מדובב 🎤"    to Color(0xFFE65100))
+        if (combined.contains(" HEB") || combined.contains(".HEB") || combined.contains("HEBREW") || combined.contains("מדובב") || combined.contains(" IL "))
+            add("HEB \uD83C\uDDEE\uD83C\uDDF1"  to Color(0xFF00ACC1))
+        if (combined.contains(" ENG") || combined.contains(".ENG") || combined.contains("ENGLISH") || combined.contains(" EN "))
+            add("ENG \uD83C\uDDFA\uD83C\uDDF8" to Color(0xFF3949AB))
+        if (combined.contains(" RUS") || combined.contains(".RUS") || combined.contains("RUSSIAN") || combined.contains(" RU "))
+            add("RUS \uD83C\uDDF7\uD83C\uDDFA"   to Color(0xFFE53935))
+        if (combined.contains(" FRE") || combined.contains(".FRE") || combined.contains("FRENCH") || combined.contains(" FR "))
+            add("FRE \uD83C\uDDEB\uD83C\uDDF7"  to Color(0xFF1E88E5))
+        if (combined.contains(" SPA") || combined.contains(".SPA") || combined.contains("SPANISH") || combined.contains(" ES "))
+            add("SPA \uD83C\uDDEA\uD83C\uDDF8" to Color(0xFF8E24AA))
+        if (combined.contains(" ITA") || combined.contains(".ITA") || combined.contains("ITALIAN") || combined.contains(" IT "))
+            add("ITA \uD83C\uDDEE\uD83C\uDDF9" to Color(0xFF43A047))
+        if (combined.contains("MULTI") || combined.contains("DUAL"))
+            add("MULTI \uD83C\uDF0D"   to Color(0xFF00897B))
     }
 
     val subtitleBadges = buildList {
@@ -305,11 +305,10 @@ fun DetailsScreen(
         state.readyToPlayUrl?.let { url ->
             showSources = false
 
-            // שומרים את העונה והפרק לזיכרון לפני פתיחת הנגן
-            context.getSharedPreferences("player_context", android.content.Context.MODE_PRIVATE).edit()
-                .putInt("current_season", currentScrapeSeason ?: -1)
-                .putInt("current_episode", currentScrapeEpisode ?: -1)
-                .apply()
+            context.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
+                putInt("current_season", currentScrapeSeason ?: -1)
+                putInt("current_episode", currentScrapeEpisode ?: -1)
+            }
 
             val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
             onPlayDirectUrl(encodedUrl, media.imdbId)
@@ -752,7 +751,7 @@ fun DetailsScreen(
                             }
                             else -> {
                                 LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp), // צמצום המרווח בין השורות
                                     contentPadding      = PaddingValues(bottom = 64.dp),
                                     modifier            = Modifier.focusGroup()
                                 ) {
@@ -802,7 +801,7 @@ private fun StreamSourceCard(
             contentColor = WH,
             focusedContentColor = WH
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         glow = ClickableSurfaceDefaults.glow(
             focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 25.dp)
@@ -811,7 +810,8 @@ private fun StreamSourceCard(
             .fillMaxWidth()
             .onFocusChanged { focusedState.value = it.isFocused }
     ) {
-        Column(Modifier.fillMaxWidth().padding(24.dp)) {
+        // צמצום ריווחים פנימיים (Padding) בתוך הכרטיסייה
+        Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
 
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -821,15 +821,15 @@ private fun StreamSourceCard(
                     text = "#$rank",
                     color = WH.copy(alpha = 0.5f),
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 13.sp
                 )
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(10.dp))
 
                 Text(
                     text = meta.provider.uppercase(),
                     color = if (source.isCachedRd) Color(0xFF43A047) else Color(0xFF29B6F6),
                     fontWeight = FontWeight.Black,
-                    fontSize = 14.sp,
+                    fontSize = 13.sp,
                     letterSpacing = 1.sp
                 )
 
@@ -840,49 +840,56 @@ private fun StreamSourceCard(
                         Text(
                             text = "\uf0c0",
                             color = seederColor(meta.seeders),
-                            fontSize = 12.sp
+                            fontSize = 11.sp
                         )
-                        Spacer(Modifier.width(6.dp))
+                        Spacer(Modifier.width(4.dp))
                         Text(
                             text = "${meta.seeders}",
                             color = seederColor(meta.seeders),
                             fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp
+                            fontSize = 13.sp
                         )
                     }
                     Spacer(Modifier.width(16.dp))
                 }
 
+                val formattedSize = run {
+                    val gb = source.sizeBytes / 1_073_741_824.0
+                    if (gb >= 1.0) "%.2f GB".format(gb)
+                    else "%.0f MB".format(source.sizeBytes / 1_048_576.0)
+                }
+
                 Text(
-                    text = source.formattedSize,
+                    text = formattedSize,
                     color = fileSizeColor,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 13.sp
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             Text(
                 text = source.releaseGroup.ifEmpty { "UNKNOWN RELEASE" }.uppercase(),
                 color = WH,
                 fontWeight = FontWeight.Black,
-                fontSize = 20.sp,
+                fontSize = 17.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(8.dp))
 
+            // הצגת תגיות איכות, וידאו, סאונד, וכל השפות שזוהו
             Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth()
             ) {
-                PremiumBadge(source.quality.displayName, Color(0xFF0D47A1))
+                PremiumBadge(source.quality.name.replace("UHD_4K", "4K UHD").replace("FHD_1080P", "1080p").replace("HD_720P", "720p"), Color(0xFF0D47A1))
 
                 if (source.isCachedRd) {
-                    PremiumBadge("RD+ CACHED", Color(0xFF1B5E20), icon = "\uf0e7")
+                    PremiumBadge("RD+", Color(0xFF1B5E20), icon = "\uf0e7")
                 }
 
                 if (meta.isCam) {
@@ -901,19 +908,18 @@ private fun StreamSourceCard(
                     PremiumBadge(it.first, Color(0xFF8E24AA), isOutline = true)
                 }
 
-                val hasHebrew = meta.langBadges.any { it.first.contains("עברית") || it.first.contains("מדובב") }
-                        || meta.subtitleBadges.any { it.first.contains("כתוביות עב") }
-                if (hasHebrew) {
-                    PremiumBadge("HEBREW", Color(0xFF00ACC1), isOutline = true)
+                // תגיות שפות שחולצו על ידי הפונקציה parseStreamMeta (ENG, RUS, HEB וכו')
+                meta.langBadges.forEach { (langLabel, color) ->
+                    PremiumBadge(langLabel, color, isOutline = true)
                 }
             }
 
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(6.dp))
 
             Text(
                 text = source.filename.replace(".", " "),
                 color = WH.copy(alpha = if (isFocused) 0.5f else 0.25f),
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -937,7 +943,7 @@ private fun PremiumBadge(
                 color = if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent,
                 shape = RoundedCornerShape(6.dp)
             )
-            .padding(horizontal = 10.dp, vertical = 5.dp)
+            .padding(horizontal = 8.dp, vertical = 4.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             if (icon != null) {
@@ -945,14 +951,14 @@ private fun PremiumBadge(
                     text = icon,
                     color = color,
                     fontSize = 10.sp,
-                    modifier = Modifier.padding(end = 6.dp)
+                    modifier = Modifier.padding(end = 4.dp)
                 )
             }
             Text(
                 text = text.uppercase(),
                 color = if (isOutline) color else WH,
                 fontWeight = FontWeight.ExtraBold,
-                fontSize = 11.sp,
+                fontSize = 10.sp,
                 letterSpacing = 0.5.sp
             )
         }
@@ -1012,7 +1018,7 @@ private fun EpisodeCard(
             .onFocusChanged { focusedState.value = it.isFocused }
     ) {
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
-            val imageUrl = if (episode.stillUrl.isNullOrBlank() || episode.stillUrl.endsWith("null")) fallbackImageUrl else episode.stillUrl
+            val imageUrl = if (episode.stillUrl.isBlank() || episode.stillUrl.endsWith("null")) fallbackImageUrl else episode.stillUrl
 
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)

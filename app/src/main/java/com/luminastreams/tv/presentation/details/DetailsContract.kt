@@ -16,8 +16,8 @@ data class Episode(
 @Immutable
 data class Recommendation(val id: String, val title: String, val posterUrl: String)
 
-enum class StreamQuality(val priority: Int, val displayName: String) {
-    UHD_4K(9, "4K UHD"), FHD_1080P(7, "1080p"), HD_720P(6, "720p"), SD_480P(5, "480p"), UNKNOWN(0, "Unknown");
+enum class StreamQuality(val priority: Int) {
+    UHD_4K(9), FHD_1080P(7), HD_720P(6), SD_480P(5), UNKNOWN(0);
     companion object {
         fun fromString(title: String): StreamQuality {
             val t = title.uppercase()
@@ -32,7 +32,6 @@ enum class StreamQuality(val priority: Int, val displayName: String) {
     }
 }
 
-// displayName removed — only .name is needed; add back if UI ever shows codec label
 enum class VideoCodec {
     HEVC, AVC, AV1, UNKNOWN;
     companion object {
@@ -60,9 +59,8 @@ data class AdvancedStreamSource(
     val quality: StreamQuality,
     val videoCodec: VideoCodec
 ) {
-    val sizeGb: Double        get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
-    val formattedSize: String get() = String.format(java.util.Locale.US, "%.2f GB", sizeGb)
-    val sortScore: Int        get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
+    val sizeGb: Double get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
+    val sortScore: Int get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
 }
 
 @Immutable
