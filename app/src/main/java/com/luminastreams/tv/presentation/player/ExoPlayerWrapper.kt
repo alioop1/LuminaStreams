@@ -159,10 +159,14 @@ class ExoPlayerWrapper(context: Context) {
         .setMediaSourceFactory(mediaSourceFactory)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
+        // ── התיקון כאן: דורשים Passthrough ומונעים מאנדרואיד להתערב בסאונד ──
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
+                .build(),
+            true
         )
         .setHandleAudioBecomingNoisy(true)
         .build()
@@ -171,7 +175,7 @@ class ExoPlayerWrapper(context: Context) {
                 val cls  = Class.forName("androidx.media3.exoplayer.audio.AudioOffloadPreferences")
                 val bldr = cls.getClasses().firstOrNull { it.simpleName == "Builder" } ?: return@runCatching
                 val ob   = bldr.getDeclaredConstructor().newInstance()
-                bldr.getMethod("setAudioOffloadMode", Int::class.java).invoke(ob, 1)
+                bldr.getMethod("setAudioOffloadMode", Int::class.java).invoke(ob, 1) // AUDIO_OFFLOAD_MODE_ENABLED
                 val op   = bldr.getMethod("build").invoke(ob)
                 exo.javaClass.getMethod("setAudioOffloadPreferences", cls).invoke(exo, op)
             }
@@ -226,8 +230,9 @@ class ExoPlayerWrapper(context: Context) {
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .any {
                         it.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC ||
-                                (it.sampleMimeType == MimeTypes.AUDIO_E_AC3 &&
-                                        (it.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0)
+                                it.codecs?.contains("joc", ignoreCase = true) == true ||
+                                it.label?.contains("atmos", ignoreCase = true) == true ||
+                                it.id?.contains("atmos", ignoreCase = true) == true
                     }
                 _isDolbyAtmos.value = hasAtmos
             }

@@ -18,13 +18,19 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -34,6 +40,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import androidx.tv.material3.Text
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -49,6 +56,7 @@ import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
+import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -86,6 +94,28 @@ fun LuminaAppShell() {
 }
 
 @Composable
+fun SplashScreen(onTimeout: () -> Unit) {
+    LaunchedEffect(Unit) {
+        delay(2000) // זמן הצגת מסך הפתיחה
+        onTimeout()
+    }
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xFF040405)),
+        contentAlignment = Alignment.Center
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+            Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFE50914)), Alignment.Center) {
+                Text("L", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
+            }
+            Column {
+                Text("LUMINA",  color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 5.sp, lineHeight = 30.sp)
+                Text("STREAMS", color = Color(0xFFE50914),   fontSize = 14.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 5.sp, lineHeight = 14.sp)
+            }
+        }
+    }
+}
+
+@Composable
 fun AppNavHostContainer(
     navController : NavHostController,
     homeViewModel : HomeViewModel,
@@ -96,12 +126,20 @@ fun AppNavHostContainer(
 
     NavHost(
         navController      = navController,
-        startDestination   = "home",
+        startDestination   = "splash",
         enterTransition    = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
         exitTransition     = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
         popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
         popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
+
+        composable("splash") {
+            SplashScreen(onTimeout = {
+                navController.navigate("home") {
+                    popUpTo("splash") { inclusive = true }
+                }
+            })
+        }
 
         composable("home") {
             HomeScreen(
@@ -138,10 +176,12 @@ fun AppNavHostContainer(
             DetailsScreen(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
-                onPlayDirectUrl = { videoUrl, imdbId ->
+                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop ->
                     val safeUrl  = java.net.URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb = if (imdbId.isBlank()) "_" else imdbId
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb")
+                    val safeTitle = java.net.URLEncoder.encode(title, "UTF-8")
+                    val safeBackdrop = java.net.URLEncoder.encode(backdrop, "UTF-8")
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop")
                 },
                 onNavigateBack        = { navController.popBackStack() },
                 onRecommendationClick = { id ->
@@ -152,20 +192,30 @@ fun AppNavHostContainer(
         }
 
         composable(
-            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}",
+            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}",
             arguments = listOf(
                 navArgument("videoUrl") { type = NavType.StringType; defaultValue = "" },
-                navArgument("imdbId")   { type = NavType.StringType; defaultValue = "_" }
+                navArgument("imdbId")   { type = NavType.StringType; defaultValue = "_" },
+                navArgument("title")    { type = NavType.StringType; defaultValue = "" },
+                navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" }
             )
         ) { back ->
             val encodedUrl = back.arguments?.getString("videoUrl") ?: ""
-            val imdbId     = back.arguments?.getString("imdbId")   ?: "_"
             val videoUrl   = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+            val imdbId     = back.arguments?.getString("imdbId")   ?: "_"
+
+            val encodedTitle = back.arguments?.getString("title") ?: ""
+            val title      = java.net.URLDecoder.decode(encodedTitle, "UTF-8")
+
+            val encodedBackdrop = back.arguments?.getString("backdropUrl") ?: ""
+            val backdropUrl = java.net.URLDecoder.decode(encodedBackdrop, "UTF-8")
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
                     videoUrl       = videoUrl,
                     imdbId         = if (imdbId == "_") "" else imdbId,
+                    title          = title,
+                    backdropUrl    = backdropUrl,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

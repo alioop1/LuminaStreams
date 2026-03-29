@@ -244,7 +244,7 @@ private fun seederColor(seeders: Int) = when {
 fun DetailsScreen(
     state: DetailsScreenState,
     onEvent: (DetailsEvent) -> Unit,
-    onPlayDirectUrl: (videoUrl: String, imdbId: String) -> Unit,
+    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String) -> Unit,
     onNavigateBack: () -> Unit = {},
     onRecommendationClick: (String) -> Unit
 ) {
@@ -310,8 +310,7 @@ fun DetailsScreen(
                 putInt("current_episode", currentScrapeEpisode ?: -1)
             }
 
-            val encodedUrl = java.net.URLEncoder.encode(url, "UTF-8")
-            onPlayDirectUrl(encodedUrl, media.imdbId)
+            onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl)
             onEvent(DetailsEvent.ClearPlayUrl)
         }
     }
