@@ -8,6 +8,7 @@ package com.luminastreams.tv.presentation.player
 
 import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.view.KeyEvent
 import android.view.SurfaceView
@@ -16,28 +17,25 @@ import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -62,6 +60,7 @@ import androidx.compose.ui.zIndex
 import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -70,6 +69,14 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
+import androidx.compose.ui.draw.alpha
+
+// פונקציית חילוץ ה-Activity שפותרת את בעיית שינוי ה-AFR וה-HDR
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
 
 val CustomSubtitlesIcon: ImageVector
     get() = ImageVector.Builder("Subtitles", 24.dp, 24.dp, 24f, 24f).apply {
@@ -97,26 +104,47 @@ val CustomAudioIcon: ImageVector
         }
     }.build()
 
+val CustomWebSubsIcon: ImageVector
+    get() = ImageVector.Builder("WebSubs", 24.dp, 24.dp, 24f, 24f).apply {
+        path(fill = SolidColor(Color.White)) {
+            moveTo(19f, 4f); lineTo(5f, 4f); curveTo(3.89f, 4f, 3f, 4.9f, 3f, 6f)
+            lineTo(3f, 18f); curveTo(3f, 19.1f, 3.89f, 20f, 5f, 20f); lineTo(14f, 20f)
+            lineTo(14f, 18f); lineTo(5f, 18f); lineTo(5f, 6f); lineTo(19f, 6f); lineTo(19f, 13f)
+            lineTo(21f, 13f); lineTo(21f, 6f); curveTo(21f, 4.9f, 20.1f, 4f, 19f, 4f); close()
+            moveTo(7f, 14f); lineTo(13f, 14f); lineTo(13f, 16f); lineTo(7f, 16f); close()
+            moveTo(7f, 10f); lineTo(17f, 10f); lineTo(17f, 12f); lineTo(7f, 12f); close()
+            moveTo(20.49f, 19.08f); lineTo(22.96f, 21.54f); lineTo(21.54f, 22.96f)
+            lineTo(19.08f, 20.49f); curveTo(18.41f, 20.81f, 17.68f, 21f, 16.9f, 21f)
+            curveTo(14.19f, 21f, 12f, 18.81f, 12f, 16.1f); curveTo(12f, 13.39f, 14.19f, 11.2f, 16.9f, 11.2f)
+            curveTo(19.61f, 11.2f, 21.8f, 13.39f, 21.8f, 16.1f); curveTo(21.8f, 16.88f, 21.61f, 17.61f, 21.29f, 18.28f)
+            lineTo(20.49f, 19.08f); close()
+            moveTo(16.9f, 13.2f); curveTo(15.29f, 13.2f, 14f, 14.49f, 14f, 16.1f)
+            curveTo(14f, 17.71f, 15.29f, 19f, 16.9f, 19f); curveTo(18.51f, 19f, 19.8f, 17.71f, 19.8f, 16.1f)
+            curveTo(19.8f, 14.49f, 18.51f, 13.2f, 16.9f, 13.2f); close()
+        }
+    }.build()
+
 enum class AspectRatioMode(
     val label: String,
     val description: String,
     val resizeMode: Int,
     val forcedRatio: Float? = null
 ) {
-    NORMAL("Normal", "Fit to screen, preserve ratio", AspectRatioFrameLayout.RESIZE_MODE_FIT),
-    ZOOM("Zoom", "Crop to fill screen", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
-    STRETCH("Stretch", "Stretch to fill screen", AspectRatioFrameLayout.RESIZE_MODE_FILL),
-    RATIO_16_9("16:9", "Force 16∶9 widescreen", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 16f / 9f),
-    RATIO_4_3("4:3", "Force 4∶3 classic TV", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 4f / 3f),
-    RATIO_21_9("21:9", "CinemaScope ultra-wide", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 21f / 9f)
+    NORMAL("Normal", "Fit to screen", AspectRatioFrameLayout.RESIZE_MODE_FIT),
+    ZOOM("Zoom", "Crop to fill", AspectRatioFrameLayout.RESIZE_MODE_ZOOM),
+    STRETCH("Stretch", "Stretch to fill", AspectRatioFrameLayout.RESIZE_MODE_FILL),
+    RATIO_16_9("16:9", "Widescreen", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 16f / 9f),
+    RATIO_4_3("4:3", "Classic TV", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 4f / 3f),
+    RATIO_21_9("21:9", "CinemaScope", AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH, 21f / 9f)
 }
 
-private val CTRL_BG      = Color(0x99000000)
 private val RED          = Color(0xFFE50914)
 private val WHITE        = Color(0xFFFFFFFF)
 private val DIM          = Color(0xAAFFFFFF)
 private val DV_BLUE      = Color(0xFF00B4FF)
 private val ATMOS_PURPLE = Color(0xFF7B2FBE)
+private val RES_GRAY     = Color(0xFF424242)
+private val POPUP_BG     = Color(0xE6141414)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
@@ -157,8 +185,7 @@ private fun enableHdrWindow(activity: Activity) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
             activity.window.attributes = activity.window.attributes.also { lp ->
-                lp.layoutInDisplayCutoutMode =
-                    WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
             val cls = ActivityInfo::class.java
             val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
@@ -183,6 +210,8 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
 fun PlayerScreen(
     videoUrl:       String,
     imdbId:         String,
+    title:          String = "",
+    backdropUrl:    String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {
@@ -197,8 +226,8 @@ fun PlayerScreen(
     val isDolbyVision    by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos     by exo.isDolbyAtmos.collectAsState()
     val videoAspectRatio by exo.videoAspectRatio.collectAsState()
+    val contentFps       by exo.contentFrameRate.collectAsState()
 
-    val contentFps = exo.contentFrameRate.collectAsState()
     val afrEnabled = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
             .getBoolean("afr", false)
@@ -209,9 +238,7 @@ fun PlayerScreen(
 
     LaunchedEffect(videoAspectRatio, selectedAspectRatio) {
         val layout = aspectLayoutRef.value ?: return@LaunchedEffect
-        val ratio  = selectedAspectRatio.forcedRatio
-            ?: videoAspectRatio.takeIf { it > 0f }
-            ?: (16f / 9f)
+        val ratio  = selectedAspectRatio.forcedRatio ?: videoAspectRatio.takeIf { it > 0f } ?: (16f / 9f)
         layout.setAspectRatio(ratio)
         layout.resizeMode = selectedAspectRatio.resizeMode
     }
@@ -224,6 +251,7 @@ fun PlayerScreen(
     var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
+    var hasStartedPlaying by remember { mutableStateOf(false) }
 
     val watchPrefs    = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
     val progressKey   = remember(imdbId) { "progress_$imdbId" }
@@ -231,13 +259,12 @@ fun PlayerScreen(
     var showResumeDialog by remember { mutableStateOf(false) }
     var resumeHandled    by remember { mutableStateOf(false) }
 
-    val backBtnFR   = remember { FocusRequester() }
+    val playPauseFR = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
-    val firstPillFR = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
     LaunchedEffect(Unit) {
-        (context as? Activity)?.let { enableHdrWindow(it) }
+        context.findActivity()?.let { enableHdrWindow(it) }
     }
 
     val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
@@ -258,16 +285,16 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(contentFps.value) {
-        if (!afrEnabled || contentFps.value <= 0f) return@LaunchedEffect
-        val activity = context as? Activity ?: return@LaunchedEffect
-        applyAfrForContent(activity, contentFps.value)
+    LaunchedEffect(contentFps) {
+        if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
+        val activity = context.findActivity() ?: return@LaunchedEffect
+        applyAfrForContent(activity, contentFps)
     }
 
     DisposableEffect(Unit) {
         onDispose {
             exo.release()
-            if (afrEnabled) (context as? Activity)?.let { restoreDisplayMode(it) }
+            if (afrEnabled) context.findActivity()?.let { restoreDisplayMode(it) }
         }
     }
 
@@ -333,24 +360,19 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(showControls) {
-        if (showControls && activeMenu == ActiveMenu.NONE) {
-            delay(120); runCatching { seekBarFR.requestFocus() }
-        }
-    }
-
     LaunchedEffect(activeMenu) {
-        if (activeMenu != ActiveMenu.NONE) {
-            delay(200); runCatching { sideMenuFR.requestFocus() }
-        } else {
-            delay(160); runCatching { seekBarFR.requestFocus() }
+        if (activeMenu == ActiveMenu.NONE && showControls) {
+            delay(50); runCatching { playPauseFR.requestFocus() }
         }
     }
 
-    LaunchedEffect(showControls, isPlaying, activityTick) {
+    LaunchedEffect(showControls, isPlaying, activityTick, activeMenu) {
         if (showControls && isPlaying && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
             delay(5000); showControls = false
         }
+    }
+    LaunchedEffect(isPlaying) {
+        if (isPlaying) hasStartedPlaying = true
     }
 
     BackHandler {
@@ -398,24 +420,16 @@ fun PlayerScreen(
             }
     ) {
         AndroidView(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(Color.Black),
+            modifier = Modifier.fillMaxSize().background(Color.Black),
             factory = { ctx ->
                 val arLayout = AspectRatioFrameLayout(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     setAspectRatio(16f / 9f)
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
 
                 val surfaceView = SurfaceView(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     keepScreenOn = true
                     applySurfaceDolbyVision(this)
                     addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
@@ -431,17 +445,9 @@ fun PlayerScreen(
                 }
 
                 val subtitleView = SubtitleView(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
-                    setStyle(
-                        CaptionStyleCompat(
-                            textColor, AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT,
-                            CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, AndroidColor.BLACK, null
-                        )
-                    )
+                    setStyle(CaptionStyleCompat(textColor, AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, AndroidColor.BLACK, null))
                     setApplyEmbeddedStyles(false)
                     setApplyEmbeddedFontSizes(false)
                     setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
@@ -450,7 +456,6 @@ fun PlayerScreen(
 
                 arLayout.addView(surfaceView)
                 arLayout.addView(subtitleView)
-
                 aspectLayoutRef.value = arLayout
                 arLayout
             },
@@ -462,49 +467,110 @@ fun PlayerScreen(
             }
         )
 
-        val showDvBadge = remember { mutableStateOf(isDolbyVision) }
-        val showAtmosBadge = remember { mutableStateOf(isDolbyAtmos) }
-        LaunchedEffect(isDolbyVision) {
-            if (isDolbyVision) { showDvBadge.value = true; delay(4000); showDvBadge.value = false }
+        // ── מסך טעינה לפני תחילת הזרמה (עם תמונת הרקע) ──
+        androidx.compose.animation.AnimatedVisibility(
+            visible = !hasStartedPlaying,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(800)),
+            modifier = Modifier.fillMaxSize().zIndex(200f) // מוודא שזה יושב מעל הכל
+        ) {
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                if (backdropUrl.isNotBlank()) {
+                    coil.compose.AsyncImage(
+                        model = backdropUrl,
+                        contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().alpha(0.5f)
+                    )
+                }
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))))
+
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    com.luminastreams.tv.ui.components.LoadingIndicator()
+                    Spacer(modifier = Modifier.height(24.dp))
+                    if (title.isNotBlank()) {
+                        Text(title, color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                        Spacer(modifier = Modifier.height(8.dp))
+                    }
+                    Text("טוען ומתחבר לזרם...", color = DIM, fontSize = 16.sp)
+                }
+            }
         }
-        LaunchedEffect(isDolbyAtmos) {
-            if (isDolbyAtmos) { showAtmosBadge.value = true; delay(4000); showAtmosBadge.value = false }
+
+        // ── Info Badges (Top Right) ──
+        var activeVideoFormat by remember { mutableStateOf<Format?>(null) }
+
+        LaunchedEffect(currentTracks) {
+            val format = currentTracks.groups
+                .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
+                .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
+                .firstOrNull { it.width > 0 && it.height > 0 }
+            if (format != null) {
+                activeVideoFormat = format
+            }
         }
+
+        val resolutionBadge = remember(activeVideoFormat) {
+            val h = activeVideoFormat?.height ?: 0
+            when {
+                h >= 2160 -> "4K UHD"
+                h >= 1080 -> "1080p"
+                h >= 720  -> "720p"
+                h > 0     -> "${h}p"
+                else      -> null
+            }
+        }
+        val hzBadge = remember(activeVideoFormat, contentFps) {
+            val fps = if (contentFps > 0f) contentFps else activeVideoFormat?.frameRate ?: 0f
+            if (fps > 0f) {
+                when {
+                    fps > 59f -> "60Hz"
+                    fps > 49f -> "50Hz"
+                    fps > 29f -> "30Hz"
+                    fps > 24f -> "25Hz"
+                    else      -> "24Hz"
+                }
+            } else null
+        }
+
+        var showInfoBadges by remember { mutableStateOf(false) }
+
+        // עצמאי לחלוטין מ-showControls - קופץ לכמה שניות בודדות כשהערכים מתעדכנים
+        LaunchedEffect(resolutionBadge, hzBadge, isDolbyVision, isDolbyAtmos) {
+            val hasData = resolutionBadge != null || hzBadge != null || isDolbyVision || isDolbyAtmos
+            if (hasData) {
+                showInfoBadges = true
+                delay(3500)
+                showInfoBadges = false
+            }
+        }
+
         Row(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 28.dp, end = 28.dp)
-                .zIndex(50f),
+            modifier = Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 32.dp).zIndex(50f),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            AnimatedVisibility(
-                visible = showDvBadge.value,
-                enter = fadeIn(),
-                exit = fadeOut(animationSpec = tween(600))
-            ) { DolbyBadge(text = "DOLBY VISION", color = DV_BLUE) }
-            AnimatedVisibility(
-                visible = showAtmosBadge.value,
-                enter = fadeIn(),
-                exit = fadeOut(animationSpec = tween(600))
-            ) { DolbyBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE) }
+            androidx.compose.animation.AnimatedVisibility(visible = showInfoBadges && resolutionBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) {
+                InfoBadge(text = resolutionBadge ?: "", color = RES_GRAY)
+            }
+            androidx.compose.animation.AnimatedVisibility(visible = showInfoBadges && hzBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) {
+                InfoBadge(text = hzBadge ?: "", color = RES_GRAY)
+            }
+            androidx.compose.animation.AnimatedVisibility(visible = showInfoBadges && isDolbyVision, enter = fadeIn(), exit = fadeOut(tween(600))) {
+                InfoBadge(text = "DOLBY VISION", color = DV_BLUE)
+            }
+            androidx.compose.animation.AnimatedVisibility(visible = showInfoBadges && isDolbyAtmos, enter = fadeIn(), exit = fadeOut(tween(600))) {
+                InfoBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
+            }
         }
 
         if (selectedAspectRatio != AspectRatioMode.NORMAL) {
             Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(top = 28.dp, start = 28.dp)
-                    .zIndex(50f)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color.Black.copy(0.7f))
-                    .padding(horizontal = 10.dp, vertical = 5.dp)
+                modifier = Modifier.align(Alignment.TopStart).padding(top = 28.dp, start = 28.dp).zIndex(50f).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(0.7f)).padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
-                androidx.compose.material3.Text(
-                    text       = "⬛ ${selectedAspectRatio.label}",
-                    color      = WHITE,
-                    fontSize   = 11.sp,
-                    fontWeight = FontWeight.ExtraBold
-                )
+                Text("⬛ ${selectedAspectRatio.label}", color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
             }
         }
 
@@ -512,17 +578,10 @@ fun PlayerScreen(
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
             LaunchedEffect(Unit) { delay(100); runCatching { resumeFR.requestFocus() } }
-            Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.75f)).zIndex(300f),
-                contentAlignment = Alignment.Center
-            ) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.75f)).zIndex(300f), Alignment.Center) {
                 Column(
-                    modifier = Modifier
-                        .width(480.dp)
-                        .background(Color(0xFF1A1A24), RoundedCornerShape(24.dp))
-                        .padding(36.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.width(480.dp).background(Color(0xFF1A1A24), RoundedCornerShape(24.dp)).padding(36.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Icon(Icons.Default.PlayArrow, null, tint = RED, modifier = Modifier.size(48.dp))
                     Text("Continue Watching?", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
@@ -543,17 +602,17 @@ fun PlayerScreen(
                         Surface(
                             onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition) },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
+                            colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
                             onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit { remove(progressKey) } },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = Color(0xFF3A3A50), contentColor = WHITE, focusedContentColor = WHITE),
+                            colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(fromStartFR)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("From Start", fontWeight = FontWeight.Bold, fontSize = 15.sp) } }
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("From Start", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                     }
                 }
             }
@@ -562,15 +621,8 @@ fun PlayerScreen(
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { delay(100); runCatching { errorFR.requestFocus() } }
-            Box(
-                modifier = Modifier.fillMaxSize().background(Color.Black.copy(0.88f)).zIndex(200f),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(20.dp),
-                    modifier = Modifier.padding(48.dp)
-                ) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.88f)).zIndex(200f), Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.padding(48.dp)) {
                     Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape), Alignment.Center) {
                         Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
                     }
@@ -580,14 +632,14 @@ fun PlayerScreen(
                     Surface(
                         onClick  = { exo.clearError(); onNavigateBack() },
                         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = Color(0xFFFF2A2A), contentColor = WHITE, focusedContentColor = WHITE),
+                        colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                         modifier = Modifier.height(52.dp).focusRequester(errorFR)
                     ) {
                         Box(Modifier.padding(horizontal = 32.dp).fillMaxHeight(), Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
-                                Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Icon(Icons.Default.ArrowBack, null, Modifier.size(18.dp))
+                                Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center)
                             }
                         }
                     }
@@ -595,18 +647,18 @@ fun PlayerScreen(
             }
         }
 
-        AnimatedVisibility(
+        // ── Main Player Controls & Popups ──
+        androidx.compose.animation.AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
             exit     = fadeOut(tween(350)),
             modifier = Modifier.fillMaxSize()
         ) {
-            Box(
-                Modifier.fillMaxSize().background(
-                    Brush.verticalGradient(listOf(CTRL_BG.copy(0.7f), Color.Transparent, Color.Transparent, CTRL_BG.copy(0.85f)))
-                )
-            ) {
-                AnimatedVisibility(
+            Box(Modifier.fillMaxSize()) {
+
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000)))))
+
+                androidx.compose.animation.AnimatedVisibility(
                     visible  = !isPlaying,
                     enter    = scaleIn(tween(120)) + fadeIn(tween(120)),
                     exit     = scaleOut(tween(100)) + fadeOut(tween(100)),
@@ -617,41 +669,50 @@ fun PlayerScreen(
                     }
                 }
 
-                Row(
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .fillMaxWidth()
-                        .padding(horizontal = 64.dp, vertical = 32.dp)
-                        .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
-                                runCatching { seekBarFR.requestFocus() }; true
-                            } else false
-                        },
-                    verticalAlignment = Alignment.CenterVertically
+                // Popup Menus (Floating exactly above the right controls)
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = activeMenu != ActiveMenu.NONE,
+                    enter = slideInVertically(initialOffsetY = { 30 }) + fadeIn(tween(200)),
+                    exit = slideOutVertically(targetOffsetY = { 30 }) + fadeOut(tween(150)),
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 120.dp, end = 48.dp).zIndex(100f)
                 ) {
-                    Surface(
-                        onClick  = { exo.pause(); onNavigateBack() },
-                        shape    = ClickableSurfaceDefaults.shape(CircleShape),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = CTRL_BG, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.1f),
-                        modifier = Modifier.size(48.dp).focusRequester(backBtnFR)
-                    ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(22.dp)) } }
-                    Spacer(Modifier.width(16.dp))
-                    if (!isPlaying) Text("Buffering...", color = DIM, fontSize = 14.sp)
+                    PlayerPopupMenu(
+                        activeMenu = activeMenu,
+                        exo = exo,
+                        state = state,
+                        selectedWebSubUrl = selectedWebSubUrl,
+                        selectedAspectRatio = selectedAspectRatio,
+                        sideMenuFR = sideMenuFR,
+                        onApplySubtitle = { url ->
+                            exo.applySubtitle(url)
+                            selectedWebSubUrl = url
+                            subtitleApplied = true
+                            pendingSubIndex = null
+                            activeMenu = ActiveMenu.NONE
+                        },
+                        onApplyAspectRatio = { mode ->
+                            selectedAspectRatio = mode
+                            activeMenu = ActiveMenu.NONE
+                        },
+                        onClose = { activeMenu = ActiveMenu.NONE }
+                    )
                 }
 
+                // Bottom Controls Row
                 Column(
-                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 64.dp, vertical = 40.dp)
+                    modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 48.dp, vertical = 28.dp),
+                    verticalArrangement = Arrangement.Bottom
                 ) {
                     PlayerProgressControls(
                         exoWrapper    = exo,
                         isPlaying     = isPlaying,
                         isRtl         = isRtl,
                         seekFR        = seekBarFR,
-                        onUpPressed   = { runCatching { backBtnFR.requestFocus() } },
-                        onDownPressed = { runCatching { firstPillFR.requestFocus() } }
+                        onUpPressed   = {},
+                        onDownPressed = { runCatching { playPauseFR.requestFocus() } }
                     )
-                    Spacer(Modifier.height(20.dp))
+
+                    Spacer(Modifier.height(16.dp))
 
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
@@ -662,151 +723,34 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            ControlPill(
-                                icon     = CustomAudioIcon,
-                                text     = "Audio",
-                                modifier = Modifier.focusRequester(firstPillFR)
-                            ) {
-                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
-                                activityTick++
+                        // Left Side: Play/Pause & Close
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            PlayerIconButton(
+                                icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                focusRequester = playPauseFR,
+                                onClick = { if (isPlaying) exo.pause() else exo.play(); activityTick++ }
+                            )
+                            PlayerIconButton(icon = Icons.Default.Close, onClick = { exo.pause(); onNavigateBack() })
+                        }
+
+                        // Right Side: Audio, Embedded Subs, Web Subs, Aspect Ratio
+                        Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                            PlayerIconButton(CustomAudioIcon, isActive = activeMenu == ActiveMenu.AUDIO) {
+                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO; activityTick++
                             }
-                            ControlPill(CustomSubtitlesIcon, "Embedded Subs") {
-                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
-                                activityTick++
+                            PlayerIconButton(CustomSubtitlesIcon, isActive = activeMenu == ActiveMenu.EMBEDDED_SUBS) {
+                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS; activityTick++
                             }
-                            ControlPill(
-                                icon = Icons.Default.Search,
-                                text = when {
-                                    state.isSubtitlesLoading           -> "Loading Subs..."
-                                    state.availableSubtitles.isEmpty() -> "Web Subs"
-                                    else -> "Web Subs (${state.availableSubtitles.size})"
-                                }
-                            ) {
+                            PlayerIconButton(CustomWebSubsIcon, isActive = activeMenu == ActiveMenu.WEB_SUBS) {
                                 if (!state.isSubtitlesLoading) {
                                     activeMenu = if (activeMenu == ActiveMenu.WEB_SUBS) ActiveMenu.NONE else ActiveMenu.WEB_SUBS
                                 }
                                 activityTick++
                             }
-                            ControlPill(
-                                icon = Icons.Default.AspectRatio,
-                                text = if (selectedAspectRatio == AspectRatioMode.NORMAL)
-                                    "Aspect Ratio"
-                                else
-                                    "AR: ${selectedAspectRatio.label}"
-                            ) {
-                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO)
-                                    ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
-                                activityTick++
+                            PlayerIconButton(Icons.Default.AspectRatio, isActive = activeMenu == ActiveMenu.ASPECT_RATIO) {
+                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO; activityTick++
                             }
                         }
-                        ControlPill(Icons.Default.Close, "Exit") { exo.pause(); onNavigateBack() }
-                    }
-                }
-            }
-        }
-
-        AnimatedVisibility(
-            visible  = activeMenu != ActiveMenu.NONE && error == null,
-            enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
-            exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
-            modifier = Modifier.fillMaxSize().zIndex(200f)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(0.7f))
-                    .clickable(remember { MutableInteractionSource() }, null) { activeMenu = ActiveMenu.NONE },
-                contentAlignment = if (isRtl) Alignment.CenterStart else Alignment.CenterEnd
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .padding(start = if (isRtl) 24.dp else 0.dp, top = 24.dp, end = if (isRtl) 0.dp else 24.dp, bottom = 24.dp)
-                        .width(460.dp)
-                        .clip(RoundedCornerShape(28.dp))
-                        .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
-                        .padding(horizontal = 36.dp, vertical = 40.dp)
-                        .clickable(remember { MutableInteractionSource() }, null) {}
-                        .onPreviewKeyEvent { ev ->
-                            if (ev.type == KeyEventType.KeyDown) {
-                                when {
-                                    ev.key == Key.Back || ev.key == Key.Escape   -> { activeMenu = ActiveMenu.NONE; true }
-                                    (!isRtl && ev.key == Key.DirectionLeft)      -> { activeMenu = ActiveMenu.NONE; true }
-                                    (isRtl  && ev.key == Key.DirectionRight)     -> { activeMenu = ActiveMenu.NONE; true }
-                                    else -> false
-                                }
-                            } else false
-                        }
-                ) {
-                    when (activeMenu) {
-                        ActiveMenu.AUDIO -> {
-                            SidePanelHeader("Audio Tracks", "Select language")
-                            TrackListUi(
-                                exo       = exo,
-                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO },
-                                trackType = C.TRACK_TYPE_AUDIO,
-                                focusReq  = sideMenuFR
-                            ) { activeMenu = ActiveMenu.NONE }
-                        }
-                        ActiveMenu.EMBEDDED_SUBS -> {
-                            SidePanelHeader("Embedded Subtitles", "From video file")
-                            TrackListUi(
-                                exo       = exo,
-                                groups    = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT },
-                                trackType = C.TRACK_TYPE_TEXT,
-                                focusReq  = sideMenuFR
-                            ) { activeMenu = ActiveMenu.NONE }
-                        }
-                        ActiveMenu.WEB_SUBS -> {
-                            SidePanelHeader(
-                                title    = "Web Subtitles",
-                                subtitle = if (state.availableSubtitles.isNotEmpty())
-                                    "${state.availableSubtitles.size} online" else ""
-                            )
-                            if (state.availableSubtitles.isEmpty()) {
-                                Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
-                                    Text(
-                                        if (state.isSubtitlesLoading) "Searching..." else "No subtitles found",
-                                        color = DIM, fontSize = 15.sp
-                                    )
-                                }
-                            } else {
-                                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.focusGroup()) {
-                                    itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
-                                        val isFirst = index == 0
-                                        val isLast  = index == state.availableSubtitles.size - 1
-                                        TrackItemCard(
-                                            title      = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
-                                            subtitle   = sub.source,
-                                            isSelected = sub.url == selectedWebSubUrl,
-                                            modifier   = Modifier
-                                                .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
-                                                .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
-                                                .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
-                                            onClick = {
-                                                exo.applySubtitle(sub.url)
-                                                selectedWebSubUrl = sub.url
-                                                subtitleApplied   = true
-                                                pendingSubIndex   = null
-                                                activeMenu        = ActiveMenu.NONE
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        ActiveMenu.ASPECT_RATIO -> {
-                            AspectRatioPanel(
-                                selected  = selectedAspectRatio,
-                                focusReq  = sideMenuFR,
-                                onSelect  = { mode ->
-                                    selectedAspectRatio = mode
-                                    activeMenu = ActiveMenu.NONE
-                                }
-                            )
-                        }
-                        ActiveMenu.NONE -> {}
                     }
                 }
             }
@@ -814,185 +758,151 @@ fun PlayerScreen(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  UI COMPONENTS
+// ═══════════════════════════════════════════════════════════════════
+
 @Composable
-private fun AspectRatioPanel(
-    selected: AspectRatioMode,
-    focusReq: FocusRequester,
-    onSelect: (AspectRatioMode) -> Unit
-) {
-    SidePanelHeader(
-        title    = "Aspect Ratio",
-        subtitle = "Current: ${selected.label}",
-        accentColor = RED
-    )
-
-    LazyColumn(
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        modifier            = Modifier.focusGroup()
-    ) {
-        itemsIndexed(AspectRatioMode.entries) { index, mode ->
-            val isFirst = index == 0
-            val isLast  = index == AspectRatioMode.entries.size - 1
-
-            AspectRatioCard(
-                mode       = mode,
-                isSelected = mode == selected,
-                modifier   = Modifier
-                    .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
-                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
-                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
-                onClick    = { onSelect(mode) }
-            )
-        }
+fun InfoBadge(text: String, color: Color) {
+    Box(Modifier.clip(RoundedCornerShape(6.dp)).background(color.copy(alpha = 0.9f)).padding(horizontal = 10.dp, vertical = 5.dp)) {
+        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp, textAlign = TextAlign.Center)
     }
 }
 
 @Composable
-private fun AspectRatioCard(
-    mode:       AspectRatioMode,
-    isSelected: Boolean,
-    modifier:   Modifier = Modifier,
-    onClick:    () -> Unit
+fun PlayerIconButton(
+    icon: ImageVector,
+    isActive: Boolean = false,
+    focusRequester: FocusRequester? = null,
+    onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val containerBg by animateColorAsState(
-        targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
-        animationSpec = tween(200),
-        label         = "bgAnim"
-    )
+
+    val bg = if (isActive) RED else if (focused) WHITE else Color.Transparent
+    val tint = if (isActive) WHITE else if (focused) Color.Black else WHITE
 
     Surface(
-        onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent, focusedContainerColor = Color.Transparent,
-            contentColor   = WHITE,             focusedContentColor   = WHITE
-        ),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
-        modifier = modifier.fillMaxWidth().height(64.dp).onFocusChanged { focused = it.isFocused }
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(CircleShape),
+        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+        border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+        modifier = Modifier.size(44.dp).onFocusChanged { focused = it.isFocused }.then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
     ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(containerBg, RoundedCornerShape(16.dp))
-                .padding(horizontal = 20.dp)
-        ) {
-            Row(
-                modifier              = Modifier.fillMaxSize(),
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                    AspectRatioPreviewBox(mode, if (focused) RED else Color.Gray)
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp)) }
+    }
+}
 
-                    Spacer(Modifier.width(16.dp))
+@Composable
+fun PlayerPopupMenu(
+    activeMenu: ActiveMenu,
+    exo: ExoPlayerWrapper,
+    state: PlayerUiState,
+    selectedWebSubUrl: String?,
+    selectedAspectRatio: AspectRatioMode,
+    sideMenuFR: FocusRequester,
+    onApplySubtitle: (String) -> Unit,
+    onApplyAspectRatio: (AspectRatioMode) -> Unit,
+    onClose: () -> Unit
+) {
+    LaunchedEffect(activeMenu) {
+        delay(50)
+        runCatching { sideMenuFR.requestFocus() }
+    }
 
-                    Column {
-                        Text(
-                            text       = mode.label,
-                            color      = WHITE,
-                            fontSize   = 16.sp,
-                            fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold,
-                            maxLines   = 1,
-                            overflow   = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text     = mode.description,
-                            color    = DIM,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+    Box(
+        Modifier
+            .width(320.dp)
+            .heightIn(max = 350.dp)
+            .background(POPUP_BG, RoundedCornerShape(12.dp))
+            .border(1.dp, Color(0xFF2A2A2A), RoundedCornerShape(12.dp))
+            .padding(vertical = 16.dp, horizontal = 12.dp)
+            .focusGroup()
+            .focusProperties {
+                left = FocusRequester.Cancel
+                right = FocusRequester.Cancel
+            }
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyDown) {
+                    if (ev.key == Key.Back || ev.key == Key.Escape || ev.key == Key.DirectionLeft || ev.key == Key.DirectionRight) {
+                        onClose()
+                        true
+                    } else false
+                } else false
+            }
+    ) {
+        when (activeMenu) {
+            ActiveMenu.AUDIO -> {
+                Column {
+                    Text("Audio Tracks", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    TrackListUi(exo = exo, groups = exo.currentTracks.value.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, trackType = C.TRACK_TYPE_AUDIO, focusReq = sideMenuFR, onClose = onClose)
+                }
+            }
+            ActiveMenu.EMBEDDED_SUBS -> {
+                Column {
+                    Text("Subtitles", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    TrackListUi(exo = exo, groups = exo.currentTracks.value.groups.filter { it.type == C.TRACK_TYPE_TEXT }, trackType = C.TRACK_TYPE_TEXT, focusReq = sideMenuFR, onClose = onClose)
+                }
+            }
+            ActiveMenu.WEB_SUBS -> {
+                Column {
+                    Text("Web Subtitles", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    if (state.availableSubtitles.isEmpty()) {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), Alignment.Center) {
+                            Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.focusGroup().focusProperties { left = FocusRequester.Cancel; right = FocusRequester.Cancel }
+                        ) {
+                            itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
+                                val isFirst = index == 0
+                                val isLast  = index == state.availableSubtitles.size - 1
+                                TrackItemCard(
+                                    title = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
+                                    subtitle = sub.source,
+                                    isSelected = sub.url == selectedWebSubUrl,
+                                    modifier = Modifier
+                                        .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
+                                        .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                                        .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                                    onClick = { onApplySubtitle(sub.url) }
+                                )
+                            }
+                        }
                     }
                 }
-
-                if (isSelected) {
-                    Spacer(Modifier.width(12.dp))
-                    Icon(
-                        Icons.Default.CheckCircle,
-                        contentDescription = null,
-                        tint     = Color(0xFF4D90FE),
-                        modifier = Modifier.size(18.dp)
-                    )
+            }
+            ActiveMenu.ASPECT_RATIO -> {
+                Column {
+                    Text("Aspect Ratio", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    LazyColumn(
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.focusGroup().focusProperties { left = FocusRequester.Cancel; right = FocusRequester.Cancel }
+                    ) {
+                        itemsIndexed(AspectRatioMode.entries) { index, mode ->
+                            val isFirst = index == 0
+                            val isLast  = index == AspectRatioMode.entries.size - 1
+                            TrackItemCard(
+                                title = mode.label, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
+                                modifier = Modifier
+                                    .then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier)
+                                    .then(if (isFirst) Modifier.focusProperties { up = FocusRequester.Cancel } else Modifier)
+                                    .then(if (isLast)  Modifier.focusProperties { down = FocusRequester.Cancel } else Modifier),
+                                onClick = { onApplyAspectRatio(mode) }
+                            )
+                        }
+                    }
                 }
             }
+            ActiveMenu.NONE -> {}
         }
     }
 }
 
 @Composable
-private fun AspectRatioPreviewBox(mode: AspectRatioMode, color: Color) {
-    val (w, h) = when (mode) {
-        AspectRatioMode.NORMAL,
-        AspectRatioMode.ZOOM,
-        AspectRatioMode.STRETCH,
-        AspectRatioMode.RATIO_16_9 -> 28.dp to 16.dp
-        AspectRatioMode.RATIO_4_3  -> 22.dp to 16.dp
-        AspectRatioMode.RATIO_21_9 -> 36.dp to 16.dp
-    }
-
-    val vectorIcon = when (mode) {
-        AspectRatioMode.ZOOM    -> Icons.Default.ZoomIn
-        AspectRatioMode.STRETCH -> Icons.Default.OpenInFull
-        else                    -> null
-    }
-
-    Box(
-        modifier = Modifier
-            .width(w)
-            .height(h)
-            .border(2.dp, color.copy(alpha = 0.8f), RoundedCornerShape(2.dp)),
-        contentAlignment = Alignment.Center
-    ) {
-        if (vectorIcon != null) {
-            Icon(
-                imageVector = vectorIcon,
-                contentDescription = null,
-                tint = color,
-                modifier = Modifier.size(12.dp)
-            )
-        }
-    }
-}
-
-@Composable
-private fun DolbyBadge(text: String, color: Color) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(6.dp))
-            .background(color.copy(alpha = 0.85f))
-            .padding(horizontal = 10.dp, vertical = 5.dp)
-    ) {
-        Text(text, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 0.8.sp)
-    }
-}
-
-@Composable
-private fun SidePanelHeader(
-    title:       String,
-    subtitle:    String,
-    accentColor: Color = RED
-) {
-    Column {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(4.dp).height(36.dp).background(accentColor, RoundedCornerShape(2.dp)))
-            Spacer(Modifier.width(14.dp))
-            Column {
-                Text(title,    color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black)
-                if (subtitle.isNotEmpty()) Text(subtitle, color = DIM, fontSize = 13.sp)
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(
-            Brush.horizontalGradient(listOf(accentColor.copy(0.6f), Color(0x08FFFFFF)))
-        ))
-        Spacer(Modifier.height(20.dp))
-    }
-}
-
-@Composable
-private fun TrackListUi(
+fun TrackListUi(
     exo:       ExoPlayerWrapper,
     groups:    List<androidx.media3.common.Tracks.Group>,
     trackType: Int,
@@ -1003,7 +913,7 @@ private fun TrackListUi(
         val list = mutableListOf<Triple<androidx.media3.common.Tracks.Group?, Int, String>>()
         if (trackType == C.TRACK_TYPE_TEXT) {
             val isOff = groups.none { it.isSelected }
-            list.add(Triple(null, -1, if (isOff) "✅ Turn Off" else "Turn Off"))
+            list.add(Triple(null, -1, if (isOff) "Turn Off" else "Turn Off"))
         }
         groups.forEach { group ->
             for (i in 0 until group.length) {
@@ -1013,30 +923,34 @@ private fun TrackListUi(
                 val channels = if (format.channelCount > 0) "${format.channelCount}Ch" else ""
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
                 val dolbyTag = when (format.sampleMimeType) {
-                    "audio/eac3-joc"    -> "🎵 ATMOS"
-                    "video/dolby-vision"-> "🎬 DV"
+                    "audio/eac3-joc"    -> "ATMOS"
+                    "video/dolby-vision"-> "DV"
                     else -> ""
                 }
-                val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag)
-                    .filter { it.isNotBlank() }.joinToString(" • ")
+                val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag).filter { it.isNotBlank() }.joinToString(" • ")
                 list.add(Triple(group, i, name))
             }
         }
         list
     }
+
     if (trackList.isEmpty()) {
-        Box(Modifier.fillMaxWidth().padding(vertical = 32.dp), Alignment.Center) {
-            Text("No tracks available", color = DIM, fontSize = 15.sp)
+        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp).focusRequester(focusReq).focusable(), Alignment.Center) {
+            Text("No tracks available", color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
         }
     } else {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.focusGroup()) {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+            modifier = Modifier.focusGroup().focusProperties { left = FocusRequester.Cancel; right = FocusRequester.Cancel }
+        ) {
             itemsIndexed(trackList) { index, (group, trackIndex, name) ->
                 val isFirst    = index == 0
                 val isLast     = index == trackList.size - 1
-                val isSelected = group?.isTrackSelected(trackIndex) ?: (trackType == C.TRACK_TYPE_TEXT && name.contains("✅"))
+                val isSelected = group?.isTrackSelected(trackIndex) ?: (trackType == C.TRACK_TYPE_TEXT && name.contains("Turn Off") && groups.none { it.isSelected })
+
                 TrackItemCard(
-                    title      = name.replace("✅ ", ""),
-                    subtitle   = if (group == null) "Disable" else "Internal",
+                    title      = name,
+                    subtitle   = if (group == null) "" else "Internal",
                     isSelected = isSelected,
                     modifier   = Modifier
                         .then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier)
@@ -1045,9 +959,8 @@ private fun TrackListUi(
                     onClick = {
                         val builder = exo.player.trackSelectionParameters.buildUpon()
                         builder.clearOverridesOfType(trackType)
-                        if (group == null) {
-                            builder.setTrackTypeDisabled(trackType, true)
-                        } else {
+                        if (group == null) builder.setTrackTypeDisabled(trackType, true)
+                        else {
                             builder.setTrackTypeDisabled(trackType, false)
                             builder.setOverrideForType(TrackSelectionOverride(group.mediaTrackGroup, trackIndex))
                         }
@@ -1061,7 +974,7 @@ private fun TrackListUi(
 }
 
 @Composable
-private fun TrackItemCard(
+fun TrackItemCard(
     title:      String,
     subtitle:   String,
     isSelected: Boolean,
@@ -1069,42 +982,27 @@ private fun TrackItemCard(
     onClick:    () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val containerBg by animateColorAsState(
-        targetValue   = if (focused) Color(0xFF282832) else Color(0x0CFFFFFF),
-        animationSpec = tween(200), label = "bgAnim"
-    )
+    val containerBg by animateColorAsState(targetValue = if (focused) RED else Color.Transparent, animationSpec = tween(150), label = "bgAnim")
+
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent, contentColor = WHITE, focusedContentColor = WHITE),
-        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
-        modifier = modifier.fillMaxWidth().height(64.dp).onFocusChanged { focused = it.isFocused }
+        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        modifier = modifier.fillMaxWidth().height(48.dp).onFocusChanged { focused = it.isFocused }
     ) {
-        Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(16.dp)).padding(horizontal = 20.dp)) {
+        Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp)) {
             Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(text = title, color = WHITE, fontSize = 16.sp, fontWeight = if (isSelected) FontWeight.Black else FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.fillMaxWidth(0.7f))
-                    if (isSelected) {
-                        Spacer(Modifier.width(12.dp))
-                        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF4D90FE), modifier = Modifier.size(18.dp))
-                    }
+                Column(Modifier.weight(1f)) {
+                    Text(text = title, color = WHITE, fontSize = 15.sp, fontWeight = if (focused || isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+                    if (subtitle.isNotEmpty()) Text(text = subtitle, color = if (focused) WHITE.copy(0.7f) else Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Start)
                 }
-                PremiumBadge(subtitle, if (focused) RED else Color.Gray, isOutline = !focused)
+                if (isSelected) {
+                    Spacer(Modifier.width(8.dp))
+                    Icon(Icons.Default.Check, null, tint = if (focused) WHITE else RED, modifier = Modifier.size(20.dp))
+                }
             }
         }
-    }
-}
-
-@Composable
-private fun PremiumBadge(text: String, color: Color, isOutline: Boolean = false) {
-    Box(
-        Modifier.clip(RoundedCornerShape(6.dp))
-            .background(if (isOutline) Color.Transparent else color.copy(alpha = 0.25f))
-            .border(1.dp, if (isOutline) color.copy(alpha = 0.4f) else Color.Transparent, RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Text(text.uppercase(), color = if (isOutline) color else WHITE, fontWeight = FontWeight.ExtraBold, fontSize = 10.sp, letterSpacing = 0.5.sp)
     }
 }
 
@@ -1143,21 +1041,12 @@ fun PlayerProgressControls(
 
     val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
     val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp, label = "bh")
-    val thumbSize by animateDpAsState(if (seekFocused) 18.dp else 0.dp,  label = "ts")
+    val thumbSize by animateDpAsState(if (seekFocused) 20.dp else 0.dp,  label = "ts")
 
-    Column {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text("-${formatTime((videoDuration - currentPosition).coerceAtLeast(0L))}", color = DIM, fontSize = 13.sp)
-            Text(formatTime(videoDuration), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.height(10.dp))
+    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.Start)
         Box(
-            modifier = Modifier
-                .fillMaxWidth().height(28.dp)
-                .focusRequester(seekFR)
-                .focusable()
-                .onFocusChanged { seekFocused = it.isFocused }
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp).height(32.dp).focusRequester(seekFR).focusable().onFocusChanged { seekFocused = it.isFocused }
                 .onKeyEvent { ev ->
                     if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                     when (ev.nativeKeyEvent.keyCode) {
@@ -1171,9 +1060,7 @@ fun PlayerProgressControls(
                             val p = (exoWrapper.player.currentPosition + d).coerceIn(0L, videoDuration)
                             exoWrapper.seekTo(p); currentPosition = p; true
                         }
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                            if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true
-                        }
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true }
                         KeyEvent.KEYCODE_DPAD_UP   -> { onUpPressed();   true }
                         KeyEvent.KEYCODE_DPAD_DOWN -> { onDownPressed(); true }
                         else -> false
@@ -1181,53 +1068,15 @@ fun PlayerProgressControls(
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(WHITE.copy(if (seekFocused) 0.25f else 0.18f)))
-            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) WHITE else RED))
+            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(WHITE.copy(if (seekFocused) 0.35f else 0.25f)))
+            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) RED else RED.copy(0.8f)))
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
-                    Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE))
+                    Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE).shadow(4.dp, CircleShape))
                 }
             }
         }
-    }
-}
-
-@Composable
-fun ControlPill(
-    icon:        ImageVector,
-    text:        String,
-    modifier:    Modifier = Modifier,
-    accentColor: Color?   = null,
-    onClick:     () -> Unit
-) {
-    val highlightColor = accentColor ?: RED
-    Surface(
-        onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(
-            containerColor        = if (accentColor != null) highlightColor.copy(0.18f) else Color(0x55000000),
-            focusedContainerColor = highlightColor,
-            contentColor          = if (accentColor != null) highlightColor else WHITE,
-            focusedContentColor   = WHITE
-        ),
-        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
-        border = ClickableSurfaceDefaults.border(
-            border = if (accentColor != null)
-                Border(
-                    androidx.compose.foundation.BorderStroke(1.dp, highlightColor.copy(0.55f)),
-                    shape = RoundedCornerShape(50)
-                )
-            else Border.None,
-            focusedBorder = Border.None
-        ),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(highlightColor.copy(0.5f), 16.dp)),
-        modifier = modifier
-    ) {
-        Row(modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, null, Modifier.size(20.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(text, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-        }
+        Text(formatTime(videoDuration - currentPosition), color = DIM, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.End)
     }
 }
 
