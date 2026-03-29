@@ -207,24 +207,30 @@ fun HomeScreen(
     navController: NavController,
     onMovieClick:  (String) -> Unit
 ) {
-    val rows: List<RowDef> = remember(
-        state.selectedTab, state.selectedStudioFilter,
-        state.movieTrending, state.movieHBO, state.tvTrending,
-        state.movieNetflix, state.movieAmazon, state.moviePremieres,
-        state.tvAppleTV, state.movieParamount, state.movieHulu,
-        state.movieAppleTV, state.movieDisney, state.movieAction,
-        state.movieDrama, state.movieScifi, state.movieTopRated,
-        state.tvHBO, state.tvAmazon, state.tvParamount, state.tvHulu,
-        state.tvNetflix, state.tvDisney, state.tvPremieres,
-        state.tvDrama, state.tvCrime, state.tvScifi, state.tvTopRated,
-        // Fuzer:
-        state.fuzerMovies, state.fuzerSeries, state.fuzerMoviesHD,
-        state.fuzerSeriesHD, state.fuzerMovies4K, state.fuzerSeries4K,
-        state.fuzerDubbedMovies, state.fuzerDubbedSeries
-    ) {
-        val filter = state.selectedStudioFilter
-        when (state.selectedTab) {
-            "ראשי" -> buildList {
+    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
+
+    var currentTab by remember { mutableStateOf(state.selectedTab) }
+    var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }
+    var contentAlpha by remember { mutableStateOf(1f) }
+
+    LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
+        if (currentTab != state.selectedTab || currentFilter != state.selectedStudioFilter) {
+            contentAlpha = 0f
+            // נותנים לאנימציית המעבר (300ms) להסתיים לחלוטין כדי לא לתקוע את ה-UI Thread!
+            delay(300)
+            currentTab = state.selectedTab
+            currentFilter = state.selectedStudioFilter
+            focusState.currentRowIndex = 0
+            // נותנים לקומפוז כמה פריימים לבנות את ה-DOM החדש בשקט
+            delay(30)
+            contentAlpha = 1f
+        }
+    }
+
+    val rows: List<RowDef> = buildList {
+        val filter = currentFilter
+        when (currentTab) {
+            "ראשי" -> {
                 if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", "Trending Movies",       state.movieTrending))
                 if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,         state.movieHBO))
                 if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",    "Popular Shows",         state.tvTrending))
@@ -233,7 +239,7 @@ fun HomeScreen(
                 if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres","New in Theaters",       state.moviePremieres))
                 if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio("tvAppleTV",      StudioBrand.APPLE_TV,    state.tvAppleTV))
             }
-            "סרטים" -> buildList {
+            "סרטים" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,       state.movieHBO))
                 if (filter == null || filter == "AMAZON")    if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    state.movieAmazon))
@@ -251,7 +257,7 @@ fun HomeScreen(
                     if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  "Top Rated",          state.movieTopRated))
                 }
             }
-            "סדרות" -> buildList {
+            "סדרות" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.tvHBO.isNotEmpty())       add(RowDef.Studio("tvHBO",       StudioBrand.HBO,       state.tvHBO))
                 if (filter == null || filter == "AMAZON")    if (state.tvAmazon.isNotEmpty())    add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    state.tvAmazon))
@@ -269,7 +275,7 @@ fun HomeScreen(
                     if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  "Top Rated Shows",   state.tvTopRated))
                 }
             }
-            "Fuzer" -> buildList {
+            "Fuzer" -> {
                 val newContent = (state.fuzerMovies + state.fuzerSeries)
                     .sortedByDescending { it.id }
                 if (newContent.isNotEmpty())
@@ -293,11 +299,8 @@ fun HomeScreen(
                 if (state.fuzerDubbedSeries.isNotEmpty())
                     add(RowDef.Regular("fuzer_ds",   "🎤 סדרות מדובבות",      state.fuzerDubbedSeries))
             }
-            else -> emptyList()
         }
     }
-
-    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
 
     fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) {
         is RowDef.StudioRibbon -> 110.dp
@@ -327,11 +330,26 @@ fun HomeScreen(
 
     LaunchedEffect(state.isLoading, rows.size) {
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) {
-            focusState.heroMovie = when (val r = rows[0]) {
-                is RowDef.Regular      -> r.movies.firstOrNull()
-                is RowDef.Studio       -> r.movies.firstOrNull()
-                is RowDef.StudioRibbon -> null
-            }
+            focusState.heroMovie = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r ->
+                when (r) {
+                    is RowDef.Regular -> r.movies
+                    is RowDef.Studio  -> r.movies
+                    else -> null
+                }
+            }?.firstOrNull()
+        }
+    }
+
+    LaunchedEffect(rows) {
+        if (focusState.isNavFocused || focusState.heroMovie == null) {
+            val m = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r ->
+                when (r) {
+                    is RowDef.Regular -> r.movies
+                    is RowDef.Studio  -> r.movies
+                    else -> null
+                }
+            }?.firstOrNull()
+            if (m != null) focusState.heroMovie = m
         }
     }
 
@@ -349,9 +367,10 @@ fun HomeScreen(
 
         ContentLayer(
             rows                = rows,
+            contentAlpha        = contentAlpha,
             focusState          = focusState,
             activeTab           = state.selectedTab,
-            activeFilter        = state.selectedStudioFilter,
+            activeFilter        = currentFilter,
             panelH              = panelH,
             rowHeightFor        = { i -> rowHeightFor(i) },
             onMovieClick        = onMovieClick,
@@ -486,20 +505,24 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun ContentLayer(
-    rows: List<RowDef>, focusState: HomeFocusState, activeTab: String,
-    activeFilter: String?,
+    rows: List<RowDef>, contentAlpha: Float,
+    focusState: HomeFocusState, activeTab: String, activeFilter: String?,
     panelH: Dp, rowHeightFor: (Int) -> Dp,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
-    onStudioFilterClick: (String?) -> Unit,
-    onLoadMore: (String) -> Unit,
-    onSearch: () -> Unit,
-    onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
+    onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
+    onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit, onFuzer: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit
 ) {
     val firstNavFR   = remember { FocusRequester() }
     val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
     var initialFocusDone by remember { mutableStateOf(false) }
+
+    val animatedContentAlpha by animateFloatAsState(
+        targetValue   = contentAlpha,
+        animationSpec = tween(250, easing = LinearEasing),
+        label         = "contentAlpha"
+    )
 
     LaunchedEffect(Unit) {
         delay(150)
@@ -588,6 +611,7 @@ private fun ContentLayer(
                 .fillMaxWidth()
                 .height(panelH)
                 .align(Alignment.BottomStart)
+                .graphicsLayer { alpha = animatedContentAlpha }
         ) {
             RowsPanel(
                 rows                = rows,
@@ -631,8 +655,9 @@ private fun TwoRowNavBar(
     val targetX     = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
-    val animatedX     by animateDpAsState(targetValue = targetX,     animationSpec = tween(350, easing = FastOutSlowInEasing), label = "pillX")
-    val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(350, easing = FastOutSlowInEasing), label = "pillW")
+    // הופחת ל-300 מילישניות כדי להשתלב טוב יותר עם ההמתנה
+    val animatedX     by animateDpAsState(targetValue = targetX,     animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillX")
+    val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillW")
 
     Column(modifier = modifier.onFocusChanged { if (it.hasFocus) onNavFocus() }) {
         Row(
@@ -815,7 +840,7 @@ private fun RowsPanel(
                             .fillMaxWidth()
                             .height(rh)
                             .offset(y = yOffset)
-                            .alpha(animatedAlpha)
+                            .graphicsLayer { alpha = animatedAlpha } // Optimized from .alpha()
                     ) {
                         val cardFR = rowFRs.getOrNull(i)
                         val onFocus: (Movie) -> Unit = { m ->

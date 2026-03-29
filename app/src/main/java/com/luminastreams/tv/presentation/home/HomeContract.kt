@@ -71,18 +71,12 @@ data class HomeState(
  * Each entry maps a human-readable name to the numeric cat ID on fuzer.xyz.
  */
 object FuzerCats {
-    const val MOVIES         = 1
-    const val SERIES         = 2
-    const val MOVIES_HD      = 41
-    const val SERIES_HD      = 42
-    const val MOVIES_4K      = 65
-    const val SERIES_4K      = 66
-    const val DUBBED_MOVIES  = 83
-    const val DUBBED_SERIES  = 84
-    const val ANIMATION      = 14
-    const val DOCUMENTARY    = 33
-    const val KIDS           = 31
-    const val ISRAELI        = 49
-    const val FOREIGN        = 6
-    const val SPORTS         = 54
+    const val MOVIES         = 2
+    const val SERIES         = 1
+    const val MOVIES_HD      = 42
+    const val SERIES_HD      = 41
+    const val MOVIES_4K      = 66
+    const val SERIES_4K      = 65
+    const val DUBBED_MOVIES  = 84
+    const val DUBBED_SERIES  = 83
 }
