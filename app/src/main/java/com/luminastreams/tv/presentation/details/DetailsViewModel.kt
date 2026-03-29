@@ -27,6 +27,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
+import okhttp3.OkHttpClient
+import java.util.concurrent.TimeUnit
 
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(
@@ -55,8 +57,14 @@ class DetailsViewModel(
     private val rdManager        = RealDebridManager()
     private val watchlistManager = WatchlistManager(appContext)
 
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder()
         .baseUrl("https://torrentio.strem.fun/")
+        .client(okHttpClient) // <--- אומרים ל-Retrofit להשתמש בלקוח עם הזמן הארוך
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(DynamicTorrentioApi::class.java)
@@ -160,6 +168,10 @@ class DetailsViewModel(
                 val isSaved         = watchlistManager.isInWatchlist("movie_$id")
                 val qualityHint     = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
 
+                // שליפת הלוגו
+                val logoPath = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
+                val fullLogoUrl = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
+
                 _state.update {
                     it.copy(
                         isLoadingData  = false,
@@ -171,7 +183,7 @@ class DetailsViewModel(
                             overview       = dto.overview ?: "",
                             posterUrl      = posterUrl(dto.posterPath),
                             backdropUrl    = backdropUrl(dto.backdropPath),
-                            logoUrl        = null,
+                            logoUrl        = fullLogoUrl, // <--- עודכן כאן!
                             isSeries       = false,
                             releaseDate    = dto.releaseDate?.take(4) ?: "",
                             runtimeMinutes = dto.runtime ?: 0,
@@ -210,6 +222,10 @@ class DetailsViewModel(
                 val trailerUrl      = fetchRealTrailer(scrapeId, "series")
                 val isSaved         = watchlistManager.isInWatchlist("tv_$id")
 
+                // שליפת הלוגו
+                val logoPath = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
+                val fullLogoUrl = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
+
                 _state.update {
                     it.copy(
                         isLoadingData  = false,
@@ -221,7 +237,7 @@ class DetailsViewModel(
                             overview       = dto.overview ?: "",
                             posterUrl      = posterUrl(dto.posterPath),
                             backdropUrl    = backdropUrl(dto.backdropPath),
-                            logoUrl        = null,
+                            logoUrl        = fullLogoUrl, // <--- עודכן כאן!
                             isSeries       = true,
                             releaseDate    = dto.firstAirDate?.take(4) ?: "",
                             tmdbRating     = dto.voteAverage.toDouble(),
@@ -364,6 +380,8 @@ class DetailsViewModel(
             try {
                 val url  = URL("https://api.themoviedb.org/3/$tmdbType/$tmdbId/external_ids?api_key=${Constants.TMDB_API_KEY}")
                 val conn = url.openConnection() as HttpURLConnection
+                conn.connectTimeout = 5000 // <--- הוספנו 5 שניות חיבור
+                conn.readTimeout = 5000    // <--- הוספנו 5 שניות קריאה
                 if (conn.responseCode == 200) {
                     val imdb = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                         .optString("imdb_id", "")

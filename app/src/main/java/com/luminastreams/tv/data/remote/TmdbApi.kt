@@ -10,9 +10,10 @@ import retrofit2.http.*
  * שינויים מהגרסה הקודמת:
  * 1. הוסרו TorrentioResponse ו-TorrentioStream (מוגדרים ב-DetailsViewModel)
  * 2. נוספו GenreDto, ProductionCompanyDto, NetworkDto
- * 3. TmdbMovieDetailsDto קיבל genres + productionCompanies
- * 4. TmdbTvDetailsDto קיבל genres + networks
+ * 3. TmdbMovieDetailsDto קיבל genres + productionCompanies + images
+ * 4. TmdbTvDetailsDto קיבל genres + networks + images
  * 5. תוקן progress ב-RdTorrentInfoResponse ל-Double כדי למנוע קריסות
+ * 6. נוספו מודלים לשליפת לוגואים (ImagesDto, LogoDto)
  *
  * Path: app/src/main/java/com/luminastreams/tv/data/api/TmdbApi.kt
  */
@@ -36,6 +37,16 @@ data class NetworkDto(
     val id: Int,
     val name: String,
     @SerializedName("logo_path") val logoPath: String?
+)
+
+// ── Images & Logos ────────────────────────────────────────────────────────────
+data class ImagesDto(
+    val logos: List<LogoDto>?
+)
+
+data class LogoDto(
+    @SerializedName("file_path") val filePath: String,
+    @SerializedName("iso_639_1") val lang: String?
 )
 
 // ── TMDB Generic response ─────────────────────────────────────────────────────
@@ -71,7 +82,9 @@ data class TmdbMovieDetailsDto(
     /** חברות הפקה */
     @SerializedName("production_companies") val productionCompanies: List<ProductionCompanyDto>?,
     val credits: CreditsDto?,
-    val external_ids: ExternalIdsDto?
+    val external_ids: ExternalIdsDto?,
+    /** תמונות (כולל לוגואים) */
+    val images: ImagesDto?
 )
 
 // ── TV Details ────────────────────────────────────────────────────────────────
@@ -90,7 +103,9 @@ data class TmdbTvDetailsDto(
     /** רשת שידור (Netflix / HBO / וכו') */
     val networks: List<NetworkDto>?,
     val credits: CreditsDto?,
-    val external_ids: ExternalIdsDto?
+    val external_ids: ExternalIdsDto?,
+    /** תמונות (כולל לוגואים) */
+    val images: ImagesDto?
 )
 
 // ── Credits ───────────────────────────────────────────────────────────────────
@@ -120,7 +135,7 @@ data class RdTorrentInfoResponse(
     val id: String,
     val filename: String,
     val status: String,
-    val progress: Double, // <--- התיקון: שונה ל-Double כדי שלא יקרוס כש-RD מחזיר שברים עשרוניים
+    val progress: Double,
     val links: List<String>,
     val files: List<RdTorrentFile>
 )
@@ -170,7 +185,7 @@ interface TmdbApi {
         @Path("movie_id")          movieId:  String,
         @Query("api_key")          apiKey:   String,
         @Query("language")         language: String = "en-US",
-        @Query("append_to_response") append: String = "credits,videos,external_ids"
+        @Query("append_to_response") append: String = "credits,videos,external_ids,images"
     ): TmdbMovieDetailsDto
 
     @GET("tv/{tv_id}")
@@ -178,7 +193,7 @@ interface TmdbApi {
         @Path("tv_id")               seriesId: String,
         @Query("api_key")            apiKey:   String,
         @Query("language")           language: String = "en-US",
-        @Query("append_to_response") append:   String = "credits,videos,external_ids"
+        @Query("append_to_response") append:   String = "credits,videos,external_ids,images"
     ): TmdbTvDetailsDto
 
     @GET("discover/{type}")

@@ -211,6 +211,7 @@ fun PlayerScreen(
     imdbId:         String,
     title:          String = "",
     backdropUrl:    String = "",
+    logoUrl:        String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {
@@ -490,10 +491,23 @@ fun PlayerScreen(
                 ) {
                     com.luminastreams.tv.ui.components.LoadingIndicator()
                     Spacer(modifier = Modifier.height(24.dp))
-                    if (title.isNotBlank()) {
+
+                    // מציג לוגו אם קיים, אחרת מציג את טקסט הכותרת כגיבוי
+                    if (logoUrl.isNotBlank()) {
+                        coil.compose.AsyncImage(
+                            model = logoUrl,
+                            contentDescription = title,
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                            modifier = Modifier
+                                .widthIn(max = 400.dp) // מגביל את רוחב הלוגו שלא יהיה ענק
+                                .heightIn(max = 140.dp) // מגביל את גובה הלוגו
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                    } else if (title.isNotBlank()) {
                         Text(title, color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
+
                     Text("טוען ומתחבר לזרם...", color = DIM, fontSize = 16.sp)
                 }
             }
