@@ -38,6 +38,7 @@ import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
@@ -244,7 +245,7 @@ private fun seederColor(seeders: Int) = when {
 fun DetailsScreen(
     state: DetailsScreenState,
     onEvent: (DetailsEvent) -> Unit,
-    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String, logoUrl: String) -> Unit, // <--- הוספנו פה
+    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String, logoUrl: String) -> Unit,
     onNavigateBack: () -> Unit = {},
     onRecommendationClick: (String) -> Unit
 ){
@@ -283,10 +284,6 @@ fun DetailsScreen(
     val playFR         = remember { FocusRequester() }
     val backBtnFR      = remember { FocusRequester() }
     val firstSourceFR  = remember { FocusRequester() }
-    val firstSeasonFR  = remember { FocusRequester() }
-    val firstEpisodeFR = remember { FocusRequester() }
-    val firstCastFR    = remember { FocusRequester() }
-    val firstRecFR     = remember { FocusRequester() }
 
     val scrollState   = rememberLazyListState()
     var showSources   by remember { mutableStateOf(false) }
@@ -372,7 +369,12 @@ fun DetailsScreen(
                         colors   = ClickableSurfaceDefaults.colors(containerColor = GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
                         scale    = ClickableSurfaceDefaults.scale(1.1f),
                         modifier = Modifier.align(Alignment.TopEnd).padding(end = 48.dp).size(48.dp)
-                            .focusRequester(backBtnFR).focusProperties { down = playFR; left = playFR; right = playFR }
+                            .focusRequester(backBtnFR).focusProperties {
+                                // מגן מפני קריסה אם כפתור ה-Play לא קיים!
+                                if (!state.isFuzerDirect) {
+                                    down = playFR; left = playFR; right = playFR
+                                }
+                            }
                     ) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
                             Icon(if (isRtl) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack, "Back", Modifier.size(24.dp))
@@ -520,7 +522,7 @@ fun DetailsScreen(
 
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(bottom = 14.dp)
+                            modifier = Modifier.padding(bottom = 14.dp).lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(56.dp)) }
 
@@ -533,13 +535,7 @@ fun DetailsScreen(
                                     colors   = ClickableSurfaceDefaults.colors(containerColor = if (sel) BR else GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
                                     scale    = ClickableSurfaceDefaults.scale(1.05f),
                                     border   = ClickableSurfaceDefaults.border(border = if (sel) Border.None else Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
-                                    modifier = Modifier
-                                        .then(if (idx == 0) Modifier.focusRequester(firstSeasonFR) else Modifier)
-                                        .focusProperties {
-                                            if (state.episodes.isNotEmpty()) down = firstEpisodeFR
-                                            else if (media.cast.isNotEmpty()) down = firstCastFR
-                                            else if (media.recommendations.isNotEmpty()) down = firstRecFR
-                                        }
+                                    modifier = Modifier // Removed forced focus properties!
                                 ) {
                                     Text("Season $n", fontWeight = if (sel) FontWeight.Black else FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                                 }
@@ -552,7 +548,8 @@ fun DetailsScreen(
                             Box(Modifier.fillMaxWidth().height(145.dp), Alignment.Center) { LoadingIndicator() }
                         } else if (state.episodes.isNotEmpty()) {
                             LazyRow(
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                modifier = Modifier.lockFocusEdges()
                             ) {
                                 item { Spacer(modifier = Modifier.width(50.dp)) }
 
@@ -561,14 +558,7 @@ fun DetailsScreen(
                                     EpisodeCard(
                                         episode = ep,
                                         fallbackImageUrl = fallbackImage,
-                                        modifier = Modifier
-                                            .then(if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier)
-                                            .focusProperties {
-                                                if (media.totalSeasons > 0) up = firstSeasonFR
-
-                                                if (media.cast.isNotEmpty()) down = firstCastFR
-                                                else if (media.recommendations.isNotEmpty()) down = firstRecFR
-                                            },
+                                        modifier = Modifier, // Removed forced focus properties!
                                         onClick = {
                                             currentScrapeSeason = ep.seasonNumber
                                             currentScrapeEpisode = ep.episodeNumber
@@ -593,21 +583,15 @@ fun DetailsScreen(
                         Spacer(Modifier.height(16.dp))
 
                         LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(18.dp)
+                            horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            modifier = Modifier.lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(46.dp)) }
 
                             itemsIndexed(media.cast) { idx, a ->
                                 CastMemberCard(
                                     actor = a,
-                                    modifier = Modifier
-                                        .then(if (idx == 0) Modifier.focusRequester(firstCastFR) else Modifier)
-                                        .focusProperties {
-                                            if (state.episodes.isNotEmpty()) up = firstEpisodeFR
-                                            else if (media.totalSeasons > 0) up = firstSeasonFR
-
-                                            if (media.recommendations.isNotEmpty()) down = firstRecFR
-                                        }
+                                    modifier = Modifier // Removed forced focus properties!
                                 )
                             }
 
@@ -625,7 +609,8 @@ fun DetailsScreen(
                         Spacer(Modifier.height(16.dp))
 
                         LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            modifier = Modifier.lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(50.dp)) }
 
@@ -637,13 +622,7 @@ fun DetailsScreen(
                                 )
                                 com.luminastreams.tv.presentation.home.PosterCard(
                                     movie    = tempMovie,
-                                    modifier = Modifier
-                                        .then(if (idx == 0) Modifier.focusRequester(firstRecFR) else Modifier)
-                                        .focusProperties {
-                                            if (media.cast.isNotEmpty()) up = firstCastFR
-                                            else if (state.episodes.isNotEmpty()) up = firstEpisodeFR
-                                            else if (media.totalSeasons > 0) up = firstSeasonFR
-                                        },
+                                    modifier = Modifier, // Removed forced focus properties!
                                     onClick  = { onRecommendationClick(rec.id) }
                                 )
                             }
@@ -655,12 +634,13 @@ fun DetailsScreen(
             }
         }
 
-        // ── Sources Side Panel ─────────────────────────────────────────────────
+// ── Sources Side Panel ─────────────────────────────────────────────────
         if (!state.isFuzerDirect) {
             AnimatedVisibility(
                 visible  = showSources,
-                enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
-                exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
+                // 1. הרקע הכהה כולו רק נדלק ונכבה בעדינות (Fade בלבד)
+                enter    = fadeIn(animationSpec = tween(350, easing = LinearOutSlowInEasing)),
+                exit     = fadeOut(animationSpec = tween(250, easing = FastOutLinearInEasing)),
                 modifier = Modifier.fillMaxSize().zIndex(200f)
             ) {
                 Box(
@@ -683,6 +663,17 @@ fun DetailsScreen(
                 ) {
                     Column(
                         modifier = Modifier
+                            // 2. הפאנל עצמו מחליק מהצד בצורה סינמטית (Slide נפרד מהרקע)
+                            .animateEnterExit(
+                                enter = slideInHorizontally(
+                                    initialOffsetX = { if (isRtl) -it else it },
+                                    animationSpec = tween(450, easing = LinearOutSlowInEasing) // כניסה רכה
+                                ),
+                                exit = slideOutHorizontally(
+                                    targetOffsetX = { if (isRtl) -it else it },
+                                    animationSpec = tween(300, easing = FastOutLinearInEasing) // יציאה מהירה
+                                )
+                            )
                             .fillMaxHeight()
                             .padding(vertical = 24.dp)
                             .padding(start = if (isRtl) 24.dp else 0.dp, end = if (isRtl) 0.dp else 24.dp)
@@ -750,9 +741,9 @@ fun DetailsScreen(
                             }
                             else -> {
                                 LazyColumn(
-                                    verticalArrangement = Arrangement.spacedBy(8.dp), // צמצום המרווח בין השורות
+                                    verticalArrangement = Arrangement.spacedBy(8.dp),
                                     contentPadding      = PaddingValues(bottom = 64.dp),
-                                    modifier            = Modifier.focusGroup()
+                                    modifier            = Modifier.focusGroup().lockFocusEdges(lockRight = false, lockDown = true)
                                 ) {
                                     itemsIndexed(state.availableStreams) { index, stream ->
                                         StreamSourceCard(
@@ -809,7 +800,6 @@ private fun StreamSourceCard(
             .fillMaxWidth()
             .onFocusChanged { focusedState.value = it.isFocused }
     ) {
-        // צמצום ריווחים פנימיים (Padding) בתוך הכרטיסייה
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
 
             Row(
@@ -879,7 +869,6 @@ private fun StreamSourceCard(
 
             Spacer(Modifier.height(8.dp))
 
-            // הצגת תגיות איכות, וידאו, סאונד, וכל השפות שזוהו
             Row(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -907,7 +896,6 @@ private fun StreamSourceCard(
                     PremiumBadge(it.first, Color(0xFF8E24AA), isOutline = true)
                 }
 
-                // תגיות שפות שחולצו על ידי הפונקציה parseStreamMeta (ENG, RUS, HEB וכו')
                 meta.langBadges.forEach { (langLabel, color) ->
                     PremiumBadge(langLabel, color, isOutline = true)
                 }
@@ -1059,5 +1047,23 @@ private fun CastMemberCard(actor: CastMember, modifier: Modifier = Modifier) {
         Spacer(Modifier.height(10.dp))
         Text(actor.name, color = if (focused) WH else DM, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, minLines = 2, lineHeight = 16.sp, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         Text(actor.character, color = MT, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+    }
+}
+
+// מודיפייר חכם שנועל את הניווט בקצוות המסך
+fun Modifier.lockFocusEdges(
+    lockRight: Boolean = true,
+    lockLeft: Boolean = false,
+    lockDown: Boolean = false,
+    lockUp: Boolean = false
+): Modifier = this.focusProperties {
+    exit = { direction ->
+        when {
+            direction == FocusDirection.Right && lockRight -> FocusRequester.Cancel
+            direction == FocusDirection.Left && lockLeft -> FocusRequester.Cancel
+            direction == FocusDirection.Down && lockDown -> FocusRequester.Cancel
+            direction == FocusDirection.Up && lockUp -> FocusRequester.Cancel
+            else -> FocusRequester.Default
+        }
     }
 }

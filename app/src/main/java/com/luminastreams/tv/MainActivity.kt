@@ -11,11 +11,10 @@ import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -23,10 +22,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -93,25 +95,88 @@ fun LuminaAppShell() {
     }
 }
 
+// ── גלי אור מיוחדים לטעינה (Lumina Light Waves) ──
+@Composable
+fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
+    val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
+    val waveCount = 5
+
+    // יצירת אנימציה לכל פס עם השהיה (StartOffset) כדי ליצור תנועה של גל
+    val waveAnimations = (0 until waveCount).map { index ->
+        infiniteTransition.animateFloat(
+            initialValue = 0.2f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse,
+                initialStartOffset = StartOffset(offsetMillis = index * 120)
+            ),
+            label = "wave_$index"
+        )
+    }
+
+    Row(
+        modifier = modifier.height(40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        waveAnimations.forEach { anim ->
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .fillMaxHeight(anim.value) // הגובה משתנה לפי האנימציה כדי ליצור גל
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFF00E5FF), // כחול ניאון
+                                Color(0xFFB400FF)  // סגול קוסמי
+                            )
+                        )
+                    )
+            )
+        }
+    }
+}
+
+// מסך הטעינה המשולב - עכשיו במסך מלא
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
+    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.6f, // התחלת פעימה קצת יותר גבוהה כי זה רקע
+        targetValue  = 1.0f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(1600, easing = LinearEasing), // פעימה קצת יותר איטית ומרשימה
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+
     LaunchedEffect(Unit) {
-        delay(2000) // זמן הצגת מסך הפתיחה
+        delay(3500) // זמן הצגת מסך הפתיחה
         onTimeout()
     }
+
     Box(
-        modifier = Modifier.fillMaxSize().background(Color(0xFF040405)),
-        contentAlignment = Alignment.Center
+        modifier = Modifier.fillMaxSize().background(Color.Black)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-            Box(Modifier.size(64.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFFE50914)), Alignment.Center) {
-                Text("L", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
-            }
-            Column {
-                Text("LUMINA",  color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 5.sp, lineHeight = 30.sp)
-                Text("STREAMS", color = Color(0xFFE50914),   fontSize = 14.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 5.sp, lineHeight = 14.sp)
-            }
-        }
+        // התמונה ברזולוציה הגבוהה - כרקע מסך מלא
+        Image(
+            painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_glow),
+            contentDescription = "Lumina Logo Background",
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(alpha)
+        )
+
+        // גלי האור שזורמים בתחתית המסך
+        LuminaLoadingIndicator(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp)
+        )
     }
 }
 
@@ -180,9 +245,10 @@ fun AppNavHostContainer(
                     val safeUrl  = java.net.URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb = if (imdbId.isBlank()) "_" else imdbId
                     val safeTitle = java.net.URLEncoder.encode(title, "UTF-8")
-                    val safeBackdrop = java.net.URLEncoder.encode(backdrop, "UTF-8")
-                    val safeLogo = java.net.URLEncoder.encode(logo, "UTF-8") // <--- חדש
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo") // <--- התעדכן
+                    val safeBackdrop = java.net.URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
+                    val safeLogo = java.net.URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
                 onRecommendationClick = { id ->
@@ -210,10 +276,10 @@ fun AppNavHostContainer(
             val title      = java.net.URLDecoder.decode(encodedTitle, "UTF-8")
 
             val encodedBackdrop = back.arguments?.getString("backdropUrl") ?: ""
-            val backdropUrl = java.net.URLDecoder.decode(encodedBackdrop, "UTF-8")
+            val backdropUrl = java.net.URLDecoder.decode(encodedBackdrop, "UTF-8").let { if (it == "none") "" else it }
 
             val encodedLogo = back.arguments?.getString("logoUrl") ?: ""
-            val logoUrl = java.net.URLDecoder.decode(encodedLogo, "UTF-8")
+            val logoUrl = java.net.URLDecoder.decode(encodedLogo, "UTF-8").let { if (it == "none") "" else it }
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
@@ -226,6 +292,7 @@ fun AppNavHostContainer(
                 )
             }
         }
+
         composable("search") {
             val vm: SearchViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
