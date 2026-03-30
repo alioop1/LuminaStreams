@@ -29,10 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -42,7 +40,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import androidx.tv.material3.Text
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -61,6 +58,10 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
 import kotlinx.coroutines.delay
 
 class MainActivity : ComponentActivity() {
+
+    // מנהל הסאונד שלנו
+    var soundManager: com.luminastreams.tv.core.SoundManager? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
@@ -72,9 +73,35 @@ class MainActivity : ComponentActivity() {
                 it.preferMinimalPostProcessing = true
             }
         }
+
+        // אתחול מנהל הסאונד
+        soundManager = com.luminastreams.tv.core.SoundManager(this)
+
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
+    }
+
+    // תפיסת הלחיצות בשלט והפעלת סאונד בהתאם
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                android.view.KeyEvent.KEYCODE_DPAD_CENTER, android.view.KeyEvent.KEYCODE_ENTER -> {
+                    soundManager?.playClick()
+                }
+                android.view.KeyEvent.KEYCODE_DPAD_UP, android.view.KeyEvent.KEYCODE_DPAD_DOWN,
+                android.view.KeyEvent.KEYCODE_DPAD_LEFT, android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    soundManager?.playNav()
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    // ניקוי הזיכרון של הסאונדים כשהאפליקציה נסגרת
+    override fun onDestroy() {
+        soundManager?.release()
+        super.onDestroy()
     }
 }
 
@@ -101,7 +128,6 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
     val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
     val waveCount = 5
 
-    // יצירת אנימציה לכל פס עם השהיה (StartOffset) כדי ליצור תנועה של גל
     val waveAnimations = (0 until waveCount).map { index ->
         infiniteTransition.animateFloat(
             initialValue = 0.2f,
@@ -124,7 +150,7 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
             Box(
                 modifier = Modifier
                     .width(6.dp)
-                    .fillMaxHeight(anim.value) // הגובה משתנה לפי האנימציה כדי ליצור גל
+                    .fillMaxHeight(anim.value)
                     .clip(RoundedCornerShape(50))
                     .background(
                         Brush.verticalGradient(
@@ -139,21 +165,26 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
     }
 }
 
-// מסך הטעינה המשולב - עכשיו במסך מלא
+// מסך הטעינה המשולב - עכשיו במסך מלא + סאונד
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alpha by infiniteTransition.animateFloat(
-        initialValue = 0.6f, // התחלת פעימה קצת יותר גבוהה כי זה רקע
+        initialValue = 0.6f,
         targetValue  = 1.0f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1600, easing = LinearEasing), // פעימה קצת יותר איטית ומרשימה
+            animation = tween(1600, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "alpha"
     )
 
+    val context = LocalContext.current
+
     LaunchedEffect(Unit) {
+        // הפעלת סאונד הפתיחה המרשים
+        (context as? MainActivity)?.soundManager?.playSplash()
+
         delay(3500) // זמן הצגת מסך הפתיחה
         onTimeout()
     }
@@ -161,7 +192,6 @@ fun SplashScreen(onTimeout: () -> Unit) {
     Box(
         modifier = Modifier.fillMaxSize().background(Color.Black)
     ) {
-        // התמונה ברזולוציה הגבוהה - כרקע מסך מלא
         Image(
             painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_glow),
             contentDescription = "Lumina Logo Background",
@@ -171,7 +201,6 @@ fun SplashScreen(onTimeout: () -> Unit) {
                 .alpha(alpha)
         )
 
-        // גלי האור שזורמים בתחתית המסך
         LuminaLoadingIndicator(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
