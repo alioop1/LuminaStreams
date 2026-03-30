@@ -176,12 +176,13 @@ fun AppNavHostContainer(
             DetailsScreen(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
-                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop ->
+                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
                     val safeUrl  = java.net.URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb = if (imdbId.isBlank()) "_" else imdbId
                     val safeTitle = java.net.URLEncoder.encode(title, "UTF-8")
                     val safeBackdrop = java.net.URLEncoder.encode(backdrop, "UTF-8")
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop")
+                    val safeLogo = java.net.URLEncoder.encode(logo, "UTF-8") // <--- חדש
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo") // <--- התעדכן
                 },
                 onNavigateBack        = { navController.popBackStack() },
                 onRecommendationClick = { id ->
@@ -192,12 +193,13 @@ fun AppNavHostContainer(
         }
 
         composable(
-            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}",
+            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&logoUrl={logoUrl}",
             arguments = listOf(
                 navArgument("videoUrl") { type = NavType.StringType; defaultValue = "" },
                 navArgument("imdbId")   { type = NavType.StringType; defaultValue = "_" },
                 navArgument("title")    { type = NavType.StringType; defaultValue = "" },
-                navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" }
+                navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" },
+                navArgument("logoUrl") { type = NavType.StringType; defaultValue = "" }
             )
         ) { back ->
             val encodedUrl = back.arguments?.getString("videoUrl") ?: ""
@@ -210,17 +212,20 @@ fun AppNavHostContainer(
             val encodedBackdrop = back.arguments?.getString("backdropUrl") ?: ""
             val backdropUrl = java.net.URLDecoder.decode(encodedBackdrop, "UTF-8")
 
+            val encodedLogo = back.arguments?.getString("logoUrl") ?: ""
+            val logoUrl = java.net.URLDecoder.decode(encodedLogo, "UTF-8")
+
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
                     videoUrl       = videoUrl,
                     imdbId         = if (imdbId == "_") "" else imdbId,
                     title          = title,
                     backdropUrl    = backdropUrl,
+                    logoUrl        = logoUrl,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
         }
-
         composable("search") {
             val vm: SearchViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)

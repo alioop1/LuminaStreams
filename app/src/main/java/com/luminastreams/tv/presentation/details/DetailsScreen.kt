@@ -244,10 +244,10 @@ private fun seederColor(seeders: Int) = when {
 fun DetailsScreen(
     state: DetailsScreenState,
     onEvent: (DetailsEvent) -> Unit,
-    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String) -> Unit,
+    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String, logoUrl: String) -> Unit, // <--- הוספנו פה
     onNavigateBack: () -> Unit = {},
     onRecommendationClick: (String) -> Unit
-) {
+){
     val context  = LocalContext.current
     val isRtl    = LocalLayoutDirection.current == LayoutDirection.Rtl
 
@@ -310,7 +310,7 @@ fun DetailsScreen(
                 putInt("current_episode", currentScrapeEpisode ?: -1)
             }
 
-            onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl)
+            onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl, media.logoUrl ?: "")
             onEvent(DetailsEvent.ClearPlayUrl)
         }
     }
