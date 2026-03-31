@@ -9,61 +9,21 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocalMovies
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -78,11 +38,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -97,22 +53,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
-import androidx.tv.material3.Border
-import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Glow
-import androidx.tv.material3.Icon
-import androidx.tv.material3.Surface
-import androidx.tv.material3.Text
+import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 // ═══════════════════════════════════════════════════════════════════
@@ -216,12 +165,10 @@ fun HomeScreen(
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
         if (currentTab != state.selectedTab || currentFilter != state.selectedStudioFilter) {
             contentAlpha = 0f
-            // נותנים לאנימציית המעבר (300ms) להסתיים לחלוטין כדי לא לתקוע את ה-UI Thread!
             delay(300)
             currentTab = state.selectedTab
             currentFilter = state.selectedStudioFilter
             focusState.currentRowIndex = 0
-            // נותנים לקומפוז כמה פריימים לבנות את ה-DOM החדש בשקט
             delay(30)
             contentAlpha = 1f
         }
@@ -408,11 +355,15 @@ private fun BackdropLayer(hero: Movie?) {
                     cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 720)
         }
     }
+    // Duration = 0 on LOW → instant snap, no extra GPU compositing layer
+    val backdropDuration = DeviceProfile.animConfig.backdropDuration.coerceAtLeast(0)
+
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
         Crossfade(
             targetState   = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl,
-            animationSpec = tween(400, easing = FastOutSlowInEasing), label = "bd"
+            animationSpec = tween(backdropDuration, easing = FastOutSlowInEasing),
+            label         = "bd"
         ) { url ->
             if (!url.isNullOrBlank()) {
                 AsyncImage(
@@ -420,7 +371,9 @@ private fun BackdropLayer(hero: Movie?) {
                         ImageRequest.Builder(ctx).data(url).size(bwPx, bhPx)
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
-                            .allowHardware(true).crossfade(false).build()
+                            .allowHardware(true)
+                            .crossfade(false)
+                            .build()
                     },
                     contentDescription = null,
                     contentScale       = ContentScale.Crop,
@@ -655,7 +608,6 @@ private fun TwoRowNavBar(
     val targetX     = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
-    // הופחת ל-300 מילישניות כדי להשתלב טוב יותר עם ההמתנה
     val animatedX     by animateDpAsState(targetValue = targetX,     animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillX")
     val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillW")
 
@@ -702,15 +654,12 @@ private fun TwoRowNavBar(
 // ── Logo ─────────────────────────────────────────────────────────────────────
 @Composable
 private fun LuminaLogo() {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Box(Modifier.size(24.dp).clip(RoundedCornerShape(6.dp)).background(RED), Alignment.Center) {
-            Text("L", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Black)
-        }
-        Column {
-            Text("LUMINA",  color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 11.sp)
-            Text("STREAMS", color = RED,   fontSize = 6.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 7.sp)
-        }
-    }
+    Image(
+        painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
+        contentDescription = "Lumina Logo",
+        contentScale = ContentScale.Fit,
+        modifier = Modifier.height(48.dp)
+    )
 }
 
 // ── Search button ─────────────────────────────────────────────────────────────
@@ -805,6 +754,14 @@ private fun RowsPanel(
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
+    // How many rows above/below the current one to keep fully rendered.
+    // HIGH: 3 rows buffer (parallax, crossfade) — MID/LOW: 1 row buffer.
+    val renderMargin = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.HIGH -> 3
+        DeviceProfile.Tier.MID  -> 1
+        DeviceProfile.Tier.LOW  -> 1
+    }
+
     val targetYOffset: Dp = remember(curRow, rows.size) {
         var acc = 0.dp
         for (i in 0 until curRow) acc += rowHeightFor(i)
@@ -824,44 +781,78 @@ private fun RowsPanel(
                 val isLand   = (i == 0)
                 val isActive = !focusState.isNavFocused && i == curRow
                 val yOffset  = yAccum
+                val inWindow = kotlin.math.abs(i - curRow) <= renderMargin
 
                 key(rowDef.id) {
-                    val animatedAlpha by animateFloatAsState(
-                        targetValue   = if (i == curRow) 1f else 0.22f,
-                        animationSpec = tween(
-                            durationMillis = if (i == curRow) 180 else 100,
-                            easing         = FastOutSlowInEasing
-                        ),
-                        label = "a$i"
-                    )
+                    if (!inWindow) {
+                        // ── Off-screen placeholder ──────────────────────────
+                        // Empty box at the exact position so yAccum stays
+                        // correct. No composition of row content — zero GPU cost.
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(rh)
+                                .offset(y = yOffset)
+                        )
+                    } else {
+                        // ── Visible row — normal rendering ──────────────────
+                        // Only animate alpha on HIGH tier; MID/LOW rows just
+                        // snap to their target opacity (no continuous animation).
+                        val animatedAlpha by animateFloatAsState(
+                            targetValue   = if (i == curRow) 1f else 0.22f,
+                            animationSpec = if (DeviceProfile.animConfig.enableRowFade)
+                                tween(
+                                    durationMillis = if (i == curRow)
+                                        DeviceProfile.animConfig.rowFadeDuration
+                                    else
+                                        (DeviceProfile.animConfig.rowFadeDuration / 2).coerceAtLeast(60),
+                                    easing = FastOutSlowInEasing
+                                )
+                            else
+                                tween(0), // instant — no GPU animation overhead
+                            label = "a$i"
+                        )
 
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(rh)
-                            .offset(y = yOffset)
-                            .graphicsLayer { alpha = animatedAlpha } // Optimized from .alpha()
-                    ) {
-                        val cardFR = rowFRs.getOrNull(i)
-                        val onFocus: (Movie) -> Unit = { m ->
-                            focusState.currentRowIndex = i
-                            focusState.isNavFocused    = false
-                            onItemFocus(m)
-                        }
-
-                        if (rowDef is RowDef.StudioRibbon) {
-                            StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
-                        } else if (isLand) {
-                            when (rowDef) {
-                                is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
-                                is RowDef.Studio  -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
-                                else -> {}
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(rh)
+                                .offset(y = yOffset)
+                                .graphicsLayer { alpha = animatedAlpha }
+                        ) {
+                            val cardFR = rowFRs.getOrNull(i)
+                            val onFocus: (Movie) -> Unit = { m ->
+                                focusState.currentRowIndex = i
+                                focusState.isNavFocused    = false
+                                onItemFocus(m)
                             }
-                        } else {
-                            when (rowDef) {
-                                is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
-                                is RowDef.Studio  -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) })
-                                else -> {}
+
+                            if (rowDef is RowDef.StudioRibbon) {
+                                StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
+                            } else if (isLand) {
+                                when (rowDef) {
+                                    is RowDef.Regular -> LandscapeRow(
+                                        rowDef.title, rowDef.movies, isActive, cardFR,
+                                        onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) }
+                                    )
+                                    is RowDef.Studio  -> LandscapeStudioRow(
+                                        rowDef.brand, rowDef.movies, isActive, cardFR,
+                                        onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) }
+                                    )
+                                    else -> {}
+                                }
+                            } else {
+                                when (rowDef) {
+                                    is RowDef.Regular -> PortraitRow(
+                                        rowDef.title, rowDef.movies, isActive, cardFR,
+                                        onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) }
+                                    )
+                                    is RowDef.Studio  -> PortraitStudioRow(
+                                        rowDef.brand, rowDef.movies, isActive, cardFR,
+                                        onFocus, onItemClick, onLoadMore = { onLoadMore(rowDef.id) }
+                                    )
+                                    else -> {}
+                                }
                             }
                         }
                     }
@@ -872,6 +863,7 @@ private fun RowsPanel(
         }
     }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  LANDSCAPE ROW
@@ -1091,15 +1083,26 @@ private fun LandscapeCard(
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
 
+    // HIGH: spring for organic feel. MID/LOW: fast tween — no continuous frames.
+    val cardAnimSpec = remember {
+        if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
+            spring<Float>(stiffness = Spring.StiffnessMediumLow)
+        else
+            tween<Float>(durationMillis = 90, easing = LinearEasing)
+    }
+
     val zoom by animateFloatAsState(
         targetValue   = if (isFocused.value) 1.06f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = cardAnimSpec,
         label         = "lzoom"
     )
+
+    // overlay gradient — only computed on HIGH; on MID/LOW it stays at 0
+    // so the `if (isFocused.value)` branches below draw nothing.
     val overlayAlpha by animateFloatAsState(
-        targetValue   = if (isFocused.value) 0.18f else 0f,
+        targetValue = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.18f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label         = "loverlay"
+        label = "loverlay"
     )
 
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
@@ -1109,7 +1112,7 @@ private fun LandscapeCard(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .crossfade(300)
+            .crossfade(false)   // always off per-card — Coil global setting handles it
             .build()
     }
 
@@ -1126,11 +1129,8 @@ private fun LandscapeCard(
             ),
             shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
             scale  = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-            border = ClickableSurfaceDefaults.border(
-                border        = Border.None,
-                focusedBorder = Border.None
-            ),
-            glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+            border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+            glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier
                 .fillMaxSize()
                 .onFocusChanged { fs ->
@@ -1151,7 +1151,8 @@ private fun LandscapeCard(
                         .background(Brush.linearGradient(listOf(Color(0xFF2E2E2E), CARD_BG))),
                     Alignment.Center
                 ) {
-                    Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
+                    Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
                 }
             }
 
@@ -1165,7 +1166,8 @@ private fun LandscapeCard(
                     )
             )
 
-            if (isFocused.value) {
+            // HIGH-tier only overlay effects
+            if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) {
                 Box(
                     Modifier.fillMaxSize()
                         .background(
@@ -1191,31 +1193,32 @@ private fun LandscapeCard(
                 val isDubbed = movie.title.contains("מדובב")
                 Box(
                     Modifier
-                        .align(Alignment.TopStart)
-                        .padding(6.dp)
+                        .align(Alignment.TopStart).padding(6.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {
-                    Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE,
+                        fontSize = 9.sp, fontWeight = FontWeight.Black)
                 }
             }
 
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                Text(movie.title, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(movie.title, color = WHITE, fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM2, fontSize = 11.sp)
             }
 
             if (movie.rating > 0f) {
                 Box(
                     Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(6.dp)
+                        .align(Alignment.TopEnd).padding(6.dp)
                         .clip(RoundedCornerShape(4.dp))
                         .background(Color(0xBB000000))
                         .padding(horizontal = 5.dp, vertical = 2.dp)
                 ) {
-                    Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                    Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1234,15 +1237,22 @@ fun PosterCard(
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
 
+    val cardAnimSpec = remember {
+        if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
+            spring<Float>(stiffness = Spring.StiffnessMediumLow)
+        else
+            tween<Float>(durationMillis = 90, easing = LinearEasing)
+    }
+
     val zoom by animateFloatAsState(
         targetValue   = if (isFocused.value) 1.08f else 1f,
-        animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
+        animationSpec = cardAnimSpec,
         label         = "pzoom"
     )
     val overlayAlpha by animateFloatAsState(
-        targetValue   = if (isFocused.value) 0.15f else 0f,
+        targetValue = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.15f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label         = "poverlay"
+        label = "poverlay"
     )
 
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
@@ -1252,7 +1262,7 @@ fun PosterCard(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .crossfade(300)
+            .crossfade(false)
             .build()
     }
 
@@ -1266,11 +1276,8 @@ fun PosterCard(
                 ),
                 shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
                 scale  = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-                border = ClickableSurfaceDefaults.border(
-                    border        = Border.None,
-                    focusedBorder = Border.None
-                ),
-                glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+                border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+                glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
                 modifier = Modifier
                     .fillMaxSize()
                     .onFocusChanged { fs ->
@@ -1291,11 +1298,14 @@ fun PosterCard(
                             .background(Brush.verticalGradient(listOf(Color(0xFF2A2A2A), CARD_BG))),
                         Alignment.Center
                     ) {
-                        Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(8.dp))
+                        Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp,
+                            maxLines = 3, overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.padding(8.dp))
                     }
                 }
 
-                if (isFocused.value) {
+                // HIGH-tier only: top shimmer overlay on focus
+                if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) {
                     Box(
                         Modifier.fillMaxSize()
                             .background(
@@ -1310,26 +1320,26 @@ fun PosterCard(
                     val isDubbed = movie.title.contains("מדובב")
                     Box(
                         Modifier
-                            .align(Alignment.TopStart)
-                            .padding(5.dp)
+                            .align(Alignment.TopStart).padding(5.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
-                        Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black)
+                        Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE,
+                            fontSize = 8.sp, fontWeight = FontWeight.Black)
                     }
                 }
 
                 if (movie.rating > 0f) {
                     Box(
                         Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(5.dp)
+                            .align(Alignment.TopEnd).padding(5.dp)
                             .clip(RoundedCornerShape(4.dp))
                             .background(Color(0xBB000000))
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
-                        Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                        Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1348,6 +1358,7 @@ fun PosterCard(
         Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
     }
 }
+
 
 // ═══════════════════════════════════════════════════════════════════
 //  STUDIO RIBBON

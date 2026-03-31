@@ -5,6 +5,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -21,6 +22,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,15 +80,12 @@ fun WatchlistScreen(
                 Spacer(Modifier.width(32.dp))
 
                 // Lumina Logo
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Box(Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(Color(0xFFE50914)), Alignment.Center) {
-                        Text("L", color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
-                    }
-                    Column {
-                        Text("LUMINA",  color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 13.sp)
-                        Text("STREAMS", color = Color(0xFFE50914), fontSize = 7.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 9.sp)
-                    }
-                }
+                Image(
+                    painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
+                    contentDescription = "Lumina Logo",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.height(34.dp)
+                )
 
                 Spacer(Modifier.width(32.dp))
                 // Divider Line

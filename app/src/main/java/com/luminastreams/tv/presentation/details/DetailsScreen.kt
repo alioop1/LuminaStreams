@@ -634,13 +634,12 @@ fun DetailsScreen(
             }
         }
 
-// ── Sources Side Panel ─────────────────────────────────────────────────
+        // ── Sources Side Panel ─────────────────────────────────────────────────
         if (!state.isFuzerDirect) {
             AnimatedVisibility(
                 visible  = showSources,
-                // 1. הרקע הכהה כולו רק נדלק ונכבה בעדינות (Fade בלבד)
-                enter    = fadeIn(animationSpec = tween(350, easing = LinearOutSlowInEasing)),
-                exit     = fadeOut(animationSpec = tween(250, easing = FastOutLinearInEasing)),
+                enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(380, easing = FastOutSlowInEasing)) + fadeIn(tween(250)),
+                exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(300, easing = FastOutSlowInEasing)) + fadeOut(tween(200)),
                 modifier = Modifier.fillMaxSize().zIndex(200f)
             ) {
                 Box(
@@ -663,17 +662,6 @@ fun DetailsScreen(
                 ) {
                     Column(
                         modifier = Modifier
-                            // 2. הפאנל עצמו מחליק מהצד בצורה סינמטית (Slide נפרד מהרקע)
-                            .animateEnterExit(
-                                enter = slideInHorizontally(
-                                    initialOffsetX = { if (isRtl) -it else it },
-                                    animationSpec = tween(450, easing = LinearOutSlowInEasing) // כניסה רכה
-                                ),
-                                exit = slideOutHorizontally(
-                                    targetOffsetX = { if (isRtl) -it else it },
-                                    animationSpec = tween(300, easing = FastOutLinearInEasing) // יציאה מהירה
-                                )
-                            )
                             .fillMaxHeight()
                             .padding(vertical = 24.dp)
                             .padding(start = if (isRtl) 24.dp else 0.dp, end = if (isRtl) 0.dp else 24.dp)

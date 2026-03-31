@@ -1,4 +1,3 @@
-// ✅ Fixed: redundant qualifier names replaced with short names + proper imports below
 @file:OptIn(
     ExperimentalComposeUiApi::class,
     ExperimentalTvMaterial3Api::class,
@@ -31,6 +30,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -223,21 +224,19 @@ private fun SmartRailItem(
 
 @Composable
 private fun LuminaLogo(isExpanded: Boolean) {
-    val textAlpha by animateFloatAsState(
-        targetValue   = if (isExpanded) 1f else 0f,
-        animationSpec = tween(200, easing = LinearEasing),
-        label = "logoAlpha"
-    )
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.width(88.dp), Alignment.Center) {
-            Box(Modifier.size(36.dp).clip(RoundedCornerShape(8.dp)).background(ACCENT_RED), Alignment.Center) {
-                Text("L", color = TEXT_PRIMARY, fontSize = 20.sp, fontWeight = FontWeight.Black)
-            }
-        }
-        Column(Modifier.alpha(textAlpha)) {
-            Text("LUMINA",  color = TEXT_PRIMARY, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp, lineHeight = 14.sp)
-            Text("STREAMS", color = ACCENT_RED,   fontSize = 8.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp, lineHeight = 10.sp)
-        }
+    Box(
+        modifier = Modifier.fillMaxWidth().height(48.dp),
+        contentAlignment = Alignment.CenterStart
+    ) {
+        Image(
+            painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
+            contentDescription = "Lumina Logo",
+            contentScale = ContentScale.Fit,
+            modifier = Modifier
+                .padding(start = 26.dp)
+                .height(48.dp)
+                .requiredWidth(220.dp)
+        )
     }
 }
 
@@ -296,7 +295,7 @@ private fun LazyListScope.buildAccountDashboard(
         DashboardActionCard(
             title     = "RD Server Speed Test",
             desc      = if (state.rdSpeedTesting) "Pinging Real-Debrid API..."
-                        else state.rdSpeedTestResult ?: "Measure latency to Real-Debrid CDN",
+            else state.rdSpeedTestResult ?: "Measure latency to Real-Debrid CDN",
             icon      = if (state.rdSpeedTesting) Icons.Default.HourglassEmpty else Icons.Default.NetworkCheck,
             value     = if (state.rdSpeedTesting) "Testing..." else "Run Test",
             highlight = if (state.rdSpeedTestResult?.contains("🟢") == true) ACCENT_GREEN else null
@@ -418,7 +417,6 @@ private fun LazyListScope.buildPlaybackDashboard(
     }
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("CINEMATIC VIDEO") }
-    // ✅ REAL: PlayerScreen reads afr and calls window.setFrameRate on playback start
     item {
         DashboardToggleCard(
             title     = "Auto Frame Rate (AFR)",
@@ -478,7 +476,6 @@ private fun LazyListScope.buildPersonalizationDashboard(
     }
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("SEARCH & HISTORY") }
-    // ✅ REAL: SearchViewModel checks save_history before calling saveToHistory()
     item {
         DashboardToggleCard(
             title     = "Save Search History",
@@ -491,14 +488,13 @@ private fun LazyListScope.buildPersonalizationDashboard(
         DashboardActionCard(
             title = "Clear Search History",
             desc  = if (state.searchHistoryStatus == "Clear") "Remove all saved search queries from this device."
-                    else state.searchHistoryStatus,
+            else state.searchHistoryStatus,
             icon  = Icons.Default.DeleteSweep,
             value = state.searchHistoryStatus
         ) { if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory() }
     }
     item { Spacer(Modifier.height(8.dp)) }
     item { SectionTitle("PERFORMANCE TWEAKS") }
-    // ✅ REAL: ExoPlayer skips stream embedded subtitle tracks — saves CPU & bandwidth on weak devices
     item {
         DashboardToggleCard(
             title     = "Skip Embedded Subtitle Tracks",
@@ -516,7 +512,6 @@ private fun LazyListScope.buildSystemDashboard(
     state: SettingsState, viewModel: SettingsViewModel
 ) {
     item { SectionTitle("PERFORMANCE") }
-    // ✅ REAL: Immediately calls DeviceProfile.forceLowTier — disables parallax & fades
     item {
         DashboardToggleCard(
             title     = "Lite UI Mode",
@@ -525,7 +520,6 @@ private fun LazyListScope.buildSystemDashboard(
             isChecked = state.liteUiMode
         ) { viewModel.updateToggleSetting("lite_ui", !state.liteUiMode) }
     }
-    // ✅ REAL: DeviceProfile.forceReduceMotion — cuts ALL transition animations to 0ms
     item {
         DashboardToggleCard(
             title     = "Reduce Motion",
@@ -534,7 +528,6 @@ private fun LazyListScope.buildSystemDashboard(
             isChecked = state.reduceMotion
         ) { viewModel.updateToggleSetting("reduce_motion", !state.reduceMotion) }
     }
-    // ✅ REAL: ExoPlayer reserves 64 MB and extends buffer window
     item {
         DashboardToggleCard(
             title     = "Pre-allocate Video Buffer (64 MB)",

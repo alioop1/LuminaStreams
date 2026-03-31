@@ -31,6 +31,7 @@ class LuminaApp : Application() {
 
         repository = MediaRepositoryImpl()
 
+        // GC on non-HIGH devices — free init overhead fast
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
             Runtime.getRuntime().gc()
             registerLowMemoryCallbacks()
@@ -42,21 +43,29 @@ class LuminaApp : Application() {
 
         val memoryCachePercent = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> 0.15
-            DeviceProfile.Tier.MID  -> 0.10
-            DeviceProfile.Tier.LOW  -> 0.06
+            DeviceProfile.Tier.MID  -> 0.08   // was 0.10 — less pressure on MID
+            DeviceProfile.Tier.LOW  -> 0.05   // was 0.06 — weak devices need breathing room
         }
         val memoryCacheBytes = (maxHeap * memoryCachePercent).toLong()
-            .coerceIn(32 * 1024 * 1024L, 256 * 1024 * 1024L)
+            .coerceIn(24 * 1024 * 1024L, 256 * 1024 * 1024L)
 
         val diskCacheBytes = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> 512 * 1024 * 1024L
             DeviceProfile.Tier.MID  -> 256 * 1024 * 1024L
-            DeviceProfile.Tier.LOW  -> 128 * 1024 * 1024L
+            DeviceProfile.Tier.LOW  -> 96  * 1024 * 1024L  // was 128 MB
         }
 
+        val connectTimeout = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 15L else 10L
+        val readTimeout    = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 15L
+
         val okhttp = OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+            .connectTimeout(connectTimeout, TimeUnit.SECONDS)
+            .readTimeout(readTimeout, TimeUnit.SECONDS)
+            // Limit parallel image fetches on weak devices — prevents RAM spikes
+            .dispatcher(okhttp3.Dispatcher().also { d ->
+                d.maxRequests           = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 4 else 8
+                d.maxRequestsPerHost    = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 2 else 4
+            })
             .build()
 
         val imageLoader = ImageLoader.Builder(this)
@@ -72,7 +81,9 @@ class LuminaApp : Application() {
                     .build()
             }
             .okHttpClient(okhttp)
-            .crossfade(DeviceProfile.tier != DeviceProfile.Tier.LOW)
+            // Crossfade only on HIGH — it requires an extra GPU compositing pass
+            // that kills frame rate on Mali-G31 / Mali-450 chips
+            .crossfade(DeviceProfile.tier == DeviceProfile.Tier.HIGH)
             .respectCacheHeaders(false)
             .build()
 

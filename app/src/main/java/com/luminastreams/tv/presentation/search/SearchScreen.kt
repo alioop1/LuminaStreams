@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -39,6 +40,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -145,7 +147,6 @@ fun SearchScreen(
         Column(
             Modifier
                 .fillMaxSize()
-                // נעילת הרקע כשהפופאפ פתוח
                 .focusProperties { canFocus = !state.showFilters }
         ) {
             TopBar(
@@ -204,7 +205,6 @@ fun SearchScreen(
                         .padding(vertical = 40.dp)
                         .clickable(remember { MutableInteractionSource() }, null) {}
                         .focusGroup()
-                        // ── נעילה הרמטית של הפוקוס! ──
                         .focusProperties {
                             exit  = { FocusRequester.Cancel }
                             left  = FocusRequester.Cancel
@@ -281,20 +281,13 @@ private fun TopBar(
                     .focusProperties { down = firstTabFR; right = inputFR }
             ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(16.dp)) } }
 
-            Row(
-                verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Box(
-                    Modifier.size(32.dp).clip(RoundedCornerShape(8.dp))
-                        .background(Brush.linearGradient(listOf(Color(0xFFE50914), Color(0xFF8B0000)))),
-                    Alignment.Center
-                ) { Text("L", color = WHITE, fontSize = 17.sp, fontWeight = FontWeight.Black) }
-                Column(verticalArrangement = Arrangement.Center) {
-                    Text("LUMINA",  color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 2.5.sp, lineHeight = 12.sp)
-                    Text("STREAMS", color = RED,   fontSize = 7.sp,  fontWeight = FontWeight.Bold,  letterSpacing = 2.sp,  lineHeight = 9.sp)
-                }
-            }
+            // Logo
+            Image(
+                painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
+                contentDescription = "Lumina Logo",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.height(52.dp)
+            )
 
             Box(Modifier.width(1.dp).height(24.dp).background(DIM2))
 
@@ -345,7 +338,7 @@ private fun TopBar(
                         },
                         modifier = Modifier.weight(1f)
                             .focusRequester(inputFR)
-                            .focusProperties { up = backFR } // מילוט מעלה לכפתור אחורה
+                            .focusProperties { up = backFR }
                             .onFocusChanged { f -> inputFocused = f.isFocused }
                             .onPreviewKeyEvent { ev ->
                                 if (ev.type == KeyEventType.KeyDown) {
@@ -366,12 +359,10 @@ private fun TopBar(
                                             true
                                         }
                                         Key.DirectionUp -> {
-                                            // קפיצה אקטיבית החוצה לכפתור אחורה!
                                             runCatching { backFR.requestFocus() }
                                             true
                                         }
                                         Key.DirectionLeft -> {
-                                            // אם אין טקסט - חץ שמאלה מקפיץ אותך החוצה
                                             if (state.query.isEmpty()) {
                                                 runCatching { backFR.requestFocus() }
                                                 true
@@ -589,7 +580,6 @@ private fun TabRow(
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                 modifier = Modifier.height(36.dp)
                     .let { if (idx == 0) it.focusRequester(firstTabFR) else it }
-                    // מילוט שמאלה לכפתור ה-Back עבור הטאב הראשון!
                     .focusProperties {
                         if (idx == 0) left = backFR
                     }
@@ -650,7 +640,7 @@ private fun TabRow(
     }
 }
 
-// ═══ FILTER SIDEBAR (עיצוב פופאפ PlayerScreen מדוייק!) ════════════════════════
+// ═══ FILTER SIDEBAR ════════════════════════════════════════════════════
 @Composable
 private fun FilterSidebar(
     filters:       SearchFilters,

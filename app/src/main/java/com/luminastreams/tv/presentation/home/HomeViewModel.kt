@@ -32,10 +32,6 @@ class HomeViewModel : ViewModel() {
 
     private val imgBase = "https://image.tmdb.org/t/p"
 
-    // ── Tier-aware image sizes ─────────────────────────────────────────────────
-    //   HIGH (Nvidia Shield / LG OLED): original backdrop, w780 poster
-    //   MID  (decent streamers):         w1280 backdrop,   w500 poster
-    //   LOW  (2 GB Mali boxes):           w500 backdrop,   w342 poster
     private val backdropSize: String get() = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> "original"
         DeviceProfile.Tier.MID  -> "w1280"
@@ -47,10 +43,17 @@ class HomeViewModel : ViewModel() {
         DeviceProfile.Tier.LOW  -> "w342"
     }
 
+    // Connection pool size: fewer parallel connections on LOW/MID → less RAM pressure
+    private val maxConnections = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.HIGH -> 8
+        DeviceProfile.Tier.MID  -> 5
+        DeviceProfile.Tier.LOW  -> 3
+    }
+
     private val http = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
-        .connectionPool(okhttp3.ConnectionPool(8, 5, TimeUnit.MINUTES))
+        .connectionPool(okhttp3.ConnectionPool(maxConnections, 5, TimeUnit.MINUTES))
         .protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
         .build()
 
@@ -86,8 +89,6 @@ class HomeViewModel : ViewModel() {
                     "movieDrama"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieScifi"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieTopRated"  -> { url = "$BASE/movie/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
-
-                    // Fixed Studio Movies: Using companies for Disney/Paramount to get rich content
                     "movieNetflix"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieAppleTV"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieDisney"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
@@ -95,15 +96,12 @@ class HomeViewModel : ViewModel() {
                     "movieAmazon"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieParamount" -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
                     "movieHulu"      -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-
                     "tvTrending"     -> { url = "$BASE/trending/tv/week?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
                     "tvPremieres"    -> { url = "$BASE/tv/on_the_air?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
                     "tvDrama"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                     "tvCrime"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                     "tvScifi"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                     "tvTopRated"     -> { url = "$BASE/tv/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-
-                    // Fixed Studio TV Shows: Using 'with_networks' retrieves true originals globally
                     "tvNetflix"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                     "tvAppleTV"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
                     "tvDisney"       -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
@@ -159,20 +157,16 @@ class HomeViewModel : ViewModel() {
     // ── Fuzer ─────────────────────────────────────────────────────────────────
     fun loadFuzerContent() {
         viewModelScope.launch(Dispatchers.IO) {
-            // מציגים ספינר רק אם הרשימה באמת ריקה (למנוע הבהובים במעבר טאבים)
             if (_state.value.fuzerMovies.isEmpty() && _state.value.fuzerSeries.isEmpty()) {
                 _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
             }
 
             try {
-                // גל ראשון: תוכן הבסיס (סרטים וסדרות) - נטען במקביל ומוצג מיד למשתמש
                 coroutineScope {
                     val moviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
                     val seriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
-
                     val moviesR = moviesDef.await()
                     val seriesR = seriesDef.await()
-
                     _state.update { s -> s.copy(
                         fuzerIsLoading = false,
                         fuzerItems     = moviesR + seriesR,
@@ -181,44 +175,31 @@ class HomeViewModel : ViewModel() {
                     )}
                 }
 
-                delay(300) // השהייה קלה כדי להיות מנומסים לשרת של Fuzer
+                delay(400)
 
-                // גל שני: איכויות גבוהות (HD ו-4K) נטענות ברקע
                 coroutineScope {
                     val moviesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() } }
                     val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
                     val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
                     val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
-
-                    val moviesHdR = moviesHdDef.await()
-                    val seriesHdR = seriesHdDef.await()
-                    val movies4kR = movies4kDef.await()
-                    val series4kR = series4kDef.await()
-
                     _state.update { s -> s.copy(
-                        fuzerMoviesHD = moviesHdR,
-                        fuzerSeriesHD = seriesHdR,
-                        fuzerMovies4K = movies4kR,
-                        fuzerSeries4K = series4kR
+                        fuzerMoviesHD = moviesHdDef.await(),
+                        fuzerSeriesHD = seriesHdDef.await(),
+                        fuzerMovies4K = movies4kDef.await(),
+                        fuzerSeries4K = series4kDef.await()
                     )}
                 }
 
-                delay(300)
+                delay(400)
 
-                // גל שלישי: תוכן מדובב נטען אחרון
                 coroutineScope {
                     val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
                     val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
-
-                    val dubbedMoviesR = dubbedMoviesDef.await()
-                    val dubbedSeriesR = dubbedSeriesDef.await()
-
                     _state.update { s -> s.copy(
-                        fuzerDubbedMovies = dubbedMoviesR,
-                        fuzerDubbedSeries = dubbedSeriesR
+                        fuzerDubbedMovies = dubbedMoviesDef.await(),
+                        fuzerDubbedSeries = dubbedSeriesDef.await()
                     )}
                 }
-
             } catch (e: Exception) {
                 _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }
             }
@@ -233,7 +214,7 @@ class HomeViewModel : ViewModel() {
                 val k      = Constants.TMDB_API_KEY
                 val region = "US"
 
-                // Wave 1: above-the-fold content
+                // ── Wave 1: above-the-fold (always fast) ──────────────────────
                 coroutineScope {
                     val mTrend  = async { fetch("$BASE/trending/movie/week?api_key=$k&language=en-US", "movie") }
                     val tvTrend = async { fetch("$BASE/trending/tv/week?api_key=$k&language=en-US",   "tv") }
@@ -249,71 +230,115 @@ class HomeViewModel : ViewModel() {
                     ) }
                 }
 
-                // Wave 2: genre rows + streaming services
-                coroutineScope {
-                    val mAction    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc",   "movie") }
-                    val mDrama     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",   "movie") }
-                    val mScifi     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc",  "movie") }
-                    val mTop       = async { fetch("$BASE/movie/top_rated?api_key=$k&language=en-US",                                          "movie") }
-
-                    val mHBO       = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc", "movie") }
-                    val mAmazon    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc",  "movie") }
-                    val mApple     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc",  "movie") }
-                    val mDisney    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc",  "movie") }
-                    val mParamount = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc",  "movie") }
-                    val mHulu      = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc",   "movie") }
-
-                    val tvAir      = async { fetch("$BASE/tv/on_the_air?api_key=$k&language=en-US",                                             "tv") }
-                    val tvDrama    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",        "tv") }
-                    val tvCrime    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc",        "tv") }
-                    val tvScifi    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc",     "tv") }
-                    val tvTop      = async { fetch("$BASE/tv/top_rated?api_key=$k&language=en-US",                                              "tv") }
-
-                    val tvNflx     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc",    "tv") }
-                    val tvApple    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc",  "tv") }
-                    val tvDisney   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc",  "tv") }
-                    val tvHBO      = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc", "tv") }
-                    val tvAmazon   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc",  "tv") }
-                    val tvParamount= async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc",  "tv") }
-                    val tvHulu     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc",   "tv") }
-
-                    _state.update { s -> s.copy(
-                        movieAction   = mAction.await(),
-                        movieDrama    = mDrama.await(),
-                        movieScifi    = mScifi.await(),
-                        movieTopRated = mTop.await()
-                    ) }; delay(100)
-
-                    _state.update { s -> s.copy(
-                        movieHBO       = mHBO.await(),
-                        movieAmazon    = mAmazon.await(),
-                        movieAppleTV   = mApple.await(),
-                        movieDisney    = mDisney.await(),
-                        movieParamount = mParamount.await(),
-                        movieHulu      = mHulu.await()
-                    ) }; delay(100)
-
-                    _state.update { s -> s.copy(
-                        tvPremieres = tvAir.await(),
-                        tvDrama     = tvDrama.await(),
-                        tvCrime     = tvCrime.await(),
-                        tvScifi     = tvScifi.await(),
-                        tvTopRated  = tvTop.await()
-                    ) }; delay(100)
-
-                    _state.update { s -> s.copy(
-                        tvNetflix   = tvNflx.await(),
-                        tvAppleTV   = tvApple.await(),
-                        tvDisney    = tvDisney.await(),
-                        tvHBO       = tvHBO.await(),
-                        tvAmazon    = tvAmazon.await(),
-                        tvParamount = tvParamount.await(),
-                        tvHulu      = tvHulu.await()
-                    ) }
+                // ── Wave 2: secondary content ─────────────────────────────────
+                // On LOW/MID devices, we batch into smaller groups with delays
+                // to avoid all-at-once RAM pressure (20 OkHttp buffers in flight
+                // simultaneously = ~40 MB of transient memory on S905X4).
+                if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
+                    // LOW: sequential batches of 3, generous delays
+                    loadWave2Batched(k, region, batchSize = 3, delayMs = 250)
+                } else {
+                    // HIGH/MID: original parallel approach
+                    loadWave2Parallel(k, region)
                 }
+
             } catch (e: Exception) {
                 _state.update { it.copy(isLoading = false, error = "Network error: ${e.message}") }
             }
+        }
+    }
+
+    /** Original all-parallel wave-2 for HIGH/MID devices. */
+    private suspend fun loadWave2Parallel(k: String, region: String) {
+        coroutineScope {
+            val mAction    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc",   "movie") }
+            val mDrama     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",   "movie") }
+            val mScifi     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc",  "movie") }
+            val mTop       = async { fetch("$BASE/movie/top_rated?api_key=$k&language=en-US",                                          "movie") }
+            val mHBO       = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc", "movie") }
+            val mAmazon    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc",  "movie") }
+            val mApple     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc",  "movie") }
+            val mDisney    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc",  "movie") }
+            val mParamount = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc",  "movie") }
+            val mHulu      = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc",   "movie") }
+            val tvAir      = async { fetch("$BASE/tv/on_the_air?api_key=$k&language=en-US",                                             "tv") }
+            val tvDrama    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",        "tv") }
+            val tvCrime    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc",        "tv") }
+            val tvScifi    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc",     "tv") }
+            val tvTop      = async { fetch("$BASE/tv/top_rated?api_key=$k&language=en-US",                                              "tv") }
+            val tvNflx     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc",    "tv") }
+            val tvApple    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc",  "tv") }
+            val tvDisney   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc",  "tv") }
+            val tvHBO      = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc", "tv") }
+            val tvAmazon   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc",  "tv") }
+            val tvParamount= async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc",  "tv") }
+            val tvHulu     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc",   "tv") }
+
+            _state.update { s -> s.copy(
+                movieAction   = mAction.await(),
+                movieDrama    = mDrama.await(),
+                movieScifi    = mScifi.await(),
+                movieTopRated = mTop.await()
+            ) }; delay(80)
+
+            _state.update { s -> s.copy(
+                movieHBO       = mHBO.await(),
+                movieAmazon    = mAmazon.await(),
+                movieAppleTV   = mApple.await(),
+                movieDisney    = mDisney.await(),
+                movieParamount = mParamount.await(),
+                movieHulu      = mHulu.await()
+            ) }; delay(80)
+
+            _state.update { s -> s.copy(
+                tvPremieres = tvAir.await(),
+                tvDrama     = tvDrama.await(),
+                tvCrime     = tvCrime.await(),
+                tvScifi     = tvScifi.await(),
+                tvTopRated  = tvTop.await()
+            ) }; delay(80)
+
+            _state.update { s -> s.copy(
+                tvNetflix   = tvNflx.await(),
+                tvAppleTV   = tvApple.await(),
+                tvDisney    = tvDisney.await(),
+                tvHBO       = tvHBO.await(),
+                tvAmazon    = tvAmazon.await(),
+                tvParamount = tvParamount.await(),
+                tvHulu      = tvHulu.await()
+            ) }
+        }
+    }
+
+    /**
+     * LOW-tier batched loading — fetch at most [batchSize] endpoints at once,
+     * wait [delayMs] between batches. Keeps peak OkHttp buffer RAM low and
+     * gives the GC time to clean up between network bursts.
+     */
+    private suspend fun loadWave2Batched(k: String, region: String, batchSize: Int, delayMs: Long) {
+        val requests: List<Pair<String, suspend (List<Movie>) -> Unit>> = listOf(
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAction = v) } },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { v -> _state.update { it.copy(movieDrama = v) } },
+            Pair("$BASE/movie/top_rated?api_key=$k&language=en-US") { v -> _state.update { it.copy(movieTopRated = v) } },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc") { v -> _state.update { it.copy(movieHBO = v) } },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAmazon = v) } },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { v -> _state.update { it.copy(tvDrama = v) } },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc") { v -> _state.update { it.copy(tvCrime = v) } },
+            Pair("$BASE/tv/top_rated?api_key=$k&language=en-US") { v -> _state.update { it.copy(tvTopRated = v) } },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc") { v -> _state.update { it.copy(tvNetflix = v) } },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc") { v -> _state.update { it.copy(tvHBO = v) } },
+        )
+
+        requests.chunked(batchSize).forEach { batch ->
+            coroutineScope {
+                batch.forEach { (url, updater) ->
+                    launch {
+                        val mt = if (url.contains("/movie")) "movie" else "tv"
+                        updater(fetch(url, mt))
+                    }
+                }
+            }
+            delay(delayMs)
         }
     }
 
@@ -343,7 +368,6 @@ class HomeViewModel : ViewModel() {
                     val posterPath = j.optString("poster_path")
                     if (posterPath.isBlank() || posterPath == "null") continue
 
-                    // Tier-aware image sizes — Shield gets /original/, 2 GB box gets w500
                     out += Movie(
                         id              = "${mt}_${j.optInt("id")}",
                         title           = title,

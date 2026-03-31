@@ -22,19 +22,20 @@ object DeviceProfile {
     )
 
     // ── Manufacturer / chipset flags ──────────────────────────────────────────
-    var isXiaomi  : Boolean = false; private set
-    var isMeCool  : Boolean = false; private set
-    var isAmlogic : Boolean = false; private set
-    var isLg      : Boolean = false; private set
-    var isSony    : Boolean = false; private set
-    var isPhilips : Boolean = false; private set
-    var isNvidia  : Boolean = false; private set
-    var isRockchip: Boolean = false; private set
+    var isXiaomi    : Boolean = false; private set
+    var isMeCool    : Boolean = false; private set
+    var isAmlogic   : Boolean = false; private set
+    var isLg        : Boolean = false; private set
+    var isSony      : Boolean = false; private set
+    var isPhilips   : Boolean = false; private set
+    var isNvidia    : Boolean = false; private set
+    var isRockchip  : Boolean = false; private set
+    /** S905X / S905X2 / S905X3 / S905X4 — Mali-450/G31: definitely LOW */
+    var isWeakAmlogic: Boolean = false; private set
 
     // ── Read-only state ────────────────────────────────────────────────────────
     var gpuRenderer: String = "unknown"; private set
-
-    var totalRamMb: Int = 0; private set
+    var totalRamMb : Int    = 0;         private set
 
     lateinit var tier      : Tier;       private set
     lateinit var animConfig: AnimConfig; private set
@@ -50,46 +51,58 @@ object DeviceProfile {
 
     // ── Initialisation ─────────────────────────────────────────────────────────
     fun init(context: Context) {
-        totalRamMb  = readTotalRam(context)
+        totalRamMb = readTotalRam(context)
 
         val manufacturer = Build.MANUFACTURER.lowercase()
         val hardware     = Build.HARDWARE.lowercase()
         val model        = Build.MODEL.lowercase()
         val board        = Build.BOARD.lowercase()
 
-        isXiaomi   = manufacturer.contains("xiaomi")
-        isMeCool   = manufacturer.contains("mecool") || model.contains("km") || model.contains("mecool")
-        isAmlogic  = hardware.contains("amlogic") || hardware.contains("s905") ||
-                hardware.contains("s922")     || hardware.contains("s912") ||
-                hardware.contains("s905x")    || board.contains("s905")
-        isLg       = manufacturer.contains("lge") || manufacturer.contains("lg") ||
-                model.contains("oled")        || model.contains(" lg")
-        isSony     = manufacturer.contains("sony")
-        isPhilips  = manufacturer.contains("philips") || manufacturer.contains("tp vision")
-        isNvidia   = manufacturer.contains("nvidia")
-        isRockchip = hardware.contains("rockchip") || hardware.contains("rk3588") ||
-                hardware.contains("rk3399")   || board.contains("rk3588")
+        isXiaomi    = manufacturer.contains("xiaomi")
+        isMeCool    = manufacturer.contains("mecool") || model.contains("km") || model.contains("mecool")
+        isAmlogic   = hardware.contains("amlogic") || hardware.contains("s905") ||
+                hardware.contains("s922")           || hardware.contains("s912") ||
+                hardware.contains("s905x")          || board.contains("s905")
+        isLg        = manufacturer.contains("lge") || manufacturer.contains("lg") ||
+                model.contains("oled")              || model.contains(" lg")
+        isSony      = manufacturer.contains("sony")
+        isPhilips   = manufacturer.contains("philips") || manufacturer.contains("tp vision")
+        isNvidia    = manufacturer.contains("nvidia")
+        isRockchip  = hardware.contains("rockchip") || hardware.contains("rk3588") ||
+                hardware.contains("rk3399")         || board.contains("rk3588")
+
+        // Weak Amlogic = S905 family (excluding S922X which is decent)
+        isWeakAmlogic = isAmlogic && (
+                hardware.contains("s905x")  || // S905X, S905X2, S905X3, S905X4
+                        hardware.contains("s905d")  ||
+                        hardware.contains("s905w")  ||
+                        hardware.contains("s905l")  ||
+                        hardware.contains("s905")   ||
+                        board.contains("s905")
+                ) && !hardware.contains("s922")
 
         gpuRenderer = buildGpuLabel(manufacturer, hardware, model, board)
 
-        tier       = detectTier(hardware, model, board)
-        animConfig = buildConfig(effectiveTier())
+        tier        = detectTier(hardware, model, board)
+        animConfig  = buildConfig(effectiveTier())
     }
 
     // ── GPU label ──────────────────────────────────────────────────────────────
     private fun buildGpuLabel(mfr: String, hw: String, model: String, board: String): String {
         return when {
-            mfr.contains("nvidia")                      -> "Tegra (Nvidia)"
+            mfr.contains("nvidia")                               -> "Tegra (Nvidia)"
             hw.contains("rk3588")  || board.contains("rk3588")  -> "Mali-G610 (RK3588)"
             hw.contains("rk3399")  || board.contains("rk3399")  -> "Mali-T860 (RK3399)"
-            hw.contains("s922")                         -> "Mali-G52 (S922X)"
-            hw.contains("s905x4")  || model.contains("km7") -> "Mali-G31 (S905X4)"
-            hw.contains("s905")                         -> "Mali-450 (S905)"
-            mfr.contains("lge")    || model.contains("oled") -> "Mali-G78 (LG)"
-            mfr.contains("sony")                        -> "Adreno/PowerVR (Sony)"
-            mfr.contains("xiaomi") && model.contains("mi box") -> "Mali-G52 (Mi Box)"
-            mfr.contains("xiaomi")                      -> "Mali (Xiaomi)"
-            else                                        -> "${hw}/${Build.SUPPORTED_ABIS[0]}"
+            hw.contains("s922")                                  -> "Mali-G52 (S922X)"
+            hw.contains("s905x4")  || model.contains("km7")     -> "Mali-G31 (S905X4)"
+            hw.contains("s905x3")                                -> "Mali-G31 (S905X3)"
+            hw.contains("s905x2")                                -> "Mali-450 (S905X2)"
+            hw.contains("s905")                                  -> "Mali-450 (S905)"
+            mfr.contains("lge")    || model.contains("oled")    -> "Mali-G78 (LG)"
+            mfr.contains("sony")                                 -> "Adreno/PowerVR (Sony)"
+            mfr.contains("xiaomi") && model.contains("mi box")  -> "Mali-G52 (Mi Box)"
+            mfr.contains("xiaomi")                               -> "Mali (Xiaomi)"
+            else                                                 -> "${hw}/${Build.SUPPORTED_ABIS[0]}"
         }
     }
 
@@ -104,12 +117,23 @@ object DeviceProfile {
 
         if (isMeCool || isAmlogic) {
             return when {
-                hw.contains("s922") || model.contains("km7")         -> Tier.HIGH
-                hw.contains("s905x4")|| model.contains("km6")        -> Tier.MID
-                hw.contains("s905x3")                                 -> Tier.MID
-                hw.contains("s905x2")                                 -> Tier.MID
-                totalRamMb >= 3000                                    -> Tier.MID
-                else                                                  -> Tier.LOW
+                // S922X — Amlogic's best, Mali-G52: solid HIGH
+                hw.contains("s922") || model.contains("km7")  -> Tier.HIGH
+
+                // Everything S905-based: Mali-450 / Mali-G31 — these GPUs
+                // cannot handle parallax, heavy cross-fades, or spring
+                // animations without frame drops. Force LOW regardless of RAM.
+                hw.contains("s905x4") || model.contains("km6") -> Tier.LOW
+                hw.contains("s905x3")                          -> Tier.LOW
+                hw.contains("s905x2")                          -> Tier.LOW
+                hw.contains("s905x")                           -> Tier.LOW
+                hw.contains("s905d")                           -> Tier.LOW
+                hw.contains("s905w")                           -> Tier.LOW
+                hw.contains("s905")                            -> Tier.LOW
+
+                // Unknown Amlogic with decent RAM → cautious MID
+                totalRamMb >= 3000 -> Tier.MID
+                else               -> Tier.LOW
             }
         }
 
@@ -156,16 +180,16 @@ object DeviceProfile {
             )
             Tier.MID -> AnimConfig(
                 rowFadeDuration   = 120,
-                backdropDuration  = 300,
-                heroFadeDuration  = 200,
-                crossfadeDuration = 100,
+                backdropDuration  = 250,
+                heroFadeDuration  = 150,
+                crossfadeDuration = 80,
                 enableRowFade     = true,
                 enableParallax    = false,
                 lazyBeyondBounds  = 1
             )
             Tier.LOW -> AnimConfig(
                 rowFadeDuration   = 0,
-                backdropDuration  = 150,
+                backdropDuration  = 0,
                 heroFadeDuration  = 0,
                 crossfadeDuration = 0,
                 enableRowFade     = false,
@@ -177,11 +201,11 @@ object DeviceProfile {
 
     // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
     data class BufferConfig(
-        val minBufferMs    : Int,
-        val maxBufferMs    : Int,
-        val bufferForPlayMs: Int,
-        val bufferForReplayMs: Int,
-        val targetBufferBytes: Int
+        val minBufferMs       : Int,
+        val maxBufferMs       : Int,
+        val bufferForPlayMs   : Int,
+        val bufferForReplayMs : Int,
+        val targetBufferBytes : Int
     )
 
     val bufferConfig: BufferConfig get() = when (effectiveTier()) {
@@ -194,6 +218,7 @@ object DeviceProfile {
     fun debugInfo(): String =
         "Tier=${if (forceLowTier) "LOW(forced)" else tier.name} | " +
                 "ReduceMotion=$forceReduceMotion | GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
+                "WeakAmlogic=$isWeakAmlogic | " +
                 "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | Amlogic=$isAmlogic | " +
                 "LG=$isLg | Sony=$isSony | Philips=$isPhilips | Rockchip=$isRockchip | " +
                 "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
