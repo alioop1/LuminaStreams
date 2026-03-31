@@ -13,3 +13,7 @@ interface MediaRepository {
     suspend fun getTvFullDetails(id: String): Result<TmdbTvDetailsDto>
     suspend fun discoverMedia(type: String, genreId: String?, year: String?, sortBy: String, page: Int): Result<List<Movie>>
 }
+
+// ── PlayerRepository ───────────────────────────────────────────────────────
+// TODO: Implement PlayerRepository
+interface PlayerRepository

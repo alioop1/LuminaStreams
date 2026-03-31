@@ -71,6 +71,11 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 
+@Composable
+fun tr(en: String, he: String): String {
+    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+}
+
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
     is ContextWrapper -> baseContext.findActivity()
@@ -492,15 +497,14 @@ fun PlayerScreen(
                     com.luminastreams.tv.ui.components.LoadingIndicator()
                     Spacer(modifier = Modifier.height(24.dp))
 
-                    // מציג לוגו אם קיים, אחרת מציג את טקסט הכותרת כגיבוי
                     if (logoUrl.isNotBlank()) {
                         coil.compose.AsyncImage(
                             model = logoUrl,
                             contentDescription = title,
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                             modifier = Modifier
-                                .widthIn(max = 400.dp) // מגביל את רוחב הלוגו שלא יהיה ענק
-                                .heightIn(max = 140.dp) // מגביל את גובה הלוגו
+                                .widthIn(max = 400.dp)
+                                .heightIn(max = 140.dp)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                     } else if (title.isNotBlank()) {
@@ -508,7 +512,7 @@ fun PlayerScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                     }
 
-                    Text("טוען ומתחבר לזרם...", color = DIM, fontSize = 16.sp)
+                    Text(tr("Loading and connecting...", "טוען ומתחבר לזרם..."), color = DIM, fontSize = 16.sp)
                 }
             }
         }
@@ -582,7 +586,13 @@ fun PlayerScreen(
             Box(
                 modifier = Modifier.align(Alignment.TopStart).padding(top = 28.dp, start = 28.dp).zIndex(50f).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(0.7f)).padding(horizontal = 10.dp, vertical = 5.dp)
             ) {
-                Text("⬛ ${selectedAspectRatio.label}", color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                val modeLabel = when (selectedAspectRatio) {
+                    AspectRatioMode.NORMAL -> tr("Normal", "רגיל")
+                    AspectRatioMode.ZOOM -> tr("Zoom", "זום")
+                    AspectRatioMode.STRETCH -> tr("Stretch", "מתיחה")
+                    else -> selectedAspectRatio.label
+                }
+                Text("⬛ $modeLabel", color = WHITE, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
             }
         }
 
@@ -596,16 +606,16 @@ fun PlayerScreen(
                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     Icon(Icons.Default.PlayArrow, null, tint = RED, modifier = Modifier.size(48.dp))
-                    Text("Continue Watching?", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-                    Text("Stopped at ${formatTime(savedPosition)}", color = DIM, fontSize = 15.sp, textAlign = TextAlign.Center)
+                    Text(tr("Continue Watching?", "להמשיך צפייה?"), color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                    Text(tr("Stopped at", "נעצר ב-") + " ${formatTime(savedPosition)}", color = DIM, fontSize = 15.sp, textAlign = TextAlign.Center)
                     Spacer(Modifier.height(8.dp))
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown) {
                                 when {
-                                    ev.key == Key.DirectionRight -> { runCatching { fromStartFR.requestFocus() }; true }
-                                    ev.key == Key.DirectionLeft  -> { runCatching { resumeFR.requestFocus() }; true }
+                                    ev.key == Key.DirectionRight -> { runCatching { if (isRtl) resumeFR.requestFocus() else fromStartFR.requestFocus() }; true }
+                                    ev.key == Key.DirectionLeft  -> { runCatching { if (isRtl) fromStartFR.requestFocus() else resumeFR.requestFocus() }; true }
                                     else -> false
                                 }
                             } else false
@@ -617,14 +627,14 @@ fun PlayerScreen(
                             colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("▶  Continue", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
                             onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit { remove(progressKey) } },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(fromStartFR)
-                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text("From Start", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
+                        ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("From Start", "מהתחלה"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                     }
                 }
             }
@@ -638,7 +648,7 @@ fun PlayerScreen(
                     Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape), Alignment.Center) {
                         Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
                     }
-                    Text("Playback Error", color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
+                    Text(tr("Playback Error", "שגיאת נגן"), color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
                     Text(error!!, color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
                     Spacer(Modifier.height(8.dp))
                     Surface(
@@ -651,7 +661,7 @@ fun PlayerScreen(
                         Box(Modifier.padding(horizontal = 32.dp).fillMaxHeight(), Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp))
-                                Text("Back to Sources", fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center)
+                                Text(tr("Back to Sources", "חזור למקורות"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center)
                             }
                         }
                     }
@@ -839,22 +849,22 @@ fun PlayerPopupMenu(
         when (activeMenu) {
             ActiveMenu.AUDIO -> {
                 Column {
-                    Text("Audio Tracks", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    Text(tr("Audio Tracks", "רצועות שמע"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
                     TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, trackType = C.TRACK_TYPE_AUDIO, focusReq = sideMenuFR, onClose = onClose)
                 }
             }
             ActiveMenu.EMBEDDED_SUBS -> {
                 Column {
-                    Text("Subtitles", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    Text(tr("Subtitles", "כתוביות"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
                     TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, trackType = C.TRACK_TYPE_TEXT, focusReq = sideMenuFR, onClose = onClose)
                 }
             }
             ActiveMenu.WEB_SUBS -> {
                 Column {
-                    Text("Web Subtitles", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    Text(tr("Web Subtitles", "כתוביות רשת"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
                     if (state.availableSubtitles.isEmpty()) {
                         Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), Alignment.Center) {
-                            Text(if (state.isSubtitlesLoading) "Searching..." else "No subtitles found", color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
+                            Text(if (state.isSubtitlesLoading) tr("Searching...", "מחפש...") else tr("No subtitles found", "לא נמצאו כתוביות"), color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
                         }
                     } else {
                         LazyColumn(
@@ -877,15 +887,21 @@ fun PlayerPopupMenu(
             }
             ActiveMenu.ASPECT_RATIO -> {
                 Column {
-                    Text("Aspect Ratio", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
+                    Text(tr("Aspect Ratio", "יחס תצוגה"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
                     LazyColumn(
                         verticalArrangement = Arrangement.spacedBy(4.dp),
                         modifier = Modifier.focusGroup()
                     ) {
                         itemsIndexed(AspectRatioMode.entries) { index, mode ->
                             val isFirst = index == 0
+                            val modeLabel = when (mode) {
+                                AspectRatioMode.NORMAL -> tr("Normal", "רגיל")
+                                AspectRatioMode.ZOOM -> tr("Zoom", "זום")
+                                AspectRatioMode.STRETCH -> tr("Stretch", "מתיחה")
+                                else -> mode.label
+                            }
                             TrackItemCard(
-                                title = mode.label, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
+                                title = modeLabel, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
                                 modifier = Modifier.then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier),
                                 onClick = { onApplyAspectRatio(mode) }
                             )
@@ -910,7 +926,7 @@ fun TrackListUi(
         val list = mutableListOf<Triple<androidx.media3.common.Tracks.Group?, Int, String>>()
         if (trackType == C.TRACK_TYPE_TEXT) {
             val isOff = groups.none { it.isSelected }
-            list.add(Triple(null, -1, if (isOff) "Turn Off" else "Turn Off"))
+            list.add(Triple(null, -1, "Turn Off")) // מתורגם למטה ברמת ה-UI כדאי להשאיר כמפתח באנגלית
         }
         groups.forEach { group ->
             for (i in 0 until group.length) {
@@ -933,7 +949,7 @@ fun TrackListUi(
 
     if (trackList.isEmpty()) {
         Box(Modifier.fillMaxWidth().padding(vertical = 24.dp).focusRequester(focusReq).focusable(), Alignment.Center) {
-            Text("No tracks available", color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
+            Text(tr("No tracks available", "אין רצועות זמינות"), color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
         }
     } else {
         LazyColumn(
@@ -943,10 +959,11 @@ fun TrackListUi(
             itemsIndexed(trackList) { index, (group, trackIndex, name) ->
                 val isFirst    = index == 0
                 val isSelected = group?.isTrackSelected(trackIndex) ?: (trackType == C.TRACK_TYPE_TEXT && name.contains("Turn Off") && groups.none { it.isSelected })
+                val displayName = if (name == "Turn Off") tr("Turn Off", "כבה") else name
 
                 TrackItemCard(
-                    title      = name,
-                    subtitle   = if (group == null) "" else "Internal",
+                    title      = displayName,
+                    subtitle   = if (group == null) "" else tr("Internal", "פנימי"),
                     isSelected = isSelected,
                     modifier   = Modifier.then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier),
                     onClick = {

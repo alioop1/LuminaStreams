@@ -8,15 +8,19 @@ sealed interface SettingsAuthStatus {
     data class Error(val message: String) : SettingsAuthStatus
 }
 
-enum class SettingsCategory(val titleHe: String, val titleEn: String) {
-    ACCOUNT("חשבון ורשת", "Real-Debrid & Network"),
-    PLAYBACK("וידאו וסאונד", "HDR, Audio & Player"),
-    PRIVACY("כתוביות והתאמה אישית", "Subtitles & Interface"),
-    SYSTEM("ביצועים ותצוגה", "Performance & Display")
+enum class SettingsCategory {
+    LANGUAGE,
+    ACCOUNT,
+    PLAYBACK,
+    PRIVACY,
+    SYSTEM
 }
 
 data class SettingsState(
     val selectedCategory: SettingsCategory = SettingsCategory.ACCOUNT,
+
+    // ── App Language ──────────────────────────────────────────────────────────
+    val appLanguage: String = "he", // "en" or "he"
 
     // ── Real-Debrid Auth ──────────────────────────────────────────────────────
     val rdToken: String = "",
@@ -28,7 +32,7 @@ data class SettingsState(
 
     // ── Playback & Home Theater ───────────────────────────────────────────────
     val audioPassthrough: Boolean = false,
-    val autoFrameRate: Boolean = false,          // ✅ REAL: PlayerScreen sets window frame rate
+    val autoFrameRate: Boolean = false,
     val hwAcceleration: Boolean = true,
     val preferredAudioLang: String = "original",
 
@@ -36,12 +40,12 @@ data class SettingsState(
     val defaultSubtitles: String = "Hebrew",
     val yellowSubtitles: Boolean = false,
     val subtitleFontScale: String = "medium",
-    val saveSearchHistory: Boolean = true,       // ✅ REAL: SearchViewModel checks before saving
-    val subtitleCacheOnly: Boolean = false,      // ✅ REAL: ExoPlayer skips stream sub tracks
+    val saveSearchHistory: Boolean = true,
+    val subtitleCacheOnly: Boolean = false,
 
     // ── System & Performance ──────────────────────────────────────────────────
     val liteUiMode: Boolean = false,
-    val reduceMotion: Boolean = false,           // ✅ REAL: DeviceProfile.forceReduceMotion
+    val reduceMotion: Boolean = false,
     val preAllocateBuffer: Boolean = false,
 
     // ── Status & Info ─────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     private fun loadAllSettings() {
         _state.update {
             it.copy(
+                appLanguage        = prefs.getString("app_lang", "he") ?: "he",
                 rdToken            = prefs.getString("rd_api_token", "") ?: "",
                 audioPassthrough   = prefs.getBoolean("audio_passthrough", false),
                 autoFrameRate      = prefs.getBoolean("afr", false),
@@ -86,6 +87,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     fun updateStringSetting(key: String, value: String) {
         _state.update { current ->
             when (key) {
+                "app_lang"             -> current.copy(appLanguage        = value)
                 "preferred_audio_lang" -> current.copy(preferredAudioLang = value)
                 "def_subs"             -> current.copy(defaultSubtitles   = value)
                 "subtitle_font_scale"  -> current.copy(subtitleFontScale  = value)

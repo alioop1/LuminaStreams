@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -45,10 +46,12 @@ import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
@@ -130,6 +133,14 @@ private val rowsOverlay = Brush.verticalGradient(
 )
 
 // ═══════════════════════════════════════════════════════════════════
+//  TRANSLATION HELPER
+// ═══════════════════════════════════════════════════════════════════
+@Composable
+fun tr(en: String, he: String): String {
+    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+}
+
+// ═══════════════════════════════════════════════════════════════════
 //  FOCUS STATE
 // ═══════════════════════════════════════════════════════════════════
 @Stable
@@ -178,12 +189,12 @@ fun HomeScreen(
         val filter = currentFilter
         when (currentTab) {
             "ראשי" -> {
-                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", "Trending Movies",       state.movieTrending))
+                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", tr("Trending Movies", "סרטים פופולריים"), state.movieTrending))
                 if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,         state.movieHBO))
-                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",    "Popular Shows",         state.tvTrending))
+                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",    tr("Popular Shows", "סדרות פופולריות"), state.tvTrending))
                 if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,     state.movieNetflix))
                 if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,      state.movieAmazon))
-                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres","New in Theaters",       state.moviePremieres))
+                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",tr("New in Theaters", "בקולנוע"), state.moviePremieres))
                 if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio("tvAppleTV",      StudioBrand.APPLE_TV,    state.tvAppleTV))
             }
             "סרטים" -> {
@@ -196,12 +207,12 @@ fun HomeScreen(
                 if (filter == null || filter == "APPLE_TV")  if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio("movieAppleTV",   StudioBrand.APPLE_TV,  state.movieAppleTV))
                 if (filter == null || filter == "DISNEY")    if (state.movieDisney.isNotEmpty())    add(RowDef.Studio("movieDisney",    StudioBrand.DISNEY,    state.movieDisney))
                 if (filter == null) {
-                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  "Trending Now",       state.movieTrending))
-                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", "New in Theaters",    state.moviePremieres))
-                    if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",    "Action & Adventure", state.movieAction))
-                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     "Drama",              state.movieDrama))
-                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     "Sci-Fi",             state.movieScifi))
-                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  "Top Rated",          state.movieTopRated))
+                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Now", "פופולרי עכשיו"), state.movieTrending))
+                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters", "בקולנוע"), state.moviePremieres))
+                    if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",    tr("Action & Adventure", "פעולה והרפתקאות"), state.movieAction))
+                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     tr("Drama", "דרמה"), state.movieDrama))
+                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     tr("Sci-Fi", "מדע בדיוני"), state.movieScifi))
+                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  tr("Top Rated", "דירוג גבוה"), state.movieTopRated))
                 }
             }
             "סדרות" -> {
@@ -214,37 +225,36 @@ fun HomeScreen(
                 if (filter == null || filter == "APPLE_TV")  if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio("tvAppleTV",   StudioBrand.APPLE_TV,  state.tvAppleTV))
                 if (filter == null || filter == "DISNEY")    if (state.tvDisney.isNotEmpty())    add(RowDef.Studio("tvDisney",    StudioBrand.DISNEY,    state.tvDisney))
                 if (filter == null) {
-                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  "Trending Shows",    state.tvTrending))
-                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", "On The Air",        state.tvPremieres))
-                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     "Drama",             state.tvDrama))
-                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     "Crime & Thriller",  state.tvCrime))
-                    if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     "Sci-Fi & Fantasy",  state.tvScifi))
-                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  "Top Rated Shows",   state.tvTopRated))
+                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  tr("Trending Shows", "סדרות פופולריות"), state.tvTrending))
+                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", tr("On The Air", "משודר כעת"), state.tvPremieres))
+                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     tr("Drama", "דרמה"), state.tvDrama))
+                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     tr("Crime & Thriller", "פשע ומתח"), state.tvCrime))
+                    if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     tr("Sci-Fi & Fantasy", "מדע בדיוני ופנטזיה"), state.tvScifi))
+                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  tr("Top Rated Shows", "סדרות מומלצות"), state.tvTopRated))
                 }
             }
             "Fuzer" -> {
-                val newContent = (state.fuzerMovies + state.fuzerSeries)
-                    .sortedByDescending { it.id }
+                val newContent = (state.fuzerMovies + state.fuzerSeries).sortedByDescending { it.id }
                 if (newContent.isNotEmpty())
-                    add(RowDef.Regular("fuzer_new",  "🆕 תוכן חדש",          newContent))
+                    add(RowDef.Regular("fuzer_new",  tr("🆕 New Content", "🆕 תוכן חדש"), newContent))
 
                 if (state.fuzerMovies.isNotEmpty())
-                    add(RowDef.Regular("fuzer_m",    "🎬 סרטים",              state.fuzerMovies))
+                    add(RowDef.Regular("fuzer_m",    tr("🎬 Movies", "🎬 סרטים"), state.fuzerMovies))
                 if (state.fuzerMoviesHD.isNotEmpty())
-                    add(RowDef.Regular("fuzer_mhd",  "🎬 סרטים HD",           state.fuzerMoviesHD))
+                    add(RowDef.Regular("fuzer_mhd",  tr("🎬 Movies HD", "🎬 סרטים HD"), state.fuzerMoviesHD))
                 if (state.fuzerMovies4K.isNotEmpty())
-                    add(RowDef.Regular("fuzer_m4k",  "✨ סרטים 4K",           state.fuzerMovies4K))
+                    add(RowDef.Regular("fuzer_m4k",  tr("✨ Movies 4K", "✨ סרטים 4K"), state.fuzerMovies4K))
                 if (state.fuzerDubbedMovies.isNotEmpty())
-                    add(RowDef.Regular("fuzer_dm",   "🎤 סרטים מדובבים",      state.fuzerDubbedMovies))
+                    add(RowDef.Regular("fuzer_dm",   tr("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), state.fuzerDubbedMovies))
 
                 if (state.fuzerSeries.isNotEmpty())
-                    add(RowDef.Regular("fuzer_tv",   "📺 סדרות",              state.fuzerSeries))
+                    add(RowDef.Regular("fuzer_tv",   tr("📺 TV Shows", "📺 סדרות"), state.fuzerSeries))
                 if (state.fuzerSeriesHD.isNotEmpty())
-                    add(RowDef.Regular("fuzer_shd",  "📺 סדרות HD",           state.fuzerSeriesHD))
+                    add(RowDef.Regular("fuzer_shd",  tr("📺 TV Shows HD", "📺 סדרות HD"), state.fuzerSeriesHD))
                 if (state.fuzerSeries4K.isNotEmpty())
-                    add(RowDef.Regular("fuzer_s4k",  "✨ סדרות 4K",           state.fuzerSeries4K))
+                    add(RowDef.Regular("fuzer_s4k",  tr("✨ TV Shows 4K", "✨ סדרות 4K"), state.fuzerSeries4K))
                 if (state.fuzerDubbedSeries.isNotEmpty())
-                    add(RowDef.Regular("fuzer_ds",   "🎤 סדרות מדובבות",      state.fuzerDubbedSeries))
+                    add(RowDef.Regular("fuzer_ds",   tr("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), state.fuzerDubbedSeries))
             }
         }
     }
@@ -418,7 +428,7 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (m.year > 0) { Text(m.year.toString(), color = DIM, fontSize = 13.sp); MetaDot() }
                         if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); MetaDot() }
-                        Text(if (m.mediaType == "tv") "TV Series" else "Movie", color = DIM, fontSize = 13.sp)
+                        Text(if (m.mediaType == "tv") tr("TV Series", "סדרה") else tr("Movie", "סרט"), color = DIM, fontSize = 13.sp)
                         if (m.rating > 0f) {
                             MetaDot()
                             Row(
@@ -602,13 +612,13 @@ private fun TwoRowNavBar(
     }
 
     val density      = LocalDensity.current
-    val tabPositions = remember { mutableStateMapOf<String, Offset>() }
+    val tabPositions = remember { mutableStateMapOf<String, Float>() }
     val tabWidths    = remember { mutableStateMapOf<String, Dp>() }
 
-    val targetX     = with(density) { (tabPositions[activeTab]?.x ?: 0f).toDp() }
+    val targetX     = tabPositions[activeTab] ?: 0f
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
-    val animatedX     by animateDpAsState(targetValue = targetX,     animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillX")
+    val animatedX     by animateFloatAsState(targetValue = targetX,     animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillX")
     val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = tween(300, easing = FastOutSlowInEasing), label = "pillW")
 
     Column(modifier = modifier.onFocusChanged { if (it.hasFocus) onNavFocus() }) {
@@ -625,11 +635,16 @@ private fun TwoRowNavBar(
 
         Box(
             modifier         = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp),
-            contentAlignment = Alignment.CenterStart
+            // שימוש ב-AbsoluteAlignment מונע מ-Compose להפוך צדדים ולשבור את האנימציה ב-RTL
+            contentAlignment = AbsoluteAlignment.CenterLeft
         ) {
             if (animatedWidth > 0.dp) {
                 androidx.compose.material3.Surface(
-                    modifier = Modifier.offset(x = animatedX).width(animatedWidth).height(NAV_PILL_H),
+                    modifier = Modifier
+                        .width(animatedWidth)
+                        .height(NAV_PILL_H)
+                        // שימוש ב-graphicsLayer במקום offset מבטיח הזזה בפיקסלים קשיחים ללא התערבות כיוון שפה
+                        .graphicsLayer { translationX = animatedX },
                     color    = WHITE, shape = RoundedCornerShape(50)
                 ) {}
             }
@@ -638,12 +653,12 @@ private fun TwoRowNavBar(
                 verticalAlignment     = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                NavPill("Home",      Icons.Default.Home,        activeTab == "ראשי",   firstNavFR, onHomeTab)   { o, w -> tabPositions["ראשי"]      = o; tabWidths["ראשי"]      = w }
-                NavPill("Movies",    Icons.Default.Movie,       activeTab == "סרטים",  null,       onMoviesTab)  { o, w -> tabPositions["סרטים"]     = o; tabWidths["סרטים"]     = w }
-                NavPill("TV Shows",  Icons.Default.Tv,          activeTab == "סדרות",  null,       onSeriesTab)  { o, w -> tabPositions["סדרות"]     = o; tabWidths["סדרות"]     = w }
-                NavPill("Fuzer",     Icons.Default.LocalMovies, activeTab == "Fuzer",  null,       onFuzer)      { o, w -> tabPositions["Fuzer"]     = o; tabWidths["Fuzer"]     = w }
-                NavPill("Watchlist", Icons.Default.Bookmark,    false,                 null,       onWatchlist)  { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
-                NavPill("Settings",  Icons.Default.Settings,    false,                 null,       onSettings)   { o, w -> tabPositions["Settings"]  = o; tabWidths["Settings"]  = w }
+                NavPill(tr("Home", "ראשי"),      Icons.Default.Home,        activeTab == "ראשי",   firstNavFR, onHomeTab)   { o, w -> tabPositions["ראשי"]      = o; tabWidths["ראשי"]      = w }
+                NavPill(tr("Movies", "סרטים"),    Icons.Default.Movie,       activeTab == "סרטים",  null,       onMoviesTab)  { o, w -> tabPositions["סרטים"]     = o; tabWidths["סרטים"]     = w }
+                NavPill(tr("TV Shows", "סדרות"),  Icons.Default.Tv,          activeTab == "סדרות",  null,       onSeriesTab)  { o, w -> tabPositions["סדרות"]     = o; tabWidths["סדרות"]     = w }
+                NavPill("Fuzer",                 Icons.Default.LocalMovies, activeTab == "Fuzer",  null,       onFuzer)      { o, w -> tabPositions["Fuzer"]     = o; tabWidths["Fuzer"]     = w }
+                NavPill(tr("Watchlist", "רשימת צפייה"), Icons.Default.Bookmark,    false,                 null,       onWatchlist)  { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
+                NavPill(tr("Settings", "הגדרות"),  Icons.Default.Settings,    false,                 null,       onSettings)   { o, w -> tabPositions["Settings"]  = o; tabWidths["Settings"]  = w }
                 Spacer(Modifier.weight(1f))
                 SearchBarButton(onClick = onSearch)
             }
@@ -688,7 +703,7 @@ private fun SearchBarButton(onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Icon(Icons.Default.Search, null, Modifier.size(13.dp))
-            Text("Search movies, shows...", fontSize = 12.sp, letterSpacing = 0.sp)
+            Text(tr("Search movies, shows...", "חיפוש סרטים וסדרות..."), fontSize = 12.sp, letterSpacing = 0.sp)
         }
     }
 }
@@ -701,7 +716,7 @@ private fun NavPill(
     label: String, icon: ImageVector, isSelected: Boolean,
     focusRequester: FocusRequester? = null,
     onClick: () -> Unit,
-    onTabPositioned: (Offset, Dp) -> Unit
+    onTabPositioned: (Float, Dp) -> Unit
 ) {
     val density      = LocalDensity.current
     val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
@@ -726,7 +741,7 @@ private fun NavPill(
             .height(NAV_PILL_H)
             .wrapContentWidth()
             .onGloballyPositioned { coords ->
-                onTabPositioned(coords.positionInParent(), with(density) { coords.size.width.toDp() })
+                onTabPositioned(coords.positionInParent().x, with(density) { coords.size.width.toDp() })
             }
             .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
@@ -1020,14 +1035,20 @@ private fun PortraitStudioRow(
     }
 }
 
-private fun studioLabel(b: StudioBrand) = when (b) {
-    StudioBrand.NETFLIX   -> "Netflix Originals"
-    StudioBrand.APPLE_TV  -> "Apple TV+ Originals"
-    StudioBrand.DISNEY    -> "Disney+ Exclusives"
-    StudioBrand.HBO       -> "HBO Max Exclusives"
-    StudioBrand.AMAZON    -> "Amazon Originals"
-    StudioBrand.PARAMOUNT -> "Paramount+ Exclusives"
-    StudioBrand.HULU      -> "Hulu Originals"
+@Composable
+private fun studioLabel(b: StudioBrand): String {
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    fun _tr(en: String, he: String) = if (isRtl) he else en
+
+    return when (b) {
+        StudioBrand.NETFLIX   -> _tr("Netflix Originals", "מקור של נטפליקס")
+        StudioBrand.APPLE_TV  -> _tr("Apple TV+ Originals", "מקור של אפל TV")
+        StudioBrand.DISNEY    -> _tr("Disney+ Exclusives", "בלעדי לדיסני+")
+        StudioBrand.HBO       -> _tr("HBO Max Exclusives", "בלעדי ל-HBO")
+        StudioBrand.AMAZON    -> _tr("Amazon Originals", "מקור של אמאזון")
+        StudioBrand.PARAMOUNT -> _tr("Paramount+ Exclusives", "בלעדי לפרמאונט")
+        StudioBrand.HULU      -> _tr("Hulu Originals", "מקור של הולו")
+    }
 }
 
 @Composable
@@ -1198,7 +1219,7 @@ private fun LandscapeCard(
                         .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {
-                    Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE,
+                    Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE,
                         fontSize = 9.sp, fontWeight = FontWeight.Black)
                 }
             }
@@ -1206,7 +1227,7 @@ private fun LandscapeCard(
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
                 Text(movie.title, color = WHITE, fontSize = 13.sp,
                     fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM2, fontSize = 11.sp)
+                Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
             }
 
             if (movie.rating > 0f) {
@@ -1325,7 +1346,7 @@ fun PosterCard(
                             .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
                             .padding(horizontal = 5.dp, vertical = 2.dp)
                     ) {
-                        Text(if (isDubbed) "🎤 מדובב" else "💎 FUZER", color = WHITE,
+                        Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE,
                             fontSize = 8.sp, fontWeight = FontWeight.Black)
                     }
                 }
@@ -1355,7 +1376,7 @@ fun PosterCard(
             overflow   = TextOverflow.Ellipsis,
             modifier   = Modifier.width(cardW)
         )
-        Text(if (movie.mediaType == "tv") "TV Show" else "Movie", color = DIM3, fontSize = 10.sp)
+        Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM3, fontSize = 10.sp)
     }
 }
 
@@ -1373,7 +1394,7 @@ private fun StudioRibbonRow(
 
     Column(Modifier.padding(vertical = 10.dp)) {
         Text(
-            "Browse by Studio",
+            tr("Browse by Studio", "סנן לפי אולפן"),
             color      = WHITE.copy(if (isActive) 1f else 0.4f),
             fontSize   = 14.sp,
             fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
@@ -1483,7 +1504,7 @@ fun HomeError(message: String, onRetry: () -> Unit) {
                 modifier = Modifier.height(50.dp).width(160.dp)
             ) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) {
-                    Text("Retry", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    Text(tr("Retry", "נסה שוב"), color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

@@ -92,9 +92,6 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── Track selector ─────────────────────────────────────────────────────────
-    // HIGH tier: no resolution or bitrate cap — full 4K UHD
-    // MID  tier: up to 4K but no explicit cap either (device RAM is sufficient)
-    // LOW  tier: capped at 1920×1080 / 10 Mbps to prevent OOM and stuttering
     val trackSelector = DefaultTrackSelector(appContext).apply {
         val builder = buildUponParameters()
             .setPreferredVideoMimeTypes(
@@ -105,27 +102,6 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            // ── Resolution & bitrate caps ───────────────────────────────────
-            .apply {
-                when (DeviceProfile.tier) {
-                    DeviceProfile.Tier.HIGH -> {
-                        // No cap — allow full 4K UHD at any bitrate
-                        setMaxVideoSize(Int.MAX_VALUE, Int.MAX_VALUE)
-                        setMaxVideoBitrate(Int.MAX_VALUE)
-                    }
-                    DeviceProfile.Tier.MID -> {
-                        // Allow up to 4K but limit bitrate to 40 Mbps (safe for most MID devices)
-                        setMaxVideoSize(3840, 2160)
-                        setMaxVideoBitrate(40_000_000)
-                    }
-                    DeviceProfile.Tier.LOW -> {
-                        // Cap at 1080p / 10 Mbps — prevents OOM on 2 GB Mali boxes
-                        setMaxVideoSize(1920, 1080)
-                        setMaxVideoBitrate(10_000_000)
-                    }
-                }
-            }
-            // ── Tunneling ───────────────────────────────────────────────────
             .setTunnelingEnabled(
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
                         DeviceProfile.isNvidia ||
@@ -135,7 +111,6 @@ class ExoPlayerWrapper(context: Context) {
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
-
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
             "en" -> builder.setPreferredAudioLanguages("eng", "en")
@@ -349,6 +324,7 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
+    // FIX: reads file on IO, parses on Default, updates state on Main
     private suspend fun loadAndStartTickerAsync(subFile: File, isVtt: Boolean) {
         val text: String = withContext(Dispatchers.IO) {
             runCatching { subFile.readText(Charsets.UTF_8) }.getOrNull()

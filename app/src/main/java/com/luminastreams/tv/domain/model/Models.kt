@@ -21,9 +21,10 @@ data class Movie(
 )
 
 // ── SearchResult ──────────────────────────────────────────────────────────
-enum class MediaType(val label: String) {
-    MOVIE("סרט"),
-    TV_SHOW("סדרה")
+enum class MediaType(val label: String, val hebrewPlural: String) {
+    MOVIE("סרט", "סרטים"),
+    TV_SHOW("סדרה", "סדרות"),
+    PERSON("שחקן", "שחקנים")
 }
 
 @Immutable
@@ -39,8 +40,26 @@ data class SearchResult(
     val overview: String = "",
     val matchScore: Int = 0,
     val dominantColor: String? = null,
+    // Search & filter support
     val genre: String = "",
-    val qualityTag: String = ""
+    val qualityTag: String = ""   // "4K", "FHD", "HD", or ""
+)
+
+// ── StreamSource ──────────────────────────────────────────────────────────
+data class StreamSource(
+    val id: String,
+    val groupName: String,
+    val filename: String,
+    val sizeGb: Double,
+    val seeders: Int,
+    val resolution: String,
+    val codec: String,
+    val audioFormat: String,
+    val isCached: Boolean,
+    val isDV: Boolean,
+    val isHDR10: Boolean,
+    val hasBuiltInSubs: Boolean,
+    val infoHash: String? = null
 )
 
 // ── Subtitle ───────────────────────────────────────────────────────────────────

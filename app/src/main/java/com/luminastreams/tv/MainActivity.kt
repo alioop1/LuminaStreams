@@ -7,6 +7,8 @@ package com.luminastreams.tv
 
 import android.os.Build
 import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.os.Bundle
 import android.view.KeyEvent
@@ -109,12 +111,31 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun LuminaAppShell() {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+
+    // קוראים את השפה המוגדרת ומאזינים לשינויים בזמן אמת
+    var appLang by remember { mutableStateOf(prefs.getString("app_lang", "he") ?: "he") }
+
+    DisposableEffect(Unit) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPrefs, key ->
+            if (key == "app_lang") {
+                appLang = sharedPrefs.getString("app_lang", "he") ?: "he"
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
+    val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
+
     val navController = rememberNavController()
-    // Single repository instance — shared across all ViewModels
-    val repository: MediaRepository = remember { MediaRepositoryImpl() }
+
+    // התיקון כאן! מעבירים את ה-context ל-MediaRepositoryImpl
+    val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+    CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -312,7 +333,9 @@ fun AppNavHostContainer(
         }
 
         composable("search") {
-            val vm: SearchViewModel = viewModel()
+            val vm: SearchViewModel = viewModel(
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+            )
             SearchScreen(
                 state          = vm.state.collectAsState().value,
                 onIntent       = vm::onIntent,
@@ -325,19 +348,24 @@ fun AppNavHostContainer(
         }
 
         composable("settings") {
-            val vm: SettingsViewModel = viewModel()
+            val vm: SettingsViewModel = viewModel(
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+            )
+            val state = vm.state.collectAsState().value
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 SettingsScreen(
-                    state          = vm.state.collectAsState().value,
+                    state          = state,
                     viewModel      = vm,
-                    isRtl          = false,
+                    isRtl          = state.appLanguage == "he",
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
         }
 
         composable("watchlist") {
-            val vm: WatchlistViewModel = viewModel()
+            val vm: WatchlistViewModel = viewModel(
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+            )
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 WatchlistScreen(
                     viewModel      = vm,

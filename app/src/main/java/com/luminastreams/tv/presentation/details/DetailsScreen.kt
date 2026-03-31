@@ -82,6 +82,11 @@ private val BR  = Color(0xFFE50914)
 private val GLD = Color(0xFFFFC107)
 private val TMR = Color(0xFFF44336)
 
+@Composable
+fun tr(en: String, he: String): String {
+    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+}
+
 private fun launchTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle: String) {
     val appCtx = context.applicationContext
     if (!trailerIdOrUrl.isNullOrBlank()) {
@@ -97,21 +102,11 @@ private fun launchTrailer(context: Context, trailerIdOrUrl: String?, fallbackTit
     } catch (_: Exception) {}
 }
 
-// ── Stream metadata parser ────────────────────────────────────────────────────
-
 private data class StreamMeta(
-    val videoCodecLabel: String,
-    val videoCodecColor: Color,
-    val hdrBadges: List<Pair<String, Color>>,
-    val audioBadges: List<Pair<String, Color>>,
-    val langBadges: List<Pair<String, Color>>,
-    val subtitleBadges: List<Pair<String, Color>>,
-    val releaseType: String,
-    val releaseTypeColor: Color,
-    val provider: String,
-    val seeders: Int,
-    val isRemux: Boolean,
-    val isCam: Boolean
+    val videoCodecLabel: String, val videoCodecColor: Color, val hdrBadges: List<Pair<String, Color>>,
+    val audioBadges: List<Pair<String, Color>>, val langBadges: List<Pair<String, Color>>,
+    val subtitleBadges: List<Pair<String, Color>>, val releaseType: String, val releaseTypeColor: Color,
+    val provider: String, val seeders: Int, val isRemux: Boolean, val isCam: Boolean
 )
 
 private fun parseStreamMeta(filename: String, name: String): StreamMeta {
@@ -199,7 +194,6 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
         combined.contains("EZTV")                                   -> "EZTV"
         combined.contains("1337X")                                  -> "1337x"
         combined.contains("SPARKS")                                 -> "SPARKS"
-        combined.contains("YIFY")                                   -> "YIFY"
         combined.contains("FLUX")                                   -> "FLuX"
         combined.contains("CMRG")                                   -> "CMRG"
         combined.contains("DSNP") || combined.contains("DISNEY")   -> "Disney+"
@@ -217,20 +211,7 @@ private fun parseStreamMeta(filename: String, name: String): StreamMeta {
     val isCam   = combined.contains("CAM") || combined.contains("HDCAM") ||
             (combined.contains(".TS.") || combined.contains(" TS "))
 
-    return StreamMeta(
-        videoCodecLabel  = codecLabel,
-        videoCodecColor  = codecColor,
-        hdrBadges        = hdrBadges,
-        audioBadges      = audioBadges,
-        langBadges       = langBadges,
-        subtitleBadges   = subtitleBadges,
-        releaseType      = releaseType,
-        releaseTypeColor = releaseTypeColor,
-        provider         = provider,
-        seeders          = seeders,
-        isRemux          = isRemux,
-        isCam            = isCam
-    )
+    return StreamMeta(videoCodecLabel = codecLabel, videoCodecColor = codecColor, hdrBadges = hdrBadges, audioBadges = audioBadges, langBadges = langBadges, subtitleBadges = subtitleBadges, releaseType = releaseType, releaseTypeColor = releaseTypeColor, provider = provider, seeders = seeders, isRemux = isRemux, isCam = isCam)
 }
 
 private fun seederColor(seeders: Int) = when {
@@ -285,6 +266,13 @@ fun DetailsScreen(
     val backBtnFR      = remember { FocusRequester() }
     val firstSourceFR  = remember { FocusRequester() }
 
+    // פוקוס-רקוויסטרים לשורות התוכן (כדי לאפס את הפוקוס בעת עלייה/ירידה)
+    val seasonsFR      = remember { FocusRequester() }
+    val episodesFR     = remember { FocusRequester() }
+    val castFR         = remember { FocusRequester() }
+    val collectionFR   = remember { FocusRequester() }
+    val starringFR     = remember { FocusRequester() }
+
     val scrollState   = rememberLazyListState()
     var showSources   by remember { mutableStateOf(false) }
     val focusManager  = LocalFocusManager.current
@@ -333,7 +321,7 @@ fun DetailsScreen(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 LoadingIndicator()
                 Spacer(Modifier.height(12.dp))
-                Text("Loading...", color = DM, fontSize = 16.sp)
+                Text(tr("Loading...", "טוען..."), color = DM, fontSize = 16.sp)
             }
         }
         return
@@ -352,8 +340,10 @@ fun DetailsScreen(
                 AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.5f)
             }
         }
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.4f), BK.copy(0.95f)), startY = 400f)))
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(if (isRtl) listOf(BK.copy(0.85f), Color.Transparent) else listOf(Color.Transparent, BK.copy(0.85f)), startX = 0f, endX = 1400f)))
+
+        val sideGradientColors = if (isRtl) listOf(Color.Transparent, BK.copy(0.85f), BK.copy(1f)) else listOf(BK.copy(1f), BK.copy(0.85f), Color.Transparent)
+        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(sideGradientColors)))
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.6f), BK.copy(1f)), startY = 300f)))
 
         LazyColumn(
             state = scrollState,
@@ -370,10 +360,7 @@ fun DetailsScreen(
                         scale    = ClickableSurfaceDefaults.scale(1.1f),
                         modifier = Modifier.align(Alignment.TopEnd).padding(end = 48.dp).size(48.dp)
                             .focusRequester(backBtnFR).focusProperties {
-                                // מגן מפני קריסה אם כפתור ה-Play לא קיים!
-                                if (!state.isFuzerDirect) {
-                                    down = playFR; left = playFR; right = playFR
-                                }
+                                if (!state.isFuzerDirect) { down = playFR; left = playFR; right = playFR }
                             }
                     ) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
@@ -397,7 +384,7 @@ fun DetailsScreen(
                             if (media.releaseDate.isNotEmpty()) { Text(media.releaseDate.take(4), color = WH, fontSize = 13.sp, fontWeight = FontWeight.Bold); MDot() }
                             if (media.ageRating.isNotEmpty())   { Box(Modifier.border(1.dp, GB, RoundedCornerShape(3.dp)).padding(horizontal = 5.dp, vertical = 2.dp)) { Text(media.ageRating, color = WH, fontSize = 10.sp, fontWeight = FontWeight.Black) }; MDot() }
                             if (!media.isSeries && media.runtimeMinutes > 0) Text(media.formattedRuntime, color = DM, fontSize = 13.sp)
-                            else if (media.isSeries && media.totalSeasons > 0) Text("${media.totalSeasons} Seasons", color = DM, fontSize = 13.sp)
+                            else if (media.isSeries && media.totalSeasons > 0) Text(tr("${media.totalSeasons} Seasons", "${media.totalSeasons} עונות"), color = DM, fontSize = 13.sp)
                             if (media.displayGenres.isNotEmpty()) { MDot(); Text(media.displayGenres, color = DM, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
                         }
                         Spacer(Modifier.height(9.dp))
@@ -417,14 +404,20 @@ fun DetailsScreen(
                         }
                         Spacer(Modifier.height(12.dp))
                         if (media.overview.isNotEmpty()) {
-                            Text(media.overview, color = DM, fontSize = 14.sp, lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                            Text(media.overview, color = DM, fontSize = 14.sp, lineHeight = 22.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
                         }
                         Spacer(Modifier.height(22.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment     = Alignment.CenterVertically,
-                            modifier              = Modifier.focusGroup().focusProperties { up = backBtnFR }
+                            modifier              = Modifier.focusGroup().focusProperties {
+                                up = backBtnFR
+                                enter = { dir ->
+                                    if (dir == FocusDirection.Up || dir == FocusDirection.Down) playFR
+                                    else FocusRequester.Default
+                                }
+                            }
                         ) {
                             if (state.isFuzerDirect) {
                                 when (val st = state.scrapingStatus) {
@@ -449,7 +442,7 @@ fun DetailsScreen(
                                     else -> {
                                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                             LoadingIndicator()
-                                            Text("מתחבר ל-Real-Debrid...", color = DM, fontSize = 15.sp)
+                                            Text(tr("Connecting to Real-Debrid...", "מתחבר ל-Real-Debrid..."), color = DM, fontSize = 15.sp)
                                         }
                                     }
                                 }
@@ -476,12 +469,12 @@ fun DetailsScreen(
                                     Row(Modifier.padding(horizontal = 28.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
                                         Spacer(Modifier.width(8.dp))
-                                        Text("Play Now", fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, softWrap = false)
+                                        Text(tr("Play Now", "נגן עכשיו"), fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, softWrap = false)
                                     }
                                 }
-                                ActionPill("Trailer", Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
+                                ActionPill(tr("Trailer", "טריילר"), Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
                                 ActionPill(
-                                    label = if (state.availableStreams.isNotEmpty()) "Sources (${state.availableStreams.size})" else "Sources",
+                                    label = if (state.availableStreams.isNotEmpty()) tr("Sources (${state.availableStreams.size})", "מקורות (${state.availableStreams.size})") else tr("Sources", "מקורות"),
                                     icon  = Icons.AutoMirrored.Filled.List
                                 ) {
                                     showSources = true
@@ -516,17 +509,26 @@ fun DetailsScreen(
             // ── Seasons + Episodes ──────────────────────────────────
             if (!state.isFuzerDirect && media.isSeries && media.totalSeasons > 0) {
                 item {
-                    Column(Modifier.fillMaxWidth()) {
-                        SectionHeader("Seasons & Episodes", Modifier.padding(horizontal = 64.dp))
+                    Column(Modifier.fillMaxWidth().focusGroup()) {
+                        SectionHeader(tr("Seasons & Episodes", "עונות ופרקים"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(12.dp))
 
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.padding(bottom = 14.dp).lockFocusEdges()
+                            modifier = Modifier
+                                .padding(bottom = 14.dp)
+                                .focusGroup()
+                                .focusProperties {
+                                    enter = { dir ->
+                                        if (dir == FocusDirection.Up || dir == FocusDirection.Down) seasonsFR
+                                        else FocusRequester.Default
+                                    }
+                                }
+                                .lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(56.dp)) }
 
-                            items(media.totalSeasons) { idx ->
+                            items(media.totalSeasons, key = { idx -> "season_${media.id}_$idx" }) { idx ->
                                 val n = idx + 1
                                 val sel = state.selectedSeason == n
                                 Surface(
@@ -535,9 +537,9 @@ fun DetailsScreen(
                                     colors   = ClickableSurfaceDefaults.colors(containerColor = if (sel) BR else GL, contentColor = WH, focusedContainerColor = WH, focusedContentColor = BK),
                                     scale    = ClickableSurfaceDefaults.scale(1.05f),
                                     border   = ClickableSurfaceDefaults.border(border = if (sel) Border.None else Border(BorderStroke(1.dp, GB)), focusedBorder = Border.None),
-                                    modifier = Modifier // Removed forced focus properties!
+                                    modifier = if (idx == 0) Modifier.focusRequester(seasonsFR) else Modifier
                                 ) {
-                                    Text("Season $n", fontWeight = if (sel) FontWeight.Black else FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                                    Text(tr("Season $n", "עונה $n"), fontWeight = if (sel) FontWeight.Black else FontWeight.Bold, fontSize = 14.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
                                 }
                             }
 
@@ -549,16 +551,24 @@ fun DetailsScreen(
                         } else if (state.episodes.isNotEmpty()) {
                             LazyRow(
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
-                                modifier = Modifier.lockFocusEdges()
+                                modifier = Modifier
+                                    .focusGroup()
+                                    .focusProperties {
+                                        enter = { dir ->
+                                            if (dir == FocusDirection.Up || dir == FocusDirection.Down) episodesFR
+                                            else FocusRequester.Default
+                                        }
+                                    }
+                                    .lockFocusEdges()
                             ) {
                                 item { Spacer(modifier = Modifier.width(50.dp)) }
 
-                                itemsIndexed(state.episodes, key = { _, ep -> ep.id }) { idx, ep ->
+                                itemsIndexed(state.episodes, key = { _, ep -> "${media.id}_${ep.id}" }) { idx, ep ->
                                     val fallbackImage = media.backdropUrl.ifBlank { media.posterUrl }
                                     EpisodeCard(
                                         episode = ep,
                                         fallbackImageUrl = fallbackImage,
-                                        modifier = Modifier, // Removed forced focus properties!
+                                        modifier = if (idx == 0) Modifier.focusRequester(episodesFR) else Modifier,
                                         onClick = {
                                             currentScrapeSeason = ep.seasonNumber
                                             currentScrapeEpisode = ep.episodeNumber
@@ -578,20 +588,28 @@ fun DetailsScreen(
             // ── Cast ───────────────────────────────────────────────
             if (!state.isFuzerDirect && media.cast.isNotEmpty()) {
                 item {
-                    Column(Modifier.fillMaxWidth()) {
-                        SectionHeader("Cast & Crew", Modifier.padding(horizontal = 64.dp))
+                    Column(Modifier.fillMaxWidth().focusGroup()) {
+                        SectionHeader(tr("Cast & Crew", "שחקנים וצוות"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
 
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(18.dp),
-                            modifier = Modifier.lockFocusEdges()
+                            modifier = Modifier
+                                .focusGroup()
+                                .focusProperties {
+                                    enter = { dir ->
+                                        if (dir == FocusDirection.Up || dir == FocusDirection.Down) castFR
+                                        else FocusRequester.Default
+                                    }
+                                }
+                                .lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(46.dp)) }
 
                             itemsIndexed(media.cast) { idx, a ->
                                 CastMemberCard(
                                     actor = a,
-                                    modifier = Modifier // Removed forced focus properties!
+                                    modifier = if (idx == 0) Modifier.focusRequester(castFR) else Modifier
                                 )
                             }
 
@@ -601,29 +619,71 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Recommendations ────────────────────────────────────
-            if (!state.isFuzerDirect && media.recommendations.isNotEmpty()) {
+            // ── Collection ────────────────────────────────────────
+            if (!state.isFuzerDirect && media.collectionItems.isNotEmpty()) {
                 item {
-                    Column(Modifier.fillMaxWidth()) {
-                        SectionHeader("More Like This", Modifier.padding(horizontal = 64.dp))
+                    Column(Modifier.fillMaxWidth().focusGroup()) {
+                        val collName = media.collectionName ?: "Collection"
+                        SectionHeader(tr("More in $collName", "עוד באוסף $collName"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
 
                         LazyRow(
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
-                            modifier = Modifier.lockFocusEdges()
+                            modifier = Modifier
+                                .focusGroup()
+                                .focusProperties {
+                                    enter = { dir ->
+                                        if (dir == FocusDirection.Up || dir == FocusDirection.Down) collectionFR
+                                        else FocusRequester.Default
+                                    }
+                                }
+                                .lockFocusEdges()
                         ) {
                             item { Spacer(modifier = Modifier.width(50.dp)) }
 
-                            itemsIndexed(media.recommendations, key = { _, r -> r.id }) { idx, rec ->
-                                val tempMovie = Movie(
-                                    id = rec.id, title = rec.title, posterUrl = rec.posterUrl,
-                                    backdropUrl = "", rating = 0f, mediaType = media.id.substringBefore("_"),
-                                    overview = "", year = 0, genre = ""
-                                )
+                            itemsIndexed(media.collectionItems, key = { _, r -> r.id }) { idx, rec ->
+                                val tempMovie = Movie(id = rec.id, title = rec.title, posterUrl = rec.posterUrl, backdropUrl = "", rating = 0f, mediaType = "movie", overview = "", year = 0, genre = "")
                                 com.luminastreams.tv.presentation.home.PosterCard(
-                                    movie    = tempMovie,
-                                    modifier = Modifier, // Removed forced focus properties!
-                                    onClick  = { onRecommendationClick(rec.id) }
+                                    movie = tempMovie,
+                                    modifier = if (idx == 0) Modifier.focusRequester(collectionFR) else Modifier,
+                                    onClick = { onRecommendationClick(rec.id) }
+                                )
+                            }
+
+                            item { Spacer(modifier = Modifier.width(50.dp)) }
+                        }
+                    }
+                }
+            }
+
+            // ── More Starring ──────────────────────────────────────
+            if (!state.isFuzerDirect && media.starringItems.isNotEmpty()) {
+                item {
+                    Column(Modifier.fillMaxWidth().focusGroup()) {
+                        val actorName = media.starringActorName ?: ""
+                        SectionHeader(tr("More Starring $actorName", "עוד בכיכובו של $actorName"), Modifier.padding(horizontal = 64.dp))
+                        Spacer(Modifier.height(16.dp))
+
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            modifier = Modifier
+                                .focusGroup()
+                                .focusProperties {
+                                    enter = { dir ->
+                                        if (dir == FocusDirection.Up || dir == FocusDirection.Down) starringFR
+                                        else FocusRequester.Default
+                                    }
+                                }
+                                .lockFocusEdges()
+                        ) {
+                            item { Spacer(modifier = Modifier.width(50.dp)) }
+
+                            itemsIndexed(media.starringItems, key = { _, r -> r.id }) { idx, rec ->
+                                val tempMovie = Movie(id = rec.id, title = rec.title, posterUrl = rec.posterUrl, backdropUrl = "", rating = 0f, mediaType = if (rec.id.startsWith("tv")) "tv" else "movie", overview = "", year = 0, genre = "")
+                                com.luminastreams.tv.presentation.home.PosterCard(
+                                    movie = tempMovie,
+                                    modifier = if (idx == 0) Modifier.focusRequester(starringFR) else Modifier,
+                                    onClick = { onRecommendationClick(rec.id) }
                                 )
                             }
 
@@ -675,10 +735,10 @@ fun DetailsScreen(
                             Box(Modifier.width(4.dp).height(36.dp).background(BR, RoundedCornerShape(2.dp)))
                             Spacer(Modifier.width(14.dp))
                             Column {
-                                Text("Available Sources", color = WH, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                                Text(tr("Available Sources", "מקורות זמינים"), color = WH, fontSize = 26.sp, fontWeight = FontWeight.Black)
                                 if (state.availableStreams.isNotEmpty()) {
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Text("${state.availableStreams.size} sources found", color = DM, fontSize = 13.sp)
+                                        Text(tr("${state.availableStreams.size} sources found", "נמצאו ${state.availableStreams.size} מקורות"), color = DM, fontSize = 13.sp)
                                         val rdCount = state.availableStreams.count { it.isCachedRd }
                                         if (rdCount > 0) {
                                             Box(
@@ -686,7 +746,7 @@ fun DetailsScreen(
                                                     .background(Color(0xFF1B5E20).copy(0.8f))
                                                     .padding(horizontal = 6.dp, vertical = 2.dp)
                                             ) {
-                                                Text("$rdCount RD+ cached", color = WH, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                Text(tr("$rdCount RD+ cached", "$rdCount מקורות ב-RD+"), color = WH, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                             }
                                         }
                                     }
@@ -712,7 +772,7 @@ fun DetailsScreen(
                                 Box(Modifier.fillMaxSize(), Alignment.Center) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
                                         LoadingIndicator()
-                                        Text("Scanning Torrentio servers...", color = DM, fontSize = 17.sp)
+                                        Text(tr("Scanning Torrentio servers...", "סורק שרתי Torrentio..."), color = DM, fontSize = 17.sp)
                                     }
                                 }
                             }
@@ -722,7 +782,7 @@ fun DetailsScreen(
                                         LoadingIndicator()
                                         val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") ||
                                             st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
-                                            st.streamId else "Resolving via Real-Debrid..."
+                                            st.streamId else tr("Resolving via Real-Debrid...", "מפענח דרך Real-Debrid...")
                                         Text(msg, color = WH, fontSize = 17.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
@@ -1007,7 +1067,7 @@ private fun EpisodeCard(
 
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.98f)), startY = 40f)))
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                Text("${episode.episodeNumber}. ${episode.title}", color = WH, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(tr("Ep ${episode.episodeNumber}. ${episode.title}", "פרק ${episode.episodeNumber}. ${episode.title}"), color = WH, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("45m", color = DM, fontSize = 12.sp)
             }
             if (episode.progress > 0f) {
@@ -1038,7 +1098,6 @@ private fun CastMemberCard(actor: CastMember, modifier: Modifier = Modifier) {
     }
 }
 
-// מודיפייר חכם שנועל את הניווט בקצוות המסך
 fun Modifier.lockFocusEdges(
     lockRight: Boolean = true,
     lockLeft: Boolean = false,

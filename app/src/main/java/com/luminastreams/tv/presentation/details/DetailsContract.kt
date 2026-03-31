@@ -2,19 +2,9 @@ package com.luminastreams.tv.presentation.details
 
 import androidx.compose.runtime.Immutable
 
-@Immutable
-data class CastMember(val id: String, val name: String, val character: String, val imageUrl: String)
-
-@Immutable
-data class Episode(
-    val id: String, val episodeNumber: Int, val seasonNumber: Int,
-    val title: String, val overview: String, val stillUrl: String,
-    val hasWatched: Boolean = false,
-    val progress: Float = 0f
-)
-
-@Immutable
-data class Recommendation(val id: String, val title: String, val posterUrl: String)
+@Immutable data class CastMember(val id: String, val name: String, val character: String, val imageUrl: String)
+@Immutable data class Episode(val id: String, val episodeNumber: Int, val seasonNumber: Int, val title: String, val overview: String, val stillUrl: String, val hasWatched: Boolean = false, val progress: Float = 0f)
+@Immutable data class Recommendation(val id: String, val title: String, val posterUrl: String)
 
 enum class StreamQuality(val priority: Int) {
     UHD_4K(9), FHD_1080P(7), HD_720P(6), SD_480P(5), UNKNOWN(0);
@@ -49,15 +39,8 @@ enum class VideoCodec {
 
 @Immutable
 data class AdvancedStreamSource(
-    val id: String,
-    val releaseGroup: String,
-    val filename: String,
-    val infoHash: String?,
-    val directUrl: String?,
-    val sizeBytes: Long,
-    val isCachedRd: Boolean,
-    val quality: StreamQuality,
-    val videoCodec: VideoCodec
+    val id: String, val releaseGroup: String, val filename: String, val infoHash: String?,
+    val directUrl: String?, val sizeBytes: Long, val isCachedRd: Boolean, val quality: StreamQuality, val videoCodec: VideoCodec
 ) {
     val sizeGb: Double get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
     val sortScore: Int get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
@@ -71,8 +54,10 @@ data class MediaDetailsInfo(
     val runtimeMinutes: Int = 0, val tmdbRating: Double = 0.0, val imdbRating: Double = 0.0,
     val ageRating: String = "TV-MA", val studios: List<String> = emptyList(),
     val genres: List<String> = emptyList(), val director: String = "",
-    val cast: List<CastMember> = emptyList(), val recommendations: List<Recommendation> = emptyList(),
-    val totalSeasons: Int = 0, val isFavorite: Boolean = false, val trailerUrl: String? = null
+    val cast: List<CastMember> = emptyList(),
+    val totalSeasons: Int = 0, val isFavorite: Boolean = false, val trailerUrl: String? = null,
+    val collectionName: String? = null, val collectionItems: List<Recommendation> = emptyList(),
+    val starringActorName: String? = null, val starringItems: List<Recommendation> = emptyList()
 ) {
     val displayStudios: String get() = studios.take(2).joinToString(" • ").uppercase()
     val displayGenres:  String get() = genres.take(3).joinToString(" • ")
@@ -89,17 +74,10 @@ sealed interface ScrapingStatus {
 
 @Immutable
 data class DetailsScreenState(
-    val isLoadingData: Boolean = true,
-    val errorData: String? = null,
-    val mediaInfo: MediaDetailsInfo = MediaDetailsInfo(),
-    val selectedSeason: Int = 1,
-    val episodes: List<Episode> = emptyList(),
-    val isEpisodesLoading: Boolean = false,
-    val scrapingStatus: ScrapingStatus = ScrapingStatus.Idle,
-    val availableStreams: List<AdvancedStreamSource> = emptyList(),
-    val readyToPlayUrl: String? = null,
-    val bestSourceHint: String? = null,
-    val isFuzerDirect: Boolean = false
+    val isLoadingData: Boolean = true, val errorData: String? = null, val mediaInfo: MediaDetailsInfo = MediaDetailsInfo(),
+    val selectedSeason: Int = 1, val episodes: List<Episode> = emptyList(), val isEpisodesLoading: Boolean = false,
+    val scrapingStatus: ScrapingStatus = ScrapingStatus.Idle, val availableStreams: List<AdvancedStreamSource> = emptyList(),
+    val readyToPlayUrl: String? = null, val bestSourceHint: String? = null, val isFuzerDirect: Boolean = false
 )
 
 sealed interface DetailsEvent {

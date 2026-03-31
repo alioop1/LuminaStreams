@@ -3,7 +3,7 @@ package com.luminastreams.tv.presentation.search
 import android.app.Application
 import android.content.Context
 import androidx.compose.runtime.Immutable
-import androidx.core.content.edit
+import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.data.remote.FuzerEngine
@@ -18,19 +18,21 @@ import java.net.URLEncoder
 
 enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
 
+// Quality filter values
 enum class QualityFilter { ANY, HD, FHD, UHD }
 
+// NEW: Sort options
 enum class SortBy { POPULARITY, RATING, NEWEST }
 
 @Immutable
 data class SearchFilters(
-    val genre:       String?       = null,
+    val genre:       String?       = null,   // null = any
     val minYear:     Int           = 1970,
     val maxYear:     Int           = 2026,
     val minRating:   Float         = 0f,
     val quality:     QualityFilter = QualityFilter.ANY,
-    val dubbedOnly:  Boolean       = false,
-    val sortBy:      SortBy        = SortBy.POPULARITY
+    val dubbedOnly:  Boolean       = false,  // Fuzer only
+    val sortBy:      SortBy        = SortBy.POPULARITY // הסינון החדש
 ) {
     val isActive: Boolean get() =
         genre != null || minYear > 1970 || maxYear < 2026 || minRating > 0f ||
@@ -44,34 +46,42 @@ data class SearchState(
     val filters:            SearchFilters   = SearchFilters(),
     val showFilters:        Boolean         = false,
 
+    // TMDB
     val tmdbResults:        List<SearchResult> = emptyList(),
     val isTmdbLoading:      Boolean            = false,
 
+    // Fuzer
     val fuzerResults:       List<SearchResult> = emptyList(),
     val isFuzerLoading:     Boolean            = false,
     val fuzerError:         String?            = null,
 
+    // Discovery (no query)
     val discoveryResults:   List<SearchResult> = emptyList(),
     val isDiscoveryLoading: Boolean            = false,
 
+    // UI helpers
     val searchHistory:           List<String> = emptyList(),
     val autocompleteSuggestions: List<String> = emptyList()
 ) {
     private fun applyFilters(list: List<SearchResult>): List<SearchResult> {
         var r = list
 
+        // 1. סינון ז'אנר
         if (filters.genre != null)
             r = r.filter { it.genre.equals(filters.genre, ignoreCase = true) }
 
+        // 2. סינון דירוג
         if (filters.minRating > 0f)
             r = r.filter { it.rating >= filters.minRating }
 
+        // 3. סינון שנים
         if (filters.minYear > 1970 || filters.maxYear < 2026)
             r = r.filter { yr ->
                 val y = yr.releaseYear.toIntOrNull() ?: return@filter true
                 y in filters.minYear..filters.maxYear
             }
 
+        // 4. סינון איכות
         if (filters.quality != QualityFilter.ANY) {
             val qStr = when (filters.quality) {
                 QualityFilter.HD  -> "HD"
@@ -82,13 +92,15 @@ data class SearchState(
             r = r.filter { it.qualityTag.equals(qStr, ignoreCase = true) }
         }
 
+        // 5. סינון דיבוב
         if (filters.dubbedOnly)
             r = r.filter { it.title.contains("מדובב", ignoreCase = true) }
 
+        // 6. ביצוע המיון (Sorting) החדש שהוספנו
         r = when (filters.sortBy) {
-            SortBy.RATING     -> r.sortedByDescending { it.rating }
-            SortBy.NEWEST     -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
-            SortBy.POPULARITY -> r
+            SortBy.RATING -> r.sortedByDescending { it.rating }
+            SortBy.NEWEST -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
+            SortBy.POPULARITY -> r // משאיר את הסדר המקורי (שהוא בדרך כלל לפי פופולריות ב-API)
         }
 
         return r
@@ -112,13 +124,13 @@ data class SearchState(
 }
 
 sealed interface SearchIntent {
-    data class UpdateQuery(val query: String)         : SearchIntent
+    data class UpdateQuery(val query: String)     : SearchIntent
     data class SelectSource(val source: SearchSource) : SearchIntent
     data class UpdateFilters(val filters: SearchFilters) : SearchIntent
-    object ToggleFilters                              : SearchIntent
-    object ClearFilters                               : SearchIntent
-    object ClearHistory                               : SearchIntent
-    data class RemoveHistoryItem(val item: String)   : SearchIntent
+    object ToggleFilters   : SearchIntent
+    object ClearFilters    : SearchIntent
+    object ClearHistory    : SearchIntent
+    data class RemoveHistoryItem(val item: String) : SearchIntent
 }
 
 @OptIn(FlowPreview::class)
@@ -142,6 +154,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         loadDiscovery()
     }
 
+    // ─────────────────────────────────────────────────────────────
     fun onIntent(intent: SearchIntent) {
         when (intent) {
             is SearchIntent.UpdateQuery      -> handleQueryUpdate(intent.query)
@@ -154,14 +167,17 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ─── Source change ────────────────────────────────────────────
     private fun handleSourceChange(src: SearchSource) {
         _state.update { it.copy(source = src) }
+        // Always refresh Fuzer when switching to it and there's a query
         if (src == SearchSource.FUZER) {
             val q = _state.value.query
             if (q.isNotBlank()) viewModelScope.launch { runFuzerSearch(q) }
         }
     }
 
+    // ─── Query update ─────────────────────────────────────────────
     private fun handleQueryUpdate(newQuery: String) {
         _state.update {
             it.copy(
@@ -187,6 +203,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return (hist + popular).distinct().take(6)
     }
 
+    // ─── Query observer — debounced ───────────────────────────────
     private fun observeQuery() {
         viewModelScope.launch {
             queryFlow
@@ -195,36 +212,36 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 .filter { it.isNotBlank() }
                 .collectLatest { q ->
                     saveToHistory(q)
+                    // Always run both in parallel — Fuzer loads in background
+                    // regardless of active tab so switching is instant
                     coroutineScope {
                         launch { runTmdbSearch(q) }
-                        launch { runFuzerSearch(q) }
+                        launch { runFuzerSearch(q) }   // always, not conditional
                     }
                 }
         }
     }
 
+    // ─── TMDB ─────────────────────────────────────────────────────
     private suspend fun runTmdbSearch(query: String) {
         _state.update { it.copy(isTmdbLoading = true) }
         try {
-            val results = withContext(Dispatchers.IO) {
-                val isHe = query.any { it in '\u0590'..'\u05FF' }
-                val lang = if (isHe) "he-IL" else "en-US"
-                val enc  = URLEncoder.encode(query, "UTF-8")
-                val p1   = fetchTmdbPage(enc, lang, 1)
-                val p2   = fetchTmdbPage(enc, lang, 2)
-                (p1 + p2).distinctBy { r -> r.id }
-            }
-            _state.update { it.copy(tmdbResults = results, isTmdbLoading = false) }
+            val isHe = query.any { it in '\u0590'..'\u05FF' }
+            val lang = if (isHe) "he-IL" else "en-US"
+            val enc  = URLEncoder.encode(query, "UTF-8")
+            val key  = "9ab4a284f0c028007b78925852196b79"
+            val base = "https://image.tmdb.org/t/p"
+            val p1   = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 1) }
+            val p2   = withContext(Dispatchers.IO) { fetchTmdbPage(enc, lang, key, base, 2) }
+            _state.update { it.copy(tmdbResults = (p1 + p2).distinctBy { r -> r.id }, isTmdbLoading = false) }
         } catch (_: Exception) {
             _state.update { it.copy(tmdbResults = emptyList(), isTmdbLoading = false) }
         }
     }
 
-    private fun fetchTmdbPage(enc: String, lang: String, page: Int): List<SearchResult> {
+    private fun fetchTmdbPage(enc: String, lang: String, key: String, base: String, page: Int): List<SearchResult> {
         val out = mutableListOf<SearchResult>()
         try {
-            val key  = "9ab4a284f0c028007b78925852196b79"
-            val base = "https://image.tmdb.org/t/p"
             val con = URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
                 .openConnection() as HttpURLConnection
             con.connectTimeout = 6000; con.readTimeout = 9000
@@ -251,6 +268,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return out
     }
 
+    // ─── Fuzer ────────────────────────────────────────────────────
     private suspend fun runFuzerSearch(query: String) {
         _state.update { it.copy(isFuzerLoading = true, fuzerError = null) }
         try {
@@ -288,12 +306,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    // ─── Discovery ────────────────────────────────────────────────
     private fun loadDiscovery() {
         viewModelScope.launch {
             _state.update { it.copy(isDiscoveryLoading = true) }
             try {
-                val p1 = withContext(Dispatchers.IO) { fetchDiscoveryPage(1) }
-                val p2 = withContext(Dispatchers.IO) { fetchDiscoveryPage(2) }
+                val key  = "9ab4a284f0c028007b78925852196b79"
+                val base = "https://image.tmdb.org/t/p"
+                val p1 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 1) }
+                val p2 = withContext(Dispatchers.IO) { fetchDiscoveryPage(key, base, 2) }
                 _state.update { it.copy(
                     discoveryResults   = (p1 + p2).distinctBy { r -> r.id },
                     isDiscoveryLoading = false
@@ -304,10 +325,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun fetchDiscoveryPage(page: Int): List<SearchResult> {
+    private fun fetchDiscoveryPage(key: String, base: String, page: Int): List<SearchResult> {
         val out = mutableListOf<SearchResult>()
-        val key  = "9ab4a284f0c028007b78925852196b79"
-        val base = "https://image.tmdb.org/t/p"
         for (mt in listOf("movie", "tv")) {
             try {
                 val con = URL("https://api.themoviedb.org/3/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=popularity.desc")
@@ -337,9 +356,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         return out
     }
 
+    // ─── History ──────────────────────────────────────────────────
     private fun saveToHistory(q: String) {
         val h = (listOf(q) + _state.value.searchHistory).distinct().take(8)
-        historyPrefs.edit { putString("history_items", h.joinToString("||")) }
+        historyPrefs.edit().putString("history_items", h.joinToString("||")).apply()
         _state.update { it.copy(searchHistory = h) }
     }
     private fun loadHistory() {
@@ -347,15 +367,16 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(searchHistory = s.split("||").filter { it.isNotBlank() }) }
     }
     private fun clearHistory() {
-        historyPrefs.edit { remove("history_items") }
+        historyPrefs.edit().remove("history_items").apply()
         _state.update { it.copy(searchHistory = emptyList()) }
     }
     private fun removeHistoryItem(item: String) {
         val h = _state.value.searchHistory.filter { it != item }
-        historyPrefs.edit { putString("history_items", h.joinToString("||")) }
+        historyPrefs.edit().putString("history_items", h.joinToString("||")).apply()
         _state.update { it.copy(searchHistory = h) }
     }
 
+    // ─── TMDB genre id → name ─────────────────────────────────────
     private fun tmdbGenreName(id: Int): String = when (id) {
         28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
         80 -> "Crime"; 99 -> "Documentary"; 18 -> "Drama"; 10751 -> "Family"

@@ -8,14 +8,18 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.luminastreams.tv.data.repository.MediaRepositoryImpl
+import com.luminastreams.tv.domain.repository.MediaRepository
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class LuminaApp : Application() {
+    lateinit var repository: MediaRepository
 
     override fun onCreate() {
         super.onCreate()
 
+        // חובה לאתחל את הפרופיל של המכשיר קודם כל!
         DeviceProfile.init(this)
 
         val prefs = getSharedPreferences("lumina_settings", MODE_PRIVATE)
@@ -25,6 +29,9 @@ class LuminaApp : Application() {
         Log.d("DeviceProfile", DeviceProfile.debugInfo())
 
         setupCoil()
+
+        // התיקון כאן: העברת this ל-MediaRepositoryImpl
+        repository = MediaRepositoryImpl(this)
 
         // GC on non-HIGH devices — free init overhead fast
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {

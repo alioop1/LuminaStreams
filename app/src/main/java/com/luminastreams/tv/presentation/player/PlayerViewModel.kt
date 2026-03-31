@@ -24,45 +24,40 @@ data class StremioSubtitle(val url: String, val lang: String, val source: String
 
 data class PlayerUiState(
     val videoUrl: String? = null,
-    val contentTitle: String = "",
     val isSubtitlesLoading: Boolean = false,
     val availableSubtitles: List<StremioSubtitle> = emptyList()
 )
 
 class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
 
-    private val subtitleScraper = SubtitleScraper()
-    private val ktuvitDirect    = KtuvitDirectClient(app)
+    private val subtitleScraper  = SubtitleScraper()
+    private val ktuvitDirect     = KtuvitDirectClient(app)
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
-    fun loadMedia(
-        videoUrl    : String,
-        imdbId      : String,
-        season      : Int?    = null,
-        episode     : Int?    = null,
-        contentTitle: String  = ""
-    ) {
-        _state.update { it.copy(
-            videoUrl       = videoUrl,
-            contentTitle   = contentTitle,
-            isSubtitlesLoading = imdbId.isNotEmpty()
-        ) }
+    fun loadMedia(videoUrl: String, imdbId: String, season: Int? = null, episode: Int? = null) {
+        _state.update { it.copy(videoUrl = videoUrl, isSubtitlesLoading = true) }
 
         if (imdbId.isNotEmpty()) {
             viewModelScope.launch {
-                val subs = fetchAllSubtitles(imdbId, season, episode, contentTitle)
-                _state.update { it.copy(isSubtitlesLoading = false, availableSubtitles = subs) }
+                val subs = fetchAllSubtitles(imdbId, season, episode)
+                _state.update {
+                    it.copy(
+                        isSubtitlesLoading = false,
+                        availableSubtitles = subs
+                    )
+                }
             }
+        } else {
+            _state.update { it.copy(isSubtitlesLoading = false) }
         }
     }
 
     private suspend fun fetchAllSubtitles(
-        imdbId      : String,
-        season      : Int?    = null,
-        episode     : Int?    = null,
-        contentTitle: String  = ""
+        imdbId: String,
+        season: Int? = null,
+        episode: Int? = null
     ): List<StremioSubtitle> = coroutineScope {
         val formattedId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
         val type        = if (season != null && episode != null) "series" else "movie"
@@ -73,12 +68,17 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         val officialUrl = "https://opensubtitles-v3.strem.io/subtitles/$type/$queryId.json"
         val ufoUrl      = "https://opensubtitles.stremio.homes/heb/subtitles/$type/$queryId.json"
 
-        val wizdomDeferred          = async { fetchAndParseStremioJson(wizdomUrl,   "Wizdom") }
-        val ktuvitProxyDeferred     = async { fetchAndParseStremioJson(ktuvitUrl,   "Ktuvit") }
-        val officialDeferred        = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
-        val ufoDeferred             = async { fetchAndParseStremioJson(ufoUrl,      "OS-Community") }
-        val scraperDeferred         = async { fetchFromSubtitleScraper(formattedId, season, episode) }
-        val ktuvitDirectDeferred    = async { fetchFromKtuvitDirect(formattedId, type, season, episode, contentTitle) }
+        val wizdomDeferred    = async { fetchAndParseStremioJson(wizdomUrl,   "Wizdom") }
+        val ktuvitProxyDeferred = async { fetchAndParseStremioJson(ktuvitUrl, "Ktuvit") }
+        val officialDeferred  = async { fetchAndParseStremioJson(officialUrl, "OpenSubtitles") }
+        val ufoDeferred       = async { fetchAndParseStremioJson(ufoUrl,      "OS-Community") }
+
+        // מעבירים את העונה והפרק לסקריפר
+        val scraperDeferred   = async { fetchFromSubtitleScraper(formattedId, season, episode) }
+
+        val ktuvitDirectDeferred = async {
+            fetchFromKtuvitDirect(formattedId, type, season, episode)
+        }
 
         val allResults = wizdomDeferred.await() +
                 ktuvitProxyDeferred.await() +
@@ -93,7 +93,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                     lang.contains("eng") || lang == "en"
         }
 
-        filteredSubs.distinctBy { it.url }.sortedBy { sub ->
+        return@coroutineScope filteredSubs.distinctBy { it.url }.sortedBy { sub ->
             var score = 0
             if (!sub.lang.lowercase().contains("he")) score += 100
             if (sub.source == "OpenSubtitles" || sub.source == "OS-Community") score += 10
@@ -102,16 +102,15 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun fetchFromKtuvitDirect(
-        imdbId      : String,
-        type        : String,
-        season      : Int?,
-        episode     : Int?,
-        contentTitle: String
+        imdbId: String,
+        type: String,
+        season: Int?,
+        episode: Int?
     ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
         try {
-            val prefs = app.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-            val email = prefs.getString("ktuvit_email",    "") ?: ""
-            val pass  = prefs.getString("ktuvit_password", "") ?: ""
+            val prefs   = app.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+            val email   = prefs.getString("ktuvit_email",    "") ?: ""
+            val pass    = prefs.getString("ktuvit_password",  "") ?: ""
 
             if (email.isBlank() || pass.isBlank()) return@withContext emptyList()
 
@@ -121,9 +120,8 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
             }
 
             val isSeries = type == "series"
-            // Pass contentTitle so Ktuvit can find the title by name when IMDB lookup fails
             val ktuvitId = ktuvitDirect.getKtuvitId(
-                name     = contentTitle,
+                name     = "",
                 isSeries = isSeries,
                 imdbId   = imdbId
             ) ?: return@withContext emptyList()
@@ -181,18 +179,15 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         subtitles
     }
 
-    private suspend fun fetchFromSubtitleScraper(
-        imdbId : String,
-        season : Int?,
-        episode: Int?
-    ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
-        try {
-            val result = subtitleScraper.fetchSubtitleInMemory(imdbId, season, episode, "heb")
-            val bytes  = result.getOrNull() ?: return@withContext emptyList()
-            val suffix = if (season != null && episode != null) "s${season}e${episode}" else "movie"
-            val file   = File(app.cacheDir, "subtitle_${imdbId}_${suffix}_heb.srt")
-            file.writeBytes(bytes)
-            listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
-        } catch (_: Exception) { emptyList() }
-    }
+    private suspend fun fetchFromSubtitleScraper(imdbId: String, season: Int?, episode: Int?): List<StremioSubtitle> =
+        withContext(Dispatchers.IO) {
+            try {
+                val result = subtitleScraper.fetchSubtitleInMemory(imdbId, season, episode, "heb")
+                val bytes  = result.getOrNull() ?: return@withContext emptyList()
+                val suffix = if (season != null && episode != null) "s${season}e${episode}" else "movie"
+                val file   = File(app.cacheDir, "subtitle_${imdbId}_${suffix}_heb.srt")
+                file.writeBytes(bytes)
+                listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
+            } catch (e: Exception) { emptyList() }
+        }
 }
