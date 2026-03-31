@@ -10,12 +10,6 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
 
-// ── AppDatabase ─────────────────────────────────────────────────────────────
-interface AppDatabase {
-    suspend fun saveWatchProgress(movieId: String, progressMillis: Long)
-    suspend fun getWatchProgress(movieId: String): Long
-}
-
 // ── CacheManager ───────────────────────────────────────────────────────────
 class CacheManager(private val context: Context) {
 
@@ -87,7 +81,7 @@ class WatchlistManager(context: Context) {
 
     fun getWatchlist(): List<Movie> {
         val list = mutableListOf<Movie>()
-        val allEntries: Map<String, *> = prefs.all // תיקון בעיית הקומפילציה
+        val allEntries: Map<String, *> = prefs.all
         for ((_, value) in allEntries) {
             try {
                 if (value is String) {

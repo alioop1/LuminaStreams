@@ -43,7 +43,6 @@ class ExoPlayerWrapper(context: Context) {
     private val appContext = context.applicationContext
     private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    // LG OLED / Sony / Philips — audio passthrough ON by default (Dolby Atmos bitstream)
     private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
@@ -72,17 +71,15 @@ class ExoPlayerWrapper(context: Context) {
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
-    // ── Renderers factory — tier-aware ──────────────────────────────────────────
+    // ── Renderers factory ──────────────────────────────────────────────────────
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // LOW tier: prefer SW fallback decoders for tricky content (old Mali)
                 DeviceProfile.tier == DeviceProfile.Tier.LOW ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // LG/Sony/Philips/Shield: native HW decoders handle DV/HDR fine
                 DeviceProfile.isLg   || DeviceProfile.isSony   ||
                         DeviceProfile.isPhilips || DeviceProfile.isNvidia ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
@@ -105,7 +102,6 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            // Tunneling: only enable on capable HIGH-tier devices
             .setTunnelingEnabled(
                 DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
                         DeviceProfile.isNvidia ||
@@ -123,7 +119,7 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params)
     }
 
-    // ── LoadControl — tier-aware buffer sizes ──────────────────────────────────
+    // ── LoadControl ────────────────────────────────────────────────────────────
     private val loadControl: DefaultLoadControl = run {
         val buf = DeviceProfile.bufferConfig
         if (preAllocateBuffer) {
@@ -159,7 +155,6 @@ class ExoPlayerWrapper(context: Context) {
         .setMediaSourceFactory(mediaSourceFactory)
         .setTrackSelector(trackSelector)
         .setLoadControl(loadControl)
-        // ── התיקון כאן: דורשים Passthrough ומונעים מאנדרואיד להתערב בסאונד ──
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
@@ -175,7 +170,7 @@ class ExoPlayerWrapper(context: Context) {
                 val cls  = Class.forName("androidx.media3.exoplayer.audio.AudioOffloadPreferences")
                 val bldr = cls.getClasses().firstOrNull { it.simpleName == "Builder" } ?: return@runCatching
                 val ob   = bldr.getDeclaredConstructor().newInstance()
-                bldr.getMethod("setAudioOffloadMode", Int::class.java).invoke(ob, 1) // AUDIO_OFFLOAD_MODE_ENABLED
+                bldr.getMethod("setAudioOffloadMode", Int::class.java).invoke(ob, 1)
                 val op   = bldr.getMethod("build").invoke(ob)
                 exo.javaClass.getMethod("setAudioOffloadPreferences", cls).invoke(exo, op)
             }
@@ -298,8 +293,10 @@ class ExoPlayerWrapper(context: Context) {
         maxRetries  : Int     = 2
     ) {
         if (subtitleUrl.startsWith("file://")) {
-            val f = File(subtitleUrl.toUri().path!!)
-            loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            scope.launch {
+                val path = subtitleUrl.toUri().path ?: return@launch
+                loadAndStartTickerAsync(File(path), isVtt || subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            }
             return
         }
         scope.launch(Dispatchers.IO) {
@@ -315,7 +312,7 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { loadAndStartTicker(file, ext == "vtt") }
+                        loadAndStartTickerAsync(file, ext == "vtt")
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -327,20 +324,30 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    private fun loadAndStartTicker(subFile: File, isVtt: Boolean) {
-        stopSubTicker()
-        _currentCues.value = emptyList()
-        val text = subFile.readText(Charsets.UTF_8)
-        parsedSubs = if (isVtt) parseVtt(text) else parseSrt(text)
-        if (parsedSubs.isEmpty()) return
-        _subtitleApplied.value = true
-        val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
-        subTickerJob = scope.launch {
-            while (isActive) {
-                val pos    = player.currentPosition
-                val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
-                delay(tickMs)
+    // FIX: reads file on IO, parses on Default, updates state on Main
+    private suspend fun loadAndStartTickerAsync(subFile: File, isVtt: Boolean) {
+        val text: String = withContext(Dispatchers.IO) {
+            runCatching { subFile.readText(Charsets.UTF_8) }.getOrNull()
+        } ?: return
+
+        val parsed: List<SubEntry> = withContext(Dispatchers.Default) {
+            if (isVtt) parseVtt(text) else parseSrt(text)
+        }
+
+        withContext(Dispatchers.Main) {
+            stopSubTicker()
+            _currentCues.value = emptyList()
+            parsedSubs = parsed
+            if (parsedSubs.isEmpty()) return@withContext
+            _subtitleApplied.value = true
+            val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
+            subTickerJob = scope.launch {
+                while (isActive) {
+                    val pos    = player.currentPosition
+                    val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
+                    _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                    delay(tickMs)
+                }
             }
         }
     }

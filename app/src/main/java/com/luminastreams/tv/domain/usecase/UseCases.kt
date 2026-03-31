@@ -1,29 +1,9 @@
 package com.luminastreams.tv.domain.usecase
 
 import com.luminastreams.tv.domain.model.Movie
-import com.luminastreams.tv.domain.model.StreamSource
 import com.luminastreams.tv.domain.repository.MediaRepository
-import com.luminastreams.tv.data.remote.SubtitleScraper
 
-// ── GetHomeFeedUseCase ─────────────────────────────────────────────────────
+// ── GetHomeFeedUseCase ─────────────────────────────────────────────
 class GetHomeFeedUseCase(private val repository: MediaRepository) {
     suspend operator fun invoke(): Result<List<Movie>> = repository.getTrendingMovies()
-}
-
-// ── GetMediaDetailsUseCase ─────────────────────────────────────────────────
-class GetMediaDetailsUseCase(private val repository: MediaRepository) {
-    suspend operator fun invoke(movieId: String): Result<Movie> = repository.getMovieDetails(movieId)
-}
-
-// ── FetchSubtitlesUseCase ──────────────────────────────────────────────────
-class FetchSubtitlesUseCase(private val scraper: SubtitleScraper) {
-    // עדכון: תמיכה בהעברת עונה ופרק לסקריפר כדי שיעבוד גם בסדרות
-    suspend operator fun invoke(imdbId: String, season: Int? = null, episode: Int? = null, lang: String = "heb"): Result<ByteArray> =
-        scraper.fetchSubtitleInMemory(imdbId = imdbId, season = season, episode = episode, langCode = lang)
-}
-
-// ── ResolveStreamUseCase ───────────────────────────────────────────────────
-class ResolveStreamUseCase {
-    suspend operator fun invoke(torrentId: String): Result<StreamSource> =
-        Result.failure(Exception("Not implemented yet"))
 }
