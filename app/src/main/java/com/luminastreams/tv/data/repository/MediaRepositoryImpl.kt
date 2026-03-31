@@ -1,6 +1,7 @@
 package com.luminastreams.tv.data.repository
 
 import com.luminastreams.tv.core.Constants
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.api.TmdbApi
 import com.luminastreams.tv.data.api.TmdbMediaDto
 import com.luminastreams.tv.data.api.TmdbMovieDetailsDto
@@ -18,8 +19,13 @@ import java.util.concurrent.TimeUnit
 
 /**
  * MediaRepositoryImpl — TMDB data source.
- * All image URLs are now tier-aware via Constants.backdropUrl / Constants.posterUrl
- * so Nvidia Shield gets /original/ quality while 2 GB Mali boxes get w500.
+ *
+ * Image URLs are tier-aware via Constants.backdropUrl / Constants.posterUrl:
+ *   HIGH  → /original/ backdrops + /w780/ posters   (Nvidia Shield, LG OLED …)
+ *   MID   → /w1280/   backdrops + /w500/ posters
+ *   LOW   → /w500/    backdrops + /w342/ posters   (2 GB Mali boxes)
+ *
+ * resolutionBadge is also tier-aware so the UI badge reflects real capability.
  */
 class MediaRepositoryImpl : MediaRepository {
 
@@ -36,20 +42,25 @@ class MediaRepositoryImpl : MediaRepository {
         .build()
         .create(TmdbApi::class.java)
 
-    // ── Internal mapper — tier-aware images ────────────────────────────────────
+    // ── Tier-aware resolution badge ────────────────────────────────────────────
+    private val tierBadge: String get() = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.HIGH -> "4K HDR"
+        DeviceProfile.Tier.MID  -> "FHD 1080p"
+        DeviceProfile.Tier.LOW  -> "HD 720p"
+    }
+
+    // ── Internal mapper — tier-aware images + badge ────────────────────────────
     private fun TmdbMediaDto.toMovie(type: String) = Movie(
         id              = "${type}_${id}",
         title           = title ?: name ?: "Unknown",
-        // Backdrops: original on Shield, w500 on 2 GB boxes
         backdropUrl     = Constants.backdropUrl(backdropPath),
-        // Posters: w780 on Shield, w342 on low-end
         posterUrl       = Constants.posterUrl(posterPath),
         overview        = overview ?: "",
         rating          = voteAverage,
         mediaType       = type,
         genreIds        = genreIds ?: emptyList(),
-        is4K            = true,
-        resolutionBadge = "4K HDR"
+        is4K            = DeviceProfile.tier == DeviceProfile.Tier.HIGH,
+        resolutionBadge = tierBadge
     )
 
     // ── Public API ─────────────────────────────────────────────────────────────

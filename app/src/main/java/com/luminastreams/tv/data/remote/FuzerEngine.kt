@@ -56,6 +56,8 @@ object FuzerEngine {
             val html      = getHtml(searchUrl) ?: return@withContext Result.success(emptyList())
             Result.success(parseHtmlToMovies(html))
         } catch (e: Exception) {
+            // Reset login so next call retries auth instead of failing silently
+            isLoggedIn = false
             Result.failure(Exception("Fuzer search: ${e.message}"))
         }
     }
@@ -66,8 +68,9 @@ object FuzerEngine {
             val html = getHtml("$BASE/browse.php?cat=$catId&page=$page")
                 ?: return@withContext Result.success(emptyList())
             Result.success(parseHtmlToMovies(html))
-        } catch (_: Exception) {
-            Result.failure(Exception("Fuzer getCategoryPage failed"))
+        } catch (e: Exception) {
+            isLoggedIn = false
+            Result.failure(Exception("Fuzer getCategoryPage failed: ${e.message}"))
         }
     }
 
@@ -90,6 +93,7 @@ object FuzerEngine {
                 Result.success(bytes)
             else Result.failure(Exception("Invalid torrent data"))
         } catch (e: Exception) {
+            isLoggedIn = false
             Result.failure(e)
         }
     }
@@ -162,6 +166,8 @@ object FuzerEngine {
                 isLoggedIn = true; return true
             }
         } catch (_: Exception) {}
+        // Login failed — don't leave isLoggedIn = true
+        isLoggedIn = false
         return false
     }
 

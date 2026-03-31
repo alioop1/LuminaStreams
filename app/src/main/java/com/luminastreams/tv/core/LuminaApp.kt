@@ -8,13 +8,10 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
-import com.luminastreams.tv.data.repository.MediaRepositoryImpl
-import com.luminastreams.tv.domain.repository.MediaRepository
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 
 class LuminaApp : Application() {
-    lateinit var repository: MediaRepository
 
     override fun onCreate() {
         super.onCreate()
@@ -29,8 +26,6 @@ class LuminaApp : Application() {
 
         setupCoil()
 
-        repository = MediaRepositoryImpl()
-
         // GC on non-HIGH devices — free init overhead fast
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
             Runtime.getRuntime().gc()
@@ -43,8 +38,8 @@ class LuminaApp : Application() {
 
         val memoryCachePercent = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> 0.15
-            DeviceProfile.Tier.MID  -> 0.08   // was 0.10 — less pressure on MID
-            DeviceProfile.Tier.LOW  -> 0.05   // was 0.06 — weak devices need breathing room
+            DeviceProfile.Tier.MID  -> 0.08
+            DeviceProfile.Tier.LOW  -> 0.05
         }
         val memoryCacheBytes = (maxHeap * memoryCachePercent).toLong()
             .coerceIn(24 * 1024 * 1024L, 256 * 1024 * 1024L)
@@ -52,7 +47,7 @@ class LuminaApp : Application() {
         val diskCacheBytes = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> 512 * 1024 * 1024L
             DeviceProfile.Tier.MID  -> 256 * 1024 * 1024L
-            DeviceProfile.Tier.LOW  -> 96  * 1024 * 1024L  // was 128 MB
+            DeviceProfile.Tier.LOW  -> 96  * 1024 * 1024L
         }
 
         val connectTimeout = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 15L else 10L
@@ -61,10 +56,9 @@ class LuminaApp : Application() {
         val okhttp = OkHttpClient.Builder()
             .connectTimeout(connectTimeout, TimeUnit.SECONDS)
             .readTimeout(readTimeout, TimeUnit.SECONDS)
-            // Limit parallel image fetches on weak devices — prevents RAM spikes
             .dispatcher(okhttp3.Dispatcher().also { d ->
-                d.maxRequests           = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 4 else 8
-                d.maxRequestsPerHost    = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 2 else 4
+                d.maxRequests        = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 4 else 8
+                d.maxRequestsPerHost = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 2 else 4
             })
             .build()
 
@@ -81,8 +75,6 @@ class LuminaApp : Application() {
                     .build()
             }
             .okHttpClient(okhttp)
-            // Crossfade only on HIGH — it requires an extra GPU compositing pass
-            // that kills frame rate on Mali-G31 / Mali-450 chips
             .crossfade(DeviceProfile.tier == DeviceProfile.Tier.HIGH)
             .respectCacheHeaders(false)
             .build()
