@@ -139,7 +139,7 @@ private val NAV_FOCUS = Color(0x30FFFFFF)
 // ═══════════════════════════════════════════════════════════════════
 //  LAYOUT
 // ═══════════════════════════════════════════════════════════════════
-private val NAV_SEARCH_H = 84.dp
+private val NAV_SEARCH_H = 28.dp
 private val NAV_PILLS_H  = 34.dp
 private val NAV_PILL_H   = 28.dp
 private val NAV_GAP      = 12.dp
@@ -724,7 +724,7 @@ private fun TwoRowNavBar(
             Row(
                 modifier              = Modifier.fillMaxSize(),
                 verticalAlignment     = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 NavPill(tr("Home", "ראשי"),      Icons.Default.Home,        activeTab == "ראשי",   firstNavFR, onHomeTab)   { o, w -> tabPositions["ראשי"]      = o; tabWidths["ראשי"]      = w }
                 NavPill(tr("Movies", "סרטים"),    Icons.Default.Movie,       activeTab == "סרטים",  null,       onMoviesTab)  { o, w -> tabPositions["סרטים"]     = o; tabWidths["סרטים"]     = w }
@@ -746,7 +746,7 @@ private fun LuminaLogo() {
         painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
         contentDescription = "Lumina Logo",
         contentScale = ContentScale.Fit,
-        modifier = Modifier.height(128.dp)
+        modifier = Modifier.height(64.dp)
     )
 }
 

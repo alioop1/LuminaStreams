@@ -34,8 +34,11 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         .create(TmdbApi::class.java)
 
     private val tmdbLang: String get() {
-        val appLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he")
-        return if (appLang == "he") "he-IL" else "en-US"
+        // בודק גם את הגדרות האפליקציה וגם את שפת המכשיר/מערכת בפועל ("iw" זה הקוד הישן של אנדרואיד לעברית)
+        val prefsLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "")
+        val deviceLang = java.util.Locale.getDefault().language
+
+        return if (prefsLang == "he" || deviceLang == "he" || deviceLang == "iw") "he" else "en-US"
     }
 
     private val tierBadge: String get() = when (DeviceProfile.tier) {
