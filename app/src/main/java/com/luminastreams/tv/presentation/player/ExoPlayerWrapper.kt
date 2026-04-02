@@ -126,6 +126,7 @@ class ExoPlayerWrapper(context: Context) {
             DefaultLoadControl.Builder()
                 .setBufferDurationsMs(30_000, 120_000, 5_000, 10_000)
                 .setTargetBufferBytes(64 * 1024 * 1024)
+                .setPrioritizeTimeOverSizeThresholds(true) // קריטי ל-4K בסטרימרים חלשים!
                 .build()
         } else {
             DefaultLoadControl.Builder()
@@ -136,6 +137,7 @@ class ExoPlayerWrapper(context: Context) {
                     buf.bufferForReplayMs
                 )
                 .setTargetBufferBytes(buf.targetBufferBytes)
+                .setPrioritizeTimeOverSizeThresholds(true) // קריטי ל-4K בסטרימרים חלשים!
                 .build()
         }
     }
@@ -324,7 +326,6 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    // FIX: reads file on IO, parses on Default, updates state on Main
     private suspend fun loadAndStartTickerAsync(subFile: File, isVtt: Boolean) {
         val text: String = withContext(Dispatchers.IO) {
             runCatching { subFile.readText(Charsets.UTF_8) }.getOrNull()

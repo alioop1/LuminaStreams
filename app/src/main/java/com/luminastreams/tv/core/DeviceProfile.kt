@@ -30,7 +30,6 @@ object DeviceProfile {
     var isPhilips   : Boolean = false; private set
     var isNvidia    : Boolean = false; private set
     var isRockchip  : Boolean = false; private set
-    /** S905X / S905X2 / S905X3 / S905X4 — Mali-450/G31: definitely LOW */
     var isWeakAmlogic: Boolean = false; private set
 
     // ── Read-only state ────────────────────────────────────────────────────────
@@ -67,13 +66,12 @@ object DeviceProfile {
                 model.contains("oled")              || model.contains(" lg")
         isSony      = manufacturer.contains("sony")
         isPhilips   = manufacturer.contains("philips") || manufacturer.contains("tp vision")
-        isNvidia    = manufacturer.contains("nvidia")
+        isNvidia    = manufacturer.contains("nvidia") || model.contains("shield")
         isRockchip  = hardware.contains("rockchip") || hardware.contains("rk3588") ||
                 hardware.contains("rk3399")         || board.contains("rk3588")
 
-        // Weak Amlogic = S905 family (excluding S922X which is decent)
         isWeakAmlogic = isAmlogic && (
-                hardware.contains("s905x")  || // S905X, S905X2, S905X3, S905X4
+                hardware.contains("s905x")  ||
                         hardware.contains("s905d")  ||
                         hardware.contains("s905w")  ||
                         hardware.contains("s905l")  ||
@@ -82,7 +80,6 @@ object DeviceProfile {
                 ) && !hardware.contains("s922")
 
         gpuRenderer = buildGpuLabel(manufacturer, hardware, model, board)
-
         tier        = detectTier(hardware, model, board)
         animConfig  = buildConfig(effectiveTier())
     }
@@ -115,14 +112,12 @@ object DeviceProfile {
 
         if (hw.contains("rk3588") || board.contains("rk3588")) return Tier.HIGH
 
+        // חוק נוקשה: אם הראם קטן מ-2500MB (כמו ברוב הסטרימרים הסיניים) -> מיד LOW
+        if (totalRamMb < 2500) return Tier.LOW
+
         if (isMeCool || isAmlogic) {
             return when {
-                // S922X — Amlogic's best, Mali-G52: solid HIGH
                 hw.contains("s922") || model.contains("km7")  -> Tier.HIGH
-
-                // Everything S905-based: Mali-450 / Mali-G31 — these GPUs
-                // cannot handle parallax, heavy cross-fades, or spring
-                // animations without frame drops. Force LOW regardless of RAM.
                 hw.contains("s905x4") || model.contains("km6") -> Tier.LOW
                 hw.contains("s905x3")                          -> Tier.LOW
                 hw.contains("s905x2")                          -> Tier.LOW
@@ -130,18 +125,14 @@ object DeviceProfile {
                 hw.contains("s905d")                           -> Tier.LOW
                 hw.contains("s905w")                           -> Tier.LOW
                 hw.contains("s905")                            -> Tier.LOW
-
-                // Unknown Amlogic with decent RAM → cautious MID
-                totalRamMb >= 3000 -> Tier.MID
-                else               -> Tier.LOW
+                else                                           -> Tier.LOW
             }
         }
 
         if (isXiaomi) {
             return when {
-                model.contains("mi box s") && totalRamMb >= 2000 -> Tier.HIGH
-                model.contains("mi box")                          -> Tier.MID
-                else                                              -> Tier.MID
+                model.contains("mi box s") -> Tier.HIGH
+                else                                              -> Tier.LOW
             }
         }
 
@@ -209,17 +200,15 @@ object DeviceProfile {
     )
 
     val bufferConfig: BufferConfig get() = when (effectiveTier()) {
-        Tier.HIGH -> BufferConfig(15_000, 60_000, 2_500, 5_000, 32 * 1024 * 1024)
-        Tier.MID  -> BufferConfig(12_000, 40_000, 2_000, 4_000, 16 * 1024 * 1024)
-        Tier.LOW  -> BufferConfig( 8_000, 25_000, 1_500, 3_000,  8 * 1024 * 1024)
+        Tier.HIGH -> BufferConfig(15_000, 60_000, 2_500, 5_000, 64 * 1024 * 1024)
+        Tier.MID  -> BufferConfig(12_000, 40_000, 2_000, 4_000, 32 * 1024 * 1024)
+        // שדרוג הבאפר ל-LOW כדי ש-4K לא ייתקע! (אגרנו יותר שניות ויותר מגה-בייטים)
+        Tier.LOW  -> BufferConfig(25_000, 60_000, 2_500, 5_000, 32 * 1024 * 1024)
     }
 
-    // ── Debug ─────────────────────────────────────────────────────────────────
     fun debugInfo(): String =
         "Tier=${if (forceLowTier) "LOW(forced)" else tier.name} | " +
                 "ReduceMotion=$forceReduceMotion | GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
-                "WeakAmlogic=$isWeakAmlogic | " +
-                "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | Amlogic=$isAmlogic | " +
-                "LG=$isLg | Sony=$isSony | Philips=$isPhilips | Rockchip=$isRockchip | " +
+                "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | " +
                 "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }

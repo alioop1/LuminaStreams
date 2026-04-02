@@ -7,23 +7,66 @@
 
 package com.luminastreams.tv.presentation.home
 
+import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
-import androidx.compose.animation.core.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
-import androidx.compose.runtime.*
+import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.LocalMovies
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Tv
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.Stable
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -39,7 +82,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
@@ -56,8 +103,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
-import androidx.tv.material3.*
+import androidx.tv.material3.Border
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Glow
+import androidx.tv.material3.Icon
+import androidx.tv.material3.Surface
+import androidx.tv.material3.Text
 import coil.compose.AsyncImage
+import coil.imageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
@@ -85,7 +139,7 @@ private val NAV_FOCUS = Color(0x30FFFFFF)
 // ═══════════════════════════════════════════════════════════════════
 //  LAYOUT
 // ═══════════════════════════════════════════════════════════════════
-private val NAV_SEARCH_H = 24.dp
+private val NAV_SEARCH_H = 84.dp
 private val NAV_PILLS_H  = 34.dp
 private val NAV_PILL_H   = 28.dp
 private val NAV_GAP      = 12.dp
@@ -319,9 +373,18 @@ fun HomeScreen(
         }
 
         BackdropLayer(focusState.heroMovie)
-        Box(Modifier.fillMaxSize().background(rowsOverlay))
+
+        // אופטימיזציה לסטרימרים חלשים - גרדיאנט פשוט במקום שקיפויות עמוסות GPU
+        val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+        if (isLow) {
+            Box(Modifier.fillMaxSize().background(Color(0xD9070707)))
+        } else {
+            Box(Modifier.fillMaxSize().background(rowsOverlay))
+        }
+
         HeroOverlay(focusState.heroMovie, panelH)
 
+        val context = LocalContext.current
         ContentLayer(
             rows                = rows,
             contentAlpha        = contentAlpha,
@@ -330,7 +393,13 @@ fun HomeScreen(
             activeFilter        = currentFilter,
             panelH              = panelH,
             rowHeightFor        = { i -> rowHeightFor(i) },
-            onMovieClick        = onMovieClick,
+            onMovieClick        = { id ->
+                // פינוי RAM אקטיבי לפני כניסה לנגן או למסך פירוט!
+                if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
+                    context.imageLoader.memoryCache?.clear()
+                }
+                onMovieClick(id)
+            },
             onHeroUpdate        = { focusState.heroMovie = it },
             onStudioFilterClick = { filter ->
                 if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null)
@@ -365,7 +434,6 @@ private fun BackdropLayer(hero: Movie?) {
                     cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 720)
         }
     }
-    // Duration = 0 on LOW → instant snap, no extra GPU compositing layer
     val backdropDuration = DeviceProfile.animConfig.backdropDuration.coerceAtLeast(0)
 
     Box(Modifier.fillMaxSize()) {
@@ -382,6 +450,8 @@ private fun BackdropLayer(hero: Movie?) {
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true)
+                            // חיסכון אדיר בזיכרון לסטרימרים חלשים!
+                            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW)
                             .crossfade(false)
                             .build()
                     },
@@ -391,8 +461,14 @@ private fun BackdropLayer(hero: Movie?) {
                 )
             }
         }
-        Box(Modifier.fillMaxSize().background(heroScrimLeft))
-        Box(Modifier.fillMaxSize().background(heroScrimTop))
+
+        val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+        if (isLow) {
+            Box(Modifier.fillMaxSize().background(Color(0xD0070707)))
+        } else {
+            Box(Modifier.fillMaxSize().background(heroScrimLeft))
+            Box(Modifier.fillMaxSize().background(heroScrimTop))
+        }
     }
 }
 
@@ -611,7 +687,6 @@ private fun TwoRowNavBar(
         }
     }
 
-    val density      = LocalDensity.current
     val tabPositions = remember { mutableStateMapOf<String, Float>() }
     val tabWidths    = remember { mutableStateMapOf<String, Dp>() }
 
@@ -635,7 +710,6 @@ private fun TwoRowNavBar(
 
         Box(
             modifier         = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp),
-            // שימוש ב-AbsoluteAlignment מונע מ-Compose להפוך צדדים ולשבור את האנימציה ב-RTL
             contentAlignment = AbsoluteAlignment.CenterLeft
         ) {
             if (animatedWidth > 0.dp) {
@@ -643,7 +717,6 @@ private fun TwoRowNavBar(
                     modifier = Modifier
                         .width(animatedWidth)
                         .height(NAV_PILL_H)
-                        // שימוש ב-graphicsLayer במקום offset מבטיח הזזה בפיקסלים קשיחים ללא התערבות כיוון שפה
                         .graphicsLayer { translationX = animatedX },
                     color    = WHITE, shape = RoundedCornerShape(50)
                 ) {}
@@ -673,7 +746,7 @@ private fun LuminaLogo() {
         painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
         contentDescription = "Lumina Logo",
         contentScale = ContentScale.Fit,
-        modifier = Modifier.height(48.dp)
+        modifier = Modifier.height(128.dp)
     )
 }
 
@@ -769,8 +842,6 @@ private fun RowsPanel(
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
-    // How many rows above/below the current one to keep fully rendered.
-    // HIGH: 3 rows buffer (parallax, crossfade) — MID/LOW: 1 row buffer.
     val renderMargin = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 3
         DeviceProfile.Tier.MID  -> 1
@@ -800,9 +871,6 @@ private fun RowsPanel(
 
                 key(rowDef.id) {
                     if (!inWindow) {
-                        // ── Off-screen placeholder ──────────────────────────
-                        // Empty box at the exact position so yAccum stays
-                        // correct. No composition of row content — zero GPU cost.
                         Box(
                             Modifier
                                 .fillMaxWidth()
@@ -810,9 +878,6 @@ private fun RowsPanel(
                                 .offset(y = yOffset)
                         )
                     } else {
-                        // ── Visible row — normal rendering ──────────────────
-                        // Only animate alpha on HIGH tier; MID/LOW rows just
-                        // snap to their target opacity (no continuous animation).
                         val animatedAlpha by animateFloatAsState(
                             targetValue   = if (i == curRow) 1f else 0.22f,
                             animationSpec = if (DeviceProfile.animConfig.enableRowFade)
@@ -824,7 +889,7 @@ private fun RowsPanel(
                                     easing = FastOutSlowInEasing
                                 )
                             else
-                                tween(0), // instant — no GPU animation overhead
+                                tween(0),
                             label = "a$i"
                         )
 
@@ -878,7 +943,6 @@ private fun RowsPanel(
         }
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════
 //  LANDSCAPE ROW
@@ -1104,7 +1168,6 @@ private fun LandscapeCard(
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
 
-    // HIGH: spring for organic feel. MID/LOW: fast tween — no continuous frames.
     val cardAnimSpec = remember {
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
             spring<Float>(stiffness = Spring.StiffnessMediumLow)
@@ -1118,8 +1181,6 @@ private fun LandscapeCard(
         label         = "lzoom"
     )
 
-    // overlay gradient — only computed on HIGH; on MID/LOW it stays at 0
-    // so the `if (isFocused.value)` branches below draw nothing.
     val overlayAlpha by animateFloatAsState(
         targetValue = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.18f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
@@ -1133,7 +1194,9 @@ private fun LandscapeCard(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .crossfade(false)   // always off per-card — Coil global setting handles it
+            // שינוי קריטי למכשירים חלשים - חוסך 50% מה-RAM לקלף!
+            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW)
+            .crossfade(false)
             .build()
     }
 
@@ -1283,6 +1346,7 @@ fun PosterCard(
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
+            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW) // אופטימיזציה לראם
             .crossfade(false)
             .build()
     }
@@ -1325,7 +1389,6 @@ fun PosterCard(
                     }
                 }
 
-                // HIGH-tier only: top shimmer overlay on focus
                 if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) {
                     Box(
                         Modifier.fillMaxSize()
