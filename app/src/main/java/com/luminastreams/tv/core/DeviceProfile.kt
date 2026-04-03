@@ -112,7 +112,6 @@ object DeviceProfile {
 
         if (hw.contains("rk3588") || board.contains("rk3588")) return Tier.HIGH
 
-        // חוק נוקשה: אם הראם קטן מ-2500MB (כמו ברוב הסטרימרים הסיניים) -> מיד LOW
         if (totalRamMb < 2500) return Tier.LOW
 
         if (isMeCool || isAmlogic) {
@@ -132,7 +131,7 @@ object DeviceProfile {
         if (isXiaomi) {
             return when {
                 model.contains("mi box s") -> Tier.HIGH
-                else                                              -> Tier.LOW
+                else                       -> Tier.LOW
             }
         }
 
@@ -191,6 +190,8 @@ object DeviceProfile {
     }
 
     // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
+    // Reduced to prevent OutOfMemoryError on 512MB heap limit devices.
+    // Large buffers were causing LoadTask to exhaust available heap space.
     data class BufferConfig(
         val minBufferMs       : Int,
         val maxBufferMs       : Int,
@@ -200,10 +201,9 @@ object DeviceProfile {
     )
 
     val bufferConfig: BufferConfig get() = when (effectiveTier()) {
-        Tier.HIGH -> BufferConfig(15_000, 60_000, 2_500, 5_000, 64 * 1024 * 1024)
-        Tier.MID  -> BufferConfig(12_000, 40_000, 2_000, 4_000, 32 * 1024 * 1024)
-        // שדרוג הבאפר ל-LOW כדי ש-4K לא ייתקע! (אגרנו יותר שניות ויותר מגה-בייטים)
-        Tier.LOW  -> BufferConfig(25_000, 60_000, 2_500, 5_000, 32 * 1024 * 1024)
+        Tier.HIGH -> BufferConfig(10_000, 25_000, 2_000, 4_000, 12 * 1024 * 1024)
+        Tier.MID  -> BufferConfig( 8_000, 20_000, 2_000, 4_000,  8 * 1024 * 1024)
+        Tier.LOW  -> BufferConfig(15_000, 30_000, 2_500, 5_000,  8 * 1024 * 1024)
     }
 
     fun debugInfo(): String =

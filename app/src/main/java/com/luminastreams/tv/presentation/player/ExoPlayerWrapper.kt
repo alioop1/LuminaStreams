@@ -46,6 +46,7 @@ class ExoPlayerWrapper(context: Context) {
     private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
+    // preAllocateBuffer capped at a safe byte limit regardless of user setting
     private val preAllocateBuffer = prefs.getBoolean("pre_buffer",          false)
     private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
     private val skipEmbeddedSubs  = prefs.getBoolean("subtitle_cache_only", false)
@@ -120,13 +121,17 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── LoadControl ────────────────────────────────────────────────────────────
+    // Safe buffer cap: 12 MB max regardless of preAllocateBuffer setting.
+    // Previous values (64 MB) caused OOM when heap was near the 512 MB limit.
+    private val safeTargetBytes = 12 * 1024 * 1024 // 12 MB hard cap
+
     private val loadControl: DefaultLoadControl = run {
         val buf = DeviceProfile.bufferConfig
         if (preAllocateBuffer) {
             DefaultLoadControl.Builder()
-                .setBufferDurationsMs(30_000, 120_000, 5_000, 10_000)
-                .setTargetBufferBytes(64 * 1024 * 1024)
-                .setPrioritizeTimeOverSizeThresholds(true) // קריטי ל-4K בסטרימרים חלשים!
+                .setBufferDurationsMs(15_000, 30_000, 2_500, 5_000)
+                .setTargetBufferBytes(safeTargetBytes)
+                .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         } else {
             DefaultLoadControl.Builder()
@@ -136,8 +141,8 @@ class ExoPlayerWrapper(context: Context) {
                     buf.bufferForPlayMs,
                     buf.bufferForReplayMs
                 )
-                .setTargetBufferBytes(buf.targetBufferBytes)
-                .setPrioritizeTimeOverSizeThresholds(true) // קריטי ל-4K בסטרימרים חלשים!
+                .setTargetBufferBytes(minOf(buf.targetBufferBytes, safeTargetBytes))
+                .setPrioritizeTimeOverSizeThresholds(true)
                 .build()
         }
     }
