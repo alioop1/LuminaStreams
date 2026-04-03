@@ -282,6 +282,7 @@ fun DetailsScreen(
     var showSources   by remember { mutableStateOf(false) }
     var pendingAutoPlaySeason  by remember { mutableIntStateOf(-1) }
     var pendingAutoPlayEpisode by remember { mutableIntStateOf(-1) }
+    var isAutoPlayPending by remember { mutableStateOf(false) }
     val focusManager  = LocalFocusManager.current
 
     LaunchedEffect(state.mediaInfo.id) {
@@ -322,7 +323,7 @@ fun DetailsScreen(
             focusManager.clearFocus()
         } else onNavigateBack()
     }
-     // Sync watch-progress every time this screen becomes visible
+    // Sync watch-progress every time this screen becomes visible
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -350,15 +351,30 @@ fun DetailsScreen(
         if (state.isLoadingData || media.imdbId.isBlank()) return@LaunchedEffect
         val s = pendingAutoPlaySeason
         val e = pendingAutoPlayEpisode
+        // Reset keys synchronously — no suspension point before we finish our work,
+        // so Compose cannot cancel this coroutine mid-execution due to key change.
         pendingAutoPlaySeason  = -1
         pendingAutoPlayEpisode = -1
-        // Switch season tab if needed
         if (s != state.selectedSeason) onEvent(DetailsEvent.SelectSeason(s))
-        delay(120)
-        showSources          = true
+        // NO delay here — any suspension point after resetting the keys above
+        // allows Compose to recompose, see the new key values (-1,-1), and
+        // cancel this coroutine before isAutoPlayPending and InitiateScraping run.
+        showSources          = false
         currentScrapeSeason  = s
         currentScrapeEpisode = e
+        isAutoPlayPending    = true
         onEvent(DetailsEvent.InitiateScraping(media.imdbId, s, e))
+    }
+    LaunchedEffect(state.scrapingStatus, isAutoPlayPending) {
+        if (!isAutoPlayPending) return@LaunchedEffect
+        if (state.scrapingStatus == ScrapingStatus.Success && state.availableStreams.isNotEmpty()) {
+            isAutoPlayPending = false
+            onEvent(DetailsEvent.ResolveAndPlayStream(state.availableStreams.first()))
+        } else if (state.scrapingStatus is ScrapingStatus.Error) {
+            // On error fall back to showing the sources panel
+            isAutoPlayPending = false
+            showSources = true
+        }
     }
     if (state.isLoadingData) {
         Box(Modifier.fillMaxSize().background(BK), Alignment.Center) {
@@ -446,40 +462,51 @@ fun DetailsScreen(
                             if (media.imdbRating > 0) RatingChip(Icons.Default.Star,     GLD, String.format(Locale.US, "%.1f", media.imdbRating), "IMDb")
                             if (media.tmdbRating > 0) RatingChip(Icons.Default.Favorite, TMR, "${(media.tmdbRating * 10).toInt()}%", "TMDB")
                         }
+                        if (media.overview.isNotBlank()) {
+                            Spacer(Modifier.height(10.dp))
+                            Text(
+                                text = media.overview,
+                                color = DM,
+                                fontSize = 13.sp,
+                                lineHeight = 18.sp,
+                                maxLines = 3,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                         Spacer(Modifier.height(12.dp))
-          // ── Movie watch-progress bar ─────────────────────────────────────
-          if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
-              Spacer(Modifier.height(14.dp))
-              val prog = state.contentProgress ?: 0f
-              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                  Box(
-                      Modifier
-                          .fillMaxWidth(0.65f)
-                          .height(3.dp)
-                          .clip(RoundedCornerShape(50))
-                          .background(WH.copy(0.15f))
-                  ) {
-                      Box(
-                          Modifier
-                              .fillMaxWidth(prog)
-                              .fillMaxHeight()
-                              .background(if (state.contentIsFinished) GLD else BR)
-                      )
-                  }
-                  val label = when {
-                      state.contentIsFinished -> tr("Watched ✓", "נצפה ✓")
-                      media.runtimeMinutes > 0 -> {
-                          val leftMin = ((1f - prog) * media.runtimeMinutes).toInt()
-                              .coerceAtLeast(1)
-                          tr("${leftMin}m left", "${leftMin} דקות נותרו")
-                      }
-                      else -> "%.0f%%".format(prog * 100)
-                  }
-                  Text(label, color = if (state.contentIsFinished) GLD else DM, fontSize = 11.sp)
-              }
-          }
+                        // ── Movie watch-progress bar ─────────────────────────────────────
+                        if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
+                            Spacer(Modifier.height(14.dp))
+                            val prog = state.contentProgress ?: 0f
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth(0.65f)
+                                        .height(3.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(WH.copy(0.15f))
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth(prog)
+                                            .fillMaxHeight()
+                                            .background(if (state.contentIsFinished) GLD else BR)
+                                    )
+                                }
+                                val label = when {
+                                    state.contentIsFinished -> tr("Watched ✓", "נצפה ✓")
+                                    media.runtimeMinutes > 0 -> {
+                                        val leftMin = ((1f - prog) * media.runtimeMinutes).toInt()
+                                            .coerceAtLeast(1)
+                                        tr("${leftMin}m left", "${leftMin} דקות נותרו")
+                                    }
+                                    else -> "%.0f%%".format(prog * 100)
+                                }
+                                Text(label, color = if (state.contentIsFinished) GLD else DM, fontSize = 11.sp)
+                            }
+                        }
 
-          Spacer(Modifier.height(22.dp))
+                        Spacer(Modifier.height(22.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -521,60 +548,60 @@ fun DetailsScreen(
                                 }
                             } else {
                                 // ── Compute watch-state labels once ─────────────────────────────────
-      val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
-      val continueLabel: String = when {
-          state.contentIsFinished -> tr("Watch Again", "צפה שוב")
-          isPartiallyWatched && media.isSeries &&
-                  state.lastWatchedSeason != null && state.lastWatchedEpisode != null ->
-              tr(
-                  "Continue S${state.lastWatchedSeason}:E${state.lastWatchedEpisode}",
-                  "המשך ע${state.lastWatchedSeason}:פ${state.lastWatchedEpisode}"
-              )
-          isPartiallyWatched -> tr("Continue", "המשך")
-          else               -> tr("Play Now", "נגן עכשיו")
-      }
-      // Smart scraping target — resume last-watched episode for series
-      val resumeSeason  = state.lastWatchedSeason  ?: state.selectedSeason
-      val resumeEpisode = state.lastWatchedEpisode ?: 1
+                                val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
+                                val continueLabel: String = when {
+                                    state.contentIsFinished -> tr("Watch Again", "צפה שוב")
+                                    isPartiallyWatched && media.isSeries &&
+                                            state.lastWatchedSeason != null && state.lastWatchedEpisode != null ->
+                                        tr(
+                                            "Continue S${state.lastWatchedSeason}:E${state.lastWatchedEpisode}",
+                                            "המשך ע${state.lastWatchedSeason}:פ${state.lastWatchedEpisode}"
+                                        )
+                                    isPartiallyWatched -> tr("Continue", "המשך")
+                                    else               -> tr("Play Now", "נגן עכשיו")
+                                }
+                                // Smart scraping target — resume last-watched episode for series
+                                val resumeSeason  = state.lastWatchedSeason  ?: state.selectedSeason
+                                val resumeEpisode = state.lastWatchedEpisode ?: 1
 
-      Surface(
-          onClick = {
-              showSources = true
-              if (media.isSeries) {
-                  currentScrapeSeason  = resumeSeason
-                  currentScrapeEpisode = resumeEpisode
-                  onEvent(DetailsEvent.InitiateScraping(media.imdbId, resumeSeason, resumeEpisode))
-              } else {
-                  currentScrapeSeason  = null
-                  currentScrapeEpisode = null
-                  onEvent(DetailsEvent.InitiateScraping(media.imdbId))
-              }
-          },
-          shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-          colors   = ClickableSurfaceDefaults.colors(
-              containerColor        = if (state.contentIsFinished) MT else WH,
-              contentColor          = BK,
-              focusedContainerColor = BR,
-              focusedContentColor   = WH
-          ),
-          scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-          glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
-          modifier = Modifier.wrapContentWidth().focusRequester(playFR)
-      ) {
-          Row(
-             Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
-             verticalAlignment = Alignment.CenterVertically
-          ) {
-             Icon(
-                  imageVector = if (state.contentIsFinished) Icons.Default.Replay else Icons.Default.PlayArrow,
-                  contentDescription = null,
-                  modifier = Modifier.size(20.dp)
-             )
-              Spacer(Modifier.width(8.dp))
-              Text(continueLabel, fontWeight = FontWeight.Black, fontSize = 15.sp,
-                  maxLines = 1, softWrap = false)
-         }
-      }
+                                Surface(
+                                    onClick = {
+                                        showSources = true
+                                        if (media.isSeries) {
+                                            currentScrapeSeason  = resumeSeason
+                                            currentScrapeEpisode = resumeEpisode
+                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId, resumeSeason, resumeEpisode))
+                                        } else {
+                                            currentScrapeSeason  = null
+                                            currentScrapeEpisode = null
+                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                        }
+                                    },
+                                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                    colors   = ClickableSurfaceDefaults.colors(
+                                        containerColor        = if (state.contentIsFinished) MT else WH,
+                                        contentColor          = BK,
+                                        focusedContainerColor = BR,
+                                        focusedContentColor   = WH
+                                    ),
+                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
+                                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
+                                    modifier = Modifier.wrapContentWidth().focusRequester(playFR)
+                                ) {
+                                    Row(
+                                        Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = if (state.contentIsFinished) Icons.Default.Replay else Icons.Default.PlayArrow,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(continueLabel, fontWeight = FontWeight.Black, fontSize = 15.sp,
+                                            maxLines = 1, softWrap = false)
+                                    }
+                                }
                                 ActionPill(tr("Trailer", "טריילר"), Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
                                 ActionPill(
                                     label = if (state.availableStreams.isNotEmpty()) tr("Sources (${state.availableStreams.size})", "מקורות (${state.availableStreams.size})") else tr("Sources", "מקורות"),
@@ -1173,33 +1200,33 @@ private fun EpisodeCard(
                 Text(tr("Ep ${episode.episodeNumber}. ${episode.title}", "פרק ${episode.episodeNumber}. ${episode.title}"), color = WH, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("45m", color = DM, fontSize = 12.sp)
             }
-          if (episode.progress > 0f) {
-              Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(BK.copy(0.6f))) {
-                  Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(BR).align(Alignment.CenterStart))
-              }
-          }
+            if (episode.progress > 0f) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(BK.copy(0.6f))) {
+                    Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(BR).align(Alignment.CenterStart))
+                }
+            }
 
-          // ── Watched badge ────────────────────────────────────────────────
-          if (episode.hasWatched) {
-              Box(
-                  modifier = Modifier
-                      .align(Alignment.TopEnd)
-                      .padding(6.dp)
-                      .size(24.dp)
-                      .clip(RoundedCornerShape(50))
-                      .background(Color(0xCC2E7D32)),
-                  contentAlignment = Alignment.Center
-              ) {
-                  Icon(
-                      imageVector = Icons.Default.Check,
-                      contentDescription = null,
-                      tint     = WH,
-                      modifier = Modifier.size(14.dp)
-                  )
-              }
-          }
-      }
-  }
+            // ── Watched badge ────────────────────────────────────────────────
+            if (episode.hasWatched) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                        .size(24.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color(0xCC2E7D32)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Check,
+                        contentDescription = null,
+                        tint     = WH,
+                        modifier = Modifier.size(14.dp)
+                    )
+                }
+            }
+        }
+    }
 }
 
 @Composable
