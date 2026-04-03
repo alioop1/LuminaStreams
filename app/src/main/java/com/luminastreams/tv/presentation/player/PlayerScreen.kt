@@ -73,9 +73,8 @@ import android.graphics.Color as AndroidColor
 import com.luminastreams.tv.data.local.WatchProgressManager
 
 @Composable
-fun tr(en: String, he: String): String {
-    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
-}
+fun tr(en: String, he: String): String =
+    if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -157,7 +156,6 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
     val current = display.mode
-
     val targetFps = when {
         contentFps in 23.9f..24.1f -> 24f
         contentFps in 25f..25.1f   -> 25f
@@ -167,16 +165,12 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         contentFps in 59.9f..60.1f -> 60f
         else -> contentFps
     }
-
     val sameRes = display.supportedModes.filter {
-        it.physicalWidth  == current.physicalWidth &&
-                it.physicalHeight == current.physicalHeight
+        it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
     }
-
     val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) }
         ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) }
         ?: return
-
     if (best.modeId == current.modeId) return
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
 }
@@ -259,42 +253,90 @@ fun PlayerScreen(
     var subtitleApplied   by remember { mutableStateOf(false) }
     var hasStartedPlaying by remember { mutableStateOf(false) }
 
-    val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
-    val episodePref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_episode", -1) }
-    val season = if (seasonPref != -1) seasonPref else null
+    val playerPrefs = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE) }
+    val seasonPref  = remember { playerPrefs.getInt("current_season", -1) }
+    val episodePref = remember { playerPrefs.getInt("current_episode", -1) }
+    val season  = if (seasonPref  != -1) seasonPref  else null
     val episode = if (episodePref != -1) episodePref else null
 
+    // Next episode detection
+    val totalEpisodesInSeason = remember { playerPrefs.getInt("total_episodes_in_season", -1) }
+    val totalSeasonsInShow    = remember { playerPrefs.getInt("total_seasons", -1) }
+
+    val (nextEpSeason, nextEpEpisode) = remember(season, episode, totalEpisodesInSeason, totalSeasonsInShow) {
+        when {
+            season == null || episode == null -> Pair(null, null)
+            totalEpisodesInSeason > 0 && episode < totalEpisodesInSeason ->
+                Pair(season, episode + 1)
+            totalSeasonsInShow > 0 && season < totalSeasonsInShow ->
+                Pair(season + 1, 1)
+            totalEpisodesInSeason == -1 ->
+                Pair(season, episode + 1) // Unknown count, just try next
+            else -> Pair(null, null) // Last episode of show
+        }
+    }
+
+    var showNextEpisodeCard  by remember { mutableStateOf(false) }
+    var nextEpCardDismissed  by remember { mutableStateOf(false) }
+    var nextEpisodeCountdown by remember { mutableIntStateOf(10) }
+
+    // Poll for near-end state
+    LaunchedEffect(prepared) {
+        if (!prepared) return@LaunchedEffect
+        while (true) {
+            delay(1000)
+            val pos = exo.player.currentPosition
+            val dur = exo.player.duration
+            if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
+                dur > 30_000 && dur - pos in 1L..45_000L) {
+                showNextEpisodeCard = true
+            }
+        }
+    }
+
+    // Countdown auto-play
+    LaunchedEffect(showNextEpisodeCard) {
+        if (!showNextEpisodeCard) return@LaunchedEffect
+        nextEpisodeCountdown = 10
+        for (i in 10 downTo 1) {
+            nextEpisodeCountdown = i
+            delay(1000)
+            if (!showNextEpisodeCard) return@LaunchedEffect
+        }
+        // Auto-play next episode
+        if (showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null) {
+            playerPrefs.edit {
+                putInt("auto_play_season", nextEpSeason)
+                putInt("auto_play_episode", nextEpEpisode)
+            }
+            exo.pause()
+            onNavigateBack()
+        }
+    }
+
     val progressManager = remember { WatchProgressManager(context) }
-      val progressKey = remember(imdbId, season, episode) {
-          when {
-              imdbId.isBlank()                  -> ""
-              season != null && episode != null -> progressManager.episodeKey(imdbId, season, episode)
-              else                              -> progressManager.movieKey(imdbId)
-          }
-      }
-      val savedPosition = remember(progressKey) {
-          if (progressKey.isEmpty()) -1L
-          else progressManager.get(progressKey)?.positionMs?.takeIf { it > 30_000L }
-              // Legacy fallback for users upgrading from the old system
-              ?: context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE)
-                  .getLong("progress_$imdbId", -1L)
-      }
-      var showResumeDialog by remember { mutableStateOf(false) }
-      var resumeHandled    by remember { mutableStateOf(false) }
+    val progressKey = remember(imdbId, season, episode) {
+        when {
+            imdbId.isBlank()                  -> ""
+            season != null && episode != null -> progressManager.episodeKey(imdbId, season, episode)
+            else                              -> progressManager.movieKey(imdbId)
+        }
+    }
+    val savedPosition = remember(progressKey) {
+        if (progressKey.isEmpty()) -1L
+        else progressManager.get(progressKey)?.positionMs?.takeIf { it > 30_000L }
+            ?: context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE)
+                .getLong("progress_$imdbId", -1L)
+    }
+    var showResumeDialog by remember { mutableStateOf(false) }
+    var resumeHandled    by remember { mutableStateOf(false) }
 
     val playPauseFR = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
 
-    LaunchedEffect(Unit) {
-        context.findActivity()?.let { enableHdrWindow(it) }
-    }
-
-
-
-    LaunchedEffect(videoUrl, imdbId) {
-        viewModel.loadMedia(videoUrl, imdbId, season, episode)
-    }
+    LaunchedEffect(Unit) { context.findActivity()?.let { enableHdrWindow(it) } }
+    LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId, season, episode) }
 
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
@@ -324,27 +366,23 @@ fun PlayerScreen(
         }
     }
 
-      LaunchedEffect(prepared) {
-          if (!prepared) return@LaunchedEffect
-          while (true) {
-              delay(5_000)
-              val pos = exo.player.currentPosition
-              val dur = exo.player.duration
-              if (pos > 10_000L && dur > 0L && progressKey.isNotEmpty()) {
-                  if (pos.toFloat() / dur.toFloat() < 0.92f) {
-                      // Normal in-progress save
-                      progressManager.save(progressKey, pos, dur)
-                  } else {
-                      // ≥ 92% watched → mark as finished (saved at 95% so isFinished fires)
-                      progressManager.save(progressKey, (dur * 0.95f).toLong(), dur)
-                  }
-              }
-          }
-      }
-
-    LaunchedEffect(isPlaying) {
-        if (isPlaying) hasStartedPlaying = true
+    LaunchedEffect(prepared) {
+        if (!prepared) return@LaunchedEffect
+        while (true) {
+            delay(5_000)
+            val pos = exo.player.currentPosition
+            val dur = exo.player.duration
+            if (pos > 10_000L && dur > 0L && progressKey.isNotEmpty()) {
+                if (pos.toFloat() / dur.toFloat() < 0.92f) {
+                    progressManager.save(progressKey, pos, dur)
+                } else {
+                    progressManager.save(progressKey, (dur * 0.95f).toLong(), dur)
+                }
+            }
+        }
     }
+
+    LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
 
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
@@ -402,6 +440,7 @@ fun PlayerScreen(
     BackHandler {
         when {
             showResumeDialog              -> showResumeDialog = false
+            showNextEpisodeCard           -> { showNextEpisodeCard = false; nextEpCardDismissed = true }
             activeMenu != ActiveMenu.NONE -> activeMenu = ActiveMenu.NONE
             showControls                  -> showControls = false
             else                          -> { exo.pause(); onNavigateBack() }
@@ -418,7 +457,7 @@ fun PlayerScreen(
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                        if (activeMenu == ActiveMenu.NONE && !showResumeDialog) {
+                        if (activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
                             activityTick++
                             if (showControls) { if (isPlaying) exo.pause() else exo.play() }
                             else showControls = true
@@ -435,7 +474,7 @@ fun PlayerScreen(
                         showControls = true; activityTick++; true
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> {
-                        if (!showControls && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
+                        if (!showControls && activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
                             showControls = true; activityTick++; true
                         } else false
                     }
@@ -451,7 +490,6 @@ fun PlayerScreen(
                     setAspectRatio(16f / 9f)
                     resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                 }
-
                 val surfaceView = SurfaceView(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     keepScreenOn = true
@@ -467,7 +505,6 @@ fun PlayerScreen(
                         }
                     })
                 }
-
                 val subtitleView = SubtitleView(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
@@ -477,7 +514,6 @@ fun PlayerScreen(
                     setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
                     setBottomPaddingFraction(0.08f)
                 }
-
                 arLayout.addView(surfaceView)
                 arLayout.addView(subtitleView)
                 aspectLayoutRef.value = arLayout
@@ -491,6 +527,7 @@ fun PlayerScreen(
             }
         )
 
+        // Loading overlay before playback starts
         AnimatedVisibility(
             visible = !hasStartedPlaying && error == null,
             enter = fadeIn(tween(200)),
@@ -500,113 +537,68 @@ fun PlayerScreen(
             Box(Modifier.fillMaxSize().background(Color.Black)) {
                 if (backdropUrl.isNotBlank()) {
                     coil.compose.AsyncImage(
-                        model = backdropUrl,
-                        contentDescription = null,
+                        model = backdropUrl, contentDescription = null,
                         contentScale = androidx.compose.ui.layout.ContentScale.Crop,
                         modifier = Modifier.fillMaxSize().alpha(0.5f)
                     )
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))))
-
-                Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
+                Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     com.luminastreams.tv.ui.components.LoadingIndicator()
                     Spacer(modifier = Modifier.height(24.dp))
-
                     if (logoUrl.isNotBlank()) {
                         coil.compose.AsyncImage(
-                            model = logoUrl,
-                            contentDescription = title,
+                            model = logoUrl, contentDescription = title,
                             contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                            modifier = Modifier
-                                .widthIn(max = 400.dp)
-                                .heightIn(max = 140.dp)
+                            modifier = Modifier.widthIn(max = 400.dp).heightIn(max = 140.dp)
                         )
                         Spacer(modifier = Modifier.height(16.dp))
                     } else if (title.isNotBlank()) {
                         Text(title, color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                         Spacer(modifier = Modifier.height(8.dp))
                     }
-
                     Text(tr("Loading and connecting...", "טוען ומתחבר לזרם..."), color = DIM, fontSize = 16.sp)
                 }
             }
         }
 
-        // ── Info Badges (Top Right) ──
+        // Info Badges (Top Right)
         var activeVideoFormat by remember { mutableStateOf<Format?>(null) }
-
         LaunchedEffect(currentTracks) {
             val format = currentTracks.groups
                 .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                 .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                 .firstOrNull { it.width > 0 && it.height > 0 }
-            if (format != null) {
-                activeVideoFormat = format
-            }
+            if (format != null) activeVideoFormat = format
         }
 
         val resolutionBadge = remember(activeVideoFormat) {
             val h = activeVideoFormat?.height ?: 0
-            when {
-                h >= 2160 -> "4K UHD"
-                h >= 1080 -> "1080p"
-                h >= 720  -> "720p"
-                h > 0     -> "${h}p"
-                else      -> null
-            }
+            when { h >= 2160 -> "4K UHD"; h >= 1080 -> "1080p"; h >= 720 -> "720p"; h > 0 -> "${h}p"; else -> null }
         }
         val hzBadge = remember(activeVideoFormat, contentFps) {
             val fps = if (contentFps > 0f) contentFps else activeVideoFormat?.frameRate ?: 0f
-            if (fps > 0f) {
-                when {
-                    fps > 59f -> "60Hz"
-                    fps > 49f -> "50Hz"
-                    fps > 29f -> "30Hz"
-                    fps > 24f -> "25Hz"
-                    else      -> "24Hz"
-                }
-            } else null
+            if (fps > 0f) when { fps > 59f -> "60Hz"; fps > 49f -> "50Hz"; fps > 29f -> "30Hz"; fps > 24f -> "25Hz"; else -> "24Hz" }
+            else null
         }
-
         var showInfoBadges by remember { mutableStateOf(false) }
-
         LaunchedEffect(resolutionBadge, hzBadge, isDolbyVision, isDolbyAtmos) {
             val hasData = resolutionBadge != null || hzBadge != null || isDolbyVision || isDolbyAtmos
-            if (hasData) {
-                showInfoBadges = true
-                delay(3500)
-                showInfoBadges = false
-            }
+            if (hasData) { showInfoBadges = true; delay(3500); showInfoBadges = false }
         }
 
-        Row(
-            modifier = Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 32.dp).zIndex(50f),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            AnimatedVisibility(visible = showInfoBadges && resolutionBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) {
-                InfoBadge(text = resolutionBadge ?: "", color = RES_GRAY)
-            }
-            AnimatedVisibility(visible = showInfoBadges && hzBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) {
-                InfoBadge(text = hzBadge ?: "", color = RES_GRAY)
-            }
-            AnimatedVisibility(visible = showInfoBadges && isDolbyVision, enter = fadeIn(), exit = fadeOut(tween(600))) {
-                InfoBadge(text = "DOLBY VISION", color = DV_BLUE)
-            }
-            AnimatedVisibility(visible = showInfoBadges && isDolbyAtmos, enter = fadeIn(), exit = fadeOut(tween(600))) {
-                InfoBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE)
-            }
+        Row(modifier = Modifier.align(Alignment.TopEnd).padding(top = 32.dp, end = 32.dp).zIndex(50f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            AnimatedVisibility(visible = showInfoBadges && resolutionBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) { InfoBadge(text = resolutionBadge ?: "", color = RES_GRAY) }
+            AnimatedVisibility(visible = showInfoBadges && hzBadge != null, enter = fadeIn(), exit = fadeOut(tween(600))) { InfoBadge(text = hzBadge ?: "", color = RES_GRAY) }
+            AnimatedVisibility(visible = showInfoBadges && isDolbyVision, enter = fadeIn(), exit = fadeOut(tween(600))) { InfoBadge(text = "DOLBY VISION", color = DV_BLUE) }
+            AnimatedVisibility(visible = showInfoBadges && isDolbyAtmos, enter = fadeIn(), exit = fadeOut(tween(600))) { InfoBadge(text = "DOLBY ATMOS", color = ATMOS_PURPLE) }
         }
 
         if (selectedAspectRatio != AspectRatioMode.NORMAL) {
-            Box(
-                modifier = Modifier.align(Alignment.TopStart).padding(top = 28.dp, start = 28.dp).zIndex(50f).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(0.7f)).padding(horizontal = 10.dp, vertical = 5.dp)
-            ) {
+            Box(modifier = Modifier.align(Alignment.TopStart).padding(top = 28.dp, start = 28.dp).zIndex(50f).clip(RoundedCornerShape(6.dp)).background(Color.Black.copy(0.7f)).padding(horizontal = 10.dp, vertical = 5.dp)) {
                 val modeLabel = when (selectedAspectRatio) {
                     AspectRatioMode.NORMAL -> tr("Normal", "רגיל")
-                    AspectRatioMode.ZOOM -> tr("Zoom", "זום")
+                    AspectRatioMode.ZOOM   -> tr("Zoom", "זום")
                     AspectRatioMode.STRETCH -> tr("Stretch", "מתיחה")
                     else -> selectedAspectRatio.label
                 }
@@ -614,6 +606,106 @@ fun PlayerScreen(
             }
         }
 
+        // ── NEXT EPISODE CARD ──────────────────────────────────────────────────────
+        AnimatedVisibility(
+            visible  = showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null,
+            enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
+            exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(280)) + fadeOut(tween(200)),
+            modifier = Modifier
+                .align(if (isRtl) Alignment.BottomStart else Alignment.BottomEnd)
+                .padding(start = if (isRtl) 48.dp else 0.dp, end = if (isRtl) 0.dp else 48.dp, bottom = 135.dp)
+                .zIndex(150f)
+        ) {
+            val nextFR = remember { FocusRequester() }
+            LaunchedEffect(Unit) { delay(80); runCatching { nextFR.requestFocus() } }
+
+            Column(
+                modifier = Modifier
+                    .width(360.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .background(Color(0xF0101018))
+                    .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
+                    .padding(horizontal = 20.dp, vertical = 18.dp)
+            ) {
+                Text(
+                    tr("UP NEXT", "הבא בתור"),
+                    color = DIM.copy(0.6f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp
+                )
+                Spacer(Modifier.height(6.dp))
+                val isSameSeasonNext = nextEpSeason == season
+                Text(
+                    if (isSameSeasonNext) tr("Episode $nextEpEpisode", "פרק $nextEpEpisode")
+                    else tr("Season $nextEpSeason • Episode $nextEpEpisode", "עונה $nextEpSeason • פרק $nextEpEpisode"),
+                    color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black
+                )
+                Spacer(Modifier.height(14.dp))
+
+                // Countdown progress bar
+                Box(
+                    Modifier.fillMaxWidth().height(3.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(WHITE.copy(0.15f))
+                ) {
+                    Box(
+                        Modifier
+                            .fillMaxWidth((10f - nextEpisodeCountdown) / 10f)
+                            .fillMaxHeight()
+                            .background(RED)
+                    )
+                }
+                Spacer(Modifier.height(14.dp))
+
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Surface(
+                        onClick = {
+                            if (nextEpSeason != null && nextEpEpisode != null) {
+                                playerPrefs.edit {
+                                    putInt("auto_play_season", nextEpSeason)
+                                    putInt("auto_play_episode", nextEpEpisode)
+                                }
+                                exo.pause()
+                                onNavigateBack()
+                            }
+                        },
+                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = RED, focusedContainerColor = WHITE,
+                            contentColor = WHITE, focusedContentColor = Color.Black
+                        ),
+                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
+                        modifier = Modifier.weight(1f).height(46.dp).focusRequester(nextFR)
+                    ) {
+                        Box(Modifier.fillMaxSize(), Alignment.Center) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+                                Text(tr("Play ($nextEpisodeCountdown)", "נגן ($nextEpisodeCountdown)"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                        }
+                    }
+                    Surface(
+                        onClick = { showNextEpisodeCard = false; nextEpCardDismissed = true },
+                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE,
+                            contentColor = WHITE, focusedContentColor = Color.Black
+                        ),
+                        border = ClickableSurfaceDefaults.border(
+                            border = Border(androidx.compose.foundation.BorderStroke(1.dp, WHITE.copy(0.2f))),
+                            focusedBorder = Border.None
+                        ),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                        modifier = Modifier.height(46.dp)
+                    ) {
+                        Box(Modifier.padding(horizontal = 18.dp).fillMaxHeight(), Alignment.Center) {
+                            Text(tr("Dismiss", "דחה"), fontSize = 13.sp)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resume dialog
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -658,6 +750,7 @@ fun PlayerScreen(
             }
         }
 
+        // Error screen
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { delay(100); runCatching { errorFR.requestFocus() } }
@@ -687,7 +780,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── Main Player Controls & Popups ──
+        // Main Player Controls
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -695,7 +788,6 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             Box(Modifier.fillMaxSize()) {
-
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000)))))
 
                 AnimatedVisibility(
@@ -717,43 +809,27 @@ fun PlayerScreen(
                     modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 120.dp, end = 48.dp).zIndex(100f)
                 ) {
                     PlayerPopupMenu(
-                        activeMenu = activeMenu,
-                        exo = exo,
-                        state = state,
-                        selectedWebSubUrl = selectedWebSubUrl,
-                        selectedAspectRatio = selectedAspectRatio,
-                        sideMenuFR = sideMenuFR,
+                        activeMenu = activeMenu, exo = exo, state = state,
+                        selectedWebSubUrl = selectedWebSubUrl, selectedAspectRatio = selectedAspectRatio, sideMenuFR = sideMenuFR,
                         onApplySubtitle = { url ->
-                            exo.applySubtitle(url)
-                            selectedWebSubUrl = url
-                            subtitleApplied = true
-                            pendingSubIndex = null
-                            activeMenu = ActiveMenu.NONE
+                            exo.applySubtitle(url); selectedWebSubUrl = url
+                            subtitleApplied = true; pendingSubIndex = null; activeMenu = ActiveMenu.NONE
                         },
-                        onApplyAspectRatio = { mode ->
-                            selectedAspectRatio = mode
-                            activeMenu = ActiveMenu.NONE
-                        },
+                        onApplyAspectRatio = { mode -> selectedAspectRatio = mode; activeMenu = ActiveMenu.NONE },
                         onClose = { activeMenu = ActiveMenu.NONE }
                     )
                 }
 
-                // Bottom Controls Row
                 Column(
                     modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 48.dp, vertical = 28.dp),
                     verticalArrangement = Arrangement.Bottom
                 ) {
                     PlayerProgressControls(
-                        exoWrapper    = exo,
-                        isPlaying     = isPlaying,
-                        isRtl         = isRtl,
-                        seekFR        = seekBarFR,
+                        exoWrapper    = exo, isPlaying = isPlaying, isRtl = isRtl, seekFR = seekBarFR,
                         onUpPressed   = {},
                         onDownPressed = { runCatching { playPauseFR.requestFocus() } }
                     )
-
                     Spacer(Modifier.height(16.dp))
-
                     Row(
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionUp) {
@@ -763,7 +839,6 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment     = Alignment.CenterVertically
                     ) {
-                        // Left Side: Play/Pause & Close
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             PlayerIconButton(
                                 icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -772,8 +847,6 @@ fun PlayerScreen(
                             )
                             PlayerIconButton(icon = Icons.Default.Close, onClick = { exo.pause(); onNavigateBack() })
                         }
-
-                        // Right Side: Audio, Embedded Subs, Web Subs, Aspect Ratio
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             PlayerIconButton(CustomAudioIcon, isActive = activeMenu == ActiveMenu.AUDIO) {
                                 activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO; activityTick++
@@ -807,22 +880,21 @@ fun InfoBadge(text: String, color: Color) {
 
 @Composable
 fun PlayerIconButton(
-    icon: ImageVector,
-    isActive: Boolean = false,
-    focusRequester: FocusRequester? = null,
-    onClick: () -> Unit
+    icon: ImageVector, isActive: Boolean = false,
+    focusRequester: FocusRequester? = null, onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
-    val bg = if (isActive) RED else if (focused) WHITE else Color.Transparent
-    val tint = if (isActive) WHITE else if (focused) Color.Black else WHITE
+    val bg   = if (isActive) Color(0xFFE50914) else if (focused) Color.White else Color.Transparent
+    val tint = if (isActive) Color.White else if (focused) Color.Black else Color.White
 
     Surface(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(CircleShape),
-        colors = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
-        border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
-        modifier = Modifier.size(44.dp).onFocusChanged { focused = it.isFocused }.then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+        shape   = ClickableSurfaceDefaults.shape(CircleShape),
+        colors  = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
+        scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
+        border  = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+        modifier = Modifier.size(44.dp).onFocusChanged { focused = it.isFocused }
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp)) }
     }
@@ -830,27 +902,16 @@ fun PlayerIconButton(
 
 @Composable
 fun PlayerPopupMenu(
-    activeMenu: ActiveMenu,
-    exo: ExoPlayerWrapper,
-    state: PlayerUiState,
-    selectedWebSubUrl: String?,
-    selectedAspectRatio: AspectRatioMode,
-    sideMenuFR: FocusRequester,
-    onApplySubtitle: (String) -> Unit,
-    onApplyAspectRatio: (AspectRatioMode) -> Unit,
-    onClose: () -> Unit
+    activeMenu: ActiveMenu, exo: ExoPlayerWrapper, state: PlayerUiState,
+    selectedWebSubUrl: String?, selectedAspectRatio: AspectRatioMode,
+    sideMenuFR: FocusRequester, onApplySubtitle: (String) -> Unit,
+    onApplyAspectRatio: (AspectRatioMode) -> Unit, onClose: () -> Unit
 ) {
     val currentTracks by exo.currentTracks.collectAsState()
-
-    LaunchedEffect(activeMenu) {
-        delay(50)
-        runCatching { sideMenuFR.requestFocus() }
-    }
+    LaunchedEffect(activeMenu) { delay(50); runCatching { sideMenuFR.requestFocus() } }
 
     Box(
-        Modifier
-            .width(320.dp)
-            .heightIn(max = 350.dp)
+        Modifier.width(320.dp).heightIn(max = 350.dp)
             .background(POPUP_BG, RoundedCornerShape(12.dp))
             .border(1.dp, Color(0xFF2A2A2A), RoundedCornerShape(12.dp))
             .padding(vertical = 16.dp, horizontal = 12.dp)
@@ -858,72 +919,54 @@ fun PlayerPopupMenu(
             .onPreviewKeyEvent { ev ->
                 if (ev.type == KeyEventType.KeyDown) {
                     if (ev.key == Key.Back || ev.key == Key.Escape || ev.key == Key.DirectionLeft || ev.key == Key.DirectionRight) {
-                        onClose()
-                        true
+                        onClose(); true
                     } else false
                 } else false
             }
     ) {
         when (activeMenu) {
-            ActiveMenu.AUDIO -> {
-                Column {
-                    Text(tr("Audio Tracks", "רצועות שמע"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
-                    TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, trackType = C.TRACK_TYPE_AUDIO, focusReq = sideMenuFR, onClose = onClose)
-                }
+            ActiveMenu.AUDIO -> Column {
+                Text(tr("Audio Tracks", "רצועות שמע"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp))
+                TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }, trackType = C.TRACK_TYPE_AUDIO, focusReq = sideMenuFR, onClose = onClose)
             }
-            ActiveMenu.EMBEDDED_SUBS -> {
-                Column {
-                    Text(tr("Subtitles", "כתוביות"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
-                    TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, trackType = C.TRACK_TYPE_TEXT, focusReq = sideMenuFR, onClose = onClose)
-                }
+            ActiveMenu.EMBEDDED_SUBS -> Column {
+                Text(tr("Subtitles", "כתוביות"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp))
+                TrackListUi(exo = exo, groups = currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }, trackType = C.TRACK_TYPE_TEXT, focusReq = sideMenuFR, onClose = onClose)
             }
-            ActiveMenu.WEB_SUBS -> {
-                Column {
-                    Text(tr("Web Subtitles", "כתוביות רשת"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
-                    if (state.availableSubtitles.isEmpty()) {
-                        Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), Alignment.Center) {
-                            Text(if (state.isSubtitlesLoading) tr("Searching...", "מחפש...") else tr("No subtitles found", "לא נמצאו כתוביות"), color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
-                        }
-                    } else {
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                            modifier = Modifier.focusGroup()
-                        ) {
-                            itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
-                                val isFirst = index == 0
-                                TrackItemCard(
-                                    title = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}",
-                                    subtitle = sub.source,
-                                    isSelected = sub.url == selectedWebSubUrl,
-                                    modifier = Modifier.then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier),
-                                    onClick = { onApplySubtitle(sub.url) }
-                                )
-                            }
+            ActiveMenu.WEB_SUBS -> Column {
+                Text(tr("Web Subtitles", "כתוביות רשת"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp))
+                if (state.availableSubtitles.isEmpty()) {
+                    Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), Alignment.Center) {
+                        Text(if (state.isSubtitlesLoading) tr("Searching...", "מחפש...") else tr("No subtitles found", "לא נמצאו כתוביות"), color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
+                    }
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.focusGroup()) {
+                        itemsIndexed(state.availableSubtitles, key = { _, s -> s.url }) { index, sub ->
+                            TrackItemCard(
+                                title = "${sub.lang.uppercase()} ${getFlagEmoji(sub.lang)}", subtitle = sub.source,
+                                isSelected = sub.url == selectedWebSubUrl,
+                                modifier = Modifier.then(if (index == 0) Modifier.focusRequester(sideMenuFR) else Modifier),
+                                onClick = { onApplySubtitle(sub.url) }
+                            )
                         }
                     }
                 }
             }
-            ActiveMenu.ASPECT_RATIO -> {
-                Column {
-                    Text(tr("Aspect Ratio", "יחס תצוגה"), color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp), textAlign = TextAlign.Start)
-                    LazyColumn(
-                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                        modifier = Modifier.focusGroup()
-                    ) {
-                        itemsIndexed(AspectRatioMode.entries) { index, mode ->
-                            val isFirst = index == 0
-                            val modeLabel = when (mode) {
-                                AspectRatioMode.NORMAL -> tr("Normal", "רגיל")
-                                AspectRatioMode.ZOOM -> tr("Zoom", "זום")
-                                AspectRatioMode.STRETCH -> tr("Stretch", "מתיחה")
-                                else -> mode.label
-                            }
-                            TrackItemCard(
-                                title = modeLabel, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
-                                modifier = Modifier.then(if (isFirst) Modifier.focusRequester(sideMenuFR) else Modifier),
-                                onClick = { onApplyAspectRatio(mode) }
-                            )
+            ActiveMenu.ASPECT_RATIO -> Column {
+                Text(tr("Aspect Ratio", "יחס תצוגה"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.focusGroup()) {
+                    itemsIndexed(AspectRatioMode.entries) { index, mode ->
+                        val modeLabel = when (mode) {
+                            AspectRatioMode.NORMAL  -> tr("Normal", "רגיל")
+                            AspectRatioMode.ZOOM    -> tr("Zoom", "זום")
+                            AspectRatioMode.STRETCH -> tr("Stretch", "מתיחה")
+                            else -> mode.label
                         }
+                        TrackItemCard(
+                            title = modeLabel, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
+                            modifier = Modifier.then(if (index == 0) Modifier.focusRequester(sideMenuFR) else Modifier),
+                            onClick = { onApplyAspectRatio(mode) }
+                        )
                     }
                 }
             }
@@ -934,18 +977,12 @@ fun PlayerPopupMenu(
 
 @Composable
 fun TrackListUi(
-    exo:       ExoPlayerWrapper,
-    groups:    List<androidx.media3.common.Tracks.Group>,
-    trackType: Int,
-    focusReq:  FocusRequester,
-    onClose:   () -> Unit
+    exo: ExoPlayerWrapper, groups: List<androidx.media3.common.Tracks.Group>,
+    trackType: Int, focusReq: FocusRequester, onClose: () -> Unit
 ) {
     val trackList = remember(groups) {
         val list = mutableListOf<Triple<androidx.media3.common.Tracks.Group?, Int, String>>()
-        if (trackType == C.TRACK_TYPE_TEXT) {
-            val isOff = groups.none { it.isSelected }
-            list.add(Triple(null, -1, "Turn Off")) // מתורגם למטה ברמת ה-UI כדאי להשאיר כמפתח באנגלית
-        }
+        if (trackType == C.TRACK_TYPE_TEXT) list.add(Triple(null, -1, "Turn Off"))
         groups.forEach { group ->
             for (i in 0 until group.length) {
                 val format   = group.mediaTrackGroup.getFormat(i)
@@ -955,7 +992,7 @@ fun TrackListUi(
                 val codec    = format.sampleMimeType?.substringAfter("/")?.uppercase() ?: ""
                 val dolbyTag = when (format.sampleMimeType) {
                     "audio/eac3-joc"    -> "ATMOS"
-                    "video/dolby-vision"-> "DV"
+                    "video/dolby-vision" -> "DV"
                     else -> ""
                 }
                 val name = listOf(lang.uppercase(), label, channels, codec, dolbyTag).filter { it.isNotBlank() }.joinToString(" • ")
@@ -970,20 +1007,15 @@ fun TrackListUi(
             Text(tr("No tracks available", "אין רצועות זמינות"), color = DIM, fontSize = 14.sp, textAlign = TextAlign.Center)
         }
     } else {
-        LazyColumn(
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-            modifier = Modifier.focusGroup()
-        ) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.focusGroup()) {
             itemsIndexed(trackList) { index, (group, trackIndex, name) ->
                 val isFirst    = index == 0
                 val isSelected = group?.isTrackSelected(trackIndex) ?: (trackType == C.TRACK_TYPE_TEXT && name.contains("Turn Off") && groups.none { it.isSelected })
                 val displayName = if (name == "Turn Off") tr("Turn Off", "כבה") else name
-
                 TrackItemCard(
-                    title      = displayName,
-                    subtitle   = if (group == null) "" else tr("Internal", "פנימי"),
+                    title = displayName, subtitle = if (group == null) "" else tr("Internal", "פנימי"),
                     isSelected = isSelected,
-                    modifier   = Modifier.then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier),
+                    modifier = Modifier.then(if (isFirst) Modifier.focusRequester(focusReq) else Modifier),
                     onClick = {
                         val builder = exo.player.trackSelectionParameters.buildUpon()
                         builder.clearOverridesOfType(trackType)
@@ -1002,16 +1034,9 @@ fun TrackListUi(
 }
 
 @Composable
-fun TrackItemCard(
-    title:      String,
-    subtitle:   String,
-    isSelected: Boolean,
-    modifier:   Modifier = Modifier,
-    onClick:    () -> Unit
-) {
+fun TrackItemCard(title: String, subtitle: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val containerBg by animateColorAsState(targetValue = if (focused) RED else Color.Transparent, animationSpec = tween(150), label = "bgAnim")
-
+    val containerBg by animateColorAsState(targetValue = if (focused) Color(0xFFE50914) else Color.Transparent, animationSpec = tween(150), label = "bgAnim")
     Surface(
         onClick  = onClick,
         colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
@@ -1022,12 +1047,12 @@ fun TrackItemCard(
         Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp)) {
             Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
-                    Text(text = title, color = WHITE, fontSize = 15.sp, fontWeight = if (focused || isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
-                    if (subtitle.isNotEmpty()) Text(text = subtitle, color = if (focused) WHITE.copy(0.7f) else Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Start)
+                    Text(text = title, color = Color.White, fontSize = 15.sp, fontWeight = if (focused || isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+                    if (subtitle.isNotEmpty()) Text(text = subtitle, color = if (focused) Color.White.copy(0.7f) else Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Start)
                 }
                 if (isSelected) {
                     Spacer(Modifier.width(8.dp))
-                    Icon(Icons.Default.Check, null, tint = if (focused) WHITE else RED, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Check, null, tint = if (focused) Color.White else Color(0xFFE50914), modifier = Modifier.size(20.dp))
                 }
             }
         }
@@ -1047,12 +1072,9 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
 
 @Composable
 fun PlayerProgressControls(
-    exoWrapper:    ExoPlayerWrapper,
-    isPlaying:     Boolean,
-    isRtl:         Boolean,
-    seekFR:        FocusRequester = remember { FocusRequester() },
-    onUpPressed:   () -> Unit = {},
-    onDownPressed: () -> Unit = {}
+    exoWrapper: ExoPlayerWrapper, isPlaying: Boolean, isRtl: Boolean,
+    seekFR: FocusRequester = remember { FocusRequester() },
+    onUpPressed: () -> Unit = {}, onDownPressed: () -> Unit = {}
 ) {
     var currentPosition by remember { mutableLongStateOf(0L) }
     var videoDuration   by remember { mutableLongStateOf(1L) }
@@ -1069,12 +1091,14 @@ fun PlayerProgressControls(
 
     val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
     val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp, label = "bh")
-    val thumbSize by animateDpAsState(if (seekFocused) 20.dp else 0.dp,  label = "ts")
+    val thumbSize by animateDpAsState(if (seekFocused) 20.dp else 0.dp, label = "ts")
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(formatTime(currentPosition), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.Start)
+        Text(formatTime(currentPosition), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.Start)
         Box(
-            modifier = Modifier.weight(1f).padding(horizontal = 12.dp).height(32.dp).focusRequester(seekFR).focusable().onFocusChanged { seekFocused = it.isFocused }
+            modifier = Modifier.weight(1f).padding(horizontal = 12.dp).height(32.dp)
+                .focusRequester(seekFR).focusable()
+                .onFocusChanged { seekFocused = it.isFocused }
                 .onKeyEvent { ev ->
                     if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                     when (ev.nativeKeyEvent.keyCode) {
@@ -1096,11 +1120,11 @@ fun PlayerProgressControls(
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(WHITE.copy(if (seekFocused) 0.35f else 0.25f)))
-            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) RED else RED.copy(0.8f)))
+            Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(Color.White.copy(if (seekFocused) 0.35f else 0.25f)))
+            Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) Color(0xFFE50914) else Color(0xFFE50914).copy(0.8f)))
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
-                    Box(Modifier.size(thumbSize).clip(CircleShape).background(WHITE).shadow(4.dp, CircleShape))
+                    Box(Modifier.size(thumbSize).clip(CircleShape).background(Color.White).shadow(4.dp, CircleShape))
                 }
             }
         }

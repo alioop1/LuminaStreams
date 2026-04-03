@@ -74,6 +74,8 @@ import java.util.Locale
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.core.content.edit
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -278,6 +280,8 @@ fun DetailsScreen(
 
     val scrollState   = rememberLazyListState()
     var showSources   by remember { mutableStateOf(false) }
+    var pendingAutoPlaySeason  by remember { mutableIntStateOf(-1) }
+    var pendingAutoPlayEpisode by remember { mutableIntStateOf(-1) }
     val focusManager  = LocalFocusManager.current
 
     LaunchedEffect(state.mediaInfo.id) {
@@ -319,14 +323,43 @@ fun DetailsScreen(
         } else onNavigateBack()
     }
      // Sync watch-progress every time this screen becomes visible
-      val lifecycleOwner = LocalLifecycleOwner.current
-      DisposableEffect(lifecycleOwner) {
-          val observer = LifecycleEventObserver { _, event ->
-              if (event == Lifecycle.Event.ON_RESUME) onEvent(DetailsEvent.RefreshProgress)
-          }
-          lifecycleOwner.lifecycle.addObserver(observer)
-          onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-      }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                onEvent(DetailsEvent.RefreshProgress)
+                // Check if PlayerScreen requested auto-play of next episode
+                val prefs = context.getSharedPreferences("player_context", Context.MODE_PRIVATE)
+                val nextS = prefs.getInt("auto_play_season", -1)
+                val nextE = prefs.getInt("auto_play_episode", -1)
+                if (nextS != -1 && nextE != -1) {
+                    prefs.edit {
+                        remove("auto_play_season")
+                        remove("auto_play_episode")
+                    }
+                    pendingAutoPlaySeason  = nextS
+                    pendingAutoPlayEpisode = nextE
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(pendingAutoPlaySeason, pendingAutoPlayEpisode, state.isLoadingData) {
+        if (pendingAutoPlaySeason == -1 || pendingAutoPlayEpisode == -1) return@LaunchedEffect
+        if (state.isLoadingData || media.imdbId.isBlank()) return@LaunchedEffect
+        val s = pendingAutoPlaySeason
+        val e = pendingAutoPlayEpisode
+        pendingAutoPlaySeason  = -1
+        pendingAutoPlayEpisode = -1
+        // Switch season tab if needed
+        if (s != state.selectedSeason) onEvent(DetailsEvent.SelectSeason(s))
+        delay(120)
+        showSources          = true
+        currentScrapeSeason  = s
+        currentScrapeEpisode = e
+        onEvent(DetailsEvent.InitiateScraping(media.imdbId, s, e))
+    }
     if (state.isLoadingData) {
         Box(Modifier.fillMaxSize().background(BK), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -447,7 +480,6 @@ fun DetailsScreen(
           }
 
           Spacer(Modifier.height(22.dp))
-                        Spacer(Modifier.height(22.dp))
 
                         Row(
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
