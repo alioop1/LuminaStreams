@@ -280,7 +280,8 @@ fun PlayerScreen(
     var nextEpCardDismissed  by remember { mutableStateOf(false) }
     var nextEpisodeCountdown by remember { mutableIntStateOf(10) }
 
-    // Poll for near-end state
+    // FIX 1: Show next episode card ~4 minutes before end (during credits window)
+    // Previously triggered only in the last 45 seconds — now triggers at 240 seconds (4 min)
     LaunchedEffect(prepared) {
         if (!prepared) return@LaunchedEffect
         while (true) {
@@ -288,7 +289,7 @@ fun PlayerScreen(
             val pos = exo.player.currentPosition
             val dur = exo.player.duration
             if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
-                dur > 30_000 && dur - pos in 1L..45_000L) {
+                dur > 60_000 && dur - pos in 1L..240_000L) {
                 showNextEpisodeCard = true
             }
         }
@@ -1089,7 +1090,9 @@ fun PlayerProgressControls(
     }
     LaunchedEffect(Unit) { runCatching { seekFR.requestFocus() } }
 
-    val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
+    val rawProgress = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
+    // FIX 2: Snap to full width when within last 3% so bar visually reaches the end of the track
+    val progress  = if (rawProgress >= 0.97f) 1f else rawProgress
     val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp, label = "bh")
     val thumbSize by animateDpAsState(if (seekFocused) 20.dp else 0.dp, label = "ts")
 
