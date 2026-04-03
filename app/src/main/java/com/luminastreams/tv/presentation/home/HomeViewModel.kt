@@ -32,18 +32,31 @@ class HomeViewModel : ViewModel() {
 
     private val imgBase = "https://image.tmdb.org/t/p"
 
+    // ── Image size selection ────────────────────────────────────────────────────
+    //
+    // FIXED: Previously LOW tier used "w500" for backdrops and "w342" for posters.
+    // Both are phone-grade resolutions — completely unacceptable on even a 720p TV.
+    //
+    // New floors:
+    //   HIGH → original / w780   (4K displays, no compromise)
+    //   MID  → w1280 / w780      (1080p panels)
+    //   LOW  → w780 / w500       (720p panels, still 4× better than w342)
+    //
+    // These match Constants.kt exactly so there is one source of truth.
+    //
     private val backdropSize: String get() = when (DeviceProfile.tier) {
-        DeviceProfile.Tier.HIGH -> "original"
-        DeviceProfile.Tier.MID  -> "w1280"
-        DeviceProfile.Tier.LOW  -> "w500"
-    }
-    private val posterSize: String get() = when (DeviceProfile.tier) {
-        DeviceProfile.Tier.HIGH -> "w780"
-        DeviceProfile.Tier.MID  -> "w500"
-        DeviceProfile.Tier.LOW  -> "w342"
+        DeviceProfile.Tier.HIGH -> "original"   // full-res for SHIELD / LG OLED
+        DeviceProfile.Tier.MID  -> "w1280"      // sharp on 1080p
+        DeviceProfile.Tier.LOW  -> "w780"       // ← was "w500"; raised for TV panels
     }
 
-    // Connection pool size: fewer parallel connections on LOW/MID → less RAM pressure
+    private val posterSize: String get() = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.HIGH -> "original"   // ← was "w780"; original for 4K grids
+        DeviceProfile.Tier.MID  -> "w780"       // ← was "w500"
+        DeviceProfile.Tier.LOW  -> "w500"       // ← was "w342"; minimum for TV
+    }
+
+    // Connection pool: fewer parallel connections on LOW/MID → less RAM pressure
     private val maxConnections = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 8
         DeviceProfile.Tier.MID  -> 5
@@ -214,7 +227,7 @@ class HomeViewModel : ViewModel() {
                 val k      = Constants.TMDB_API_KEY
                 val region = "US"
 
-                // ── Wave 1: above-the-fold (always fast) ──────────────────────
+                // Wave 1: above-the-fold
                 coroutineScope {
                     val mTrend  = async { fetch("$BASE/trending/movie/week?api_key=$k&language=en-US", "movie") }
                     val tvTrend = async { fetch("$BASE/trending/tv/week?api_key=$k&language=en-US",   "tv") }
@@ -230,15 +243,10 @@ class HomeViewModel : ViewModel() {
                     ) }
                 }
 
-                // ── Wave 2: secondary content ─────────────────────────────────
-                // On LOW/MID devices, we batch into smaller groups with delays
-                // to avoid all-at-once RAM pressure (20 OkHttp buffers in flight
-                // simultaneously = ~40 MB of transient memory on S905X4).
+                // Wave 2: secondary content
                 if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
-                    // LOW: sequential batches of 3, generous delays
                     loadWave2Batched(k, region, batchSize = 3, delayMs = 250)
                 } else {
-                    // HIGH/MID: original parallel approach
                     loadWave2Parallel(k, region)
                 }
 
@@ -248,7 +256,6 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    /** Original all-parallel wave-2 for HIGH/MID devices. */
     private suspend fun loadWave2Parallel(k: String, region: String) {
         coroutineScope {
             val mAction    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc",   "movie") }
@@ -310,11 +317,6 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    /**
-     * LOW-tier batched loading — fetch at most [batchSize] endpoints at once,
-     * wait [delayMs] between batches. Keeps peak OkHttp buffer RAM low and
-     * gives the GC time to clean up between network bursts.
-     */
     private suspend fun loadWave2Batched(k: String, region: String, batchSize: Int, delayMs: Long) {
         val requests: List<Pair<String, suspend (List<Movie>) -> Unit>> = listOf(
             Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAction = v) } },

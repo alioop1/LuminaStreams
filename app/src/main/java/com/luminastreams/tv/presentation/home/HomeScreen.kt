@@ -114,9 +114,11 @@ import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
+import coil.size.Scale
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
+import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -152,10 +154,29 @@ private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
 
-private const val LAND_W_PX = 560
-private const val LAND_H_PX = 316
-private const val PORT_W_PX = 296
-private const val PORT_H_PX = 444
+// ═══════════════════════════════════════════════════════════════════
+//  IMAGE QUALITY — overdraw factor per device tier
+//
+//  HIGH: 1.5× — loads bitmaps at 150% of the card's physical pixel
+//    size. Provides sharpness headroom on 4K OLED panels where
+//    fractional scaling would otherwise soften sub-pixel edges.
+//  MID:  1.25× — moderate overdraw; visibly sharper with minimal
+//    extra bandwidth cost.
+//  LOW:  1.0× — exact physical size; avoids OOM on ≤2 GB devices.
+// ═══════════════════════════════════════════════════════════════════
+private val imageOverdraw: Float get() = when (DeviceProfile.tier) {
+    DeviceProfile.Tier.HIGH -> 1.5f
+    DeviceProfile.Tier.MID  -> 1.25f
+    DeviceProfile.Tier.LOW  -> 1.0f
+}
+
+/** Convert a dp dimension to physical pixels, applying the per-tier overdraw factor. */
+@Composable
+private fun Dp.toQualityPx(): Int {
+    val density = LocalDensity.current
+    val physicalPx = with(density) { this@toQualityPx.toPx() }
+    return (physicalPx * imageOverdraw).roundToInt().coerceAtLeast(1)
+}
 
 // ═══════════════════════════════════════════════════════════════════
 //  GRADIENT SCRIMS
@@ -422,18 +443,32 @@ fun HomeScreen(
 
 // ═══════════════════════════════════════════════════════════════════
 //  BACKDROP
+//
+//  FIX: removed the blanket coerceIn(1, 1280) cap that caused blurry
+//  backdrops on 4K TVs. Now uses per-tier caps:
+//    HIGH → up to 3840×2160 (full 4K)
+//    MID  → up to 1920×1080
+//    LOW  → up to 1280×720  (saves RAM, fine at 720p output)
+//  Also added Scale.FILL and removed allowRgb565 (16-bit banding).
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
     val cfg = LocalConfiguration.current
     val dns = LocalDensity.current
+
     val (bwPx, bhPx) = remember(cfg, dns) {
         with(dns) {
-            cfg.screenWidthDp.dp.roundToPx().coerceIn(1, 1280) to
-                    cfg.screenHeightDp.dp.roundToPx().coerceIn(1, 720)
+            val w = cfg.screenWidthDp.dp.roundToPx()
+            val h = cfg.screenHeightDp.dp.roundToPx()
+            when (DeviceProfile.tier) {
+                DeviceProfile.Tier.HIGH -> w.coerceIn(1, 3840) to h.coerceIn(1, 2160)
+                DeviceProfile.Tier.MID  -> w.coerceIn(1, 1920) to h.coerceIn(1, 1080)
+                DeviceProfile.Tier.LOW  -> w.coerceIn(1, 1280) to h.coerceIn(1,  720)
+            }
         }
     }
+
     val backdropDuration = DeviceProfile.animConfig.backdropDuration.coerceAtLeast(0)
 
     Box(Modifier.fillMaxSize()) {
@@ -446,12 +481,13 @@ private fun BackdropLayer(hero: Movie?) {
             if (!url.isNullOrBlank()) {
                 AsyncImage(
                     model = remember(url) {
-                        ImageRequest.Builder(ctx).data(url).size(bwPx, bhPx)
+                        ImageRequest.Builder(ctx)
+                            .data(url)
+                            .size(bwPx, bhPx)
+                            .scale(Scale.FILL)
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
                             .allowHardware(true)
-                            // חיסכון אדיר בזיכרון לסטרימרים חלשים!
-                            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW)
                             .crossfade(false)
                             .build()
                     },
@@ -512,7 +548,7 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                                     .clip(RoundedCornerShape(4.dp))
                                     .background(Color(0xFFF5C518))
                                     .padding(horizontal = 8.dp, vertical = 3.dp),
-                                verticalAlignment   = Alignment.CenterVertically,
+                                verticalAlignment     = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 Text("IMDb", color = Color(0xFF141414), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
@@ -1159,6 +1195,10 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
 
 // ═══════════════════════════════════════════════════════════════════
 //  LANDSCAPE CARD
+//
+//  FIX: replaced hardcoded LAND_W_PX/LAND_H_PX decode targets with
+//  density-aware pixel sizes (dp × screen density × overdraw factor).
+//  Added Scale.FILL; removed allowRgb565 (16-bit causes banding).
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
@@ -1167,6 +1207,9 @@ private fun LandscapeCard(
 ) {
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
+
+    val targetWidthPx  = LAND_W.toQualityPx()
+    val targetHeightPx = LAND_H.toQualityPx()
 
     val cardAnimSpec = remember {
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
@@ -1182,20 +1225,20 @@ private fun LandscapeCard(
     )
 
     val overlayAlpha by animateFloatAsState(
-        targetValue = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.18f else 0f,
+        targetValue   = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.18f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label = "loverlay"
+        label         = "loverlay"
     )
 
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
-    val imageRequest = remember(url) {
-        ImageRequest.Builder(ctx).data(url)
-            .size(LAND_W_PX, LAND_H_PX)
+    val imageRequest = remember(url, targetWidthPx, targetHeightPx) {
+        ImageRequest.Builder(ctx)
+            .data(url)
+            .size(targetWidthPx, targetHeightPx)
+            .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            // שינוי קריטי למכשירים חלשים - חוסך 50% מה-RAM לקלף!
-            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW)
             .crossfade(false)
             .build()
     }
@@ -1250,7 +1293,6 @@ private fun LandscapeCard(
                     )
             )
 
-            // HIGH-tier only overlay effects
             if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) {
                 Box(
                     Modifier.fillMaxSize()
@@ -1311,6 +1353,10 @@ private fun LandscapeCard(
 
 // ═══════════════════════════════════════════════════════════════════
 //  POSTER CARD
+//
+//  FIX: same density-aware sizing fix as LandscapeCard above.
+//  Also: title text below card now uses DIM2 (slightly more
+//  transparent) when unfocused for better visual hierarchy.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
@@ -1320,6 +1366,9 @@ fun PosterCard(
 ) {
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
+
+    val targetWidthPx  = cardW.toQualityPx()
+    val targetHeightPx = cardH.toQualityPx()
 
     val cardAnimSpec = remember {
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
@@ -1334,19 +1383,20 @@ fun PosterCard(
         label         = "pzoom"
     )
     val overlayAlpha by animateFloatAsState(
-        targetValue = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.15f else 0f,
+        targetValue   = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.15f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
-        label = "poverlay"
+        label         = "poverlay"
     )
 
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
-    val imageRequest = remember(url) {
-        ImageRequest.Builder(ctx).data(url)
-            .size(PORT_W_PX, PORT_H_PX)
+    val imageRequest = remember(url, targetWidthPx, targetHeightPx) {
+        ImageRequest.Builder(ctx)
+            .data(url)
+            .size(targetWidthPx, targetHeightPx)
+            .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
-            .allowRgb565(DeviceProfile.tier == DeviceProfile.Tier.LOW) // אופטימיזציה לראם
             .crossfade(false)
             .build()
     }
@@ -1432,7 +1482,7 @@ fun PosterCard(
         Spacer(Modifier.height(6.dp))
         Text(
             movie.title,
-            color      = if (isFocused.value) WHITE else DIM,
+            color      = if (isFocused.value) WHITE else DIM2,
             fontSize   = 11.sp,
             fontWeight = if (isFocused.value) FontWeight.SemiBold else FontWeight.Normal,
             maxLines   = 1,
@@ -1442,7 +1492,6 @@ fun PosterCard(
         Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM3, fontSize = 10.sp)
     }
 }
-
 
 // ═══════════════════════════════════════════════════════════════════
 //  STUDIO RIBBON

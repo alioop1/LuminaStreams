@@ -19,24 +19,37 @@ object Constants {
     const val IMAGE_ORIGINAL = "https://image.tmdb.org/t/p/original"
 
     // ── Tier-aware backdrop helper ─────────────────────────────────────────────
-    /** Returns the best backdrop URL for the current device tier. */
+    /**
+     * Returns the best backdrop URL for the current device tier.
+     *
+     * Quality floors (TV displays need much higher than phones):
+     *   HIGH → original  (OLED, SHIELD, 4K sets — no compromise)
+     *   MID  → w1280     (solid 1080p output)
+     *   LOW  → w780      (was w500 — raised to prevent visible blur on 720p+ panels)
+     */
     fun backdropUrl(path: String?): String {
         if (path.isNullOrBlank() || path == "null") return ""
         val base = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> IMAGE_ORIGINAL   // Nvidia Shield / LG OLED — full-res UHD
-            DeviceProfile.Tier.MID  -> IMAGE_W1280      // solid mid-tier streamers
-            DeviceProfile.Tier.LOW  -> IMAGE_W500       // 2 GB Mali boxes — save RAM & bandwidth
+            DeviceProfile.Tier.HIGH -> IMAGE_ORIGINAL
+            DeviceProfile.Tier.MID  -> IMAGE_W1280
+            DeviceProfile.Tier.LOW  -> IMAGE_W780   // ← was IMAGE_W500, raised for TV panels
         }
         return "$base$path"
     }
 
-    /** Returns the best poster URL for the current device tier. */
+    /**
+     * Returns the best poster URL for the current device tier.
+     *
+     *   HIGH → original  (sharp on large TV screens)
+     *   MID  → w780      (was w500, raised for portrait poster clarity)
+     *   LOW  → w500      (was w342 — w342 is phone-grade, unacceptable on TV)
+     */
     fun posterUrl(path: String?): String {
         if (path.isNullOrBlank() || path == "null") return ""
         val base = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> IMAGE_W780
-            DeviceProfile.Tier.MID  -> IMAGE_W500
-            DeviceProfile.Tier.LOW  -> IMAGE_W342
+            DeviceProfile.Tier.HIGH -> IMAGE_ORIGINAL
+            DeviceProfile.Tier.MID  -> IMAGE_W780   // ← was IMAGE_W500
+            DeviceProfile.Tier.LOW  -> IMAGE_W500   // ← was IMAGE_W342
         }
         return "$base$path"
     }
