@@ -77,7 +77,17 @@ data class DetailsScreenState(
     val isLoadingData: Boolean = true, val errorData: String? = null, val mediaInfo: MediaDetailsInfo = MediaDetailsInfo(),
     val selectedSeason: Int = 1, val episodes: List<Episode> = emptyList(), val isEpisodesLoading: Boolean = false,
     val scrapingStatus: ScrapingStatus = ScrapingStatus.Idle, val availableStreams: List<AdvancedStreamSource> = emptyList(),
-    val readyToPlayUrl: String? = null, val bestSourceHint: String? = null, val isFuzerDirect: Boolean = false
+    val readyToPlayUrl: String? = null, val bestSourceHint: String? = null, val isFuzerDirect: Boolean = false,
+
+    // ── Watch progress ─────────────────────────────────────────────────────────
+    /** For movies: 0–1 watch fraction. null = never started. */
+    val contentProgress: Float? = null,
+    /** True when the main content (movie or latest episode) is ≥ 90 % watched. */
+    val contentIsFinished: Boolean = false,
+    /** TV only: season number of the most recently watched episode. */
+    val lastWatchedSeason: Int? = null,
+    /** TV only: episode number of the most recently watched episode. */
+    val lastWatchedEpisode: Int? = null,
 )
 
 sealed interface DetailsEvent {
@@ -88,4 +98,6 @@ sealed interface DetailsEvent {
     object ToggleFavorite : DetailsEvent
     object ClearPlayUrl : DetailsEvent
     object CancelScraping : DetailsEvent
+    /** Called every time the Details screen becomes visible, to sync latest watch progress. */
+    object RefreshProgress : DetailsEvent
 }

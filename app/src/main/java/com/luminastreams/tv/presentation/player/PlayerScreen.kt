@@ -70,6 +70,7 @@ import androidx.tv.material3.*
 import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
+import com.luminastreams.tv.data.local.WatchProgressManager
 
 @Composable
 fun tr(en: String, he: String): String {
@@ -258,11 +259,28 @@ fun PlayerScreen(
     var subtitleApplied   by remember { mutableStateOf(false) }
     var hasStartedPlaying by remember { mutableStateOf(false) }
 
-    val watchPrefs    = remember { context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE) }
-    val progressKey   = remember(imdbId) { "progress_$imdbId" }
-    val savedPosition = remember(imdbId) { watchPrefs.getLong(progressKey, -1L) }
-    var showResumeDialog by remember { mutableStateOf(false) }
-    var resumeHandled    by remember { mutableStateOf(false) }
+    val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
+    val episodePref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_episode", -1) }
+    val season = if (seasonPref != -1) seasonPref else null
+    val episode = if (episodePref != -1) episodePref else null
+
+    val progressManager = remember { WatchProgressManager(context) }
+      val progressKey = remember(imdbId, season, episode) {
+          when {
+              imdbId.isBlank()                  -> ""
+              season != null && episode != null -> progressManager.episodeKey(imdbId, season, episode)
+              else                              -> progressManager.movieKey(imdbId)
+          }
+      }
+      val savedPosition = remember(progressKey) {
+          if (progressKey.isEmpty()) -1L
+          else progressManager.get(progressKey)?.positionMs?.takeIf { it > 30_000L }
+              // Legacy fallback for users upgrading from the old system
+              ?: context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE)
+                  .getLong("progress_$imdbId", -1L)
+      }
+      var showResumeDialog by remember { mutableStateOf(false) }
+      var resumeHandled    by remember { mutableStateOf(false) }
 
     val playPauseFR = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
@@ -272,10 +290,7 @@ fun PlayerScreen(
         context.findActivity()?.let { enableHdrWindow(it) }
     }
 
-    val seasonPref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_season", -1) }
-    val episodePref = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE).getInt("current_episode", -1) }
-    val season = if (seasonPref != -1) seasonPref else null
-    val episode = if (episodePref != -1) episodePref else null
+
 
     LaunchedEffect(videoUrl, imdbId) {
         viewModel.loadMedia(videoUrl, imdbId, season, episode)
@@ -309,20 +324,23 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(prepared) {
-        if (!prepared) return@LaunchedEffect
-        while (true) {
-            delay(5_000)
-            val pos = exo.player.currentPosition
-            val dur = exo.player.duration
-            if (pos > 10_000L && dur > 0L) {
-                if (pos.toFloat() / dur.toFloat() < 0.95f)
-                    watchPrefs.edit { putLong(progressKey, pos) }
-                else
-                    watchPrefs.edit { remove(progressKey) }
-            }
-        }
-    }
+      LaunchedEffect(prepared) {
+          if (!prepared) return@LaunchedEffect
+          while (true) {
+              delay(5_000)
+              val pos = exo.player.currentPosition
+              val dur = exo.player.duration
+              if (pos > 10_000L && dur > 0L && progressKey.isNotEmpty()) {
+                  if (pos.toFloat() / dur.toFloat() < 0.92f) {
+                      // Normal in-progress save
+                      progressManager.save(progressKey, pos, dur)
+                  } else {
+                      // ≥ 92% watched → mark as finished (saved at 95% so isFinished fires)
+                      progressManager.save(progressKey, (dur * 0.95f).toLong(), dur)
+                  }
+              }
+          }
+      }
 
     LaunchedEffect(isPlaying) {
         if (isPlaying) hasStartedPlaying = true
@@ -629,7 +647,7 @@ fun PlayerScreen(
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; watchPrefs.edit { remove(progressKey) } },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey) },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),

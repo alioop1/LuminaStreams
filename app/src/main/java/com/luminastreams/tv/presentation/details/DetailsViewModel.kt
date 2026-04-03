@@ -29,6 +29,7 @@ import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import com.luminastreams.tv.data.local.WatchProgressManager
 
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(val name: String? = null, val title: String? = null, val url: String? = null, val infoHash: String? = null)
@@ -46,6 +47,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private val rdManager = RealDebridManager()
     private val watchlistManager = WatchlistManager(appContext)
+    private val progressManager  = WatchProgressManager(appContext)
+
     private val isHebrew: Boolean get() = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
 
     private val okHttpClient = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
@@ -67,7 +70,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             is DetailsEvent.ToggleFavorite -> handleToggleFavorite()
             is DetailsEvent.ClearPlayUrl -> _state.update { it.copy(readyToPlayUrl = null) }
             is DetailsEvent.CancelScraping -> cancelActiveScraping()
-        }
+            is DetailsEvent.RefreshProgress -> refreshProgress()        }
     }
 
     private fun loadData(fullId: String) {
@@ -142,13 +145,17 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val starringItems = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
 
                 val qualityHint = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
+                val movieProg   = progressManager.getMovie(scrapeId)
                 val logoPath = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
                 val fullLogoUrl = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
 
-                _state.update {
-                    it.copy(
-                        isLoadingData = false, bestSourceHint = qualityHint,
-                        mediaInfo = MediaDetailsInfo(
+          _state.update {
+              it.copy(
+                  isLoadingData     = false,
+                  bestSourceHint    = qualityHint,
+                  contentProgress   = movieProg?.fraction,
+                  contentIsFinished = movieProg?.isFinished ?: false,
+                  mediaInfo = MediaDetailsInfo(
                             id = "movie_${dto.id}", imdbId = scrapeId, title = dto.title, overview = dto.overview ?: "",
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = false, releaseDate = dto.releaseDate?.take(4) ?: "", runtimeMinutes = dto.runtime ?: 0,
@@ -182,12 +189,18 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
                 val starringItems = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
 
-                val logoPath = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
-                val fullLogoUrl = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
+          val logoPath    = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
+          val fullLogoUrl = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
+          val latestEp    = progressManager.getLatestEpisodeProgress(scrapeId)
 
-                _state.update {
-                    it.copy(
-                        isLoadingData = false, bestSourceHint = "1080p • RD+",
+          _state.update {
+              it.copy(
+                  isLoadingData      = false,
+                 bestSourceHint     = "1080p • RD+",
+                contentProgress    = latestEp?.third?.fraction,
+                 contentIsFinished  = latestEp?.third?.isFinished ?: false,
+                lastWatchedSeason  = latestEp?.first,
+                 lastWatchedEpisode = latestEp?.second,
                         mediaInfo = MediaDetailsInfo(
                             id = "tv_${dto.id}", imdbId = scrapeId, title = dto.name, overview = dto.overview ?: "",
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
@@ -251,7 +264,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     }
                 } catch (_: Exception) {}
             }
-            list.sortedBy { it.episodeNumber }
+                      list.map { ep ->
+              val prog = progressManager.getEpisode(imdbId, ep.seasonNumber, ep.episodeNumber)
+              ep.copy(
+                  progress   = prog?.fraction ?: 0f,
+                  hasWatched = prog?.isFinished ?: false
+           )
+         }.sortedBy { it.episodeNumber }
         }
 
     private suspend fun resolveImdbId(id: String, tmdbType: String): String {
@@ -343,6 +362,47 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     onFailure = { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) } }
                 )
             } catch (e: Exception) { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת רשת: " else "Network error: ") + e.message)) } }
+        }
+    }
+    private fun refreshProgress() {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank() || _state.value.isLoadingData) return
+
+        viewModelScope.launch(Dispatchers.IO) {
+            if (_state.value.mediaInfo.isSeries) {
+                // TV: locate the episode watched most recently
+                val latest = progressManager.getLatestEpisodeProgress(imdbId)
+                _state.update { s ->
+                    s.copy(
+                        contentProgress    = latest?.third?.fraction,
+                        contentIsFinished  = latest?.third?.isFinished ?: false,
+                        lastWatchedSeason  = latest?.first,
+                        lastWatchedEpisode = latest?.second
+                    )
+                }
+            } else {
+                // Movie: direct fraction lookup
+                val prog = progressManager.getMovie(imdbId)
+                _state.update { s ->
+                    s.copy(
+                        contentProgress   = prog?.fraction,
+                        contentIsFinished = prog?.isFinished ?: false
+                    )
+                }
+            }
+
+            // Refresh progress on whatever episode list is currently visible
+            val eps = _state.value.episodes
+            if (eps.isNotEmpty()) {
+                val refreshed = eps.map { ep ->
+                    val prog = progressManager.getEpisode(imdbId, ep.seasonNumber, ep.episodeNumber)
+                    ep.copy(
+                        progress   = prog?.fraction ?: 0f,
+                        hasWatched = prog?.isFinished ?: false
+                    )
+                }
+                _state.update { it.copy(episodes = refreshed) }
+            }
         }
     }
 

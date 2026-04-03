@@ -71,6 +71,9 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -315,7 +318,15 @@ fun DetailsScreen(
             focusManager.clearFocus()
         } else onNavigateBack()
     }
-
+     // Sync watch-progress every time this screen becomes visible
+      val lifecycleOwner = LocalLifecycleOwner.current
+      DisposableEffect(lifecycleOwner) {
+          val observer = LifecycleEventObserver { _, event ->
+              if (event == Lifecycle.Event.ON_RESUME) onEvent(DetailsEvent.RefreshProgress)
+          }
+          lifecycleOwner.lifecycle.addObserver(observer)
+          onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+      }
     if (state.isLoadingData) {
         Box(Modifier.fillMaxSize().background(BK), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -403,9 +414,39 @@ fun DetailsScreen(
                             if (media.tmdbRating > 0) RatingChip(Icons.Default.Favorite, TMR, "${(media.tmdbRating * 10).toInt()}%", "TMDB")
                         }
                         Spacer(Modifier.height(12.dp))
-                        if (media.overview.isNotEmpty()) {
-                            Text(media.overview, color = DM, fontSize = 14.sp, lineHeight = 22.sp, maxLines = 4, overflow = TextOverflow.Ellipsis)
-                        }
+          // ── Movie watch-progress bar ─────────────────────────────────────
+          if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
+              Spacer(Modifier.height(14.dp))
+              val prog = state.contentProgress ?: 0f
+              Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                  Box(
+                      Modifier
+                          .fillMaxWidth(0.65f)
+                          .height(3.dp)
+                          .clip(RoundedCornerShape(50))
+                          .background(WH.copy(0.15f))
+                  ) {
+                      Box(
+                          Modifier
+                              .fillMaxWidth(prog)
+                              .fillMaxHeight()
+                              .background(if (state.contentIsFinished) GLD else BR)
+                      )
+                  }
+                  val label = when {
+                      state.contentIsFinished -> tr("Watched ✓", "נצפה ✓")
+                      media.runtimeMinutes > 0 -> {
+                          val leftMin = ((1f - prog) * media.runtimeMinutes).toInt()
+                              .coerceAtLeast(1)
+                          tr("${leftMin}m left", "${leftMin} דקות נותרו")
+                      }
+                      else -> "%.0f%%".format(prog * 100)
+                  }
+                  Text(label, color = if (state.contentIsFinished) GLD else DM, fontSize = 11.sp)
+              }
+          }
+
+          Spacer(Modifier.height(22.dp))
                         Spacer(Modifier.height(22.dp))
 
                         Row(
@@ -447,31 +488,61 @@ fun DetailsScreen(
                                     }
                                 }
                             } else {
-                                Surface(
-                                    onClick = {
-                                        showSources = true
-                                        if (media.isSeries) {
-                                            currentScrapeSeason = state.selectedSeason
-                                            currentScrapeEpisode = 1
-                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.selectedSeason, 1))
-                                        } else {
-                                            currentScrapeSeason = null
-                                            currentScrapeEpisode = null
-                                            onEvent(DetailsEvent.InitiateScraping(media.imdbId))
-                                        }
-                                    },
-                                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                                    colors   = ClickableSurfaceDefaults.colors(containerColor = WH, contentColor = BK, focusedContainerColor = BR, focusedContentColor = WH),
-                                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-                                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
-                                    modifier = Modifier.wrapContentWidth().focusRequester(playFR)
-                                ) {
-                                    Row(Modifier.padding(horizontal = 28.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
-                                        Spacer(Modifier.width(8.dp))
-                                        Text(tr("Play Now", "נגן עכשיו"), fontWeight = FontWeight.Black, fontSize = 15.sp, maxLines = 1, softWrap = false)
-                                    }
-                                }
+                                // ── Compute watch-state labels once ─────────────────────────────────
+      val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
+      val continueLabel: String = when {
+          state.contentIsFinished -> tr("Watch Again", "צפה שוב")
+          isPartiallyWatched && media.isSeries &&
+                  state.lastWatchedSeason != null && state.lastWatchedEpisode != null ->
+              tr(
+                  "Continue S${state.lastWatchedSeason}:E${state.lastWatchedEpisode}",
+                  "המשך ע${state.lastWatchedSeason}:פ${state.lastWatchedEpisode}"
+              )
+          isPartiallyWatched -> tr("Continue", "המשך")
+          else               -> tr("Play Now", "נגן עכשיו")
+      }
+      // Smart scraping target — resume last-watched episode for series
+      val resumeSeason  = state.lastWatchedSeason  ?: state.selectedSeason
+      val resumeEpisode = state.lastWatchedEpisode ?: 1
+
+      Surface(
+          onClick = {
+              showSources = true
+              if (media.isSeries) {
+                  currentScrapeSeason  = resumeSeason
+                  currentScrapeEpisode = resumeEpisode
+                  onEvent(DetailsEvent.InitiateScraping(media.imdbId, resumeSeason, resumeEpisode))
+              } else {
+                  currentScrapeSeason  = null
+                  currentScrapeEpisode = null
+                  onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+              }
+          },
+          shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+          colors   = ClickableSurfaceDefaults.colors(
+              containerColor        = if (state.contentIsFinished) MT else WH,
+              contentColor          = BK,
+              focusedContainerColor = BR,
+              focusedContentColor   = WH
+          ),
+          scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
+          glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
+          modifier = Modifier.wrapContentWidth().focusRequester(playFR)
+      ) {
+          Row(
+             Modifier.padding(horizontal = 28.dp, vertical = 14.dp),
+             verticalAlignment = Alignment.CenterVertically
+          ) {
+             Icon(
+                  imageVector = if (state.contentIsFinished) Icons.Default.Replay else Icons.Default.PlayArrow,
+                  contentDescription = null,
+                  modifier = Modifier.size(20.dp)
+             )
+              Spacer(Modifier.width(8.dp))
+              Text(continueLabel, fontWeight = FontWeight.Black, fontSize = 15.sp,
+                  maxLines = 1, softWrap = false)
+         }
+      }
                                 ActionPill(tr("Trailer", "טריילר"), Icons.Default.PlayArrow) { launchTrailer(context, media.trailerUrl, media.title) }
                                 ActionPill(
                                     label = if (state.availableStreams.isNotEmpty()) tr("Sources (${state.availableStreams.size})", "מקורות (${state.availableStreams.size})") else tr("Sources", "מקורות"),
@@ -1070,13 +1141,33 @@ private fun EpisodeCard(
                 Text(tr("Ep ${episode.episodeNumber}. ${episode.title}", "פרק ${episode.episodeNumber}. ${episode.title}"), color = WH, fontSize = 14.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text("45m", color = DM, fontSize = 12.sp)
             }
-            if (episode.progress > 0f) {
-                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(BK.copy(0.6f))) {
-                    Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(BR).align(Alignment.CenterStart))
-                }
-            }
-        }
-    }
+          if (episode.progress > 0f) {
+              Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(BK.copy(0.6f))) {
+                  Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(BR).align(Alignment.CenterStart))
+              }
+          }
+
+          // ── Watched badge ────────────────────────────────────────────────
+          if (episode.hasWatched) {
+              Box(
+                  modifier = Modifier
+                      .align(Alignment.TopEnd)
+                      .padding(6.dp)
+                      .size(24.dp)
+                      .clip(RoundedCornerShape(50))
+                      .background(Color(0xCC2E7D32)),
+                  contentAlignment = Alignment.Center
+              ) {
+                  Icon(
+                      imageVector = Icons.Default.Check,
+                      contentDescription = null,
+                      tint     = WH,
+                      modifier = Modifier.size(14.dp)
+                  )
+              }
+          }
+      }
+  }
 }
 
 @Composable

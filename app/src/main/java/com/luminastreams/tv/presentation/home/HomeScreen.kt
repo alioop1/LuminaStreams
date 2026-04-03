@@ -1335,20 +1335,38 @@ private fun LandscapeCard(
                 Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
             }
 
-            if (movie.rating > 0f) {
-                Box(
-                    Modifier
-                        .align(Alignment.TopEnd).padding(6.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(Color(0xBB000000))
-                        .padding(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold)
-                }
-            }
-        }
-    }
+              if (movie.rating > 0f) {
+                  Box(
+                      Modifier
+                          .align(Alignment.TopEnd).padding(5.dp)
+                          .clip(RoundedCornerShape(4.dp))
+                          .background(Color(0xBB000000))
+                          .padding(horizontal = 5.dp, vertical = 2.dp)
+                  ) {
+                      Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp,
+                          fontWeight = FontWeight.Bold)
+                  }
+              }
+
+              // ── Watch progress bar ───────────────────────────────────────
+              movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
+                  Box(
+                      Modifier
+                          .align(Alignment.BottomCenter)
+                          .fillMaxWidth()
+                          .height(3.dp)
+                          .background(Color(0x55000000))
+                  ) {
+                      Box(
+                          Modifier
+                              .fillMaxWidth(prog.coerceIn(0f, 1f))
+                              .fillMaxHeight()
+                              .background(RED)
+                      )
+                  }
+              }
+          }
+      }
 }
 
 // ═══════════════════════════════════════════════════════════════════
