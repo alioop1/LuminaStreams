@@ -287,8 +287,10 @@ fun PlayerScreen(
             delay(1000)
             val pos = exo.player.currentPosition
             val dur = exo.player.duration
+            val remaining = dur - pos
+
             if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
-                dur > 30_000 && dur - pos in 1L..45_000L) {
+                dur > 60_000 && remaining in 1L..45_000L) {
                 showNextEpisodeCard = true
             }
         }
@@ -373,10 +375,11 @@ fun PlayerScreen(
             val pos = exo.player.currentPosition
             val dur = exo.player.duration
             if (pos > 10_000L && dur > 0L && progressKey.isNotEmpty()) {
-                if (pos.toFloat() / dur.toFloat() < 0.92f) {
+                if (pos.toFloat() / dur.toFloat() < 0.95f) { // Bumped threshold to 95%
                     progressManager.save(progressKey, pos, dur)
                 } else {
-                    progressManager.save(progressKey, (dur * 0.95f).toLong(), dur)
+                    // Save as 100% completed so the red line reaches the very end
+                    progressManager.save(progressKey, dur, dur)
                 }
             }
         }
@@ -606,7 +609,7 @@ fun PlayerScreen(
             }
         }
 
-        // ── NEXT EPISODE CARD ──────────────────────────────────────────────────────
+// ── NEXT EPISODE CARD ──────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
@@ -617,7 +620,15 @@ fun PlayerScreen(
                 .zIndex(150f)
         ) {
             val nextFR = remember { FocusRequester() }
-            LaunchedEffect(Unit) { delay(80); runCatching { nextFR.requestFocus() } }
+            val dismissFR = remember { FocusRequester() }
+
+            // שימוש ב-showNextEpisodeCard כטריגר והגדלת ההשהיה מבטיחים שהפוקוס ייתפס
+            LaunchedEffect(showNextEpisodeCard) {
+                if (showNextEpisodeCard) {
+                    delay(150)
+                    runCatching { nextFR.requestFocus() }
+                }
+            }
 
             Column(
                 modifier = Modifier
@@ -626,6 +637,24 @@ fun PlayerScreen(
                     .background(Color(0xF0101018))
                     .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
                     .padding(horizontal = 20.dp, vertical = 18.dp)
+                    .focusGroup() // מגדיר את האזור כקבוצת פוקוס עצמאית
+                    .onPreviewKeyEvent { ev ->
+                        // כליאת הפוקוס בתוך הפופאפ ומניעת בריחה לנגן שברקע
+                        if (ev.type == KeyEventType.KeyDown) {
+                            when (ev.key) {
+                                Key.DirectionUp, Key.DirectionDown -> true // חוסם מעבר למעלה/למטה
+                                Key.DirectionLeft -> {
+                                    runCatching { if (isRtl) dismissFR.requestFocus() else nextFR.requestFocus() }
+                                    true
+                                }
+                                Key.DirectionRight -> {
+                                    runCatching { if (isRtl) nextFR.requestFocus() else dismissFR.requestFocus() }
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else false
+                    }
             ) {
                 Text(
                     tr("UP NEXT", "הבא בתור"),
@@ -695,7 +724,7 @@ fun PlayerScreen(
                             focusedBorder = Border.None
                         ),
                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(46.dp)
+                        modifier = Modifier.height(46.dp).focusRequester(dismissFR)
                     ) {
                         Box(Modifier.padding(horizontal = 18.dp).fillMaxHeight(), Alignment.Center) {
                             Text(tr("Dismiss", "דחה"), fontSize = 13.sp)
