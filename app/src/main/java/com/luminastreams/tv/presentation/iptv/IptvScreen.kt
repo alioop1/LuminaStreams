@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
+import androidx.compose.ui.zIndex
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -345,7 +346,7 @@ private fun IptvTopBar(
                     .padding(horizontal = 12.dp, vertical = 5.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Icon(Icons.Default.PlaylistPlay, null, Modifier.size(14.dp), tint = IPTV_DIM)
+                    Icon(Icons.AutoMirrored.Filled.PlaylistPlay, null, Modifier.size(14.dp), tint = IPTV_DIM)
                     Text(active.name, color = IPTV_DIM, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
@@ -918,7 +919,7 @@ private fun EpgTimeline(
                 Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.EventNote, null, Modifier.size(40.dp), tint = IPTV_MUTED)
+                    Icon(Icons.AutoMirrored.Filled.EventNote, null, Modifier.size(40.dp), tint = IPTV_MUTED)
                     Spacer(Modifier.height(8.dp))
                     Text(
                         if (epgLoadState is IptvLoadState.Loading) "Loading EPG data..."
@@ -1381,7 +1382,7 @@ private fun AddPlaylistDialog(
                 value = state.addPlaylistName,
                 hint = "My IPTV",
                 isFocused = nameFocused,
-                icon = Icons.Default.PlaylistPlay,
+                icon = Icons.AutoMirrored.Filled.PlaylistPlay,
                 onValueChange = { onEvent(IptvEvent.UpdateAddPlaylistName(it)) },
                 modifier = Modifier.onFocusChanged { nameFocused = it.isFocused }
             )
@@ -1410,7 +1411,7 @@ private fun AddPlaylistDialog(
                 value = state.addPlaylistEpgUrl,
                 hint = "http://provider.com/epg.xml.gz",
                 isFocused = epgFocused,
-                icon = Icons.Default.EventNote,
+                icon = Icons.AutoMirrored.Filled.EventNote,
                 onValueChange = { onEvent(IptvEvent.UpdateAddPlaylistEpgUrl(it)) },
                 modifier = Modifier.onFocusChanged { epgFocused = it.isFocused }
             )

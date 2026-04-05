@@ -52,6 +52,8 @@ import com.luminastreams.tv.presentation.details.DetailsScreen
 import com.luminastreams.tv.presentation.details.DetailsViewModel
 import com.luminastreams.tv.presentation.home.HomeScreen
 import com.luminastreams.tv.presentation.home.HomeViewModel
+import com.luminastreams.tv.presentation.iptv.IptvScreen
+import com.luminastreams.tv.presentation.iptv.IptvViewModel
 import com.luminastreams.tv.presentation.player.PlayerScreen
 import com.luminastreams.tv.presentation.search.SearchScreen
 import com.luminastreams.tv.presentation.search.SearchViewModel
@@ -114,7 +116,6 @@ fun LuminaAppShell() {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    // קוראים את השפה המוגדרת ומאזינים לשינויים בזמן אמת
     var appLang by remember { mutableStateOf(prefs.getString("app_lang", "he") ?: "he") }
 
     DisposableEffect(Unit) {
@@ -131,7 +132,6 @@ fun LuminaAppShell() {
 
     val navController = rememberNavController()
 
-    // התיקון כאן! מעבירים את ה-context ל-MediaRepositoryImpl
     val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
@@ -373,6 +373,26 @@ fun AppNavHostContainer(
                     onMovieClick   = { id ->
                         val safeId = URLEncoder.encode(id, "UTF-8")
                         navController.navigate("details?fullId=$safeId")
+                    }
+                )
+            }
+        }
+
+        // ── IPTV Live TV ───────────────────────────────────────────────────────
+        composable("iptv") {
+            val vm: IptvViewModel = viewModel(
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+            )
+            Box(Modifier.fillMaxSize().background(Color(0xFF050508))) {
+                IptvScreen(
+                    viewModel      = vm,
+                    onNavigateBack = { navController.popBackStack() },
+                    onPlayChannel  = { streamUrl, title ->
+                        val safeUrl   = URLEncoder.encode(streamUrl, "UTF-8")
+                        val safeTitle = URLEncoder.encode(title, "UTF-8")
+                        navController.navigate(
+                            "player?videoUrl=$safeUrl&imdbId=_&title=$safeTitle&backdropUrl=none&logoUrl=none"
+                        )
                     }
                 )
             }

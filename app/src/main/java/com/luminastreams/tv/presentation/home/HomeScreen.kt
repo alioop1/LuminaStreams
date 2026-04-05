@@ -436,7 +436,8 @@ fun HomeScreen(
                 viewModel.loadFuzerContent()
             },
             onWatchlist = { navController.navigate("watchlist") },
-            onSettings  = { navController.navigate("settings") }
+            onSettings  = { navController.navigate("settings") },
+                    onIptv      = { navController.navigate("iptv") }
         )
     }
 }
@@ -587,7 +588,7 @@ private fun ContentLayer(
     onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
     onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
     onSeriesTab: () -> Unit, onFuzer: () -> Unit,
-    onWatchlist: () -> Unit, onSettings: () -> Unit
+    onWatchlist: () -> Unit, onSettings: () -> Unit, onIptv: () -> Unit
 ) {
     val firstNavFR   = remember { FocusRequester() }
     val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
@@ -673,6 +674,7 @@ private fun ContentLayer(
             onFuzer     = onFuzer,
             onWatchlist = onWatchlist,
             onSettings  = onSettings,
+            onIptv      = onIptv,
             onNavFocus  = { focusState.isNavFocused = true; focusState.currentRowIndex = 0 },
             modifier    = Modifier
                 .fillMaxWidth()
@@ -711,7 +713,7 @@ private fun ContentLayer(
 private fun TwoRowNavBar(
     activeTab: String, firstNavFR: FocusRequester,
     onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
-    onSeriesTab: () -> Unit, onFuzer: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit,
+    onSeriesTab: () -> Unit, onFuzer: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit, onIptv: () -> Unit,
     onNavFocus: () -> Unit, modifier: Modifier = Modifier
 ) {
     var time by remember { mutableStateOf("") }
@@ -766,6 +768,7 @@ private fun TwoRowNavBar(
                 NavPill(tr("Movies", "סרטים"),    Icons.Default.Movie,       activeTab == "סרטים",  null,       onMoviesTab)  { o, w -> tabPositions["סרטים"]     = o; tabWidths["סרטים"]     = w }
                 NavPill(tr("TV Shows", "סדרות"),  Icons.Default.Tv,          activeTab == "סדרות",  null,       onSeriesTab)  { o, w -> tabPositions["סדרות"]     = o; tabWidths["סדרות"]     = w }
                 NavPill("Fuzer",                 Icons.Default.LocalMovies, activeTab == "Fuzer",  null,       onFuzer)      { o, w -> tabPositions["Fuzer"]     = o; tabWidths["Fuzer"]     = w }
+                NavPill(tr("Live TV", "טלוויזיה חיה"),  Icons.Default.LiveTv,      false,                 null,       onIptv)       { o, w -> tabPositions["iptv"]      = o; tabWidths["iptv"]      = w }
                 NavPill(tr("Watchlist", "רשימת צפייה"), Icons.Default.Bookmark,    false,                 null,       onWatchlist)  { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
                 NavPill(tr("Settings", "הגדרות"),  Icons.Default.Settings,    false,                 null,       onSettings)   { o, w -> tabPositions["Settings"]  = o; tabWidths["Settings"]  = w }
                 Spacer(Modifier.weight(1f))

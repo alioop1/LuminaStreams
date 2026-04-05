@@ -21,6 +21,7 @@ object QrCodeGenerator {
         }
     }
 
+    @Suppress("UNCHECKED_CAST")
     private fun generateWithReflection(text: String, size: Int): Bitmap {
         // Try to use zxing if available
         val writerClass = Class.forName("com.google.zxing.MultiFormatWriter")
@@ -29,9 +30,11 @@ object QrCodeGenerator {
         val qrCodeFormat = barcodeFormatClass.getField("QR_CODE").get(null)
         val hintsClass = Class.forName("com.google.zxing.EncodeHintType")
         val errorCorrectionClass = Class.forName("com.google.zxing.qrcode.decoder.ErrorCorrectionLevel")
-        val hints = java.util.EnumMap<Any, Any>(hintsClass as Class<Any>)
-        hints[hintsClass.getField("ERROR_CORRECTION").get(null)] = errorCorrectionClass.getField("M").get(null)
-        hints[hintsClass.getField("MARGIN").get(null)] = 2
+
+        // Fix: use LinkedHashMap instead of EnumMap to avoid constructor type issues
+        val hints = LinkedHashMap<Any, Any>()
+        hints[hintsClass.getField("ERROR_CORRECTION").get(null)!!] = errorCorrectionClass.getField("M").get(null)!!
+        hints[hintsClass.getField("MARGIN").get(null)!!] = 2
 
         val encodeMethod = writerClass.getMethod("encode", String::class.java, barcodeFormatClass, Int::class.java, Int::class.java, java.util.Map::class.java)
         val bitMatrix = encodeMethod.invoke(writer, text, qrCodeFormat, size, size, hints)
