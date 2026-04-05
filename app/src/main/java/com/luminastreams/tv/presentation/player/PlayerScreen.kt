@@ -256,8 +256,10 @@ fun PlayerScreen(
     val playerPrefs = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE) }
     val seasonPref  = remember { playerPrefs.getInt("current_season", -1) }
     val episodePref = remember { playerPrefs.getInt("current_episode", -1) }
-    val season  = if (seasonPref  != -1) seasonPref  else null
-    val episode = if (episodePref != -1) episodePref else null
+
+// מחיל את העונה והפרק רק אם זה סרט/סדרה רגילה (יש imdbId). ב-IPTV ה-imdbId ריק ולכן הפופ-אפ לא יקפוץ.
+    val season  = if (seasonPref  != -1 && imdbId.isNotBlank()) seasonPref  else null
+    val episode = if (episodePref != -1 && imdbId.isNotBlank()) episodePref else null
 
     // Next episode detection
     val totalEpisodesInSeason = remember { playerPrefs.getInt("total_episodes_in_season", -1) }

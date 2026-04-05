@@ -20,45 +20,72 @@ object M3uParser {
     }
 
     private fun fetchContent(urlString: String): String {
-        val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.connectTimeout = 20_000
-        conn.readTimeout = 30_000
-        conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV)")
-        conn.setRequestProperty("Accept", "*/*")
-        return try {
-            val charset = detectCharset(conn) ?: Charsets.UTF_8
-            BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
-        } finally {
-            conn.disconnect()
+        var currentUrl = urlString
+        var redirects = 0
+
+        while (redirects < 5) {
+            val conn = URL(currentUrl).openConnection() as HttpURLConnection
+            conn.connectTimeout = 20_000
+            conn.readTimeout = 30_000
+            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            conn.setRequestProperty("Accept", "*/*")
+            conn.instanceFollowRedirects = false
+
+            val responseCode = conn.responseCode
+            if (responseCode == HttpURLConnection.HTTP_MOVED_PERM || responseCode == HttpURLConnection.HTTP_MOVED_TEMP || responseCode == HttpURLConnection.HTTP_SEE_OTHER) {
+                val newUrl = conn.getHeaderField("Location")
+                conn.disconnect()
+                if (newUrl != null) { currentUrl = newUrl; redirects++; continue }
+            }
+
+            if (responseCode !in 200..299) {
+                conn.disconnect()
+                throw Exception("HTTP Error: $responseCode")
+            }
+
+            return try {
+                val charset = detectCharset(conn) ?: Charsets.UTF_8
+                BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
+            } finally { conn.disconnect() }
         }
+        throw Exception("Too many redirects")
     }
 
     private fun detectCharset(conn: HttpURLConnection): Charset? {
         val ct = conn.contentType ?: return null
         return ct.split(";").map { it.trim() }.firstOrNull { it.startsWith("charset=", ignoreCase = true) }
-            ?.substringAfter("=")?.let {
-                try { Charset.forName(it) } catch (_: Exception) { null }
-            }
+            ?.substringAfter("=")?.let { try { Charset.forName(it) } catch (_: Exception) { null } }
     }
 
     private fun parseM3u(content: String): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()
         val lines = content.lines()
         var channelNumber = 1
+        var globalGroup = "General"
 
         var i = 0
         while (i < lines.size) {
             val line = lines[i].trim()
 
-            if (line.startsWith("#EXTINF:")) {
+            // שומר קטגוריה גלובלית אם הספק משתמש ב- #EXTGRP שורה לפני הערוץ
+            if (line.startsWith("#EXTGRP:")) {
+                globalGroup = line.substringAfter(":", "").trim()
+            }
+            else if (line.startsWith("#EXTINF:")) {
                 val attrs = parseAttributes(line)
                 val name = extractChannelName(line)
+
+                // תומך גם ב-group-title בתוך השורה וגם בשורת #EXTGRP מיד אחרי השורה (כמו OTTClub)
+                var inlineGroup = attrs["group-title"]?.replace("\"", "")?.trim()
+                if (inlineGroup.isNullOrBlank() && i + 1 < lines.size && lines[i + 1].trim().startsWith("#EXTGRP:")) {
+                    inlineGroup = lines[i + 1].trim().substringAfter(":", "").trim()
+                }
+
+                val groupTitle = if (!inlineGroup.isNullOrBlank()) inlineGroup else globalGroup
                 val streamUrl = findStreamUrl(lines, i + 1)
 
                 if (streamUrl != null) {
-                    val channelId = attrs["tvg-id"]?.ifBlank { null }
-                        ?: attrs["tvg-name"]?.ifBlank { null }
-                        ?: "${name}_$channelNumber"
+                    val channelId = attrs["tvg-id"]?.ifBlank { null } ?: attrs["tvg-name"]?.ifBlank { null } ?: "${name}_$channelNumber"
 
                     channels.add(
                         IptvChannel(
@@ -66,12 +93,10 @@ object M3uParser {
                             name = name.trim(),
                             logoUrl = attrs["tvg-logo"]?.trim() ?: "",
                             streamUrl = streamUrl.trim(),
-                            groupTitle = attrs["group-title"]?.trim() ?: "General",
+                            groupTitle = groupTitle,
                             tvgId = attrs["tvg-id"]?.trim() ?: "",
                             tvgName = attrs["tvg-name"]?.trim() ?: name.trim(),
-                            isAdult = (attrs["group-title"] ?: "").contains("adult", ignoreCase = true) ||
-                                    (attrs["group-title"] ?: "").contains("18+", ignoreCase = true) ||
-                                    (attrs["group-title"] ?: "").contains("xxx", ignoreCase = true),
+                            isAdult = groupTitle.contains("adult", true) || groupTitle.contains("18+", true) || groupTitle.contains("xxx", true),
                             number = channelNumber
                         )
                     )
@@ -80,44 +105,29 @@ object M3uParser {
             }
             i++
         }
-
         return channels.filter { !it.isAdult }
     }
 
     private fun parseAttributes(line: String): Map<String, String> {
         val attrs = mutableMapOf<String, String>()
-        // Match key="value" or key=value patterns
-        val regex = Regex("""([\w-]+)=["']?([^"',\s]*)["']?""")
+        val regex = Regex("""([\w-]+)=["']?([^"',]*)["']?""")
         regex.findAll(line).forEach { match ->
             val key = match.groupValues[1].lowercase()
-            val value = match.groupValues[2].let {
-                // Also handle quoted with spaces by trying quoted version
-                val quotedRegex = Regex("""${Regex.escape(match.groupValues[1])}=["']([^"']*)["']""")
-                quotedRegex.find(line)?.groupValues?.get(1) ?: it
-            }
+            val value = match.groupValues[2].trim()
             attrs[key] = value
         }
         return attrs
     }
 
     private fun extractChannelName(extinf: String): String {
-        // Name is after the last comma
         val commaIdx = extinf.lastIndexOf(',')
-        return if (commaIdx >= 0 && commaIdx < extinf.length - 1) {
-            extinf.substring(commaIdx + 1).trim()
-        } else {
-            "Unknown Channel"
-        }
+        return if (commaIdx >= 0 && commaIdx < extinf.length - 1) extinf.substring(commaIdx + 1).trim() else "Unknown Channel"
     }
 
     private fun findStreamUrl(lines: List<String>, startIdx: Int): String? {
         for (j in startIdx until minOf(startIdx + 3, lines.size)) {
             val l = lines[j].trim()
-            if (l.isNotEmpty() && !l.startsWith("#")) {
-                if (l.startsWith("http") || l.startsWith("rtmp") || l.startsWith("rtsp")) {
-                    return l
-                }
-            }
+            if (l.isNotEmpty() && !l.startsWith("#") && (l.startsWith("http") || l.startsWith("rtmp") || l.startsWith("rtsp"))) return l
         }
         return null
     }

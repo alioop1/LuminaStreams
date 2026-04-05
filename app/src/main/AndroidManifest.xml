@@ -4,12 +4,10 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- TV: מסך מגע לא נדרש -->
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />
 
-    <!-- TV Launcher -->
     <uses-feature
         android:name="android.software.leanback"
         android:required="true" />
@@ -26,6 +24,7 @@
         android:largeHeap="true"
         android:hardwareAccelerated="true"
         android:enableOnBackInvokedCallback="true"
+        android:usesCleartextTraffic="true"
         tools:targetApi="34">
 
         <activity

@@ -2,8 +2,6 @@ package com.luminastreams.tv.presentation.iptv
 
 import androidx.compose.runtime.Immutable
 
-// ── IPTV Data Models ──────────────────────────────────────────────────────────
-
 @Immutable
 data class IptvChannel(
     val id: String,
@@ -22,8 +20,8 @@ data class EpgProgram(
     val channelId: String,
     val title: String,
     val description: String,
-    val startTime: Long,   // epoch ms
-    val endTime: Long,     // epoch ms
+    val startTime: Long,
+    val endTime: Long,
     val category: String = "",
     val rating: String = "",
     val posterUrl: String = ""
@@ -36,11 +34,7 @@ data class EpgProgram(
             if (now > endTime) return 1f
             return ((now - startTime).toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
         }
-    val isLive: Boolean
-        get() {
-            val now = System.currentTimeMillis()
-            return now in startTime..endTime
-        }
+    val isLive: Boolean get() = System.currentTimeMillis() in startTime..endTime
     val isUpcoming: Boolean get() = System.currentTimeMillis() < startTime
 }
 
@@ -64,27 +58,18 @@ sealed interface IptvLoadState {
 
 @Immutable
 data class IptvState(
-    // Playlists
     val playlists: List<IptvPlaylist> = emptyList(),
     val activePlaylistId: String? = null,
-
-    // Channels
     val channels: List<IptvChannel> = emptyList(),
     val groups: List<String> = emptyList(),
     val selectedGroup: String = "All",
     val filteredChannels: List<IptvChannel> = emptyList(),
     val searchQuery: String = "",
-
-    // EPG
     val epgData: Map<String, List<EpgProgram>> = emptyMap(),
     val epgLoadState: IptvLoadState = IptvLoadState.Idle,
-
-    // Playback
     val currentChannel: IptvChannel? = null,
     val currentProgram: EpgProgram? = null,
     val nextProgram: EpgProgram? = null,
-
-    // UI
     val loadState: IptvLoadState = IptvLoadState.Idle,
     val showAddPlaylist: Boolean = false,
     val showEpgGuide: Boolean = false,
@@ -93,11 +78,7 @@ data class IptvState(
     val qrCodeChannel: IptvChannel? = null,
     val favoriteChannelIds: Set<String> = emptySet(),
     val recentChannelIds: List<String> = emptyList(),
-
-    // View mode
     val viewMode: IptvViewMode = IptvViewMode.CHANNEL_LIST,
-
-    // Add playlist form
     val addPlaylistName: String = "",
     val addPlaylistUrl: String = "",
     val addPlaylistEpgUrl: String = ""
@@ -116,10 +97,12 @@ sealed interface IptvEvent {
     data class ShowQrCode(val channel: IptvChannel) : IptvEvent
     object HideQrCode : IptvEvent
     object ShowAddPlaylist : IptvEvent
+    data class ShowEditPlaylist(val playlist: IptvPlaylist) : IptvEvent
     object HideAddPlaylist : IptvEvent
     object ShowEpgGuide : IptvEvent
     object HideEpgGuide : IptvEvent
     object RefreshEpg : IptvEvent
+    object RefreshCurrentPlaylist : IptvEvent // אירוע חדש לרענון פלייליסט ו-EPG
     data class SetViewMode(val mode: IptvViewMode) : IptvEvent
     data class UpdateAddPlaylistName(val name: String) : IptvEvent
     data class UpdateAddPlaylistUrl(val url: String) : IptvEvent

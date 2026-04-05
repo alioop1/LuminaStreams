@@ -6,13 +6,11 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -41,13 +39,16 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             is IptvEvent.ToggleFavorite -> toggleFavorite(event.channelId)
             is IptvEvent.ShowQrCode -> _state.update { it.copy(showQrCode = true, qrCodeChannel = event.channel) }
             is IptvEvent.HideQrCode -> _state.update { it.copy(showQrCode = false, qrCodeChannel = null) }
-            is IptvEvent.ShowAddPlaylist -> _state.update { it.copy(showAddPlaylist = true) }
-            is IptvEvent.HideAddPlaylist -> _state.update {
-                it.copy(showAddPlaylist = false, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "")
-            }
+            is IptvEvent.ShowAddPlaylist -> _state.update { it.copy(showAddPlaylist = true, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "") }
+            is IptvEvent.ShowEditPlaylist -> _state.update { it.copy(showAddPlaylist = true, addPlaylistName = event.playlist.name, addPlaylistUrl = event.playlist.url, addPlaylistEpgUrl = event.playlist.epgUrl) }
+            is IptvEvent.HideAddPlaylist -> _state.update { it.copy(showAddPlaylist = false, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "") }
             is IptvEvent.ShowEpgGuide -> _state.update { it.copy(showEpgGuide = true) }
             is IptvEvent.HideEpgGuide -> _state.update { it.copy(showEpgGuide = false) }
             is IptvEvent.RefreshEpg -> refreshEpg()
+            is IptvEvent.RefreshCurrentPlaylist -> {
+                val active = _state.value.playlists.find { it.isActive }
+                if (active != null) loadPlaylist(active.url, active.name, active.epgUrl, active.id)
+            }
             is IptvEvent.SetViewMode -> _state.update { it.copy(viewMode = event.mode) }
             is IptvEvent.UpdateAddPlaylistName -> _state.update { it.copy(addPlaylistName = event.name) }
             is IptvEvent.UpdateAddPlaylistUrl -> _state.update { it.copy(addPlaylistUrl = event.url) }
@@ -55,78 +56,57 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             is IptvEvent.ConfirmAddPlaylist -> {
                 val s = _state.value
                 if (s.addPlaylistUrl.isNotBlank()) {
-                    loadPlaylist(s.addPlaylistUrl, s.addPlaylistName.ifBlank { "My Playlist" }, s.addPlaylistEpgUrl)
+                    val existingId = s.playlists.find { it.isActive }?.id
+                    loadPlaylist(s.addPlaylistUrl, s.addPlaylistName.ifBlank { "My Playlist" }, s.addPlaylistEpgUrl, existingId)
                     onEvent(IptvEvent.HideAddPlaylist)
                 }
             }
         }
     }
 
-    private fun loadPlaylist(url: String, name: String, epgUrl: String) {
+    private fun loadPlaylist(url: String, name: String, epgUrl: String, existingId: String? = null) {
         viewModelScope.launch {
             _state.update { it.copy(loadState = IptvLoadState.Loading) }
             try {
                 val channels = M3uParser.parse(url).getOrThrow()
-                val groups = listOf("All", "Favorites", "Recent") + channels.map { it.groupTitle }.distinct().sorted()
+                // שומר על הסדר האמיתי של הקובץ בדיוק כמו שביקשת!
+                val groups = listOf("All", "Favorites", "Recent") + channels.map { it.groupTitle }.distinct()
 
-                val playlistId = "pl_${System.currentTimeMillis()}"
+                val playlistId = existingId ?: "pl_${System.currentTimeMillis()}"
                 val playlist = IptvPlaylist(
-                    id = playlistId,
-                    name = name,
-                    url = url,
-                    epgUrl = epgUrl,
-                    channelCount = channels.size,
-                    lastUpdated = System.currentTimeMillis(),
-                    isActive = true
+                    id = playlistId, name = name, url = url, epgUrl = epgUrl,
+                    channelCount = channels.size, lastUpdated = System.currentTimeMillis(), isActive = true
                 )
 
-                val existing = _state.value.playlists.map { it.copy(isActive = false) }
+                val existing = _state.value.playlists.filter { it.id != playlistId }.map { it.copy(isActive = false) }
                 val newPlaylists = existing + playlist
                 savePlaylistsToPrefs(newPlaylists)
 
                 _state.update { s ->
                     s.copy(
-                        playlists = newPlaylists,
-                        activePlaylistId = playlistId,
-                        channels = channels,
-                        groups = groups,
-                        selectedGroup = "All",
-                        filteredChannels = channels,
-                        loadState = IptvLoadState.Success,
-                        showAddPlaylist = false
+                        playlists = newPlaylists, activePlaylistId = playlistId, channels = channels,
+                        groups = groups, selectedGroup = "All", filteredChannels = channels,
+                        loadState = IptvLoadState.Success, showAddPlaylist = false
                     )
                 }
 
-                if (epgUrl.isNotBlank()) {
-                    loadEpg(epgUrl)
-                }
+                if (epgUrl.isNotBlank()) loadEpg(epgUrl)
             } catch (e: Exception) {
-                _state.update {
-                    it.copy(loadState = IptvLoadState.Error("Failed to load playlist: ${e.message?.take(60)}"))
-                }
+                _state.update { it.copy(loadState = IptvLoadState.Error("Failed: ${e.message?.take(60)}")) }
             }
         }
     }
 
     private fun selectPlaylist(playlistId: String) {
         val playlist = _state.value.playlists.find { it.id == playlistId } ?: return
-        // Reload the playlist
-        loadPlaylist(playlist.url, playlist.name, playlist.epgUrl)
+        loadPlaylist(playlist.url, playlist.name, playlist.epgUrl, playlist.id)
     }
 
     private fun deletePlaylist(playlistId: String) {
         val updated = _state.value.playlists.filter { it.id != playlistId }
         savePlaylistsToPrefs(updated)
         if (_state.value.activePlaylistId == playlistId) {
-            _state.update {
-                it.copy(
-                    playlists = updated,
-                    activePlaylistId = null,
-                    channels = emptyList(),
-                    filteredChannels = emptyList(),
-                    groups = emptyList()
-                )
-            }
+            _state.update { it.copy(playlists = updated, activePlaylistId = null, channels = emptyList(), filteredChannels = emptyList(), groups = emptyList()) }
         } else {
             _state.update { it.copy(playlists = updated) }
         }
@@ -135,58 +115,32 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private fun selectChannel(channel: IptvChannel) {
         val epg = _state.value.epgData[channel.tvgId] ?: _state.value.epgData[channel.id]
         val now = System.currentTimeMillis()
-        val currentProg = epg?.firstOrNull { it.isLive }
-        val nextProg = epg?.firstOrNull { it.startTime > now }
-
-        // Add to recent
-        val recentIds = (listOf(channel.id) + _state.value.recentChannelIds)
-            .distinct().take(20)
+        val recentIds = (listOf(channel.id) + _state.value.recentChannelIds).distinct().take(20)
         saveRecentToPrefs(recentIds)
-
-        _state.update {
-            it.copy(
-                currentChannel = channel,
-                currentProgram = currentProg,
-                nextProgram = nextProg,
-                recentChannelIds = recentIds
-            )
-        }
+        _state.update { it.copy(currentChannel = channel, currentProgram = epg?.firstOrNull { p -> p.isLive }, nextProgram = epg?.firstOrNull { p -> p.startTime > now }, recentChannelIds = recentIds) }
     }
 
     private fun selectGroup(group: String) {
         val channels = _state.value.channels
         val favorites = _state.value.favoriteChannelIds
         val recentIds = _state.value.recentChannelIds
-
         val filtered = when (group) {
             "All" -> channels
             "Favorites" -> channels.filter { it.id in favorites }
             "Recent" -> recentIds.mapNotNull { id -> channels.find { it.id == id } }
             else -> channels.filter { it.groupTitle == group }
-        }.let { list ->
-            val q = _state.value.searchQuery
-            if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
-        }
-
+        }.let { list -> val q = _state.value.searchQuery; if (q.isBlank()) list else list.filter { it.name.contains(q, true) } }
         _state.update { it.copy(selectedGroup = group, filteredChannels = filtered) }
     }
 
     private fun updateSearch(query: String) {
-        val channels = _state.value.channels
-        val group = _state.value.selectedGroup
-        val favorites = _state.value.favoriteChannelIds
-        val recentIds = _state.value.recentChannelIds
-
-        val base = when (group) {
-            "All" -> channels
-            "Favorites" -> channels.filter { it.id in favorites }
-            "Recent" -> recentIds.mapNotNull { id -> channels.find { it.id == id } }
-            else -> channels.filter { it.groupTitle == group }
+        val base = when (val group = _state.value.selectedGroup) {
+            "All" -> _state.value.channels
+            "Favorites" -> _state.value.channels.filter { it.id in _state.value.favoriteChannelIds }
+            "Recent" -> _state.value.recentChannelIds.mapNotNull { id -> _state.value.channels.find { it.id == id } }
+            else -> _state.value.channels.filter { it.groupTitle == group }
         }
-
-        val filtered = if (query.isBlank()) base
-        else base.filter { it.name.contains(query, ignoreCase = true) }
-
+        val filtered = if (query.isBlank()) base else base.filter { it.name.contains(query, true) }
         _state.update { it.copy(searchQuery = query, filteredChannels = filtered) }
     }
 
@@ -195,11 +149,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         if (channelId in favs) favs.remove(channelId) else favs.add(channelId)
         saveFavoritesToPrefs(favs)
         _state.update { it.copy(favoriteChannelIds = favs) }
-
-        // Refresh filtered list if on favorites tab
-        if (_state.value.selectedGroup == "Favorites") {
-            selectGroup("Favorites")
-        }
+        if (_state.value.selectedGroup == "Favorites") selectGroup("Favorites")
     }
 
     private fun loadEpg(epgUrl: String) {
@@ -209,10 +159,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val epgMap = EpgParser.parse(epgUrl).getOrThrow()
                 _state.update { it.copy(epgData = epgMap, epgLoadState = IptvLoadState.Success) }
-
-                // Update current channel's program if playing
-                val ch = _state.value.currentChannel
-                if (ch != null) selectChannel(ch)
+                _state.value.currentChannel?.let { selectChannel(it) }
             } catch (e: Exception) {
                 _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG: ${e.message?.take(50)}")) }
             }
@@ -221,20 +168,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun refreshEpg() {
         val activePlaylist = _state.value.playlists.find { it.id == _state.value.activePlaylistId }
-        if (activePlaylist?.epgUrl?.isNotBlank() == true) {
-            loadEpg(activePlaylist.epgUrl)
-        }
+        if (activePlaylist?.epgUrl?.isNotBlank() == true) loadEpg(activePlaylist.epgUrl)
     }
 
     fun getEpgForChannel(channel: IptvChannel): List<EpgProgram> {
         val epgData = _state.value.epgData
-        return epgData[channel.tvgId]
-            ?: epgData[channel.id]
-            ?: epgData[channel.tvgName]
-            ?: emptyList()
+        return epgData[channel.tvgId] ?: epgData[channel.id] ?: epgData[channel.tvgName] ?: emptyList()
     }
-
-    // ── Persistence ────────────────────────────────────────────────────────────
 
     private fun loadSavedPlaylists() {
         try {
@@ -243,21 +183,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             val playlists = (0 until arr.length()).map { i ->
                 val obj = arr.getJSONObject(i)
                 IptvPlaylist(
-                    id = obj.optString("id"),
-                    name = obj.optString("name"),
-                    url = obj.optString("url"),
-                    epgUrl = obj.optString("epgUrl"),
-                    channelCount = obj.optInt("channelCount"),
-                    lastUpdated = obj.optLong("lastUpdated"),
-                    isActive = obj.optBoolean("isActive")
+                    id = obj.optString("id"), name = obj.optString("name"), url = obj.optString("url"),
+                    epgUrl = obj.optString("epgUrl"), channelCount = obj.optInt("channelCount"),
+                    lastUpdated = obj.optLong("lastUpdated"), isActive = obj.optBoolean("isActive")
                 )
             }
             if (playlists.isNotEmpty()) {
                 _state.update { it.copy(playlists = playlists) }
-                // Auto-load the last active playlist
-                playlists.lastOrNull { it.isActive }?.let {
-                    loadPlaylist(it.url, it.name, it.epgUrl)
-                }
+                playlists.lastOrNull { it.isActive }?.let { loadPlaylist(it.url, it.name, it.epgUrl, it.id) }
             }
         } catch (_: Exception) {}
     }
@@ -268,13 +201,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 val arr = JSONArray()
                 playlists.forEach { pl ->
                     arr.put(JSONObject().apply {
-                        put("id", pl.id)
-                        put("name", pl.name)
-                        put("url", pl.url)
-                        put("epgUrl", pl.epgUrl)
-                        put("channelCount", pl.channelCount)
-                        put("lastUpdated", pl.lastUpdated)
-                        put("isActive", pl.isActive)
+                        put("id", pl.id); put("name", pl.name); put("url", pl.url)
+                        put("epgUrl", pl.epgUrl); put("channelCount", pl.channelCount)
+                        put("lastUpdated", pl.lastUpdated); put("isActive", pl.isActive)
                     })
                 }
                 prefs.edit().putString("playlists", arr.toString()).apply()
@@ -282,22 +211,11 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun loadFavorites() {
-        val saved = prefs.getStringSet("favorites", emptySet()) ?: emptySet()
-        _state.update { it.copy(favoriteChannelIds = saved) }
-    }
-
-    private fun saveFavoritesToPrefs(favs: Set<String>) {
-        prefs.edit().putStringSet("favorites", favs).apply()
-    }
-
+    private fun loadFavorites() { _state.update { it.copy(favoriteChannelIds = prefs.getStringSet("favorites", emptySet()) ?: emptySet()) } }
+    private fun saveFavoritesToPrefs(favs: Set<String>) { prefs.edit().putStringSet("favorites", favs).apply() }
     private fun loadRecent() {
         val raw = prefs.getString("recent_channels", "") ?: ""
-        val ids = if (raw.isBlank()) emptyList() else raw.split(",").filter { it.isNotBlank() }
-        _state.update { it.copy(recentChannelIds = ids) }
+        _state.update { it.copy(recentChannelIds = if (raw.isBlank()) emptyList() else raw.split(",").filter { id -> id.isNotBlank() }) }
     }
-
-    private fun saveRecentToPrefs(ids: List<String>) {
-        prefs.edit().putString("recent_channels", ids.joinToString(",")).apply()
-    }
+    private fun saveRecentToPrefs(ids: List<String>) { prefs.edit().putString("recent_channels", ids.joinToString(",")).apply() }
 }

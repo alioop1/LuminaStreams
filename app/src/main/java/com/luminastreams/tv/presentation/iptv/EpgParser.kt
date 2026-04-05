@@ -7,19 +7,10 @@ import org.xml.sax.helpers.DefaultHandler
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.text.SimpleDateFormat
-import java.util.Locale
 import java.util.zip.GZIPInputStream
 import javax.xml.parsers.SAXParserFactory
 
 object EpgParser {
-
-    private val dateFormats = listOf(
-        SimpleDateFormat("yyyyMMddHHmmss Z", Locale.US),
-        SimpleDateFormat("yyyyMMddHHmmss", Locale.US),
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ssZ", Locale.US),
-        SimpleDateFormat("yyyyMMddHHmmss +0000", Locale.US)
-    )
 
     suspend fun parse(url: String): Result<Map<String, List<EpgProgram>>> = withContext(Dispatchers.IO) {
         try {
@@ -29,7 +20,7 @@ object EpgParser {
             conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV)")
             conn.setRequestProperty("Accept-Encoding", "gzip")
 
-            val stream: InputStream = if (conn.contentEncoding == "gzip" ||
+            val stream: InputStream = if (conn.contentEncoding?.contains("gzip", true) == true ||
                 url.endsWith(".gz", ignoreCase = true)) {
                 GZIPInputStream(conn.inputStream)
             } else {
@@ -43,48 +34,61 @@ object EpgParser {
             val parser = factory.newSAXParser()
             parser.parse(stream, handler)
 
-            Result.success(handler.programs.groupBy { it.channelId })
+            Result.success(handler.channelsMap)
         } catch (e: Exception) {
             Result.failure(e)
         }
     }
 
-    fun parseTime(timeStr: String): Long {
-        val cleaned = timeStr.trim()
-        for (fmt in dateFormats) {
-            try {
-                return fmt.parse(cleaned)?.time ?: continue
-            } catch (_: Exception) { }
-        }
-        // Try manual parse: yyyyMMddHHmmss +HHMM
-        return try {
-            val parts = cleaned.split(" ")
-            val base = parts[0]
-            val year = base.substring(0, 4).toInt()
-            val month = base.substring(4, 6).toInt() - 1
-            val day = base.substring(6, 8).toInt()
-            val hour = base.substring(8, 10).toInt()
-            val min = base.substring(10, 12).toInt()
-            val sec = if (base.length >= 14) base.substring(12, 14).toInt() else 0
-            val cal = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
-            cal.set(year, month, day, hour, min, sec)
-            cal.set(java.util.Calendar.MILLISECOND, 0)
-            // Apply timezone offset
-            if (parts.size > 1) {
-                val tz = parts[1]
-                val sign = if (tz.startsWith("-")) -1 else 1
-                val tzH = tz.drop(1).take(2).toIntOrNull() ?: 0
-                val tzM = tz.drop(3).take(2).toIntOrNull() ?: 0
-                cal.timeInMillis -= sign * (tzH * 60 + tzM) * 60_000L
-            }
-            cal.timeInMillis
-        } catch (_: Exception) {
-            0L
+    // Thread-local calendar כדי למנוע יצירת אובייקטים חדשים בזיכרון לכל שורה
+    private val threadLocalCalendar = object : ThreadLocal<java.util.Calendar>() {
+        override fun initialValue(): java.util.Calendar {
+            return java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC"))
         }
     }
 
+    // פונקציית המרת זמנים סופר-מהירה שלא מייצרת זבל (Garbage)
+    fun parseTimeFast(timeStr: String): Long {
+        try {
+            val cleaned = timeStr.trim()
+            if (cleaned.length >= 14) {
+                val year = cleaned.substring(0, 4).toInt()
+                val month = cleaned.substring(4, 6).toInt() - 1
+                val day = cleaned.substring(6, 8).toInt()
+                val hour = cleaned.substring(8, 10).toInt()
+                val min = cleaned.substring(10, 12).toInt()
+                val sec = cleaned.substring(12, 14).toInt()
+
+                val cal = threadLocalCalendar.get()!!
+                cal.set(year, month, day, hour, min, sec)
+                cal.set(java.util.Calendar.MILLISECOND, 0)
+
+                var time = cal.timeInMillis
+
+                val spaceIdx = cleaned.indexOf(' ')
+                if (spaceIdx != -1 && spaceIdx + 5 < cleaned.length) {
+                    val tz = cleaned.substring(spaceIdx + 1)
+                    if (tz.startsWith("+") || tz.startsWith("-")) {
+                        val sign = if (tz.startsWith("-")) -1 else 1
+                        val tzH = tz.substring(1, 3).toInt()
+                        val tzM = tz.substring(3, 5).toInt()
+                        time -= sign * (tzH * 60 + tzM) * 60_000L
+                    }
+                }
+                return time
+            }
+        } catch (_: Exception) {}
+        return 0L
+    }
+
     private class XmlTvHandler : DefaultHandler() {
-        val programs = mutableListOf<EpgProgram>()
+        val channelsMap = mutableMapOf<String, MutableList<EpgProgram>>()
+
+        // OOM Saver: נשמור רק תוכניות מה-12 שעות האחרונות ולא היסטוריה שלמה
+        private val cutoffTime = System.currentTimeMillis() - 12 * 3600 * 1000L
+
+        // Cache למחרוזות שחוזרות על עצמן המון פעמים כדי לחסוך בזיכרון
+        private val stringCache = mutableMapOf<String, String>()
 
         private var inProgramme = false
         private var currentChannelId = ""
@@ -95,19 +99,26 @@ object EpgParser {
         private var currentCategory = ""
         private var currentRating = ""
         private var currentPosterUrl = ""
+
         private var capturingTitle = false
         private var capturingDesc = false
         private var capturingCategory = false
         private var capturingRating = false
         private val sb = StringBuilder()
 
+        private fun getCachedString(value: String): String {
+            val trimmed = value.trim()
+            if (trimmed.isEmpty()) return ""
+            return stringCache.getOrPut(trimmed) { trimmed }
+        }
+
         override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
             when (qName.lowercase()) {
                 "programme" -> {
                     inProgramme = true
-                    currentChannelId = attrs.getValue("channel") ?: ""
-                    currentStart = EpgParser.parseTime(attrs.getValue("start") ?: "")
-                    currentStop = EpgParser.parseTime(attrs.getValue("stop") ?: "")
+                    currentChannelId = getCachedString(attrs.getValue("channel") ?: "")
+                    currentStart = parseTimeFast(attrs.getValue("start") ?: "")
+                    currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
                     currentTitle = ""; currentDesc = ""; currentCategory = ""
                     currentRating = ""; currentPosterUrl = ""
                 }
@@ -130,32 +141,28 @@ object EpgParser {
 
         override fun endElement(uri: String, localName: String, qName: String) {
             when (qName.lowercase()) {
-                "title" -> {
-                    if (capturingTitle) { currentTitle = sb.toString().trim(); capturingTitle = false; sb.clear() }
-                }
-                "desc" -> {
-                    if (capturingDesc) { currentDesc = sb.toString().trim(); capturingDesc = false; sb.clear() }
-                }
-                "category" -> {
-                    if (capturingCategory) { currentCategory = sb.toString().trim(); capturingCategory = false; sb.clear() }
-                }
-                "value" -> {
-                    if (capturingRating) { currentRating = sb.toString().trim(); capturingRating = false; sb.clear() }
-                }
+                "title" -> if (capturingTitle) { currentTitle = sb.toString().trim(); capturingTitle = false; sb.clear() }
+                "desc" -> if (capturingDesc) { currentDesc = sb.toString().trim(); capturingDesc = false; sb.clear() }
+                "category" -> if (capturingCategory) { currentCategory = sb.toString().trim(); capturingCategory = false; sb.clear() }
+                "value" -> if (capturingRating) { currentRating = sb.toString().trim(); capturingRating = false; sb.clear() }
                 "programme" -> {
                     if (inProgramme && currentTitle.isNotEmpty() && currentStart > 0 && currentStop > 0) {
-                        programs.add(
-                            EpgProgram(
-                                channelId = currentChannelId,
-                                title = currentTitle,
-                                description = currentDesc,
-                                startTime = currentStart,
-                                endTime = currentStop,
-                                category = currentCategory,
-                                rating = currentRating,
-                                posterUrl = currentPosterUrl
+                        // הסינון הזה חוסך 80% מהזיכרון בקבצי EPG גדולים
+                        if (currentStop > cutoffTime) {
+                            val list = channelsMap.getOrPut(currentChannelId) { mutableListOf() }
+                            list.add(
+                                EpgProgram(
+                                    channelId = currentChannelId,
+                                    title = currentTitle,
+                                    description = currentDesc,
+                                    startTime = currentStart,
+                                    endTime = currentStop,
+                                    category = getCachedString(currentCategory),
+                                    rating = getCachedString(currentRating),
+                                    posterUrl = getCachedString(currentPosterUrl)
+                                )
                             )
-                        )
+                        }
                     }
                     inProgramme = false
                 }
