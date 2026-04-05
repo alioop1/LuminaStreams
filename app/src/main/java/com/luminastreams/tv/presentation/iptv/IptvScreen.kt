@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.EventNote
+import androidx.compose.material.icons.automirrored.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -47,7 +49,6 @@ import java.util.*
 // ═══ PALETTE ═════════════════════════════════════════════════════════════════
 private val IPTV_BG        = Color(0xFF050508)
 private val IPTV_SURFACE   = Color(0xFF0C0C14)
-private val IPTV_CARD      = Color(0xFF13131E)
 private val IPTV_CARD_FOCUS= Color(0xFF1E1E2E)
 private val IPTV_RED       = Color(0xFFE50914)
 private val IPTV_LIVE      = Color(0xFFFF2D55)
@@ -66,7 +67,6 @@ fun IptvScreen(
     onPlayChannel: (String, String) -> Unit  // url, title
 ) {
     val state by viewModel.state.collectAsState()
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     val backFR = remember { FocusRequester() }
     val firstGroupFR = remember { FocusRequester() }
@@ -263,8 +263,6 @@ private fun IptvTopBar(
     onBack: () -> Unit,
     onEvent: (IptvEvent) -> Unit
 ) {
-    val addFR = remember { FocusRequester() }
-
     Row(
         Modifier
             .fillMaxWidth()
@@ -363,7 +361,7 @@ private fun IptvTopBar(
                 focusedContentColor = IPTV_WHITE
             ),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-            modifier = Modifier.height(36.dp).focusRequester(addFR)
+            modifier = Modifier.height(36.dp)
         ) {
             Row(
                 Modifier.padding(horizontal = 14.dp).fillMaxHeight(),
@@ -1107,7 +1105,6 @@ fun EpgFullGuide(
 private fun EpgFullRow(program: EpgProgram, timeFormatter: SimpleDateFormat) {
     val isLive = program.isLive
     val isPast = System.currentTimeMillis() > program.endTime
-    var focused by remember { mutableStateOf(false) }
 
     Surface(
         onClick = {},
@@ -1128,7 +1125,7 @@ private fun EpgFullRow(program: EpgProgram, timeFormatter: SimpleDateFormat) {
             focusedBorder = Border.None
         ),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        modifier = Modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        modifier = Modifier.fillMaxWidth()
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),

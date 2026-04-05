@@ -47,6 +47,7 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.Cast
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LocalMovies
 import androidx.compose.material.icons.filled.Movie
@@ -154,23 +155,12 @@ private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
 
-// ═══════════════════════════════════════════════════════════════════
-//  IMAGE QUALITY — overdraw factor per device tier
-//
-//  HIGH: 1.5× — loads bitmaps at 150% of the card's physical pixel
-//    size. Provides sharpness headroom on 4K OLED panels where
-//    fractional scaling would otherwise soften sub-pixel edges.
-//  MID:  1.25× — moderate overdraw; visibly sharper with minimal
-//    extra bandwidth cost.
-//  LOW:  1.0× — exact physical size; avoids OOM on ≤2 GB devices.
-// ═══════════════════════════════════════════════════════════════════
 private val imageOverdraw: Float get() = when (DeviceProfile.tier) {
     DeviceProfile.Tier.HIGH -> 1.5f
     DeviceProfile.Tier.MID  -> 1.25f
     DeviceProfile.Tier.LOW  -> 1.0f
 }
 
-/** Convert a dp dimension to physical pixels, applying the per-tier overdraw factor. */
 @Composable
 private fun Dp.toQualityPx(): Int {
     val density = LocalDensity.current
@@ -395,7 +385,6 @@ fun HomeScreen(
 
         BackdropLayer(focusState.heroMovie)
 
-        // אופטימיזציה לסטרימרים חלשים - גרדיאנט פשוט במקום שקיפויות עמוסות GPU
         val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
         if (isLow) {
             Box(Modifier.fillMaxSize().background(Color(0xD9070707)))
@@ -415,7 +404,6 @@ fun HomeScreen(
             panelH              = panelH,
             rowHeightFor        = { i -> rowHeightFor(i) },
             onMovieClick        = { id ->
-                // פינוי RAM אקטיבי לפני כניסה לנגן או למסך פירוט!
                 if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
                     context.imageLoader.memoryCache?.clear()
                 }
@@ -437,20 +425,13 @@ fun HomeScreen(
             },
             onWatchlist = { navController.navigate("watchlist") },
             onSettings  = { navController.navigate("settings") },
-                    onIptv      = { navController.navigate("iptv") }
+            onIptv      = { navController.navigate("iptv") }
         )
     }
 }
 
 // ═══════════════════════════════════════════════════════════════════
 //  BACKDROP
-//
-//  FIX: removed the blanket coerceIn(1, 1280) cap that caused blurry
-//  backdrops on 4K TVs. Now uses per-tier caps:
-//    HIGH → up to 3840×2160 (full 4K)
-//    MID  → up to 1920×1080
-//    LOW  → up to 1280×720  (saves RAM, fine at 720p output)
-//  Also added Scale.FILL and removed allowRgb565 (16-bit banding).
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
@@ -768,7 +749,7 @@ private fun TwoRowNavBar(
                 NavPill(tr("Movies", "סרטים"),    Icons.Default.Movie,       activeTab == "סרטים",  null,       onMoviesTab)  { o, w -> tabPositions["סרטים"]     = o; tabWidths["סרטים"]     = w }
                 NavPill(tr("TV Shows", "סדרות"),  Icons.Default.Tv,          activeTab == "סדרות",  null,       onSeriesTab)  { o, w -> tabPositions["סדרות"]     = o; tabWidths["סדרות"]     = w }
                 NavPill("Fuzer",                 Icons.Default.LocalMovies, activeTab == "Fuzer",  null,       onFuzer)      { o, w -> tabPositions["Fuzer"]     = o; tabWidths["Fuzer"]     = w }
-                NavPill(tr("Live TV", "טלוויזיה חיה"),  Icons.Default.LiveTv,      false,                 null,       onIptv)       { o, w -> tabPositions["iptv"]      = o; tabWidths["iptv"]      = w }
+                NavPill(tr("Live TV", "טלוויזיה חיה"),  Icons.Default.Cast,        false,                 null,       onIptv)       { o, w -> tabPositions["iptv"]      = o; tabWidths["iptv"]      = w }
                 NavPill(tr("Watchlist", "רשימת צפייה"), Icons.Default.Bookmark,    false,                 null,       onWatchlist)  { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
                 NavPill(tr("Settings", "הגדרות"),  Icons.Default.Settings,    false,                 null,       onSettings)   { o, w -> tabPositions["Settings"]  = o; tabWidths["Settings"]  = w }
                 Spacer(Modifier.weight(1f))
@@ -1198,10 +1179,6 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
 
 // ═══════════════════════════════════════════════════════════════════
 //  LANDSCAPE CARD
-//
-//  FIX: replaced hardcoded LAND_W_PX/LAND_H_PX decode targets with
-//  density-aware pixel sizes (dp × screen density × overdraw factor).
-//  Added Scale.FILL; removed allowRgb565 (16-bit causes banding).
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
@@ -1351,7 +1328,6 @@ private fun LandscapeCard(
                 }
             }
 
-            // ── Watch progress bar ───────────────────────────────────────
             movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                 val displayProg = if (prog >= 0.95f) 1f else prog
                 Box(
@@ -1375,10 +1351,6 @@ private fun LandscapeCard(
 
 // ═══════════════════════════════════════════════════════════════════
 //  POSTER CARD
-//
-//  FIX: same density-aware sizing fix as LandscapeCard above.
-//  Also: title text below card now uses DIM2 (slightly more
-//  transparent) when unfocused for better visual hierarchy.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
@@ -1499,7 +1471,6 @@ fun PosterCard(
                     }
                 }
 
-                // ── Watch progress bar ───────────────────────────────────────
                 movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                     val displayProg = if (prog >= 0.95f) 1f else prog
                     Box(
