@@ -1,4 +1,3 @@
-// 3. EpgParser.kt
 package com.luminastreams.tv.presentation.iptv
 
 import android.util.Log
@@ -9,9 +8,8 @@ import org.xml.sax.helpers.DefaultHandler
 import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
-import java.time.ZonedDateTime
-import java.time.format.DateTimeFormatter
-import java.time.format.DateTimeParseException
+import java.util.Calendar
+import java.util.TimeZone
 import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.SAXParserFactory
@@ -26,12 +24,13 @@ object EpgParser {
         val channelDisplayNames: Map<String, List<String>>
     )
 
-    suspend fun parse(url: String): Result<EpgResult> = withContext(Dispatchers.IO) {
+    // כאן הוספנו את allowedIds שמסנן את ה-EPG בטירוף וחוסך שעות של טעינה
+    suspend fun parse(url: String, allowedIds: Set<String>): Result<EpgResult> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "Starting EPG download from: $url")
             val stream = fetchEpgStream(url)
 
-            val handler = XmlTvHandler()
+            val handler = XmlTvHandler(allowedIds)
             val factory = SAXParserFactory.newInstance().apply {
                 isNamespaceAware = false
                 isValidating = false
@@ -42,7 +41,7 @@ object EpgParser {
             val parser = factory.newSAXParser()
             parser.parse(stream, handler)
 
-            Log.d(TAG, "EPG parsed: ${handler.channelsMap.size} channels, ${handler.channelLogos.size} logos")
+            Log.d(TAG, "EPG parsed: ${handler.channelsMap.size} relevant channels")
 
             val finalMap = mutableMapOf<String, List<EpgProgram>>()
             val finalLogoMap = mutableMapOf<String, String>()
@@ -52,18 +51,14 @@ object EpgParser {
                 finalMap[id.lowercase()] = sortedList
 
                 handler.displayNames[id]?.forEach { displayName ->
-                    if (displayName.isNotEmpty()) {
-                        finalMap[displayName.lowercase()] = sortedList
-                    }
+                    if (displayName.isNotEmpty()) finalMap[displayName.lowercase()] = sortedList
                 }
 
                 val logo = handler.channelLogos[id]
                 if (!logo.isNullOrBlank()) {
                     finalLogoMap[id.lowercase()] = logo
                     handler.displayNames[id]?.forEach { displayName ->
-                        if (displayName.isNotEmpty()) {
-                            finalLogoMap[displayName.lowercase()] = logo
-                        }
+                        if (displayName.isNotEmpty()) finalLogoMap[displayName.lowercase()] = logo
                     }
                 }
             }
@@ -89,24 +84,17 @@ object EpgParser {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 30_000
                 readTimeout = 120_000
-                setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV; Android 12) Chrome/112.0.0.0")
+                setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV) Chrome/112.0.0.0")
                 setRequestProperty("Accept-Encoding", "gzip, deflate")
-                setRequestProperty("Accept", "text/xml,application/xml,*/*")
                 instanceFollowRedirects = false
             }
 
             val responseCode = conn.responseCode
-            Log.d(TAG, "EPG fetch response: $responseCode for $currentUrl")
-
             if (responseCode in 300..399) {
                 val newUrl = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (!newUrl.isNullOrBlank()) {
-                    currentUrl = if (newUrl.startsWith("http")) newUrl
-                    else {
-                        val base = URL(currentUrl)
-                        URL(base, newUrl).toString()
-                    }
+                    currentUrl = if (newUrl.startsWith("http")) newUrl else URL(URL(currentUrl), newUrl).toString()
                     redirects++
                     continue
                 }
@@ -114,7 +102,7 @@ object EpgParser {
 
             if (responseCode !in 200..299) {
                 conn.disconnect()
-                throw Exception("HTTP Error: $responseCode fetching EPG")
+                throw Exception("HTTP Error: $responseCode")
             }
 
             val contentEncoding = conn.contentEncoding ?: ""
@@ -122,214 +110,172 @@ object EpgParser {
             val lowerUrl = currentUrl.lowercase()
 
             return when {
-                contentEncoding.contains("gzip", true) || lowerUrl.endsWith(".gz") ->
-                    GZIPInputStream(conn.inputStream)
+                contentEncoding.contains("gzip", true) || lowerUrl.endsWith(".gz") -> GZIPInputStream(conn.inputStream)
                 lowerUrl.endsWith(".zip") || contentType.contains("zip", true) -> {
                     val zis = ZipInputStream(conn.inputStream)
                     var entry = zis.nextEntry
                     while (entry != null) {
-                        if (entry.name.endsWith(".xml", true) || entry.name.endsWith(".xmltv", true)) {
-                            return zis
-                        }
+                        if (entry.name.endsWith(".xml", true) || entry.name.endsWith(".xmltv", true)) return zis
                         entry = zis.nextEntry
                     }
-                    zis.closeEntry()
-                    val zis2 = ZipInputStream(conn.inputStream)
-                    zis2.nextEntry
-                    zis2
+                    throw Exception("No XML found in ZIP")
                 }
                 else -> conn.inputStream
             }
         }
-        throw Exception("Too many redirects fetching EPG")
+        throw Exception("Too many redirects")
     }
 
-    private val timeFormatters = listOf(
-        DateTimeFormatter.ofPattern("yyyyMMddHHmmss Z"),
-        DateTimeFormatter.ofPattern("yyyyMMddHHmmss z"),
-        DateTimeFormatter.ofPattern("yyyyMMddHHmmssZ"),
-        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ssZ"),
-        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss z"),
-    )
-    private val localFormatter = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-
-    fun parseTimeSafely(timeStr: String): Long {
-        val cleanTime = timeStr.trim()
-        if (cleanTime.isEmpty() || cleanTime.length < 8) return 0L
-
-        for (fmt in timeFormatters) {
-            try {
-                return ZonedDateTime.parse(cleanTime, fmt).toInstant().toEpochMilli()
-            } catch (_: DateTimeParseException) {
-            } catch (_: Exception) {}
-        }
-
-        return try {
-            val timePart = cleanTime.split(" ")[0]
-            val ldt = java.time.LocalDateTime.parse(timePart, localFormatter)
-            ldt.atZone(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
-        } catch (_: Exception) { 0L }
-    }
-
-    private class XmlTvHandler : DefaultHandler() {
+    private class XmlTvHandler(private val allowedIds: Set<String>) : DefaultHandler() {
         val channelsMap = mutableMapOf<String, MutableList<EpgProgram>>()
         val displayNames = mutableMapOf<String, MutableList<String>>()
         val channelLogos = mutableMapOf<String, String>()
 
         private val cutoffTime = System.currentTimeMillis() - (24 * 3600 * 1000L)
         private val futureLimit = System.currentTimeMillis() + (14L * 24 * 3600 * 1000)
-        private val stringCache = HashMap<String, String>(4096)
+
+        private val calendar = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
 
         private var inChannel = false
         private var inProgramme = false
+        private var ignoreCurrentElement = false
+
         private var currentChannelId = ""
         private var currentProgramChannelId = ""
         private var currentStart = 0L
         private var currentStop = 0L
-        private var currentTitle = ""
-        private var currentDesc = ""
-        private var currentCategory = ""
-        private var currentIcon = ""
-        private var currentEpisodeNum = ""
-        private var currentRating = ""
-        private var currentDirector = ""
-        private var currentActors = ""
-        private var currentYear = ""
-        private var currentLang = ""
-
-        private var capturingDisplayName = false
-        private var capturingTitle = false
-        private var capturingDesc = false
-        private var capturingCategory = false
-        private var capturingEpisode = false
-        private var capturingRating = false
-        private var capturingDirector = false
-        private var capturingActor = false
-        private var capturingYear = false
 
         private val sb = StringBuilder(512)
+        private var currentTag = ""
 
-        private fun getCached(value: String): String {
-            val t = value.trim()
-            if (t.isEmpty()) return ""
-            return stringCache.getOrPut(t) { t }
+        private val programData = mutableMapOf<String, String>()
+
+        private fun parseTimeFast(timeStr: String): Long {
+            var len = timeStr.length
+            while (len > 0 && timeStr[len - 1] <= ' ') len--
+            var st = 0
+            while (st < len && timeStr[st] <= ' ') st++
+            if (len - st < 14) return 0L
+
+            return try {
+                var y = 0; var mo = 0; var d = 0; var h = 0; var m = 0; var s = 0
+                for(i in 0..3) y = y * 10 + (timeStr[st + i] - '0')
+                for(i in 4..5) mo = mo * 10 + (timeStr[st + i] - '0')
+                for(i in 6..7) d = d * 10 + (timeStr[st + i] - '0')
+                for(i in 8..9) h = h * 10 + (timeStr[st + i] - '0')
+                for(i in 10..11) m = m * 10 + (timeStr[st + i] - '0')
+                for(i in 12..13) s = s * 10 + (timeStr[st + i] - '0')
+
+                calendar.set(y, mo - 1, d, h, m, s)
+                calendar.set(Calendar.MILLISECOND, 0)
+
+                var offset = 0
+                if (len - st >= 19 && timeStr[st + 14] == ' ') {
+                    val sign = if (timeStr[st + 15] == '-') -1 else 1
+                    val oh = (timeStr[st + 16] - '0') * 10 + (timeStr[st + 17] - '0')
+                    val om = (timeStr[st + 18] - '0') * 10 + (timeStr[st + 19] - '0')
+                    offset = sign * ((oh * 60) + om) * 60_000
+                }
+                calendar.timeInMillis - offset
+            } catch (e: Exception) { 0L }
         }
 
         override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
             val tag = qName.lowercase()
+            currentTag = tag
+            sb.clear()
+
             when (tag) {
                 "channel" -> {
-                    inChannel = true
-                    currentChannelId = attrs.getValue("id") ?: ""
-                }
-                "icon" -> {
-                    val src = attrs.getValue("src") ?: ""
-                    if (src.isNotBlank()) {
-                        if (inChannel && currentChannelId.isNotEmpty()) {
-                            channelLogos[currentChannelId] = src
-                            channelLogos[currentChannelId.lowercase()] = src
-                        } else if (inProgramme) {
-                            currentIcon = src
-                        }
-                    }
-                }
-                "display-name" -> {
-                    if (inChannel && currentChannelId.isNotEmpty()) {
-                        capturingDisplayName = true
-                        sb.clear()
+                    val id = attrs.getValue("id") ?: ""
+                    // אם הרשימה ריקה זה אומר שלא סונן, אחרת בודקים אם הערוץ בפלייליסט
+                    if (allowedIds.isEmpty() || allowedIds.contains(id.lowercase())) {
+                        inChannel = true
+                        ignoreCurrentElement = false
+                        currentChannelId = id
+                    } else {
+                        ignoreCurrentElement = true
                     }
                 }
                 "programme" -> {
-                    inProgramme = true
-                    currentProgramChannelId = getCached(attrs.getValue("channel") ?: "")
-                    currentStart = parseTimeSafely(attrs.getValue("start") ?: "")
-                    currentStop = parseTimeSafely(attrs.getValue("stop") ?: "")
-                    currentTitle = ""; currentDesc = ""; currentCategory = ""
-                    currentIcon = ""; currentEpisodeNum = ""; currentRating = ""
-                    currentDirector = ""; currentActors = ""; currentYear = ""; currentLang = ""
-                }
-                "title" -> if (inProgramme && currentTitle.isEmpty()) { capturingTitle = true; sb.clear() }
-                "desc" -> if (inProgramme && currentDesc.isEmpty()) { capturingDesc = true; sb.clear() }
-                "category" -> if (inProgramme && currentCategory.isEmpty()) { capturingCategory = true; sb.clear() }
-                "episode-num" -> if (inProgramme) {
-                    val system = attrs.getValue("system") ?: ""
-                    if (system == "xmltv_ns" || system == "onscreen" || currentEpisodeNum.isEmpty()) {
-                        capturingEpisode = true; sb.clear()
+                    val ch = attrs.getValue("channel") ?: ""
+                    if (allowedIds.isEmpty() || allowedIds.contains(ch.lowercase())) {
+                        inProgramme = true
+                        ignoreCurrentElement = false
+                        currentProgramChannelId = ch
+                        currentStart = parseTimeFast(attrs.getValue("start") ?: "")
+                        currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
+                        programData.clear()
+                    } else {
+                        ignoreCurrentElement = true
                     }
                 }
-                "value" -> if (inProgramme) { capturingRating = true; sb.clear() }
-                "director" -> if (inProgramme) { capturingDirector = true; sb.clear() }
-                "actor" -> if (inProgramme) { capturingActor = true; sb.clear() }
-                "date" -> if (inProgramme) { capturingYear = true; sb.clear() }
-                "language" -> if (inProgramme && currentLang.isEmpty()) { capturingDesc = false; sb.clear() }
+                "icon" -> {
+                    if (!ignoreCurrentElement) {
+                        val src = attrs.getValue("src") ?: ""
+                        if (src.isNotBlank()) {
+                            if (inChannel) {
+                                channelLogos[currentChannelId] = src
+                                channelLogos[currentChannelId.lowercase()] = src
+                            } else if (inProgramme) {
+                                programData["icon"] = src
+                            }
+                        }
+                    }
+                }
             }
         }
 
         override fun characters(ch: CharArray, start: Int, length: Int) {
-            if (capturingTitle || capturingDesc || capturingCategory ||
-                capturingDisplayName || capturingEpisode || capturingRating ||
-                capturingDirector || capturingActor || capturingYear) {
+            if (!ignoreCurrentElement && (inChannel || inProgramme)) {
                 sb.appendRange(ch, start, start + length)
             }
         }
 
         override fun endElement(uri: String, localName: String, qName: String) {
+            if (ignoreCurrentElement) return
+
             val tag = qName.lowercase()
             when (tag) {
                 "channel" -> { inChannel = false }
-                "display-name" -> if (capturingDisplayName) {
+                "display-name" -> if (inChannel) {
                     val name = sb.toString().trim()
-                    if (name.isNotEmpty()) {
-                        displayNames.getOrPut(currentChannelId) { mutableListOf() }.add(getCached(name))
-                    }
-                    capturingDisplayName = false
+                    if (name.isNotEmpty()) displayNames.getOrPut(currentChannelId) { mutableListOf() }.add(name)
                 }
-                "title" -> if (capturingTitle) { currentTitle = sb.toString().trim(); capturingTitle = false }
-                "desc" -> if (capturingDesc) { currentDesc = sb.toString().trim(); capturingDesc = false }
-                "category" -> if (capturingCategory) { currentCategory = sb.toString().trim(); capturingCategory = false }
-                "episode-num" -> if (capturingEpisode) {
+                "title", "desc", "category", "date" -> if (inProgramme) programData[tag] = sb.toString().trim()
+                "episode-num" -> if (inProgramme) {
                     val raw = sb.toString().trim()
-                    currentEpisodeNum = if (raw.contains(".")) {
+                    programData["episode-num"] = if (raw.contains(".")) {
                         val parts = raw.split(".")
                         val s = (parts.getOrNull(0)?.trim()?.toIntOrNull() ?: -1) + 1
                         val e = (parts.getOrNull(1)?.trim()?.split("/")?.firstOrNull()?.toIntOrNull() ?: -1) + 1
                         if (s > 0 && e > 0) "S%02dE%02d".format(s, e) else raw
                     } else raw
-                    capturingEpisode = false
                 }
-                "value" -> if (capturingRating) { currentRating = sb.toString().trim(); capturingRating = false }
-                "director" -> if (capturingDirector) { currentDirector = sb.toString().trim(); capturingDirector = false }
-                "actor" -> if (capturingActor) {
-                    val actor = sb.toString().trim()
-                    currentActors = if (currentActors.isEmpty()) actor else "$currentActors, $actor"
-                    capturingActor = false
+                "actor", "director" -> if (inProgramme) {
+                    val current = programData[tag] ?: ""
+                    val newPerson = sb.toString().trim()
+                    programData[tag] = if (current.isEmpty()) newPerson else "$current, $newPerson"
                 }
-                "date" -> if (capturingYear) { currentYear = sb.toString().trim().take(4); capturingYear = false }
                 "programme" -> {
-                    if (inProgramme && currentTitle.isNotEmpty() && currentStart > 0 && currentStop > 0) {
-                        if (currentStop > cutoffTime && currentStart < futureLimit) {
-                            val isSeries = currentEpisodeNum.isNotEmpty()
-                            val channelId = currentProgramChannelId
-
-                            val programIcon = if (currentIcon.isNotBlank()) currentIcon
-                            else channelLogos[channelId] ?: channelLogos[channelId.lowercase()] ?: ""
-
-                            val list = channelsMap.getOrPut(channelId) { mutableListOf() }
-                            list.add(
+                    if (currentStart > 0 && currentStop > cutoffTime && currentStart < futureLimit) {
+                        val title = programData["title"] ?: ""
+                        if (title.isNotEmpty()) {
+                            val icon = programData["icon"] ?: channelLogos[currentProgramChannelId] ?: ""
+                            channelsMap.getOrPut(currentProgramChannelId) { mutableListOf() }.add(
                                 EpgProgram(
-                                    channelId = channelId,
-                                    title = getCached(currentTitle),
-                                    description = getCached(currentDesc),
+                                    channelId = currentProgramChannelId,
+                                    title = title,
+                                    description = programData["desc"] ?: "",
                                     startTime = currentStart,
                                     endTime = currentStop,
-                                    category = getCached(currentCategory),
-                                    rating = getCached(currentRating),
-                                    posterUrl = getCached(programIcon),
-                                    episodeNum = getCached(currentEpisodeNum),
-                                    isSeries = isSeries,
-                                    director = getCached(currentDirector),
-                                    actors = getCached(currentActors),
-                                    year = getCached(currentYear),
+                                    category = programData["category"] ?: "",
+                                    posterUrl = icon,
+                                    episodeNum = programData["episode-num"] ?: "",
+                                    isSeries = (programData["episode-num"]?.isNotEmpty() == true),
+                                    director = programData["director"] ?: "",
+                                    actors = programData["actor"] ?: "",
+                                    year = programData["date"]?.take(4) ?: ""
                                 )
                             )
                         }
