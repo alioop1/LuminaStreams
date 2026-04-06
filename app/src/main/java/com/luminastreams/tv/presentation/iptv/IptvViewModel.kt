@@ -422,17 +422,24 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     val epgLogo = result.channelLogos[epgLogoKey]
                         ?: result.channelLogos[ch.tvgName.lowercase()]
                         ?: result.channelLogos[ch.id.lowercase()]
-                    when {
-                        ch.logoUrl.isBlank() && !epgLogo.isNullOrBlank() -> ch.copy(logoUrl = epgLogo)
-                        else -> ch
+                        ?: result.channelLogos[ch.name.lowercase()]
+                    val mergedLogo = when {
+                        !epgLogo.isNullOrBlank() -> epgLogo
+                        ch.logoUrl.isNotBlank() -> ch.logoUrl
+                        else -> ""
                     }
+                    if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
                 }
 
+                val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
+                    updatedChannels.find { it.id == fch.id } ?: fch
+                }
                 _state.update {
                     it.copy(
                         epgData = result.programs,
                         channelLogos = result.channelLogos,
                         channels = updatedChannels,
+                        filteredChannels = updatedFilteredChannels,
                         epgLoadState = IptvLoadState.Success
                     )
                 }

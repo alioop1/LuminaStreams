@@ -386,14 +386,7 @@ fun AppNavHostContainer(
             Box(Modifier.fillMaxSize().background(Color(0xFF050508))) {
                 IptvScreen(
                     viewModel      = vm,
-                    onNavigateBack = { navController.popBackStack() },
-                    onPlayChannel  = { streamUrl, title ->
-                        val safeUrl   = URLEncoder.encode(streamUrl, "UTF-8")
-                        val safeTitle = URLEncoder.encode(title, "UTF-8")
-                        navController.navigate(
-                            "player?videoUrl=$safeUrl&imdbId=_&title=$safeTitle&backdropUrl=none&logoUrl=none"
-                        )
-                    }
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
         }

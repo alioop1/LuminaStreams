@@ -279,8 +279,11 @@ fun IptvScreen(
                                     onSettings = { viewModel.onEvent(IptvEvent.ShowIptvSettings) }
                                 )
                                 Spacer(Modifier.height(12.dp))
+                                val epgPrograms = remember(state.epgData, state.currentChannel?.id, state.epgDayOffset) {
+                                    viewModel.getEpgForChannel(state.currentChannel!!, state.epgData)
+                                }
                                 EpgTimeline(
-                                    programs = viewModel.getEpgForChannel(state.currentChannel!!),
+                                    programs = epgPrograms,
                                     epgLoadState = state.epgLoadState,
                                     dayOffset = state.epgDayOffset,
                                     onDayChange = { viewModel.onEvent(IptvEvent.SetEpgDayOffset(it)) },
@@ -368,9 +371,12 @@ fun IptvScreen(
         if (state.showEpgGuide && state.currentChannel != null) {
             IptvDialog(onDismiss = { viewModel.onEvent(IptvEvent.HideEpgGuide) }) {
                 state.currentChannel?.let { ch ->
+                    val fullGuidePrograms = remember(state.epgData, ch.id) {
+                        viewModel.getEpgForChannel(ch, state.epgData)
+                    }
                     EpgFullGuide(
                         channel = ch,
-                        programs = viewModel.getEpgForChannel(ch),
+                        programs = fullGuidePrograms,
                         dayOffset = state.epgDayOffset,
                         onDayChange = { viewModel.onEvent(IptvEvent.SetEpgDayOffset(it)) },
                         onDismiss = { viewModel.onEvent(IptvEvent.HideEpgGuide) }
@@ -868,10 +874,10 @@ private fun ChannelList(
     ) {
         itemsIndexed(channels, key = { _, ch -> ch.id }) { idx, channel ->
             val resolvedLogo = channel.logoUrl.ifBlank {
-                channelLogos[channel.tvgId.lowercase()]
-                    ?: channelLogos[channel.tvgName.lowercase()]
-                    ?: channelLogos[channel.id.lowercase()]
-                    ?: channelLogos[channel.name.lowercase()]
+                state.channelLogos[channel.tvgId.lowercase()]
+                    ?: state.channelLogos[channel.tvgName.lowercase()]
+                    ?: state.channelLogos[channel.id.lowercase()]
+                    ?: state.channelLogos[channel.name.lowercase()]
                     ?: ""
             }
 
@@ -1387,7 +1393,6 @@ private fun EpgTimeline(
             val dayPrograms = programs
                 .filter { it.endTime > dayStart && it.startTime < dayEnd }
                 .sortedBy { it.startTime }
-                .take(24)
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(dayPrograms, key = { it.startTime }) { prog ->
