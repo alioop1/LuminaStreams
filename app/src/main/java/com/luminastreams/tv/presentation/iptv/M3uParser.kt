@@ -27,12 +27,12 @@ object M3uParser {
             val conn = URL(currentUrl).openConnection() as HttpURLConnection
             conn.connectTimeout = 20_000
             conn.readTimeout = 30_000
-            conn.setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            conn.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
             conn.setRequestProperty("Accept", "*/*")
             conn.instanceFollowRedirects = false
 
             val responseCode = conn.responseCode
-            if (responseCode == HttpURLConnection.HTTP_MOVED_PERM || responseCode == HttpURLConnection.HTTP_MOVED_TEMP || responseCode == HttpURLConnection.HTTP_SEE_OTHER) {
+            if (responseCode in 300..399) {
                 val newUrl = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (newUrl != null) { currentUrl = newUrl; redirects++; continue }
@@ -60,75 +60,66 @@ object M3uParser {
     private fun parseM3u(content: String): List<IptvChannel> {
         val channels = mutableListOf<IptvChannel>()
         val lines = content.lines()
-        var channelNumber = 1
-        var globalGroup = "General"
+        var currentGroup = "General"
+
+        // לוכד ערכים גם אם יש להם מרכאות וגם אם לא
+        val attrRegex = Regex("""([a-zA-Z0-9_-]+)=(["']?)(.*?)\2(?=\s+[a-zA-Z0-9_-]+=|$)""")
 
         var i = 0
         while (i < lines.size) {
             val line = lines[i].trim()
 
-            // שומר קטגוריה גלובלית אם הספק משתמש ב- #EXTGRP שורה לפני הערוץ
             if (line.startsWith("#EXTGRP:")) {
-                globalGroup = line.substringAfter(":", "").trim()
-            }
-            else if (line.startsWith("#EXTINF:")) {
-                val attrs = parseAttributes(line)
-                val name = extractChannelName(line)
-
-                // תומך גם ב-group-title בתוך השורה וגם בשורת #EXTGRP מיד אחרי השורה (כמו OTTClub)
-                var inlineGroup = attrs["group-title"]?.replace("\"", "")?.trim()
-                if (inlineGroup.isNullOrBlank() && i + 1 < lines.size && lines[i + 1].trim().startsWith("#EXTGRP:")) {
-                    inlineGroup = lines[i + 1].trim().substringAfter(":", "").trim()
+                currentGroup = line.substringAfter(":").trim()
+            } else if (line.startsWith("#EXTINF:")) {
+                val attrs = mutableMapOf<String, String>()
+                attrRegex.findAll(line).forEach { match ->
+                    attrs[match.groupValues[1].lowercase()] = match.groupValues[3].trim()
                 }
 
-                val groupTitle = if (!inlineGroup.isNullOrBlank()) inlineGroup else globalGroup
-                val streamUrl = findStreamUrl(lines, i + 1)
+                // שם הערוץ נמצא אחרי הפסיק הראשון
+                val name = line.substringAfter(",", "Unknown Channel").trim()
 
-                if (streamUrl != null) {
-                    val channelId = attrs["tvg-id"]?.ifBlank { null } ?: attrs["tvg-name"]?.ifBlank { null } ?: "${name}_$channelNumber"
+                // זיהוי קטגוריה גם בשורה עצמה וגם בשורה מתחת
+                var group = attrs["group-title"] ?: ""
+                if (group.isEmpty() && i + 1 < lines.size && lines[i + 1].trim().startsWith("#EXTGRP:")) {
+                    group = lines[i + 1].trim().substringAfter(":").trim()
+                }
+                if (group.isEmpty()) group = currentGroup
+
+                // חיפוש לינק שידור בשורות הבאות
+                var streamUrl = ""
+                for (j in i + 1 until minOf(i + 5, lines.size)) {
+                    val nextLine = lines[j].trim()
+                    if (nextLine.isNotEmpty() && !nextLine.startsWith("#")) {
+                        streamUrl = nextLine
+                        break
+                    }
+                }
+
+                if (streamUrl.isNotEmpty()) {
+                    val tvgId = attrs["tvg-id"] ?: ""
+                    val tvgName = attrs["tvg-name"] ?: ""
+                    val logoUrl = attrs["tvg-logo"] ?: attrs["logo"] ?: ""
+                    val channelId = tvgId.ifEmpty { tvgName.ifEmpty { streamUrl } }
 
                     channels.add(
                         IptvChannel(
-                            id = channelId.trim(),
-                            name = name.trim(),
-                            logoUrl = attrs["tvg-logo"]?.trim() ?: "",
-                            streamUrl = streamUrl.trim(),
-                            groupTitle = groupTitle,
-                            tvgId = attrs["tvg-id"]?.trim() ?: "",
-                            tvgName = attrs["tvg-name"]?.trim() ?: name.trim(),
-                            isAdult = groupTitle.contains("adult", true) || groupTitle.contains("18+", true) || groupTitle.contains("xxx", true),
-                            number = channelNumber
+                            id = channelId,
+                            name = name,
+                            logoUrl = logoUrl,
+                            streamUrl = streamUrl,
+                            groupTitle = group.ifEmpty { "General" },
+                            tvgId = tvgId,
+                            tvgName = tvgName,
+                            isAdult = group.contains("adult", true) || group.contains("18+", true) || group.contains("xxx", true),
+                            number = channels.size + 1
                         )
                     )
-                    channelNumber++
                 }
             }
             i++
         }
         return channels.filter { !it.isAdult }
-    }
-
-    private fun parseAttributes(line: String): Map<String, String> {
-        val attrs = mutableMapOf<String, String>()
-        val regex = Regex("""([\w-]+)=["']?([^"',]*)["']?""")
-        regex.findAll(line).forEach { match ->
-            val key = match.groupValues[1].lowercase()
-            val value = match.groupValues[2].trim()
-            attrs[key] = value
-        }
-        return attrs
-    }
-
-    private fun extractChannelName(extinf: String): String {
-        val commaIdx = extinf.lastIndexOf(',')
-        return if (commaIdx >= 0 && commaIdx < extinf.length - 1) extinf.substring(commaIdx + 1).trim() else "Unknown Channel"
-    }
-
-    private fun findStreamUrl(lines: List<String>, startIdx: Int): String? {
-        for (j in startIdx until minOf(startIdx + 3, lines.size)) {
-            val l = lines[j].trim()
-            if (l.isNotEmpty() && !l.startsWith("#") && (l.startsWith("http") || l.startsWith("rtmp") || l.startsWith("rtsp"))) return l
-        }
-        return null
     }
 }

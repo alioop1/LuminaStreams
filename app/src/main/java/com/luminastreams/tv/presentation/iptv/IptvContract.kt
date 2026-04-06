@@ -81,7 +81,8 @@ data class IptvState(
     val viewMode: IptvViewMode = IptvViewMode.CHANNEL_LIST,
     val addPlaylistName: String = "",
     val addPlaylistUrl: String = "",
-    val addPlaylistEpgUrl: String = ""
+    val addPlaylistEpgUrl: String = "",
+    val localIpAddress: String = "" // <--- הוסף כאן!
 )
 
 enum class IptvViewMode { CHANNEL_LIST, EPG_GUIDE, FAVORITES, RECENT }

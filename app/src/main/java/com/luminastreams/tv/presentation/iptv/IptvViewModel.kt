@@ -2,6 +2,7 @@ package com.luminastreams.tv.presentation.iptv
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
@@ -13,19 +14,45 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.net.NetworkInterface
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val TAG = "EPG_DEBUG"
     private val prefs = application.getSharedPreferences("lumina_iptv", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(IptvState())
     val state: StateFlow<IptvState> = _state.asStateFlow()
 
     private var epgRefreshJob: Job? = null
+    private var webServerJob: Job? = null
 
     init {
         loadSavedPlaylists()
         loadFavorites()
         loadRecent()
+    }
+
+    private fun getLocalIpAddress(): String {
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces()
+            val addresses = mutableListOf<String>()
+            while (interfaces.hasMoreElements()) {
+                val networkInterface = interfaces.nextElement()
+                if (networkInterface.isLoopback || !networkInterface.isUp) continue
+                val inetAddresses = networkInterface.inetAddresses
+                while (inetAddresses.hasMoreElements()) {
+                    val address = inetAddresses.nextElement()
+                    if (!address.isLoopbackAddress && address is java.net.Inet4Address) {
+                        addresses.add(address.hostAddress ?: "")
+                    }
+                }
+            }
+            return addresses.firstOrNull { it.startsWith("192.168.") }
+                ?: addresses.firstOrNull { it.startsWith("10.") }
+                ?: addresses.firstOrNull { it.startsWith("172.") }
+                ?: addresses.firstOrNull() ?: ""
+        } catch (e: Exception) { e.printStackTrace() }
+        return ""
     }
 
     fun onEvent(event: IptvEvent) {
@@ -39,9 +66,33 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             is IptvEvent.ToggleFavorite -> toggleFavorite(event.channelId)
             is IptvEvent.ShowQrCode -> _state.update { it.copy(showQrCode = true, qrCodeChannel = event.channel) }
             is IptvEvent.HideQrCode -> _state.update { it.copy(showQrCode = false, qrCodeChannel = null) }
-            is IptvEvent.ShowAddPlaylist -> _state.update { it.copy(showAddPlaylist = true, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "") }
-            is IptvEvent.ShowEditPlaylist -> _state.update { it.copy(showAddPlaylist = true, addPlaylistName = event.playlist.name, addPlaylistUrl = event.playlist.url, addPlaylistEpgUrl = event.playlist.epgUrl) }
-            is IptvEvent.HideAddPlaylist -> _state.update { it.copy(showAddPlaylist = false, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "") }
+
+            is IptvEvent.ShowAddPlaylist -> {
+                val ip = getLocalIpAddress()
+                _state.update { it.copy(showAddPlaylist = true, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "", localIpAddress = ip) }
+                webServerJob?.cancel()
+                webServerJob = viewModelScope.launch {
+                    LocalWebServer.start(8080) { name, url, epgUrl ->
+                        onEvent(IptvEvent.HideAddPlaylist)
+                        loadPlaylist(url, name, epgUrl, null)
+                    }
+                }
+            }
+            is IptvEvent.ShowEditPlaylist -> {
+                val ip = getLocalIpAddress()
+                _state.update { it.copy(showAddPlaylist = true, addPlaylistName = event.playlist.name, addPlaylistUrl = event.playlist.url, addPlaylistEpgUrl = event.playlist.epgUrl, localIpAddress = ip) }
+                webServerJob?.cancel()
+                webServerJob = viewModelScope.launch {
+                    LocalWebServer.start(8080) { name, url, epgUrl ->
+                        onEvent(IptvEvent.HideAddPlaylist)
+                        loadPlaylist(url, name, epgUrl, event.playlist.id)
+                    }
+                }
+            }
+            is IptvEvent.HideAddPlaylist -> {
+                _state.update { it.copy(showAddPlaylist = false, addPlaylistName = "", addPlaylistUrl = "", addPlaylistEpgUrl = "") }
+                LocalWebServer.stop()
+            }
             is IptvEvent.ShowEpgGuide -> _state.update { it.copy(showEpgGuide = true) }
             is IptvEvent.HideEpgGuide -> _state.update { it.copy(showEpgGuide = false) }
             is IptvEvent.RefreshEpg -> refreshEpg()
@@ -68,8 +119,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(loadState = IptvLoadState.Loading) }
             try {
+                Log.d(TAG, "Loading Playlist M3U from: $url")
                 val channels = M3uParser.parse(url).getOrThrow()
-                // שומר על הסדר האמיתי של הקובץ בדיוק כמו שביקשת!
                 val groups = listOf("All", "Favorites", "Recent") + channels.map { it.groupTitle }.distinct()
 
                 val playlistId = existingId ?: "pl_${System.currentTimeMillis()}"
@@ -90,9 +141,15 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                if (epgUrl.isNotBlank()) loadEpg(epgUrl)
+                Log.d(TAG, "Playlist loaded with ${channels.size} channels. Checking for EPG...")
+                if (epgUrl.isNotBlank()) {
+                    loadEpg(epgUrl)
+                } else {
+                    Log.d(TAG, "No EPG URL provided for this playlist.")
+                }
             } catch (e: Exception) {
-                _state.update { it.copy(loadState = IptvLoadState.Error("Failed: ${e.message?.take(60)}")) }
+                Log.e(TAG, "Failed to load playlist", e)
+                _state.update { it.copy(loadState = IptvLoadState.Error("Failed to load playlist: ${e.message}")) }
             }
         }
     }
@@ -113,11 +170,23 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun selectChannel(channel: IptvChannel) {
-        val epg = _state.value.epgData[channel.tvgId] ?: _state.value.epgData[channel.id]
+        val epg = getEpgForChannel(channel)
         val now = System.currentTimeMillis()
         val recentIds = (listOf(channel.id) + _state.value.recentChannelIds).distinct().take(20)
         saveRecentToPrefs(recentIds)
-        _state.update { it.copy(currentChannel = channel, currentProgram = epg?.firstOrNull { p -> p.isLive }, nextProgram = epg?.firstOrNull { p -> p.startTime > now }, recentChannelIds = recentIds) }
+
+        _state.update {
+            it.copy(
+                currentChannel = channel,
+                currentProgram = epg.firstOrNull { p -> p.isLive },
+                nextProgram = epg.firstOrNull { p -> p.startTime > now },
+                recentChannelIds = recentIds
+            )
+        }
+
+        if (_state.value.selectedGroup == "Recent") {
+            selectGroup("Recent")
+        }
     }
 
     private fun selectGroup(group: String) {
@@ -153,15 +222,31 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadEpg(epgUrl: String) {
+        Log.d(TAG, "Calling loadEpg with URL: $epgUrl")
         epgRefreshJob?.cancel()
         epgRefreshJob = viewModelScope.launch {
             _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
             try {
                 val epgMap = EpgParser.parse(epgUrl).getOrThrow()
-                _state.update { it.copy(epgData = epgMap, epgLoadState = IptvLoadState.Success) }
+                Log.d(TAG, "EPG Map successfully saved to ViewModel state. Keys count: ${epgMap.size}")
+
+                val updatedChannels = _state.value.channels.map { ch ->
+                    if (ch.logoUrl.isBlank()) {
+                        val matchingEpg = getEpgForChannel(ch, epgMap)
+                        val epgLogo = matchingEpg.firstOrNull { it.posterUrl.isNotBlank() }?.posterUrl ?: ""
+                        if (epgLogo.isNotBlank()) ch.copy(logoUrl = epgLogo) else ch
+                    } else ch
+                }
+
+                _state.update { it.copy(epgData = epgMap, channels = updatedChannels, epgLoadState = IptvLoadState.Success) }
+
+                selectGroup(_state.value.selectedGroup)
+
                 _state.value.currentChannel?.let { selectChannel(it) }
+
             } catch (e: Exception) {
-                _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG: ${e.message?.take(50)}")) }
+                Log.e(TAG, "Failed to load EPG in ViewModel", e)
+                _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG Error: ${e.message?.take(30)}")) }
             }
         }
     }
@@ -171,9 +256,46 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         if (activePlaylist?.epgUrl?.isNotBlank() == true) loadEpg(activePlaylist.epgUrl)
     }
 
-    fun getEpgForChannel(channel: IptvChannel): List<EpgProgram> {
-        val epgData = _state.value.epgData
-        return epgData[channel.tvgId] ?: epgData[channel.id] ?: epgData[channel.tvgName] ?: emptyList()
+    fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
+        if (dataMap.isEmpty()) return emptyList()
+
+        val cId = channel.tvgId.lowercase()
+        val cNameOrig = channel.name.lowercase()
+        val cTvgName = channel.tvgName.lowercase()
+
+        // 1. התאמה מדויקת (עדיפות עליונה)
+        dataMap[cId]?.let { return it }
+        dataMap[cTvgName]?.let { return it }
+        dataMap[cNameOrig]?.let { return it }
+
+        // 2. ניקוי אגרסיבי להתאמה חכמה ובטוחה
+        val normalize = { str: String ->
+            str.lowercase()
+                .replace(Regex("\\b(hd|fhd|4k|sd|tv|channel)\\b"), "")
+                .replace(Regex("[^a-z0-9א-ת]"), "")
+                .trim()
+        }
+
+        val normName = normalize(cNameOrig)
+        val normTvgName = normalize(cTvgName)
+
+        if (normName.isNotEmpty() || normTvgName.isNotEmpty()) {
+            val fuzzyMatch = dataMap.entries.firstOrNull {
+                val normKey = normalize(it.key)
+                // חובה להתנות אורך מינימלי למניעת Match שגוי על ערוצים קצרים (למשל '1')
+                normKey.isNotEmpty() && normKey.length > 2 && (
+                        normKey == normName ||
+                                normKey == normTvgName ||
+                                // רק אם השם באמת ארוך מותר לעשות contains פנימי
+                                (normKey.length > 5 && (normName.contains(normKey) || normKey.contains(normName)))
+                        )
+            }
+            if (fuzzyMatch != null) {
+                return fuzzyMatch.value
+            }
+        }
+
+        return emptyList()
     }
 
     private fun loadSavedPlaylists() {
