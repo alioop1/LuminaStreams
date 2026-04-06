@@ -12,13 +12,15 @@ import androidx.tv.material3.darkColorScheme
 
 @OptIn(ExperimentalTvMaterial3Api::class)
 private val LuminaColorScheme = darkColorScheme(
-    background = OledBlack,
-    surface = DarkBackground,
-    primary = NetflixRed,
-    onPrimary = TextPrimary,
-    onBackground = TextPrimary,
-    onSurface = TextPrimary,
-    surfaceVariant = GlassBackground
+    background      = LuminaBlackBg,
+    surface         = LuminaNavy,
+    primary         = LuminaCyan,
+    secondary       = LuminaPurple,
+    onPrimary       = LuminaBlackBg,
+    onBackground    = TextPrimary,
+    onSurface       = TextPrimary,
+    surfaceVariant  = GlassBackground,
+    error           = LuminaRed,
 )
 
 @OptIn(ExperimentalTvMaterial3Api::class)
@@ -29,8 +31,7 @@ fun LuminaTheme(
     MaterialTheme(
         colorScheme = LuminaColorScheme,
     ) {
-        // We use a transparent Box instead of Surface so the 4K HDR video
-        // can punch through from the hardware layer underneath.
+        // Transparent Box so 4K HDR video can punch through the hardware layer
         Box(
             modifier = Modifier
                 .fillMaxSize()

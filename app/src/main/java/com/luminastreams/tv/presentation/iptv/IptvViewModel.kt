@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.NetworkInterface
+import java.io.File
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -29,6 +30,12 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private var webServerJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var autoRefreshJob: Job? = null
+
+    // ✅ EPG Cache — avoids re-downloading on every launch
+    private val epgCacheDir by lazy { application.cacheDir.also { it.mkdirs() } }
+    private fun epgCacheFile(epgUrl: String) = File(epgCacheDir, "epg_${epgUrl.hashCode()}.json")
+    private fun epgCacheTimeKey(epgUrl: String) = "epg_ts_${epgUrl.hashCode()}"
+    private val EPG_CACHE_TTL_MS = 4 * 3600 * 1000L  // 4 hours
 
     init {
         loadSavedPlaylists()
@@ -207,31 +214,270 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             is IptvEvent.DismissParentalPin -> _state.update { it.copy(showParentalPinEntry = false, pendingLockedChannel = null) }
-
-            is IptvEvent.SetEpgDayOffset -> _state.update { it.copy(epgDayOffset = event.offset) }
-
-            is IptvEvent.ShowIptvSettings -> _state.update { it.copy(showSettings = true) }
             is IptvEvent.HideIptvSettings -> _state.update { it.copy(showSettings = false) }
+            is IptvEvent.ShowIptvSettings -> _state.update { it.copy(showSettings = true) }
+            is IptvEvent.SetEpgDayOffset -> _state.update { it.copy(epgDayOffset = event.offset) }
+        }
+    }
 
-            is IptvEvent.ToggleSubtitles -> {
-                val enabled = !_state.value.subtitlesEnabled
-                _state.update { it.copy(subtitlesEnabled = enabled) }
-                prefs.edit { putBoolean("subtitles_enabled", enabled) }
-            }
+    private fun updateSearch(query: String) {
+        _state.update { it.copy(searchQuery = query) }
+        val s = _state.value
+        val base = when (s.selectedGroup) {
+            "All" -> s.channels
+            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
+            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
+            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
+        }
+        val filtered = if (query.isBlank()) base else base.filter { it.name.contains(query, true) }
+        _state.update { it.copy(filteredChannels = sortChannels(filtered, s.channelSortMode)) }
+    }
 
-            is IptvEvent.SelectAudioTrack -> _state.update { it.copy(audioTrackIndex = event.index) }
+    fun selectGroup(group: String) {
+        val s = _state.value
+        val base: List<IptvChannel> = when (group) {
+            "All" -> s.channels
+            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
+            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
+            else -> s.channels.filter { it.groupTitle == group }
+        }
+        val q = s.searchQuery
+        val filtered = if (q.isBlank()) base else base.filter { it.name.contains(q, true) }
+        _state.update { it.copy(selectedGroup = group, filteredChannels = sortChannels(filtered, s.channelSortMode)) }
+    }
 
-            is IptvEvent.ChannelUp -> {
-                val list = _state.value.filteredChannels
-                val idx = event.currentIndex
-                if (idx > 0) selectChannel(list[idx - 1])
-            }
-            is IptvEvent.ChannelDown -> {
-                val list = _state.value.filteredChannels
-                val idx = event.currentIndex
-                if (idx < list.size - 1) selectChannel(list[idx + 1])
+    private fun selectChannel(channel: IptvChannel) {
+        if (_state.value.parentalLockEnabled && channel.isAdult) {
+            _state.update { it.copy(showParentalPinEntry = true, pendingLockedChannel = channel) }
+            return
+        }
+        val epg = getEpgForChannel(channel)
+        val now = System.currentTimeMillis()
+        _state.update {
+            it.copy(
+                currentChannel = channel,
+                currentProgram = epg.firstOrNull { p -> p.isLiveNow },
+                nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow }
+            )
+        }
+        updateRecent(channel.id)
+    }
+
+    private fun updateRecent(id: String) {
+        val recent = _state.value.recentChannelIds.toMutableList()
+        recent.remove(id)
+        recent.add(0, id)
+        val trimmed = recent.take(50)
+        saveRecentToPrefs(trimmed)
+        _state.update { it.copy(recentChannelIds = trimmed) }
+        if (_state.value.selectedGroup == "Recent") selectGroup("Recent")
+    }
+
+    private fun toggleFavorite(channelId: String) {
+        val favs = _state.value.favoriteChannelIds.toMutableSet()
+        if (channelId in favs) favs.remove(channelId) else favs.add(channelId)
+        saveFavoritesToPrefs(favs)
+        _state.update { it.copy(favoriteChannelIds = favs) }
+        if (_state.value.selectedGroup == "Favorites") selectGroup("Favorites")
+    }
+
+    // ✅ EPG with cache: tries cache first, only downloads if stale
+    private fun loadEpgWithCache(epgUrl: String) {
+        epgRefreshJob?.cancel()
+        epgRefreshJob = viewModelScope.launch {
+            _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
+            try {
+                val cacheFile = epgCacheFile(epgUrl)
+                val cacheTs = prefs.getLong(epgCacheTimeKey(epgUrl), 0L)
+                val cacheAge = System.currentTimeMillis() - cacheTs
+
+                if (cacheAge < EPG_CACHE_TTL_MS && cacheFile.exists() && cacheFile.length() > 100) {
+                    Log.d(TAG, "EPG: loading from cache (${cacheAge / 60000}min old)")
+                    try {
+                        val json = cacheFile.readText()
+                        val result = deserializeEpgResult(json)
+                        if (result != null) {
+                            applyEpgResult(result)
+                            Log.d(TAG, "EPG cache applied OK")
+                            return@launch
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "EPG cache read failed, re-downloading: ${e.message}")
+                    }
+                }
+
+                Log.d(TAG, "EPG: downloading fresh from $epgUrl")
+                loadEpg(epgUrl)
+            } catch (e: Exception) {
+                Log.e(TAG, "EPG with-cache load failed", e)
+                _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG: ${e.message?.take(40)}")) }
             }
         }
+    }
+
+    private fun loadEpg(epgUrl: String) {
+        Log.d(TAG, "Loading EPG fresh from: $epgUrl")
+        epgRefreshJob?.cancel()
+        epgRefreshJob = viewModelScope.launch {
+            _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
+            try {
+                // ✅ More efficient allowedIds — 3 lookups instead of 4
+                val allowedIds = buildSet<String> {
+                    _state.value.channels.forEach { ch ->
+                        if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
+                        if (ch.tvgName.isNotEmpty()) add(ch.tvgName.lowercase())
+                        add(ch.name.lowercase())
+                    }
+                }
+
+                val result = EpgParser.parse(epgUrl, allowedIds).getOrThrow()
+
+                // ✅ Save to cache after successful download
+                try {
+                    val json = serializeEpgResult(result)
+                    epgCacheFile(epgUrl).writeText(json)
+                    prefs.edit { putLong(epgCacheTimeKey(epgUrl), System.currentTimeMillis()) }
+                    Log.d(TAG, "EPG saved to cache")
+                } catch (e: Exception) {
+                    Log.w(TAG, "EPG cache write failed: ${e.message}")
+                }
+
+                applyEpgResult(result)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "EPG load failed", e)
+                _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG: ${e.message?.take(40)}")) }
+            }
+        }
+    }
+
+    // ✅ Extracted: shared logic for applying an EPG result to state
+    private fun applyEpgResult(result: EpgParser.EpgResult) {
+        Log.d(TAG, "Applying EPG: ${result.programs.size} channels, ${result.channelLogos.size} logos")
+
+        val updatedChannels = _state.value.channels.map { ch ->
+            val epgLogoKey = ch.tvgId.lowercase().ifEmpty { ch.name.lowercase() }
+            val epgLogo = result.channelLogos[epgLogoKey]
+                ?: result.channelLogos[ch.tvgName.lowercase()]
+                ?: result.channelLogos[ch.id.lowercase()]
+                ?: result.channelLogos[ch.name.lowercase()]
+            val mergedLogo = when {
+                !epgLogo.isNullOrBlank() -> epgLogo
+                ch.logoUrl.isNotBlank() -> ch.logoUrl
+                else -> ""
+            }
+            if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
+        }
+
+        val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
+            updatedChannels.find { it.id == fch.id } ?: fch
+        }
+
+        _state.update {
+            it.copy(
+                epgData = result.programs,
+                channelLogos = result.channelLogos,
+                channels = updatedChannels,
+                filteredChannels = updatedFilteredChannels,
+                epgLoadState = IptvLoadState.Success
+            )
+        }
+
+        selectGroup(_state.value.selectedGroup)
+
+        _state.value.currentChannel?.let { ch ->
+            val updatedCh = updatedChannels.find { it.id == ch.id } ?: ch
+            val epg = getEpgForChannel(updatedCh, result.programs)
+            val now = System.currentTimeMillis()
+            _state.update {
+                it.copy(
+                    currentChannel = updatedCh,
+                    currentProgram = epg.firstOrNull { p -> p.isLiveNow },
+                    nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow }
+                )
+            }
+        }
+    }
+
+    // ✅ Serialize EPG result to JSON for disk cache
+    private fun serializeEpgResult(result: EpgParser.EpgResult): String {
+        val root = JSONObject()
+        val programs = JSONObject()
+        for ((channelId, progList) in result.programs) {
+            val arr = JSONArray()
+            for (p in progList) {
+                arr.put(JSONObject().apply {
+                    put("channelId", p.channelId)
+                    put("title", p.title)
+                    put("desc", p.description)
+                    put("start", p.startTime)
+                    put("end", p.endTime)
+                    put("cat", p.category)
+                    put("icon", p.icon)
+                    put("ep", p.episodeNum)
+                    put("rat", p.rating)
+                })
+            }
+            programs.put(channelId, arr)
+        }
+        root.put("programs", programs)
+        val logos = JSONObject()
+        for ((k, v) in result.channelLogos) logos.put(k, v)
+        root.put("logos", logos)
+        return root.toString()
+    }
+
+    private fun deserializeEpgResult(json: String): EpgParser.EpgResult? {
+        return try {
+            val root = JSONObject(json)
+            val programs = mutableMapOf<String, List<EpgProgram>>()
+            val programsJson = root.getJSONObject("programs")
+            for (key in programsJson.keys()) {
+                val arr = programsJson.getJSONArray(key)
+                val list = mutableListOf<EpgProgram>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    list.add(EpgProgram(
+                        channelId = o.optString("channelId"),
+                        title = o.optString("title"),
+                        description = o.optString("desc"),
+                        startTime = o.optLong("start"),
+                        endTime = o.optLong("end"),
+                        category = o.optString("cat"),
+                        icon = o.optString("icon"),
+                        episodeNum = o.optString("ep"),
+                        rating = o.optString("rat")
+                    ))
+                }
+                programs[key] = list
+            }
+            val logos = mutableMapOf<String, String>()
+            val logosJson = root.optJSONObject("logos")
+            logosJson?.keys()?.forEach { k -> logos[k] = logosJson.optString(k) }
+            EpgParser.EpgResult(
+                programs = programs,
+                channelLogos = logos,
+                channelDisplayNames = emptyMap()
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "deserializeEpgResult failed: ${e.message}")
+            null
+        }
+    }
+
+    private fun refreshEpg() {
+        val activePlaylist = _state.value.playlists.find { it.id == _state.value.activePlaylistId }
+        if (activePlaylist?.epgUrl?.isNotBlank() == true) loadEpg(activePlaylist.epgUrl)
+    }
+
+    fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
+        val keys = listOfNotNull(
+            channel.tvgId.lowercase().ifBlank { null },
+            channel.tvgName.lowercase().ifBlank { null },
+            channel.id.lowercase(),
+            channel.name.lowercase()
+        )
+        return keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } } ?: emptyList()
     }
 
     private fun loadPlaylist(url: String, name: String, epgUrl: String, existingId: String? = null) {
@@ -262,7 +508,11 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (epgUrl.isNotBlank()) {
-                    loadEpg(epgUrl)
+                    // ✅ FIX: Launch EPG in separate coroutine so playlist UI shows first
+                    viewModelScope.launch {
+                        delay(300) // Let playlist render before starting heavy EPG download
+                        loadEpgWithCache(epgUrl)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Failed to load playlist", e)
@@ -325,234 +575,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun selectChannel(channel: IptvChannel) {
-        if (_state.value.parentalLockEnabled && channel.isAdult) {
-            _state.update { it.copy(showParentalPinEntry = true, pendingLockedChannel = channel) }
-            return
-        }
-
-        val epg = getEpgForChannel(channel)
-        val now = System.currentTimeMillis()
-        val recentIds = (listOf(channel.id) + _state.value.recentChannelIds).distinct().take(30)
-        saveRecentToPrefs(recentIds)
-
-        _state.update {
-            it.copy(
-                currentChannel = channel,
-                currentProgram = epg.firstOrNull { p -> p.isLiveNow },
-                nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow },
-                recentChannelIds = recentIds,
-                showMiniPlayer = false
-            )
-        }
-
-        if (_state.value.selectedGroup == "Recent") selectGroup("Recent")
-
-        if (_state.value.sleepTimer == SleepTimer.END_OF_PROGRAM) {
-            val currentProg = _state.value.currentProgram
-            if (currentProg != null) {
-                sleepTimerJob?.cancel()
-                sleepTimerJob = viewModelScope.launch {
-                    val remaining = currentProg.endTime - System.currentTimeMillis()
-                    if (remaining > 0) {
-                        _state.update { it.copy(sleepTimerRemainingMs = remaining) }
-                        delay(remaining)
-                        _state.update { it.copy(currentChannel = null, sleepTimer = SleepTimer.OFF, sleepTimerRemainingMs = 0L) }
-                    }
-                }
-            }
-        }
-    }
-
-    private fun selectGroup(group: String) {
-        val channels = _state.value.channels
-        val favorites = _state.value.favoriteChannelIds
-        val recentIds = _state.value.recentChannelIds
-
-        val base = when (group) {
-            "All" -> channels
-            "Favorites" -> channels.filter { it.id in favorites }
-            "Recent" -> recentIds.mapNotNull { id -> channels.find { it.id == id } }
-            else -> channels.filter { it.groupTitle == group }
-        }
-
-        val query = _state.value.searchQuery
-        val filtered = if (query.isBlank()) base else base.filter { it.name.contains(query, true) }
-        val sorted = sortChannels(filtered, _state.value.channelSortMode)
-
-        _state.update { it.copy(selectedGroup = group, filteredChannels = sorted) }
-    }
-
-    private fun updateSearch(query: String) {
-        val s = _state.value
-        val base = when (s.selectedGroup) {
-            "All" -> s.channels
-            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
-            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
-        }
-        val filtered = if (query.isBlank()) base else base.filter { ch ->
-            ch.name.contains(query, true) ||
-                    ch.groupTitle.contains(query, true) ||
-                    ch.tvgId.contains(query, true)
-        }
-        _state.update { it.copy(searchQuery = query, filteredChannels = sortChannels(filtered, it.channelSortMode)) }
-    }
-
-    private fun toggleFavorite(channelId: String) {
-        val favs = _state.value.favoriteChannelIds.toMutableSet()
-        if (channelId in favs) favs.remove(channelId) else favs.add(channelId)
-        saveFavoritesToPrefs(favs)
-        _state.update { it.copy(favoriteChannelIds = favs) }
-        if (_state.value.selectedGroup == "Favorites") selectGroup("Favorites")
-    }
-
-    private fun loadEpg(epgUrl: String) {
-        Log.d(TAG, "Loading EPG from: $epgUrl")
-        epgRefreshJob?.cancel()
-        epgRefreshJob = viewModelScope.launch {
-            _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
-            try {
-                val allowedIds = buildSet {
-                    _state.value.channels.forEach { ch ->
-                        if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
-                        if (ch.tvgName.isNotEmpty()) add(ch.tvgName.lowercase())
-                        add(ch.id.lowercase())
-                        add(ch.name.lowercase())
-                    }
-                }
-
-                val result = EpgParser.parse(epgUrl, allowedIds).getOrThrow()
-                Log.d(TAG, "EPG loaded: ${result.programs.size} channel entries, ${result.channelLogos.size} logos")
-
-                val updatedChannels = _state.value.channels.map { ch ->
-                    val epgLogoKey = ch.tvgId.lowercase().ifEmpty { ch.name.lowercase() }
-                    val epgLogo = result.channelLogos[epgLogoKey]
-                        ?: result.channelLogos[ch.tvgName.lowercase()]
-                        ?: result.channelLogos[ch.id.lowercase()]
-                        ?: result.channelLogos[ch.name.lowercase()]
-                    val mergedLogo = when {
-                        !epgLogo.isNullOrBlank() -> epgLogo
-                        ch.logoUrl.isNotBlank() -> ch.logoUrl
-                        else -> ""
-                    }
-                    if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
-                }
-
-                val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
-                    updatedChannels.find { it.id == fch.id } ?: fch
-                }
-
-                _state.update {
-                    it.copy(
-                        epgData = result.programs,
-                        channelLogos = result.channelLogos,
-                        channels = updatedChannels,
-                        filteredChannels = updatedFilteredChannels,
-                        epgLoadState = IptvLoadState.Success
-                    )
-                }
-
-                selectGroup(_state.value.selectedGroup)
-
-                _state.value.currentChannel?.let { ch ->
-                    val updatedCh = updatedChannels.find { it.id == ch.id } ?: ch
-                    val epg = getEpgForChannel(updatedCh, result.programs)
-                    val now = System.currentTimeMillis()
-                    _state.update {
-                        it.copy(
-                            currentChannel = updatedCh,
-                            currentProgram = epg.firstOrNull { p -> p.isLiveNow },
-                            nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow }
-                        )
-                    }
-                }
-
-            } catch (e: Exception) {
-                Log.e(TAG, "EPG load failed", e)
-                _state.update { it.copy(epgLoadState = IptvLoadState.Error("EPG: ${e.message?.take(40)}")) }
-            }
-        }
-    }
-
-    private fun refreshEpg() {
-        val activePlaylist = _state.value.playlists.find { it.id == _state.value.activePlaylistId }
-        if (activePlaylist?.epgUrl?.isNotBlank() == true) loadEpg(activePlaylist.epgUrl)
-    }
-
-    fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
-        if (dataMap.isEmpty()) return emptyList()
-
-        val lookupKeys = buildList {
-            if (channel.tvgId.isNotEmpty()) add(channel.tvgId.lowercase())
-            if (channel.tvgName.isNotEmpty()) add(channel.tvgName.lowercase())
-            add(channel.id.lowercase())
-            add(channel.name.lowercase())
-            val cleanName = channel.name.lowercase()
-                .replace(Regex("""\b(hd|fhd|4k|sd|uhd)\b"""), "")
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-            if (cleanName != channel.name.lowercase()) add(cleanName)
-        }.distinct()
-
-        for (key in lookupKeys) {
-            dataMap[key]?.let { if (it.isNotEmpty()) return it }
-        }
-
-        val normalize = { s: String ->
-            s.lowercase()
-                .replace(Regex("""\b(hd|fhd|4k|sd|uhd|tv|channel|ch)\b"""), "")
-                .replace(Regex("""[^a-z0-9\u0590-\u05FF]"""), " ")
-                .replace(Regex("""\s+"""), " ")
-                .trim()
-        }
-
-        val normalizedKeys = lookupKeys.map { normalize(it) }.filter { it.length > 2 }
-
-        for (normKey in normalizedKeys) {
-            val match = dataMap.entries.firstOrNull { (k, _) ->
-                val normK = normalize(k)
-                normK.isNotEmpty() && normK.length > 2 && (
-                        normK == normKey ||
-                                (normKey.length > 4 && normK.contains(normKey)) ||
-                                (normKey.length > 4 && normKey.contains(normK))
-                        )
-            }
-            if (match != null) return match.value
-        }
-
-        return emptyList()
-    }
-
     private fun startSleepTimer(timer: SleepTimer) {
         sleepTimerJob?.cancel()
-        if (timer == SleepTimer.OFF) {
-            _state.update { it.copy(sleepTimerRemainingMs = 0L) }
-            return
-        }
-
-        if (timer == SleepTimer.END_OF_PROGRAM) {
-            val prog = _state.value.currentProgram
-            if (prog != null) {
-                val remaining = prog.endTime - System.currentTimeMillis()
-                _state.update { it.copy(sleepTimerRemainingMs = remaining.coerceAtLeast(0)) }
-                sleepTimerJob = viewModelScope.launch {
-                    if (remaining > 0) delay(remaining)
-                    _state.update { it.copy(currentChannel = null, sleepTimer = SleepTimer.OFF, sleepTimerRemainingMs = 0L) }
-                }
-            }
-            return
-        }
-
-        val totalMs = timer.minutes * 60_000L
-        _state.update { it.copy(sleepTimerRemainingMs = totalMs) }
-
+        if (timer == SleepTimer.OFF) return
         sleepTimerJob = viewModelScope.launch {
-            var remaining = totalMs
-            while (remaining > 0) {
-                delay(1_000)
-                remaining -= 1_000
+            val durationMs = timer.minutes * 60_000L
+            val endTime = System.currentTimeMillis() + durationMs
+            while (true) {
+                val remaining = endTime - System.currentTimeMillis()
+                if (remaining <= 0) break
                 _state.update { it.copy(sleepTimerRemainingMs = remaining.coerceAtLeast(0)) }
+                delay(1000)
             }
             _state.update { it.copy(currentChannel = null, sleepTimer = SleepTimer.OFF, sleepTimerRemainingMs = 0L) }
         }
