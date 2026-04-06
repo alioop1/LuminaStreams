@@ -1,3 +1,4 @@
+// 4. M3uParser.kt
 package com.luminastreams.tv.presentation.iptv
 
 import kotlinx.coroutines.Dispatchers
@@ -13,7 +14,8 @@ object M3uParser {
     suspend fun parse(url: String): Result<List<IptvChannel>> = withContext(Dispatchers.IO) {
         try {
             val content = fetchContent(url)
-            Result.success(parseM3u(content))
+            val channels = parseM3u(content)
+            Result.success(channels)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -23,19 +25,25 @@ object M3uParser {
         var currentUrl = urlString
         var redirects = 0
 
-        while (redirects < 5) {
-            val conn = URL(currentUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 20_000
-            conn.readTimeout = 30_000
-            conn.setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
-            conn.setRequestProperty("Accept", "*/*")
-            conn.instanceFollowRedirects = false
+        while (redirects < 10) {
+            val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 20_000
+                readTimeout = 60_000
+                setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+                setRequestProperty("Accept", "*/*")
+                instanceFollowRedirects = false
+            }
 
             val responseCode = conn.responseCode
             if (responseCode in 300..399) {
                 val newUrl = conn.getHeaderField("Location")
                 conn.disconnect()
-                if (newUrl != null) { currentUrl = newUrl; redirects++; continue }
+                if (!newUrl.isNullOrBlank()) {
+                    currentUrl = if (newUrl.startsWith("http")) newUrl
+                    else URL(URL(currentUrl), newUrl).toString()
+                    redirects++
+                    continue
+                }
             }
 
             if (responseCode !in 200..299) {
@@ -46,80 +54,148 @@ object M3uParser {
             return try {
                 val charset = detectCharset(conn) ?: Charsets.UTF_8
                 BufferedReader(InputStreamReader(conn.inputStream, charset)).use { it.readText() }
-            } finally { conn.disconnect() }
+            } finally {
+                conn.disconnect()
+            }
         }
         throw Exception("Too many redirects")
     }
 
     private fun detectCharset(conn: HttpURLConnection): Charset? {
         val ct = conn.contentType ?: return null
-        return ct.split(";").map { it.trim() }.firstOrNull { it.startsWith("charset=", ignoreCase = true) }
-            ?.substringAfter("=")?.let { try { Charset.forName(it) } catch (_: Exception) { null } }
+        return ct.split(";").map { it.trim() }
+            .firstOrNull { it.startsWith("charset=", ignoreCase = true) }
+            ?.substringAfter("=")
+            ?.let { try { Charset.forName(it) } catch (_: Exception) { null } }
     }
 
     private fun parseM3u(content: String): List<IptvChannel> {
+        if (!content.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+            return parsePlainUrls(content)
+        }
+
         val channels = mutableListOf<IptvChannel>()
         val lines = content.lines()
-        var currentGroup = "General"
+        var channelNumber = 1
 
-        // לוכד ערכים גם אם יש להם מרכאות וגם אם לא
-        val attrRegex = Regex("""([a-zA-Z0-9_-]+)=(["']?)(.*?)\2(?=\s+[a-zA-Z0-9_-]+=|$)""")
+        val attrRegex = Regex("""([a-zA-Z0-9_\-]+)=(?:"([^"]*)"|'([^']*)'|([^\s,]+))""")
 
         var i = 0
         while (i < lines.size) {
             val line = lines[i].trim()
 
-            if (line.startsWith("#EXTGRP:")) {
-                currentGroup = line.substringAfter(":").trim()
-            } else if (line.startsWith("#EXTINF:")) {
-                val attrs = mutableMapOf<String, String>()
-                attrRegex.findAll(line).forEach { match ->
-                    attrs[match.groupValues[1].lowercase()] = match.groupValues[3].trim()
-                }
+            when {
+                line.startsWith("#EXTINF:", ignoreCase = true) -> {
+                    val attrs = mutableMapOf<String, String>()
 
-                // שם הערוץ נמצא אחרי הפסיק הראשון
-                val name = line.substringAfter(",", "Unknown Channel").trim()
-
-                // זיהוי קטגוריה גם בשורה עצמה וגם בשורה מתחת
-                var group = attrs["group-title"] ?: ""
-                if (group.isEmpty() && i + 1 < lines.size && lines[i + 1].trim().startsWith("#EXTGRP:")) {
-                    group = lines[i + 1].trim().substringAfter(":").trim()
-                }
-                if (group.isEmpty()) group = currentGroup
-
-                // חיפוש לינק שידור בשורות הבאות
-                var streamUrl = ""
-                for (j in i + 1 until minOf(i + 5, lines.size)) {
-                    val nextLine = lines[j].trim()
-                    if (nextLine.isNotEmpty() && !nextLine.startsWith("#")) {
-                        streamUrl = nextLine
-                        break
+                    attrRegex.findAll(line).forEach { match ->
+                        val key = match.groupValues[1].lowercase()
+                        val value = match.groupValues[2].ifEmpty {
+                            match.groupValues[3].ifEmpty { match.groupValues[4] }
+                        }
+                        attrs[key] = value.trim()
                     }
-                }
 
-                if (streamUrl.isNotEmpty()) {
-                    val tvgId = attrs["tvg-id"] ?: ""
-                    val tvgName = attrs["tvg-name"] ?: ""
-                    val logoUrl = attrs["tvg-logo"] ?: attrs["logo"] ?: ""
-                    val channelId = tvgId.ifEmpty { tvgName.ifEmpty { streamUrl } }
+                    val commaIdx = line.lastIndexOf(',')
+                    val name = if (commaIdx >= 0 && commaIdx < line.length - 1)
+                        line.substring(commaIdx + 1).trim()
+                    else attrs["tvg-name"] ?: "Channel $channelNumber"
 
-                    channels.add(
-                        IptvChannel(
-                            id = channelId,
-                            name = name,
-                            logoUrl = logoUrl,
-                            streamUrl = streamUrl,
-                            groupTitle = group.ifEmpty { "General" },
-                            tvgId = tvgId,
-                            tvgName = tvgName,
-                            isAdult = group.contains("adult", true) || group.contains("18+", true) || group.contains("xxx", true),
-                            number = channels.size + 1
+                    if (name.isBlank()) { i++; continue }
+
+                    var group = attrs["group-title"] ?: ""
+                    if (group.isEmpty()) {
+                        for (j in i + 1 until minOf(i + 4, lines.size)) {
+                            val peek = lines[j].trim()
+                            when {
+                                peek.startsWith("#EXTGRP:", ignoreCase = true) ->
+                                    group = peek.substringAfter(":").trim()
+                                peek.isNotEmpty() && !peek.startsWith("#") -> break
+                            }
+                        }
+                    }
+
+                    var streamUrl = ""
+                    var j = i + 1
+                    while (j < lines.size) {
+                        val nextLine = lines[j].trim()
+                        when {
+                            nextLine.isEmpty() -> j++
+                            nextLine.startsWith("#EXTGRP:", ignoreCase = true) -> j++
+                            nextLine.startsWith("#") -> j++
+                            else -> { streamUrl = nextLine; break }
+                        }
+                    }
+
+                    if (streamUrl.isNotEmpty()) {
+                        val tvgId = attrs["tvg-id"] ?: ""
+                        val tvgName = attrs["tvg-name"] ?: ""
+                        val logo = attrs["tvg-logo"] ?: attrs["logo"] ?: ""
+                        val catchupSrc = attrs["catchup-source"] ?: attrs["catchup"] ?: ""
+                        val catchupDays = attrs["catchup-days"]?.toIntOrNull() ?: 0
+
+                        val resolution = when {
+                            name.contains("4K", true) || name.contains("UHD", true) -> "4K"
+                            name.contains("FHD", true) || name.contains("1080", true) -> "FHD"
+                            name.contains("HD", true) || name.contains("720", true) -> "HD"
+                            else -> ""
+                        }
+
+                        val isAdult = group.contains("adult", true) ||
+                                group.contains("18+", true) ||
+                                group.contains("xxx", true) ||
+                                group.contains("erotic", true)
+
+                        val country = tvgId.substringAfterLast(".").uppercase().let {
+                            if (it.length == 2) it else ""
+                        }
+
+                        val channelId = when {
+                            tvgId.isNotEmpty() -> tvgId
+                            tvgName.isNotEmpty() -> tvgName
+                            else -> "${name}_$channelNumber"
+                        }
+
+                        channels.add(
+                            IptvChannel(
+                                id = channelId,
+                                name = name,
+                                logoUrl = logo,
+                                streamUrl = streamUrl,
+                                groupTitle = group.ifEmpty { "General" },
+                                tvgId = tvgId,
+                                tvgName = tvgName,
+                                isAdult = isAdult,
+                                number = channelNumber,
+                                catchupSource = catchupSrc,
+                                catchupDays = catchupDays,
+                                hasArchive = catchupSrc.isNotEmpty() || catchupDays > 0,
+                                resolution = resolution,
+                                country = country,
+                            )
                         )
-                    )
+                        channelNumber++
+                    }
                 }
             }
             i++
         }
+
         return channels.filter { !it.isAdult }
+    }
+
+    private fun parsePlainUrls(content: String): List<IptvChannel> {
+        return content.lines()
+            .filter { it.trim().startsWith("http", ignoreCase = true) }
+            .mapIndexed { idx, url ->
+                IptvChannel(
+                    id = "ch_$idx",
+                    name = "Channel ${idx + 1}",
+                    logoUrl = "",
+                    streamUrl = url.trim(),
+                    groupTitle = "General",
+                    number = idx + 1
+                )
+            }
     }
 }
