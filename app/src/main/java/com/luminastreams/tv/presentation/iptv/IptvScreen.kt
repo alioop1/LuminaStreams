@@ -874,10 +874,10 @@ private fun ChannelList(
     ) {
         itemsIndexed(channels, key = { _, ch -> ch.id }) { idx, channel ->
             val resolvedLogo = channel.logoUrl.ifBlank {
-                state.channelLogos[channel.tvgId.lowercase()]
-                    ?: state.channelLogos[channel.tvgName.lowercase()]
-                    ?: state.channelLogos[channel.id.lowercase()]
-                    ?: state.channelLogos[channel.name.lowercase()]
+                channelLogos[channel.tvgId.lowercase()]
+                    ?: channelLogos[channel.tvgName.lowercase()]
+                    ?: channelLogos[channel.id.lowercase()]
+                    ?: channelLogos[channel.name.lowercase()]
                     ?: ""
             }
 
@@ -1166,7 +1166,9 @@ private fun NowPlayingPanel(
                 ) {
                     val resolvedLogo = channel.logoUrl.ifBlank {
                         state.channelLogos[channel.tvgId.lowercase()]
+                            ?: state.channelLogos[channel.tvgName.lowercase()]
                             ?: state.channelLogos[channel.id.lowercase()]
+                            ?: state.channelLogos[channel.name.lowercase()]
                             ?: ""
                     }
                     if (resolvedLogo.isNotBlank()) {
@@ -1395,8 +1397,8 @@ private fun EpgTimeline(
                 .sortedBy { it.startTime }
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(dayPrograms, key = { it.startTime }) { prog ->
-                    EpgProgramRow(prog, timeFormatter)
+                items(dayPrograms, key = { "${it.startTime}_${it.channelId}" }) { prog ->
+                EpgProgramRow(prog, timeFormatter)
                 }
             }
         }
@@ -1950,8 +1952,8 @@ fun EpgFullGuide(
                     item {
                         Text(date, color = IPTV_GOLD, fontSize = 16.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp, modifier = Modifier.padding(vertical = 8.dp))
                     }
-                    items(progs, key = { it.startTime }) { prog ->
-                        EpgFullRow(program = prog, timeFormatter = timeFormatter)
+                    items(progs, key = { "${it.startTime}_${it.channelId}" }) { prog ->
+                    EpgFullRow(program = prog, timeFormatter = timeFormatter)
                     }
                 }
             }

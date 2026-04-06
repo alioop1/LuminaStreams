@@ -446,11 +446,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
                 selectGroup(_state.value.selectedGroup)
 
+// ✅
                 _state.value.currentChannel?.let { ch ->
-                    val epg = getEpgForChannel(ch)
+                    val updatedCh = updatedChannels.find { it.id == ch.id } ?: ch
+                    val epg = getEpgForChannel(updatedCh, result.programs)
                     val now = System.currentTimeMillis()
                     _state.update {
                         it.copy(
+                            currentChannel = updatedCh,
                             currentProgram = epg.firstOrNull { p -> p.isLiveNow },
                             nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow }
                         )
