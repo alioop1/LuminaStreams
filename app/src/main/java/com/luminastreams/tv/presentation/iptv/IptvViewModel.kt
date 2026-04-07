@@ -3,6 +3,8 @@ package com.luminastreams.tv.presentation.iptv
 import android.app.Application
 import android.content.Context
 import android.util.Log
+import android.util.JsonReader
+import android.util.JsonWriter
 import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -14,10 +16,15 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.NetworkInterface
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
+import java.io.FileReader
+import java.io.FileWriter
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -31,7 +38,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private var sleepTimerJob: Job? = null
     private var autoRefreshJob: Job? = null
 
-    // ✅ EPG Cache — avoids re-downloading on every launch
+    // EPG Cache — avoids re-downloading on every launch
     private val epgCacheDir by lazy { application.cacheDir.also { it.mkdirs() } }
     private fun epgCacheFile(epgUrl: String) = File(epgCacheDir, "epg_${epgUrl.hashCode()}.json")
     private fun epgCacheTimeKey(epgUrl: String) = "epg_ts_${epgUrl.hashCode()}"
@@ -260,7 +267,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             "All" -> s.channels
             "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
             "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == group }
+            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
         }
         val q = s.searchQuery
         val filtered = if (q.isBlank()) base else base.filter { it.name.contains(q, true) }
@@ -302,7 +309,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.selectedGroup == "Favorites") selectGroup("Favorites")
     }
 
-    // ✅ EPG with cache: tries cache first, only downloads if stale
+    // EPG with cache: tries cache first, only downloads if stale
     private fun loadEpgWithCache(epgUrl: String) {
         epgRefreshJob?.cancel()
         epgRefreshJob = viewModelScope.launch {
@@ -315,8 +322,10 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 if (cacheAge < EPG_CACHE_TTL_MS && cacheFile.exists() && cacheFile.length() > 100) {
                     Log.d(TAG, "EPG: loading from cache (${cacheAge / 60000}min old)")
                     try {
-                        val json = cacheFile.readText()
-                        val result = deserializeEpgResult(json)
+                        // Read and deserialize on IO thread — file may be large
+                        val result = withContext(Dispatchers.IO) {
+                            deserializeEpgResult(cacheFile)
+                        }
                         if (result != null) {
                             applyEpgResult(result)
                             Log.d(TAG, "EPG cache applied OK")
@@ -342,7 +351,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         epgRefreshJob = viewModelScope.launch {
             _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
             try {
-                // ✅ More efficient allowedIds — 3 lookups instead of 4
                 val allowedIds = buildSet<String> {
                     _state.value.channels.forEach { ch ->
                         if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
@@ -351,16 +359,21 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val result = EpgParser.parse(epgUrl, allowedIds).getOrThrow()
+                // Parse EPG on IO thread
+                val result = withContext(Dispatchers.IO) {
+                    EpgParser.parse(epgUrl, allowedIds).getOrThrow()
+                }
 
-                // ✅ Save to cache after successful download
-                try {
-                    val json = serializeEpgResult(result)
-                    epgCacheFile(epgUrl).writeText(json)
-                    prefs.edit { putLong(epgCacheTimeKey(epgUrl), System.currentTimeMillis()) }
-                    Log.d(TAG, "EPG saved to cache")
-                } catch (e: Exception) {
-                    Log.w(TAG, "EPG cache write failed: ${e.message}")
+                // Write cache on IO thread using streaming JsonWriter — no full object tree in RAM
+                withContext(Dispatchers.IO) {
+                    try {
+                        val cacheFile = epgCacheFile(epgUrl)
+                        serializeEpgResult(result, cacheFile)
+                        prefs.edit { putLong(epgCacheTimeKey(epgUrl), System.currentTimeMillis()) }
+                        Log.d(TAG, "EPG saved to cache (streaming)")
+                    } catch (e: Exception) {
+                        Log.w(TAG, "EPG cache write failed: ${e.message}")
+                    }
                 }
 
                 applyEpgResult(result)
@@ -372,7 +385,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ✅ Extracted: shared logic for applying an EPG result to state
+    // Extracted: shared logic for applying an EPG result to state
     private fun applyEpgResult(result: EpgParser.EpgResult) {
         Log.d(TAG, "Applying EPG: ${result.programs.size} channels, ${result.channelLogos.size} logos")
 
@@ -420,61 +433,125 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ✅ Serialize EPG result to JSON for disk cache
-    private fun serializeEpgResult(result: EpgParser.EpgResult): String {
-        val root = JSONObject()
-        val programs = JSONObject()
-        for ((channelId, progList) in result.programs) {
-            val arr = JSONArray()
-            for (p in progList) {
-                arr.put(JSONObject().apply {
-                    put("channelId", p.channelId)
-                    put("title", p.title)
-                    put("desc", p.description)
-                    put("start", p.startTime)
-                    put("end", p.endTime)
-                    put("cat", p.category)
-                    put("icon", p.posterUrl)
-                    put("ep", p.episodeNum)
-                    put("rat", p.rating)
-                })
+    /**
+     * Serialize EPG result to a file using Android's streaming JsonWriter.
+     * Writes directly to disk without building a JSONObject tree in RAM,
+     * preventing OOM on large EPG feeds.
+     * Must be called on Dispatchers.IO.
+     */
+    private fun serializeEpgResult(result: EpgParser.EpgResult, outFile: File) {
+        BufferedWriter(FileWriter(outFile)).use { fw ->
+            JsonWriter(fw).use { writer ->
+                writer.beginObject()
+
+                // programs
+                writer.name("programs")
+                writer.beginObject()
+                for ((channelId, progList) in result.programs) {
+                    writer.name(channelId)
+                    writer.beginArray()
+                    for (p in progList) {
+                        writer.beginObject()
+                        writer.name("channelId").value(p.channelId)
+                        writer.name("title").value(p.title)
+                        writer.name("desc").value(p.description)
+                        writer.name("start").value(p.startTime)
+                        writer.name("end").value(p.endTime)
+                        writer.name("cat").value(p.category)
+                        writer.name("icon").value(p.posterUrl)
+                        writer.name("ep").value(p.episodeNum)
+                        writer.name("rat").value(p.rating)
+                        writer.endObject()
+                    }
+                    writer.endArray()
+                }
+                writer.endObject()
+
+                // logos
+                writer.name("logos")
+                writer.beginObject()
+                for ((k, v) in result.channelLogos) {
+                    writer.name(k).value(v)
+                }
+                writer.endObject()
+
+                writer.endObject()
             }
-            programs.put(channelId, arr)
         }
-        root.put("programs", programs)
-        val logos = JSONObject()
-        for ((k, v) in result.channelLogos) logos.put(k, v)
-        root.put("logos", logos)
-        return root.toString()
     }
 
-    private fun deserializeEpgResult(json: String): EpgParser.EpgResult? {
+    /**
+     * Deserialize EPG result from a file using Android's streaming JsonReader.
+     * Reads directly from disk without loading the full JSON string into RAM.
+     * Must be called on Dispatchers.IO.
+     */
+    private fun deserializeEpgResult(cacheFile: File): EpgParser.EpgResult? {
         return try {
-            val root = JSONObject(json)
             val programs = mutableMapOf<String, List<EpgProgram>>()
-            val programsJson = root.getJSONObject("programs")
-            for (key in programsJson.keys()) {
-                val arr = programsJson.getJSONArray(key)
-                val list = mutableListOf<EpgProgram>()
-                for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
-                    list.add(EpgProgram(
-                        channelId = o.optString("channelId"),
-                        title = o.optString("title"),
-                        description = o.optString("desc"),
-                        startTime = o.optLong("start"),
-                        endTime = o.optLong("end"),
-                        category = o.optString("cat"),
-                        posterUrl = o.optString("icon"),
-                        episodeNum = o.optString("ep"),
-                        rating = o.optString("rat")
-                    ))
-                }
-                programs[key] = list
-            }
             val logos = mutableMapOf<String, String>()
-            val logosJson = root.optJSONObject("logos")
-            logosJson?.keys()?.forEach { k -> logos[k] = logosJson.optString(k) }
+
+            BufferedReader(FileReader(cacheFile)).use { fr ->
+                JsonReader(fr).use { reader ->
+                    reader.beginObject()
+                    while (reader.hasNext()) {
+                        when (reader.nextName()) {
+                            "programs" -> {
+                                reader.beginObject()
+                                while (reader.hasNext()) {
+                                    val channelId = reader.nextName()
+                                    val list = mutableListOf<EpgProgram>()
+                                    reader.beginArray()
+                                    while (reader.hasNext()) {
+                                        var cId = ""; var title = ""; var desc = ""
+                                        var start = 0L; var end = 0L; var cat = ""
+                                        var icon = ""; var ep = ""; var rat = ""
+                                        reader.beginObject()
+                                        while (reader.hasNext()) {
+                                            when (reader.nextName()) {
+                                                "channelId" -> cId = reader.nextString()
+                                                "title"     -> title = reader.nextString()
+                                                "desc"      -> desc = reader.nextString()
+                                                "start"     -> start = reader.nextLong()
+                                                "end"       -> end = reader.nextLong()
+                                                "cat"       -> cat = reader.nextString()
+                                                "icon"      -> icon = reader.nextString()
+                                                "ep"        -> ep = reader.nextString()
+                                                "rat"       -> rat = reader.nextString()
+                                                else        -> reader.skipValue()
+                                            }
+                                        }
+                                        reader.endObject()
+                                        list.add(EpgProgram(
+                                            channelId = cId,
+                                            title = title,
+                                            description = desc,
+                                            startTime = start,
+                                            endTime = end,
+                                            category = cat,
+                                            posterUrl = icon,
+                                            episodeNum = ep,
+                                            rating = rat
+                                        ))
+                                    }
+                                    reader.endArray()
+                                    programs[channelId] = list
+                                }
+                                reader.endObject()
+                            }
+                            "logos" -> {
+                                reader.beginObject()
+                                while (reader.hasNext()) {
+                                    logos[reader.nextName()] = reader.nextString()
+                                }
+                                reader.endObject()
+                            }
+                            else -> reader.skipValue()
+                        }
+                    }
+                    reader.endObject()
+                }
+            }
+
             EpgParser.EpgResult(
                 programs = programs,
                 channelLogos = logos,
@@ -529,7 +606,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 }
 
                 if (epgUrl.isNotBlank()) {
-                    // ✅ FIX: Launch EPG in separate coroutine so playlist UI shows first
                     viewModelScope.launch {
                         delay(300) // Let playlist render before starting heavy EPG download
                         loadEpgWithCache(epgUrl)
