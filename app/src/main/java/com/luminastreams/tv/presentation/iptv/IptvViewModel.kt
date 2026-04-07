@@ -268,7 +268,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             "All" -> s.channels
             "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
             "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
+            else -> s.channels.filter { it.groupTitle == group }  // fixed: was s.selectedGroup
         }
         val q = s.searchQuery
         val filtered = if (q.isBlank()) base else base.filter { it.name.contains(q, true) }
@@ -356,8 +356,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Loading EPG fresh from: $epgUrl")
         _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
         try {
-            // Build allowed IDs set for post-parse fuzzy matching only.
-            // NOT used for pre-filtering during SAX parse anymore.
             val allowedIds = buildSet<String> {
                 _state.value.channels.forEach { ch ->
                     if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
@@ -372,7 +370,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             }
             Log.d(TAG, "EPG parsed: ${result.programs.values.sumOf { it.size }} programs across ${result.programs.size} channels, ${result.channelLogos.size} logos")
 
-            // Write full parsed result to cache on IO thread
             withContext(Dispatchers.IO) {
                 try {
                     val cacheFile = epgCacheFile(epgUrl)
@@ -416,8 +413,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyEpgResult(result: EpgParser.EpgResult) {
         Log.d(TAG, "Applying EPG: ${result.programs.size} program keys, ${result.channelLogos.size} logos")
 
-        // Fuzzy channel-id matching: link EPG program keys to M3U channels.
-        // EPG XML channel ids rarely match M3U tvg-id exactly, so we do substring matching.
         val epgProgramsForChannel = mutableMapOf<String, List<EpgProgram>>()
         _state.value.channels.forEach { ch ->
             val keys = listOfNotNull(
@@ -426,11 +421,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 ch.id.lowercase(),
                 ch.name.lowercase()
             )
-            // Try exact match first, then substring match
             val programs = keys.firstNotNullOfOrNull { k ->
                 result.programs[k]?.takeIf { it.isNotEmpty() }
             } ?: run {
-                // Substring fallback: find the best EPG key that contains or is contained by our keys
                 result.programs.entries.firstOrNull { (epgKey, progs) ->
                     progs.isNotEmpty() && keys.any { k ->
                         epgKey.contains(k) || k.contains(epgKey)
@@ -462,7 +455,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             updatedById[fch.id] ?: fch
         }
 
-        // Merge matched programs into the full epgData map keyed by channel id
         val mergedEpgData = result.programs.toMutableMap()
         epgProgramsForChannel.forEach { (chId, progs) ->
             mergedEpgData[chId] = progs
@@ -613,15 +605,13 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
         val keys = listOfNotNull(
-            channel.id,                           // channel id (may be set to match EPG key in applyEpgResult)
+            channel.id,
             channel.tvgId.lowercase().ifBlank { null },
             channel.tvgName.lowercase().ifBlank { null },
             channel.id.lowercase(),
             channel.name.lowercase()
         )
-        // Exact match first
         return keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } }
-        // Substring fallback
             ?: dataMap.entries.firstOrNull { (epgKey, progs) ->
                 progs.isNotEmpty() && keys.any { k -> epgKey.contains(k) || k.contains(epgKey) }
             }?.value
@@ -655,7 +645,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Start EPG immediately after playlist renders — no artificial delay
                 if (epgUrl.isNotBlank()) {
                     viewModelScope.launch {
                         loadEpgWithCache(epgUrl)

@@ -219,7 +219,18 @@ object EpgParser {
                 }
                 else -> conn.inputStream.buffered(131_072)
             }
-            return stream.use { it.readBytes() }
+            val raw = stream.use { it.readBytes() }
+            // Detect double-gzip: server may apply Content-Encoding:gzip on top of
+            // an already-compressed .gz file, leaving one layer still compressed.
+            // GZIP magic bytes are 0x1F 0x8B.
+            return if (raw.size >= 2 &&
+                       raw[0] == 0x1F.toByte() &&
+                       raw[1] == 0x8B.toByte()) {
+                Log.d(TAG, "Double-gzip detected, decompressing second layer (${raw.size} bytes)")
+                GZIPInputStream(ByteArrayInputStream(raw)).use { it.readBytes() }
+            } else {
+                raw
+            }
         }
         throw Exception("Too many redirects")
     }
