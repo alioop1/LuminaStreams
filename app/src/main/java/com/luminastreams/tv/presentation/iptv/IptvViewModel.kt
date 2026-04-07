@@ -217,6 +217,27 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             is IptvEvent.HideIptvSettings -> _state.update { it.copy(showSettings = false) }
             is IptvEvent.ShowIptvSettings -> _state.update { it.copy(showSettings = true) }
             is IptvEvent.SetEpgDayOffset -> _state.update { it.copy(epgDayOffset = event.offset) }
+
+            is IptvEvent.ToggleSubtitles -> {
+                val enabled = !_state.value.subtitlesEnabled
+                _state.update { it.copy(subtitlesEnabled = enabled) }
+                prefs.edit { putBoolean("subtitles_enabled", enabled) }
+            }
+            is IptvEvent.SelectAudioTrack -> {
+                _state.update { it.copy(audioTrackIndex = event.index) }
+            }
+            is IptvEvent.ChannelUp -> {
+                val channels = _state.value.filteredChannels
+                if (channels.isEmpty()) return
+                val nextIndex = (event.currentIndex + 1).coerceAtMost(channels.lastIndex)
+                selectChannel(channels[nextIndex])
+            }
+            is IptvEvent.ChannelDown -> {
+                val channels = _state.value.filteredChannels
+                if (channels.isEmpty()) return
+                val prevIndex = (event.currentIndex - 1).coerceAtLeast(0)
+                selectChannel(channels[prevIndex])
+            }
         }
     }
 
