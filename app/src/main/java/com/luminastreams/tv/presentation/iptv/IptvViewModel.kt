@@ -413,7 +413,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     put("start", p.startTime)
                     put("end", p.endTime)
                     put("cat", p.category)
-                    put("icon", p.icon)
+                    put("icon", p.posterUrl)
                     put("ep", p.episodeNum)
                     put("rat", p.rating)
                 })
@@ -444,7 +444,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                         startTime = o.optLong("start"),
                         endTime = o.optLong("end"),
                         category = o.optString("cat"),
-                        icon = o.optString("icon"),
+                        posterUrl = o.optString("icon"),
                         episodeNum = o.optString("ep"),
                         rating = o.optString("rat")
                     ))
