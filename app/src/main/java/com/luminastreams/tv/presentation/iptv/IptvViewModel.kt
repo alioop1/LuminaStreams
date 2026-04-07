@@ -268,7 +268,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             "All" -> s.channels
             "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
             "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == group }  // fixed: was s.selectedGroup
+            else -> s.channels.filter { it.groupTitle == group }
         }
         val q = s.searchQuery
         val filtered = if (q.isBlank()) base else base.filter { it.name.contains(q, true) }
@@ -310,7 +310,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         if (_state.value.selectedGroup == "Favorites") selectGroup("Favorites")
     }
 
-    // EPG with cache: tries cache first, only downloads if stale
     private fun loadEpgWithCache(epgUrl: String) {
         if (epgLoadInProgress) {
             Log.d(TAG, "EPG load already in progress, skipping duplicate request")
