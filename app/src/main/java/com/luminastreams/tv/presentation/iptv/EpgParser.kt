@@ -18,6 +18,9 @@ object EpgParser {
 
     private const val TAG = "EPG_DEBUG"
 
+    // Max programs stored per channel (covers ~12 hours at 30min slots = 24, with some buffer)
+    private const val MAX_PROGRAMS_PER_CHANNEL = 48
+
     data class EpgResult(
         val programs: Map<String, List<EpgProgram>>,
         val channelLogos: Map<String, String>,
@@ -29,9 +32,9 @@ object EpgParser {
             Log.d(TAG, "Starting EPG download from: $url (filtering ${allowedIds.size} IDs)")
             val stream = fetchEpgStream(url)
 
-            // Parse ALL channels/programmes — no pre-filtering by ID.
-            // Matching against allowedIds happens after parsing during applyEpgResult.
-            val handler = XmlTvHandler()
+            // Pass allowedIds directly into the handler so programmes for unknown channels
+            // are dropped DURING parsing — never allocated as EpgProgram objects.
+            val handler = XmlTvHandler(allowedIds)
             val factory = SAXParserFactory.newInstance().apply {
                 isNamespaceAware = false
                 isValidating = false
@@ -47,19 +50,16 @@ object EpgParser {
             val finalMap = mutableMapOf<String, List<EpgProgram>>()
             val finalLogoMap = mutableMapOf<String, String>()
 
-            for ((id, list) in handler.channelsMap) {
-                val sortedList = list.sortedBy { it.startTime }
+            for ((id, deque) in handler.channelsMap) {
+                val sortedList = deque.sortedBy { it.startTime }
                 val idLower = id.lowercase()
 
-                // Index by channel id
                 finalMap[idLower] = sortedList
 
-                // Also index by every display name so fuzzy lookup in ViewModel works
                 handler.displayNames[id]?.forEach { displayName ->
                     if (displayName.isNotEmpty()) finalMap[displayName.lowercase()] = sortedList
                 }
 
-                // Logo: index by id and all display names
                 val logo = handler.channelLogos[id] ?: handler.channelLogos[idLower]
                 if (!logo.isNullOrBlank()) {
                     finalLogoMap[idLower] = logo
@@ -135,18 +135,30 @@ object EpgParser {
         throw Exception("Too many redirects")
     }
 
-    // Parses ALL channels and programmes — no pre-filtering.
-    private class XmlTvHandler : DefaultHandler() {
-        val channelsMap = mutableMapOf<String, MutableList<EpgProgram>>()
+    /**
+     * SAX handler that:
+     * 1. Filters programmes DURING parsing — channels not in allowedIds are skipped immediately,
+     *    never allocated as EpgProgram objects. This is the primary OOM fix.
+     * 2. Caps storage at MAX_PROGRAMS_PER_CHANNEL per channel using an ArrayDeque (ring buffer).
+     * 3. Drops programmes that ended more than 2 hours ago (hard cutoff).
+     * 4. Drops programmes starting more than 7 days in the future.
+     */
+    private class XmlTvHandler(private val allowedIds: Set<String>) : DefaultHandler() {
+        // Use ArrayDeque so we can cheaply drop the oldest entry when the cap is hit.
+        val channelsMap = mutableMapOf<String, ArrayDeque<EpgProgram>>()
         val displayNames = mutableMapOf<String, MutableList<String>>()
         val channelLogos = mutableMapOf<String, String>()
         var programCount = 0
 
-        private val cutoffTime = System.currentTimeMillis() - (24 * 3600 * 1000L)
-        private val futureLimit = System.currentTimeMillis() + (14L * 24 * 3600 * 1000)
+        // 2-hour grace window for recently-ended programmes (e.g. still shown in the guide)
+        private val cutoffTime = System.currentTimeMillis() - (2 * 3600 * 1000L)
+        private val futureLimit = System.currentTimeMillis() + (7L * 24 * 3600 * 1000)
 
         private var inChannel = false
         private var inProgramme = false
+        // Set to true when the current <programme> channel is in allowedIds — skip all text/tag
+        // processing for channels we don't care about.
+        private var skipProgramme = false
 
         private var currentChannelId = ""
         private var currentProgramChannelId = ""
@@ -199,6 +211,7 @@ object EpgParser {
                     if (id.isNotBlank()) {
                         inChannel = true
                         inProgramme = false
+                        skipProgramme = false
                         currentChannelId = id
                     }
                 }
@@ -208,9 +221,22 @@ object EpgParser {
                         inProgramme = true
                         inChannel = false
                         currentProgramChannelId = ch
-                        currentStart = parseTimeFast(attrs.getValue("start") ?: "")
-                        currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
-                        programData.clear()
+
+                        // KEY FIX: if this channel isn't in the playlist, skip everything inside
+                        // this <programme> element — no text buffering, no map lookups, no allocations.
+                        val chLower = ch.lowercase()
+                        skipProgramme = chLower !in allowedIds
+
+                        if (!skipProgramme) {
+                            currentStart = parseTimeFast(attrs.getValue("start") ?: "")
+                            currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
+                            // Quick time-range check before we even start collecting data
+                            if (currentStop < cutoffTime || currentStart > futureLimit) {
+                                skipProgramme = true
+                            } else {
+                                programData.clear()
+                            }
+                        }
                     }
                 }
                 "icon" -> {
@@ -221,7 +247,7 @@ object EpgParser {
                                 channelLogos[currentChannelId] = src
                                 channelLogos[currentChannelId.lowercase()] = src
                             }
-                            inProgramme -> programData["icon"] = src
+                            inProgramme && !skipProgramme -> programData["icon"] = src
                         }
                     }
                 }
@@ -229,7 +255,8 @@ object EpgParser {
         }
 
         override fun characters(ch: CharArray, start: Int, length: Int) {
-            if (inChannel || inProgramme) {
+            // Only buffer text if we're inside a channel tag OR a programme we actually care about.
+            if (inChannel || (inProgramme && !skipProgramme)) {
                 sb.appendRange(ch, start, start + length)
             }
         }
@@ -243,8 +270,7 @@ object EpgParser {
                     currentChannelId = ""
                 }
                 tag == "programme" -> {
-                    inProgramme = false
-                    if (currentStart > 0 && currentStop > cutoffTime && currentStart < futureLimit) {
+                    if (!skipProgramme && currentStart > 0) {
                         val title = programData["title"]
                         if (!title.isNullOrBlank()) {
                             val prog = EpgProgram(
@@ -258,10 +284,17 @@ object EpgParser {
                                 episodeNum = programData["episodeNum"] ?: "",
                                 rating = programData["rating"] ?: ""
                             )
-                            channelsMap.getOrPut(currentProgramChannelId) { mutableListOf() }.add(prog)
+                            val deque = channelsMap.getOrPut(currentProgramChannelId) { ArrayDeque() }
+                            // Ring-buffer cap: drop oldest programme when we're over the limit.
+                            if (deque.size >= MAX_PROGRAMS_PER_CHANNEL) {
+                                deque.removeFirst()
+                            }
+                            deque.addLast(prog)
                             programCount++
                         }
                     }
+                    inProgramme = false
+                    skipProgramme = false
                     currentProgramChannelId = ""
                     currentStart = 0L
                     currentStop = 0L
@@ -273,7 +306,7 @@ object EpgParser {
                         displayNames.getOrPut(currentChannelId) { mutableListOf() }.add(text)
                     }
                 }
-                inProgramme -> {
+                inProgramme && !skipProgramme -> {
                     val text = sb.toString().trim()
                     when (tag) {
                         "title"       -> if (programData["title"] == null && text.isNotEmpty()) programData["title"] = text

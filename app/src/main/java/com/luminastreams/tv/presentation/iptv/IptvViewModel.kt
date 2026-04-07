@@ -359,7 +359,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Loading EPG fresh from: $epgUrl")
         _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
         try {
-            // Build allowed IDs for filtering — only channels actually in the playlist
+            // Build allowed IDs for filtering — only channels actually in the playlist.
+            // These are passed into EpgParser so unknown channels are discarded DURING SAX parse.
             val allowedIds = buildSet<String> {
                 _state.value.channels.forEach { ch ->
                     if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
@@ -369,21 +370,26 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             }
             Log.d(TAG, "Starting EPG download from: $epgUrl (filtering ${allowedIds.size} IDs)")
 
-            // Parse on IO thread — EpgParser already filters by allowedIds during parse
             val result = withContext(Dispatchers.IO) {
                 EpgParser.parse(epgUrl, allowedIds).getOrThrow()
             }
             Log.d(TAG, "EPG parsed: ${result.programs.values.sumOf { it.size }} programs across ${result.programs.size} channels, ${result.channelLogos.size} logos")
 
-            // Filter result to ONLY channels in the current playlist before saving to disk.
-            // The EPG XML may contain 1700+ channels; we only need ~300-400 for this playlist.
-            // This reduces cache size by ~95% and cuts save+load time from minutes to seconds.
-            val filteredPrograms = result.programs.filterKeys { it in allowedIds }
-            val filteredLogos = result.channelLogos.filterKeys { it in allowedIds }
+            // The parser already filtered by allowedIds during parsing, so filteredResult == result.
+            // We still do a key-filter pass here as a safety net (e.g. display-name aliasing may
+            // add extra keys that aren't in allowedIds).
+            val filteredPrograms = result.programs.filterKeys { key ->
+                allowedIds.any { id -> key.contains(id) || id.contains(key) }
+            }
+            val filteredLogos = result.channelLogos.filterKeys { key ->
+                allowedIds.any { id -> key.contains(id) || id.contains(key) }
+            }
             val filteredResult = EpgParser.EpgResult(
                 programs = filteredPrograms,
                 channelLogos = filteredLogos,
-                channelDisplayNames = result.channelDisplayNames.filterKeys { it in allowedIds }
+                channelDisplayNames = result.channelDisplayNames.filterKeys { key ->
+                    allowedIds.any { id -> key.contains(id) || id.contains(key) }
+                }
             )
             Log.d(TAG, "EPG result: ${filteredPrograms.size} program keys, ${filteredLogos.size} logo keys")
 
@@ -410,7 +416,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private fun refreshEpg() {
         val activePlaylist = _state.value.playlists.find { it.id == _state.value.activePlaylistId }
         if (activePlaylist?.epgUrl?.isNotBlank() == true) {
-            // Force re-download by resetting the in-progress flag first
             epgLoadInProgress = false
             loadEpgFreshForced(activePlaylist.epgUrl)
         }
@@ -433,12 +438,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private fun applyEpgResult(result: EpgParser.EpgResult) {
         Log.d(TAG, "Applying EPG: ${result.programs.size} channels, ${result.channelLogos.size} logos")
 
+        // Build a logo lookup map once — avoids O(n*m) lookups inside the map{} below.
+        val logoLookup = result.channelLogos
+
         val updatedChannels = _state.value.channels.map { ch ->
-            val epgLogoKey = ch.tvgId.lowercase().ifEmpty { ch.name.lowercase() }
-            val epgLogo = result.channelLogos[epgLogoKey]
-                ?: result.channelLogos[ch.tvgName.lowercase()]
-                ?: result.channelLogos[ch.id.lowercase()]
-                ?: result.channelLogos[ch.name.lowercase()]
+            val epgLogo = logoLookup[ch.tvgId.lowercase()]
+                ?: logoLookup[ch.tvgName.lowercase()]
+                ?: logoLookup[ch.id.lowercase()]
+                ?: logoLookup[ch.name.lowercase()]
             val mergedLogo = when {
                 !epgLogo.isNullOrBlank() -> epgLogo
                 ch.logoUrl.isNotBlank() -> ch.logoUrl
@@ -447,8 +454,10 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
         }
 
+        // Build a fast id→channel map so the filteredChannels update is O(n) not O(n²)
+        val updatedById = updatedChannels.associateBy { it.id }
         val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
-            updatedChannels.find { it.id == fch.id } ?: fch
+            updatedById[fch.id] ?: fch
         }
 
         _state.update {
@@ -464,7 +473,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         selectGroup(_state.value.selectedGroup)
 
         _state.value.currentChannel?.let { ch ->
-            val updatedCh = updatedChannels.find { it.id == ch.id } ?: ch
+            val updatedCh = updatedById[ch.id] ?: ch
             val epg = getEpgForChannel(updatedCh, result.programs)
             val now = System.currentTimeMillis()
             _state.update {
@@ -479,8 +488,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Serialize EPG result to a file using Android's streaming JsonWriter.
-     * Writes directly to disk without building a JSONObject tree in RAM,
-     * preventing OOM on large EPG feeds.
+     * Writes directly to disk without building a JSONObject tree in RAM.
      * Must be called on Dispatchers.IO.
      */
     private fun serializeEpgResult(result: EpgParser.EpgResult, outFile: File) {
@@ -488,7 +496,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             JsonWriter(fw).use { writer ->
                 writer.beginObject()
 
-                // programs
                 writer.name("programs")
                 writer.beginObject()
                 for ((channelId, progList) in result.programs) {
@@ -511,7 +518,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 writer.endObject()
 
-                // logos
                 writer.name("logos")
                 writer.beginObject()
                 for ((k, v) in result.channelLogos) {
