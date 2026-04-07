@@ -81,7 +81,6 @@ object EpgParser {
 
         while (redirects < 10) {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                // ✅ FIX #1: Reduced timeouts — 15s connect, 45s read (was 30s/120s!)
                 connectTimeout = 15_000
                 readTimeout = 45_000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV) Chrome/112.0.0.0")
@@ -110,7 +109,6 @@ object EpgParser {
             val lowerUrl = currentUrl.lowercase()
 
             return when {
-                // ✅ FIX #2: Buffered streams for faster network reading
                 contentEncoding.contains("gzip", true) || lowerUrl.endsWith(".gz") ->
                     GZIPInputStream(conn.inputStream.buffered(65536))
                 lowerUrl.endsWith(".zip") || contentType.contains("zip", true) -> {
@@ -151,7 +149,6 @@ object EpgParser {
 
         private val programData = mutableMapOf<String, String>()
 
-        // ✅ FIX #3: Fresh Calendar per call — thread-safe (shared Calendar was a data race)
         private fun parseTimeFast(timeStr: String): Long {
             var len = timeStr.length
             while (len > 0 && timeStr[len - 1] <= ' ') len--
@@ -256,7 +253,7 @@ object EpgParser {
                                 startTime = currentStart,
                                 endTime = currentStop,
                                 category = programData["category"] ?: "",
-                                icon = programData["icon"] ?: "",
+                                posterUrl = programData["icon"] ?: "",
                                 episodeNum = programData["episodeNum"] ?: "",
                                 rating = programData["rating"] ?: ""
                             )
