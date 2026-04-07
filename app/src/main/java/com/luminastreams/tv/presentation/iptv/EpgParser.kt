@@ -5,8 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.xml.sax.Attributes
 import org.xml.sax.helpers.DefaultHandler
-import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.io.PushbackInputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Calendar
@@ -49,48 +49,27 @@ private fun safeFeature(f: SAXParserFactory, name: String, value: Boolean) {
 }
 
 /**
- * Strips any leading bytes that would cause ExpatParser to throw
- * "not well-formed (invalid token)" at line 1, column 0.
- *
- * Handles:
- *  - UTF-8 BOM  (EF BB BF)
- *  - UTF-16 LE BOM (FF FE)
- *  - UTF-16 BE BOM (FE FF)
- *  - Any leading whitespace / control characters (\r \n \t space)
- *
- * Scans forward to the first '<' byte and returns a ByteArray view
- * starting there.  If no '<' is found the original array is returned
- * and the SAX parser will produce a meaningful error.
+ * Returns an InputStream that skips any leading BOM / whitespace bytes
+ * so the SAX parser sees a clean '<' as the first character.
  */
-private fun stripXmlPreamble(bytes: ByteArray): ByteArray {
-    var start = 0
-    val len = bytes.size
-    // Skip UTF-8 BOM (EF BB BF)
-    if (len >= 3 &&
-        bytes[0] == 0xEF.toByte() &&
-        bytes[1] == 0xBB.toByte() &&
-        bytes[2] == 0xBF.toByte()
-    ) start = 3
-    // Skip UTF-16 BOMs (FF FE or FE FF)
-    else if (len >= 2 &&
-        ((bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) ||
-         (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()))
-    ) start = 2
-    // Advance past any whitespace / control chars
-    while (start < len && bytes[start] <= 0x20) start++
-    // Now find the first '<' — if we're already at one, this is a no-op
-    if (start < len && bytes[start] == '<'.code.toByte()) {
-        return if (start == 0) bytes else bytes.copyOfRange(start, len)
-    }
-    // Unexpected leading content — scan forward to the first '<'
-    val xmlStart = bytes.indexOf('<'.code.toByte(), start)
-    return if (xmlStart >= 0) bytes.copyOfRange(xmlStart, len) else bytes
-}
-
-/** indexOf for a single byte in a ByteArray starting at [fromIndex]. */
-private fun ByteArray.indexOf(target: Byte, fromIndex: Int = 0): Int {
-    for (i in fromIndex until size) if (this[i] == target) return i
-    return -1
+private fun skipXmlPreamble(input: InputStream): InputStream {
+    val pb = PushbackInputStream(input, 4)
+    val header = ByteArray(4)
+    val read = pb.read(header)
+    if (read <= 0) return pb
+    var skip = 0
+    // UTF-8 BOM EF BB BF
+    if (read >= 3 &&
+        header[0] == 0xEF.toByte() &&
+        header[1] == 0xBB.toByte() &&
+        header[2] == 0xBF.toByte()) skip = 3
+    // UTF-16 BOMs FF FE or FE FF
+    else if (read >= 2 &&
+        ((header[0] == 0xFF.toByte() && header[1] == 0xFE.toByte()) ||
+         (header[0] == 0xFE.toByte() && header[1] == 0xFF.toByte()))) skip = 2
+    // Push back unread bytes (minus skipped)
+    pb.unread(header, skip, read - skip)
+    return pb
 }
 
 // -------------------------------------------------------------------------
@@ -99,7 +78,6 @@ object EpgParser {
 
     private const val TAG = "EPG_DEBUG"
     private const val MAX_PROGRAMS_PER_CHANNEL = 96
-    private const val TWO_PASS_LIMIT_BYTES = 32 * 1024 * 1024
 
     data class EpgResult(
         val programs: Map<String, List<EpgProgram>>,
@@ -121,26 +99,25 @@ object EpgParser {
                     safeFeature(this, "http://xml.org/sax/features/external-parameter-entities", false)
                 }
 
-                Log.d(TAG, "Downloading EPG from $url")
-                val rawBytes = stripXmlPreamble(fetchEpgBytes(url))
-                Log.d(TAG, "EPG downloaded: ${rawBytes.size} bytes (after preamble strip)")
-
-                val allowedEpgIds: Set<String> = if (rawBytes.size <= TWO_PASS_LIMIT_BYTES) {
+                // Pass 1: scan channel IDs (streaming)
+                Log.d(TAG, "EPG pass-1 (channel scan) from $url")
+                val allowedEpgIds: Set<String> = openEpgStream(url).use { stream ->
                     val scanHandler = ChannelScanHandler(allowedTokens)
-                    factory.newSAXParser().parse(ByteArrayInputStream(rawBytes), scanHandler)
+                    factory.newSAXParser().parse(skipXmlPreamble(stream), scanHandler)
                     Log.d(TAG, "Pass-1 matched ${scanHandler.matchedIds.size} EPG channel ids")
                     scanHandler.matchedIds
-                } else {
-                    Log.d(TAG, "Feed >${TWO_PASS_LIMIT_BYTES / 1024 / 1024}MB, single-pass token filter")
-                    emptySet()
                 }
 
+                // Pass 2: parse programmes (streaming)
+                Log.d(TAG, "EPG pass-2 (programme parse) from $url")
                 val handler = XmlTvHandler(
                     allowedEpgIds = allowedEpgIds,
                     allowedTokens = allowedTokens,
                     useFuzzyFallback = allowedEpgIds.isEmpty()
                 )
-                factory.newSAXParser().parse(ByteArrayInputStream(rawBytes), handler)
+                openEpgStream(url).use { stream ->
+                    factory.newSAXParser().parse(skipXmlPreamble(stream), handler)
+                }
                 Log.d(TAG, "EPG pass-2: ${handler.channelsMap.size} channels, ${handler.programCount} programmes")
 
                 val finalPrograms = LinkedHashMap<String, List<EpgProgram>>(handler.channelsMap.size * 2)
@@ -176,7 +153,12 @@ object EpgParser {
             }
         }
 
-    private fun fetchEpgBytes(urlString: String): ByteArray {
+    /**
+     * Opens an HTTP connection to [urlString], follows redirects manually,
+     * and returns a decompressed [InputStream] ready for SAX parsing.
+     * The caller MUST close the returned stream.
+     */
+    private fun openEpgStream(urlString: String): InputStream {
         var currentUrl = urlString
         var redirects = 0
         while (redirects < 10) {
@@ -192,7 +174,8 @@ object EpgParser {
                 val loc = conn.getHeaderField("Location")
                 conn.disconnect()
                 if (!loc.isNullOrBlank()) {
-                    currentUrl = if (loc.startsWith("http")) loc else URL(URL(currentUrl), loc).toString()
+                    currentUrl = if (loc.startsWith("http")) loc
+                                 else URL(URL(currentUrl), loc).toString()
                     redirects++
                     continue
                 }
@@ -202,13 +185,38 @@ object EpgParser {
                 throw Exception("HTTP $code for $currentUrl")
             }
             val enc = conn.contentEncoding ?: ""
-            val ct = conn.contentType ?: ""
+            val ct  = conn.contentType ?: ""
             val lowerUrl = currentUrl.lowercase()
-            val stream: InputStream = when {
-                enc.contains("gzip", true) || lowerUrl.endsWith(".gz") ->
-                    GZIPInputStream(conn.inputStream.buffered(131_072))
+
+            // Wrap in a disconnecting stream so conn.disconnect() is called on close
+            val rawStream = object : InputStream() {
+                private val delegate = conn.inputStream.buffered(65_536)
+                override fun read() = delegate.read()
+                override fun read(b: ByteArray, off: Int, len: Int) = delegate.read(b, off, len)
+                override fun close() { try { delegate.close() } finally { conn.disconnect() } }
+            }
+
+            return when {
+                enc.contains("gzip", true) || lowerUrl.endsWith(".gz") -> {
+                    // Peek first 2 bytes to guard against double-gzip
+                    val pb = PushbackInputStream(rawStream, 2)
+                    val b0 = pb.read(); val b1 = pb.read()
+                    pb.unread(byteArrayOf(b0.toByte(), b1.toByte()))
+                    val gzip1 = GZIPInputStream(pb, 65_536)
+                    // Check for second gzip layer
+                    val pb2 = PushbackInputStream(gzip1, 2)
+                    val c0 = pb2.read(); val c1 = pb2.read()
+                    if (c0 == 0x1F && c1 == 0x8B) {
+                        Log.d(TAG, "Double-gzip detected, adding second decompression layer")
+                        pb2.unread(byteArrayOf(c0.toByte(), c1.toByte()))
+                        GZIPInputStream(pb2, 65_536)
+                    } else {
+                        pb2.unread(byteArrayOf(c0.toByte(), c1.toByte()))
+                        pb2
+                    }
+                }
                 lowerUrl.endsWith(".zip") || ct.contains("zip", true) -> {
-                    val zis = ZipInputStream(conn.inputStream)
+                    val zis = ZipInputStream(rawStream)
                     var entry = zis.nextEntry
                     while (entry != null) {
                         if (entry.name.endsWith(".xml", true) || entry.name.endsWith(".xmltv", true)) break
@@ -217,19 +225,7 @@ object EpgParser {
                     if (entry == null) throw Exception("No XML in ZIP")
                     zis
                 }
-                else -> conn.inputStream.buffered(131_072)
-            }
-            val raw = stream.use { it.readBytes() }
-            // Detect double-gzip: server may apply Content-Encoding:gzip on top of
-            // an already-compressed .gz file, leaving one layer still compressed.
-            // GZIP magic bytes are 0x1F 0x8B.
-            return if (raw.size >= 2 &&
-                       raw[0] == 0x1F.toByte() &&
-                       raw[1] == 0x8B.toByte()) {
-                Log.d(TAG, "Double-gzip detected, decompressing second layer (${raw.size} bytes)")
-                GZIPInputStream(ByteArrayInputStream(raw)).use { it.readBytes() }
-            } else {
-                raw
+                else -> rawStream
             }
         }
         throw Exception("Too many redirects")
@@ -378,7 +374,7 @@ private class XmlTvHandler(
                         return
                     }
                     currentStart = parseTimeFast(attrs.getValue("start") ?: "")
-                    currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
+                    currentStop  = parseTimeFast(attrs.getValue("stop") ?: "")
                     skipProgramme = currentStop < cutoffTime || currentStart > futureLimit
                     if (!skipProgramme) {
                         currentProgramChannelId = ch
@@ -438,7 +434,7 @@ private class XmlTvHandler(
                 skipProgramme = false
                 currentProgramChannelId = ""
                 currentStart = 0L
-                currentStop = 0L
+                currentStop  = 0L
                 programData.clear()
             }
             inChannel -> {
