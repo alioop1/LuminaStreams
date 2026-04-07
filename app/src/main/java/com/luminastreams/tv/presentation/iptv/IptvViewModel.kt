@@ -38,14 +38,12 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private var sleepTimerJob: Job? = null
     private var autoRefreshJob: Job? = null
 
-    // Guard: prevents a second EPG download while one is already in progress
     @Volatile private var epgLoadInProgress = false
 
-    // EPG Cache — avoids re-downloading on every launch
     private val epgCacheDir by lazy { application.cacheDir.also { it.mkdirs() } }
     private fun epgCacheFile(epgUrl: String) = File(epgCacheDir, "epg_${epgUrl.hashCode()}.json")
     private fun epgCacheTimeKey(epgUrl: String) = "epg_ts_${epgUrl.hashCode()}"
-    private val EPG_CACHE_TTL_MS = 4 * 3600 * 1000L  // 4 hours
+    private val EPG_CACHE_TTL_MS = 6 * 3600 * 1000L  // 6 hours
 
     init {
         loadSavedPlaylists()
@@ -314,7 +312,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     // EPG with cache: tries cache first, only downloads if stale
     private fun loadEpgWithCache(epgUrl: String) {
-        // Prevent concurrent EPG downloads
         if (epgLoadInProgress) {
             Log.d(TAG, "EPG load already in progress, skipping duplicate request")
             return
@@ -359,8 +356,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         Log.d(TAG, "Loading EPG fresh from: $epgUrl")
         _state.update { it.copy(epgLoadState = IptvLoadState.Loading) }
         try {
-            // Build allowed IDs for filtering — only channels actually in the playlist.
-            // These are passed into EpgParser so unknown channels are discarded DURING SAX parse.
+            // Build allowed IDs set for post-parse fuzzy matching only.
+            // NOT used for pre-filtering during SAX parse anymore.
             val allowedIds = buildSet<String> {
                 _state.value.channels.forEach { ch ->
                     if (ch.tvgId.isNotEmpty()) add(ch.tvgId.lowercase())
@@ -368,44 +365,26 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     add(ch.name.lowercase())
                 }
             }
-            Log.d(TAG, "Starting EPG download from: $epgUrl (filtering ${allowedIds.size} IDs)")
+            Log.d(TAG, "Starting EPG download from: $epgUrl (${allowedIds.size} channel IDs for matching)")
 
             val result = withContext(Dispatchers.IO) {
                 EpgParser.parse(epgUrl, allowedIds).getOrThrow()
             }
             Log.d(TAG, "EPG parsed: ${result.programs.values.sumOf { it.size }} programs across ${result.programs.size} channels, ${result.channelLogos.size} logos")
 
-            // The parser already filtered by allowedIds during parsing, so filteredResult == result.
-            // We still do a key-filter pass here as a safety net (e.g. display-name aliasing may
-            // add extra keys that aren't in allowedIds).
-            val filteredPrograms = result.programs.filterKeys { key ->
-                allowedIds.any { id -> key.contains(id) || id.contains(key) }
-            }
-            val filteredLogos = result.channelLogos.filterKeys { key ->
-                allowedIds.any { id -> key.contains(id) || id.contains(key) }
-            }
-            val filteredResult = EpgParser.EpgResult(
-                programs = filteredPrograms,
-                channelLogos = filteredLogos,
-                channelDisplayNames = result.channelDisplayNames.filterKeys { key ->
-                    allowedIds.any { id -> key.contains(id) || id.contains(key) }
-                }
-            )
-            Log.d(TAG, "EPG result: ${filteredPrograms.size} program keys, ${filteredLogos.size} logo keys")
-
-            // Write filtered cache on IO thread using streaming JsonWriter
+            // Write full parsed result to cache on IO thread
             withContext(Dispatchers.IO) {
                 try {
                     val cacheFile = epgCacheFile(epgUrl)
-                    serializeEpgResult(filteredResult, cacheFile)
+                    serializeEpgResult(result, cacheFile)
                     prefs.edit { putLong(epgCacheTimeKey(epgUrl), System.currentTimeMillis()) }
-                    Log.d(TAG, "EPG saved to cache (streaming)")
+                    Log.d(TAG, "EPG saved to cache")
                 } catch (e: Exception) {
                     Log.w(TAG, "EPG cache write failed: ${e.message}")
                 }
             }
 
-            applyEpgResult(filteredResult)
+            applyEpgResult(result)
 
         } catch (e: Exception) {
             Log.e(TAG, "EPG load failed", e)
@@ -434,13 +413,37 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Extracted: shared logic for applying an EPG result to state
     private fun applyEpgResult(result: EpgParser.EpgResult) {
-        Log.d(TAG, "Applying EPG: ${result.programs.size} channels, ${result.channelLogos.size} logos")
+        Log.d(TAG, "Applying EPG: ${result.programs.size} program keys, ${result.channelLogos.size} logos")
 
-        // Build a logo lookup map once — avoids O(n*m) lookups inside the map{} below.
+        // Fuzzy channel-id matching: link EPG program keys to M3U channels.
+        // EPG XML channel ids rarely match M3U tvg-id exactly, so we do substring matching.
+        val epgProgramsForChannel = mutableMapOf<String, List<EpgProgram>>()
+        _state.value.channels.forEach { ch ->
+            val keys = listOfNotNull(
+                ch.tvgId.lowercase().ifBlank { null },
+                ch.tvgName.lowercase().ifBlank { null },
+                ch.id.lowercase(),
+                ch.name.lowercase()
+            )
+            // Try exact match first, then substring match
+            val programs = keys.firstNotNullOfOrNull { k ->
+                result.programs[k]?.takeIf { it.isNotEmpty() }
+            } ?: run {
+                // Substring fallback: find the best EPG key that contains or is contained by our keys
+                result.programs.entries.firstOrNull { (epgKey, progs) ->
+                    progs.isNotEmpty() && keys.any { k ->
+                        epgKey.contains(k) || k.contains(epgKey)
+                    }
+                }?.value
+            }
+            if (programs != null) {
+                epgProgramsForChannel[ch.id] = programs
+            }
+        }
+        Log.d(TAG, "EPG matched ${epgProgramsForChannel.size} of ${_state.value.channels.size} channels")
+
         val logoLookup = result.channelLogos
-
         val updatedChannels = _state.value.channels.map { ch ->
             val epgLogo = logoLookup[ch.tvgId.lowercase()]
                 ?: logoLookup[ch.tvgName.lowercase()]
@@ -454,15 +457,20 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
         }
 
-        // Build a fast id→channel map so the filteredChannels update is O(n) not O(n²)
         val updatedById = updatedChannels.associateBy { it.id }
         val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
             updatedById[fch.id] ?: fch
         }
 
+        // Merge matched programs into the full epgData map keyed by channel id
+        val mergedEpgData = result.programs.toMutableMap()
+        epgProgramsForChannel.forEach { (chId, progs) ->
+            mergedEpgData[chId] = progs
+        }
+
         _state.update {
             it.copy(
-                epgData = result.programs,
+                epgData = mergedEpgData,
                 channelLogos = result.channelLogos,
                 channels = updatedChannels,
                 filteredChannels = updatedFilteredChannels,
@@ -474,7 +482,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
         _state.value.currentChannel?.let { ch ->
             val updatedCh = updatedById[ch.id] ?: ch
-            val epg = getEpgForChannel(updatedCh, result.programs)
+            val epg = getEpgForChannel(updatedCh, mergedEpgData)
             val now = System.currentTimeMillis()
             _state.update {
                 it.copy(
@@ -486,11 +494,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Serialize EPG result to a file using Android's streaming JsonWriter.
-     * Writes directly to disk without building a JSONObject tree in RAM.
-     * Must be called on Dispatchers.IO.
-     */
     private fun serializeEpgResult(result: EpgParser.EpgResult, outFile: File) {
         BufferedWriter(FileWriter(outFile)).use { fw ->
             JsonWriter(fw).use { writer ->
@@ -530,11 +533,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Deserialize EPG result from a file using Android's streaming JsonReader.
-     * Reads directly from disk without loading the full JSON string into RAM.
-     * Must be called on Dispatchers.IO.
-     */
     private fun deserializeEpgResult(cacheFile: File): EpgParser.EpgResult? {
         return try {
             val programs = mutableMapOf<String, List<EpgProgram>>()
@@ -615,12 +613,19 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
         val keys = listOfNotNull(
+            channel.id,                           // channel id (may be set to match EPG key in applyEpgResult)
             channel.tvgId.lowercase().ifBlank { null },
             channel.tvgName.lowercase().ifBlank { null },
             channel.id.lowercase(),
             channel.name.lowercase()
         )
-        return keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } } ?: emptyList()
+        // Exact match first
+        return keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } }
+        // Substring fallback
+            ?: dataMap.entries.firstOrNull { (epgKey, progs) ->
+                progs.isNotEmpty() && keys.any { k -> epgKey.contains(k) || k.contains(epgKey) }
+            }?.value
+            ?: emptyList()
     }
 
     private fun loadPlaylist(url: String, name: String, epgUrl: String, existingId: String? = null) {
@@ -650,9 +655,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
+                // Start EPG immediately after playlist renders — no artificial delay
                 if (epgUrl.isNotBlank()) {
                     viewModelScope.launch {
-                        delay(300) // Let playlist render before starting heavy EPG download
                         loadEpgWithCache(epgUrl)
                     }
                 }

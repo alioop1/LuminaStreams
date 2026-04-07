@@ -18,8 +18,8 @@ object EpgParser {
 
     private const val TAG = "EPG_DEBUG"
 
-    // Max programs stored per channel (covers ~12 hours at 30min slots = 24, with some buffer)
-    private const val MAX_PROGRAMS_PER_CHANNEL = 48
+    // Max programs stored per channel — covers ~2 days at 30-min slots with buffer.
+    private const val MAX_PROGRAMS_PER_CHANNEL = 96
 
     data class EpgResult(
         val programs: Map<String, List<EpgProgram>>,
@@ -27,14 +27,19 @@ object EpgParser {
         val channelDisplayNames: Map<String, List<String>>
     )
 
+    /**
+     * Parse an XMLTV EPG feed. allowedIds is used ONLY for post-parse logo/display-name dedup,
+     * NOT for filtering programmes during SAX parsing. Filtering during parse was the root cause
+     * of EPG data being silently discarded — EPG channel IDs rarely match M3U tvg-id exactly.
+     */
     suspend fun parse(url: String, allowedIds: Set<String>): Result<EpgResult> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "Starting EPG download from: $url (filtering ${allowedIds.size} IDs)")
+            Log.d(TAG, "Starting EPG download from: $url")
             val stream = fetchEpgStream(url)
 
-            // Pass allowedIds directly into the handler so programmes for unknown channels
-            // are dropped DURING parsing — never allocated as EpgProgram objects.
-            val handler = XmlTvHandler(allowedIds)
+            // Parse ALL channels — no filtering during SAX. The ViewModel does fuzzy
+            // channel-id matching after parse to link programmes to M3U channels.
+            val handler = XmlTvHandler()
             val factory = SAXParserFactory.newInstance().apply {
                 isNamespaceAware = false
                 isValidating = false
@@ -91,7 +96,7 @@ object EpgParser {
         while (redirects < 10) {
             val conn = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 20_000
-                readTimeout = 60_000
+                readTimeout = 90_000
                 setRequestProperty("User-Agent", "Mozilla/5.0 (Android TV) Chrome/112.0.0.0")
                 setRequestProperty("Accept-Encoding", "gzip, deflate")
                 instanceFollowRedirects = false
@@ -119,7 +124,7 @@ object EpgParser {
 
             return when {
                 contentEncoding.contains("gzip", true) || lowerUrl.endsWith(".gz") ->
-                    GZIPInputStream(conn.inputStream.buffered(65536))
+                    GZIPInputStream(conn.inputStream.buffered(131072))
                 lowerUrl.endsWith(".zip") || contentType.contains("zip", true) -> {
                     val zis = ZipInputStream(conn.inputStream)
                     var entry = zis.nextEntry
@@ -129,35 +134,29 @@ object EpgParser {
                     }
                     throw Exception("No XML found in ZIP")
                 }
-                else -> conn.inputStream.buffered(65536)
+                else -> conn.inputStream.buffered(131072)
             }
         }
         throw Exception("Too many redirects")
     }
 
     /**
-     * SAX handler that:
-     * 1. Filters programmes DURING parsing — channels not in allowedIds are skipped immediately,
-     *    never allocated as EpgProgram objects. This is the primary OOM fix.
-     * 2. Caps storage at MAX_PROGRAMS_PER_CHANNEL per channel using an ArrayDeque (ring buffer).
-     * 3. Drops programmes that ended more than 2 hours ago (hard cutoff).
-     * 4. Drops programmes starting more than 7 days in the future.
+     * SAX handler that parses ALL channels without pre-filtering.
+     * Time-range filtering (drop stale/far-future programmes) is still applied
+     * to keep memory usage bounded. Ring-buffer cap per channel also retained.
      */
-    private class XmlTvHandler(private val allowedIds: Set<String>) : DefaultHandler() {
-        // Use ArrayDeque so we can cheaply drop the oldest entry when the cap is hit.
+    private class XmlTvHandler : DefaultHandler() {
         val channelsMap = mutableMapOf<String, ArrayDeque<EpgProgram>>()
         val displayNames = mutableMapOf<String, MutableList<String>>()
         val channelLogos = mutableMapOf<String, String>()
         var programCount = 0
 
-        // 2-hour grace window for recently-ended programmes (e.g. still shown in the guide)
-        private val cutoffTime = System.currentTimeMillis() - (2 * 3600 * 1000L)
-        private val futureLimit = System.currentTimeMillis() + (7L * 24 * 3600 * 1000)
+        // Drop programmes that ended more than 1 hour ago or start more than 14 days ahead.
+        private val cutoffTime = System.currentTimeMillis() - (1 * 3600 * 1000L)
+        private val futureLimit = System.currentTimeMillis() + (14L * 24 * 3600 * 1000)
 
         private var inChannel = false
         private var inProgramme = false
-        // Set to true when the current <programme> channel is in allowedIds — skip all text/tag
-        // processing for channels we don't care about.
         private var skipProgramme = false
 
         private var currentChannelId = ""
@@ -221,22 +220,11 @@ object EpgParser {
                         inProgramme = true
                         inChannel = false
                         currentProgramChannelId = ch
-
-                        // KEY FIX: if this channel isn't in the playlist, skip everything inside
-                        // this <programme> element — no text buffering, no map lookups, no allocations.
-                        val chLower = ch.lowercase()
-                        skipProgramme = chLower !in allowedIds
-
-                        if (!skipProgramme) {
-                            currentStart = parseTimeFast(attrs.getValue("start") ?: "")
-                            currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
-                            // Quick time-range check before we even start collecting data
-                            if (currentStop < cutoffTime || currentStart > futureLimit) {
-                                skipProgramme = true
-                            } else {
-                                programData.clear()
-                            }
-                        }
+                        currentStart = parseTimeFast(attrs.getValue("start") ?: "")
+                        currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
+                        // Only skip based on time range — not channel ID matching.
+                        skipProgramme = currentStop < cutoffTime || currentStart > futureLimit
+                        if (!skipProgramme) programData.clear()
                     }
                 }
                 "icon" -> {
@@ -255,7 +243,6 @@ object EpgParser {
         }
 
         override fun characters(ch: CharArray, start: Int, length: Int) {
-            // Only buffer text if we're inside a channel tag OR a programme we actually care about.
             if (inChannel || (inProgramme && !skipProgramme)) {
                 sb.appendRange(ch, start, start + length)
             }
@@ -285,10 +272,7 @@ object EpgParser {
                                 rating = programData["rating"] ?: ""
                             )
                             val deque = channelsMap.getOrPut(currentProgramChannelId) { ArrayDeque() }
-                            // Ring-buffer cap: drop oldest programme when we're over the limit.
-                            if (deque.size >= MAX_PROGRAMS_PER_CHANNEL) {
-                                deque.removeFirst()
-                            }
+                            if (deque.size >= MAX_PROGRAMS_PER_CHANNEL) deque.removeFirst()
                             deque.addLast(prog)
                             programCount++
                         }
