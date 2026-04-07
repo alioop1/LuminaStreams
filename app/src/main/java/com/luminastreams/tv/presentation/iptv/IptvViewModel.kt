@@ -409,6 +409,34 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Resolves the best EPG logo URL for a channel from the EPG logo map.
+     *
+     * Strategy (in priority order):
+     *  1. Exact match on tvgId (lowercase)
+     *  2. Exact match on tvgName (lowercase)
+     *  3. Exact match on channel id (lowercase)
+     *  4. Exact match on channel name (lowercase)
+     *  5. Fuzzy: any logo key that contains one of the channel keys, or vice versa
+     */
+    private fun resolveEpgLogo(ch: IptvChannel, logoMap: Map<String, String>): String? {
+        if (logoMap.isEmpty()) return null
+        val keys = listOfNotNull(
+            ch.tvgId.lowercase().ifBlank { null },
+            ch.tvgName.lowercase().ifBlank { null },
+            ch.id.lowercase().ifBlank { null },
+            ch.name.lowercase().ifBlank { null }
+        )
+        // 1-4: exact match
+        keys.forEach { k -> logoMap[k]?.takeIf { it.isNotBlank() }?.let { return it } }
+        // 5: fuzzy substring match
+        return logoMap.entries.firstOrNull { (epgKey, logo) ->
+            logo.isNotBlank() && keys.any { k ->
+                k.length >= 3 && (epgKey.contains(k) || k.contains(epgKey))
+            }
+        }?.value
+    }
+
     private fun applyEpgResult(result: EpgParser.EpgResult) {
         Log.d(TAG, "Applying EPG: ${result.programs.size} program keys, ${result.channelLogos.size} logos")
 
@@ -435,19 +463,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
         Log.d(TAG, "EPG matched ${epgProgramsForChannel.size} of ${_state.value.channels.size} channels")
 
-        val logoLookup = result.channelLogos
+        var logoHits = 0
         val updatedChannels = _state.value.channels.map { ch ->
-            val epgLogo = logoLookup[ch.tvgId.lowercase()]
-                ?: logoLookup[ch.tvgName.lowercase()]
-                ?: logoLookup[ch.id.lowercase()]
-                ?: logoLookup[ch.name.lowercase()]
+            val epgLogo = resolveEpgLogo(ch, result.channelLogos)
             val mergedLogo = when {
-                !epgLogo.isNullOrBlank() -> epgLogo
-                ch.logoUrl.isNotBlank() -> ch.logoUrl
-                else -> ""
+                !epgLogo.isNullOrBlank() -> { logoHits++; epgLogo }
+                ch.logoUrl.isNotBlank()  -> ch.logoUrl
+                else                     -> ""
             }
             if (mergedLogo != ch.logoUrl) ch.copy(logoUrl = mergedLogo) else ch
         }
+        Log.d(TAG, "EPG logos applied: $logoHits channels updated")
 
         val updatedById = updatedChannels.associateBy { it.id }
         val updatedFilteredChannels = _state.value.filteredChannels.map { fch ->
@@ -622,7 +648,21 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(loadState = IptvLoadState.Loading) }
             try {
                 Log.d(TAG, "Loading M3U from: $url")
-                val channels = M3uParser.parse(url).getOrThrow()
+                val rawChannels = M3uParser.parse(url).getOrThrow()
+
+                // Re-apply any already-loaded EPG logos so they survive M3U reloads.
+                val existingLogoMap = _state.value.channelLogos
+                val channels = if (existingLogoMap.isEmpty()) {
+                    rawChannels
+                } else {
+                    rawChannels.map { ch ->
+                        val epgLogo = resolveEpgLogo(ch, existingLogoMap)
+                        if (!epgLogo.isNullOrBlank() && epgLogo != ch.logoUrl)
+                            ch.copy(logoUrl = epgLogo)
+                        else ch
+                    }
+                }
+
                 val groups = buildGroupList(channels)
 
                 val playlistId = existingId ?: "pl_${System.currentTimeMillis()}"
