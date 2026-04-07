@@ -15,6 +15,38 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.SAXParserFactory
 
+// File-level helpers — accessible by both handler classes and EpgParser object
+private fun buildAllowedTokens(allowedIds: Set<String>): HashSet<String> {
+    val tokens = HashSet<String>(allowedIds.size * 6)
+    for (id in allowedIds) {
+        if (id.isBlank()) continue
+        val lo = id.lowercase()
+        tokens.add(lo)
+        lo.split('.', '-', '_', ' ').forEach { seg ->
+            if (seg.length >= 2) tokens.add(seg)
+        }
+        val squashed = lo.filter { it.isLetterOrDigit() }
+        if (squashed.length >= 3) tokens.add(squashed)
+    }
+    return tokens
+}
+
+private fun epgIdMatchesTokens(epgId: String, tokens: HashSet<String>): Boolean {
+    val lo = epgId.lowercase()
+    if (lo in tokens) return true
+    lo.split('.', '-', '_', ' ').forEach { seg ->
+        if (seg.length >= 2 && seg in tokens) return true
+    }
+    val squashed = lo.filter { it.isLetterOrDigit() }
+    return squashed.length >= 3 && squashed in tokens
+}
+
+private fun safeFeature(f: SAXParserFactory, name: String, value: Boolean) {
+    try { f.setFeature(name, value) } catch (_: Exception) {}
+}
+
+// -------------------------------------------------------------------------
+
 object EpgParser {
 
     private const val TAG = "EPG_DEBUG"
@@ -26,10 +58,6 @@ object EpgParser {
         val channelLogos: Map<String, String>,
         val channelDisplayNames: Map<String, List<String>>
     )
-
-    // -------------------------------------------------------------------------
-    // Public entry point
-    // -------------------------------------------------------------------------
 
     suspend fun parse(url: String, allowedIds: Set<String>): Result<EpgResult> =
         withContext(Dispatchers.IO) {
@@ -100,43 +128,6 @@ object EpgParser {
             }
         }
 
-    // -------------------------------------------------------------------------
-    // Token helpers  (single definition — used by both handlers)
-    // -------------------------------------------------------------------------
-
-    private fun buildAllowedTokens(allowedIds: Set<String>): HashSet<String> {
-        val tokens = HashSet<String>(allowedIds.size * 6)
-        for (id in allowedIds) {
-            if (id.isBlank()) continue
-            val lo = id.lowercase()
-            tokens.add(lo)
-            lo.split('.', '-', '_', ' ').forEach { seg ->
-                if (seg.length >= 2) tokens.add(seg)
-            }
-            val squashed = lo.filter { it.isLetterOrDigit() }
-            if (squashed.length >= 3) tokens.add(squashed)
-        }
-        return tokens
-    }
-
-    private fun epgIdMatchesTokens(epgId: String, tokens: HashSet<String>): Boolean {
-        val lo = epgId.lowercase()
-        if (lo in tokens) return true
-        lo.split('.', '-', '_', ' ').forEach { seg ->
-            if (seg.length >= 2 && seg in tokens) return true
-        }
-        val squashed = lo.filter { it.isLetterOrDigit() }
-        return squashed.length >= 3 && squashed in tokens
-    }
-
-    private fun safeFeature(f: SAXParserFactory, name: String, value: Boolean) {
-        try { f.setFeature(name, value) } catch (_: Exception) {}
-    }
-
-    // -------------------------------------------------------------------------
-    // Network
-    // -------------------------------------------------------------------------
-
     private fun fetchEpgBytes(urlString: String): ByteArray {
         var currentUrl = urlString
         var redirects = 0
@@ -184,225 +175,227 @@ object EpgParser {
         }
         throw Exception("Too many redirects")
     }
+}
 
-    // -------------------------------------------------------------------------
-    // Pass 1: lightweight channel-id scanner
-    // -------------------------------------------------------------------------
+// -------------------------------------------------------------------------
+// Pass 1: lightweight channel-id scanner
+// -------------------------------------------------------------------------
 
-    private inner class ChannelScanHandler(private val allowedTokens: HashSet<String>) : DefaultHandler() {
-        val matchedIds = HashSet<String>(256)
+private class ChannelScanHandler(private val allowedTokens: HashSet<String>) : DefaultHandler() {
+    val matchedIds = HashSet<String>(256)
 
-        private var inChannel = false
-        private var currentId = ""
-        private val displayNamesForCurrent = mutableListOf<String>()
-        private val sb = StringBuilder(128)
+    private var inChannel = false
+    private var currentId = ""
+    private val displayNamesForCurrent = mutableListOf<String>()
+    private val sb = StringBuilder(128)
 
-        override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
-            when (qName.lowercase()) {
-                "channel" -> {
-                    currentId = attrs.getValue("id") ?: ""
-                    inChannel = currentId.isNotBlank()
-                    displayNamesForCurrent.clear()
+    override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
+        when (qName.lowercase()) {
+            "channel" -> {
+                currentId = attrs.getValue("id") ?: ""
+                inChannel = currentId.isNotBlank()
+                displayNamesForCurrent.clear()
+                sb.clear()
+            }
+            "display-name" -> if (inChannel) sb.clear()
+        }
+    }
+
+    override fun characters(ch: CharArray, start: Int, length: Int) {
+        if (inChannel) sb.appendRange(ch, start, start + length)
+    }
+
+    override fun endElement(uri: String, localName: String, qName: String) {
+        when (qName.lowercase()) {
+            "display-name" -> {
+                if (inChannel) {
+                    val dn = sb.toString().trim()
+                    if (dn.isNotEmpty()) displayNamesForCurrent.add(dn)
                     sb.clear()
                 }
-                "display-name" -> if (inChannel) sb.clear()
             }
-        }
-
-        override fun characters(ch: CharArray, start: Int, length: Int) {
-            if (inChannel) sb.appendRange(ch, start, start + length)
-        }
-
-        override fun endElement(uri: String, localName: String, qName: String) {
-            when (qName.lowercase()) {
-                "display-name" -> {
-                    if (inChannel) {
-                        val dn = sb.toString().trim()
-                        if (dn.isNotEmpty()) displayNamesForCurrent.add(dn)
-                        sb.clear()
+            "channel" -> {
+                if (inChannel) {
+                    val candidates = buildList {
+                        add(currentId)
+                        addAll(displayNamesForCurrent)
+                    }
+                    if (candidates.any { epgIdMatchesTokens(it, allowedTokens) }) {
+                        matchedIds.add(currentId)
                     }
                 }
-                "channel" -> {
-                    if (inChannel) {
-                        val candidates = buildList {
-                            add(currentId)
-                            addAll(displayNamesForCurrent)
-                        }
-                        if (candidates.any { epgIdMatchesTokens(it, allowedTokens) }) {
-                            matchedIds.add(currentId)
-                        }
-                    }
+                inChannel = false
+                currentId = ""
+                displayNamesForCurrent.clear()
+            }
+        }
+    }
+}
+
+// -------------------------------------------------------------------------
+// Pass 2: full programme parser
+// -------------------------------------------------------------------------
+
+private class XmlTvHandler(
+    private val allowedEpgIds: Set<String>,
+    private val allowedTokens: HashSet<String>,
+    private val useFuzzyFallback: Boolean
+) : DefaultHandler() {
+
+    val channelsMap = LinkedHashMap<String, ArrayDeque<EpgProgram>>(512)
+    val displayNames = LinkedHashMap<String, MutableList<String>>(512)
+    val channelLogos = LinkedHashMap<String, String>(512)
+    var programCount = 0
+
+    private val cutoffTime = System.currentTimeMillis() - 3_600_000L
+    private val futureLimit = System.currentTimeMillis() + 14L * 86_400_000
+
+    private var inChannel = false
+    private var inProgramme = false
+    private var skipProgramme = false
+    private var currentChannelId = ""
+    private var currentProgramChannelId = ""
+    private var currentStart = 0L
+    private var currentStop = 0L
+
+    private val sb = StringBuilder(512)
+    private val programData = HashMap<String, String>(8)
+
+    private val maxProgramsPerChannel = 96
+
+    private fun parseTimeFast(s: String): Long {
+        var len = s.length
+        while (len > 0 && s[len - 1] <= ' ') len--
+        var st = 0
+        while (st < len && s[st] <= ' ') st++
+        if (len - st < 14) return 0L
+        return try {
+            var y = 0; var mo = 0; var d = 0; var h = 0; var m = 0; var sec = 0
+            for (i in 0..3)   y   = y   * 10 + (s[st + i] - '0')
+            for (i in 4..5)   mo  = mo  * 10 + (s[st + i] - '0')
+            for (i in 6..7)   d   = d   * 10 + (s[st + i] - '0')
+            for (i in 8..9)   h   = h   * 10 + (s[st + i] - '0')
+            for (i in 10..11) m   = m   * 10 + (s[st + i] - '0')
+            for (i in 12..13) sec = sec * 10 + (s[st + i] - '0')
+            val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+            cal.set(y, mo - 1, d, h, m, sec)
+            cal.set(Calendar.MILLISECOND, 0)
+            var offset = 0
+            if (len - st >= 20 && s[st + 14] == ' ') {
+                val sign = if (s[st + 15] == '-') -1 else 1
+                val oh = (s[st + 16] - '0') * 10 + (s[st + 17] - '0')
+                val om = (s[st + 18] - '0') * 10 + (s[st + 19] - '0')
+                offset = sign * (oh * 60 + om) * 60_000
+            }
+            cal.timeInMillis - offset
+        } catch (_: Exception) { 0L }
+    }
+
+    private fun isChannelAllowed(id: String): Boolean {
+        val lo = id.lowercase()
+        return if (useFuzzyFallback) epgIdMatchesTokens(lo, allowedTokens)
+               else lo in allowedEpgIds
+    }
+
+    override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
+        val tag = qName.lowercase()
+        sb.clear()
+        when (tag) {
+            "channel" -> {
+                val id = attrs.getValue("id") ?: ""
+                if (id.isNotBlank() && isChannelAllowed(id)) {
+                    inChannel = true
+                    inProgramme = false
+                    skipProgramme = false
+                    currentChannelId = id
+                }
+            }
+            "programme" -> {
+                val ch = attrs.getValue("channel") ?: ""
+                if (ch.isNotBlank()) {
+                    inProgramme = true
                     inChannel = false
-                    currentId = ""
-                    displayNamesForCurrent.clear()
+                    if (!isChannelAllowed(ch)) {
+                        skipProgramme = true
+                        return
+                    }
+                    currentStart = parseTimeFast(attrs.getValue("start") ?: "")
+                    currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
+                    skipProgramme = currentStop < cutoffTime || currentStart > futureLimit
+                    if (!skipProgramme) {
+                        currentProgramChannelId = ch
+                        programData.clear()
+                    }
+                }
+            }
+            "icon" -> {
+                val src = attrs.getValue("src") ?: ""
+                if (src.isNotBlank()) {
+                    when {
+                        inChannel && currentChannelId.isNotBlank() -> {
+                            channelLogos[currentChannelId] = src
+                            channelLogos[currentChannelId.lowercase()] = src
+                        }
+                        inProgramme && !skipProgramme -> programData["icon"] = src
+                    }
                 }
             }
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Pass 2: full programme parser
-    // -------------------------------------------------------------------------
+    override fun characters(ch: CharArray, start: Int, length: Int) {
+        if (inChannel || (inProgramme && !skipProgramme))
+            sb.appendRange(ch, start, start + length)
+    }
 
-    private inner class XmlTvHandler(
-        private val allowedEpgIds: Set<String>,
-        private val allowedTokens: HashSet<String>,
-        private val useFuzzyFallback: Boolean
-    ) : DefaultHandler() {
-
-        val channelsMap = LinkedHashMap<String, ArrayDeque<EpgProgram>>(512)
-        val displayNames = LinkedHashMap<String, MutableList<String>>(512)
-        val channelLogos = LinkedHashMap<String, String>(512)
-        var programCount = 0
-
-        private val cutoffTime = System.currentTimeMillis() - 3_600_000L
-        private val futureLimit = System.currentTimeMillis() + 14L * 86_400_000
-
-        private var inChannel = false
-        private var inProgramme = false
-        private var skipProgramme = false
-        private var currentChannelId = ""
-        private var currentProgramChannelId = ""
-        private var currentStart = 0L
-        private var currentStop = 0L
-
-        private val sb = StringBuilder(512)
-        private val programData = HashMap<String, String>(8)
-
-        private fun parseTimeFast(s: String): Long {
-            var len = s.length
-            while (len > 0 && s[len - 1] <= ' ') len--
-            var st = 0
-            while (st < len && s[st] <= ' ') st++
-            if (len - st < 14) return 0L
-            return try {
-                var y = 0; var mo = 0; var d = 0; var h = 0; var m = 0; var sec = 0
-                for (i in 0..3)   y   = y   * 10 + (s[st + i] - '0')
-                for (i in 4..5)   mo  = mo  * 10 + (s[st + i] - '0')
-                for (i in 6..7)   d   = d   * 10 + (s[st + i] - '0')
-                for (i in 8..9)   h   = h   * 10 + (s[st + i] - '0')
-                for (i in 10..11) m   = m   * 10 + (s[st + i] - '0')
-                for (i in 12..13) sec = sec * 10 + (s[st + i] - '0')
-                val cal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
-                cal.set(y, mo - 1, d, h, m, sec)
-                cal.set(Calendar.MILLISECOND, 0)
-                var offset = 0
-                if (len - st >= 20 && s[st + 14] == ' ') {
-                    val sign = if (s[st + 15] == '-') -1 else 1
-                    val oh = (s[st + 16] - '0') * 10 + (s[st + 17] - '0')
-                    val om = (s[st + 18] - '0') * 10 + (s[st + 19] - '0')
-                    offset = sign * (oh * 60 + om) * 60_000
-                }
-                cal.timeInMillis - offset
-            } catch (_: Exception) { 0L }
-        }
-
-        private fun isChannelAllowed(id: String): Boolean {
-            val lo = id.lowercase()
-            return if (useFuzzyFallback) epgIdMatchesTokens(lo, allowedTokens)
-                   else lo in allowedEpgIds
-        }
-
-        override fun startElement(uri: String, localName: String, qName: String, attrs: Attributes) {
-            val tag = qName.lowercase()
-            sb.clear()
-            when (tag) {
-                "channel" -> {
-                    val id = attrs.getValue("id") ?: ""
-                    if (id.isNotBlank() && isChannelAllowed(id)) {
-                        inChannel = true
-                        inProgramme = false
-                        skipProgramme = false
-                        currentChannelId = id
-                    }
-                }
-                "programme" -> {
-                    val ch = attrs.getValue("channel") ?: ""
-                    if (ch.isNotBlank()) {
-                        inProgramme = true
-                        inChannel = false
-                        if (!isChannelAllowed(ch)) {
-                            skipProgramme = true
-                            return
-                        }
-                        currentStart = parseTimeFast(attrs.getValue("start") ?: "")
-                        currentStop = parseTimeFast(attrs.getValue("stop") ?: "")
-                        skipProgramme = currentStop < cutoffTime || currentStart > futureLimit
-                        if (!skipProgramme) {
-                            currentProgramChannelId = ch
-                            programData.clear()
-                        }
-                    }
-                }
-                "icon" -> {
-                    val src = attrs.getValue("src") ?: ""
-                    if (src.isNotBlank()) {
-                        when {
-                            inChannel && currentChannelId.isNotBlank() -> {
-                                channelLogos[currentChannelId] = src
-                                channelLogos[currentChannelId.lowercase()] = src
-                            }
-                            inProgramme && !skipProgramme -> programData["icon"] = src
-                        }
-                    }
-                }
+    override fun endElement(uri: String, localName: String, qName: String) {
+        val tag = qName.lowercase()
+        when {
+            tag == "channel" -> {
+                inChannel = false
+                currentChannelId = ""
             }
-        }
-
-        override fun characters(ch: CharArray, start: Int, length: Int) {
-            if (inChannel || (inProgramme && !skipProgramme))
-                sb.appendRange(ch, start, start + length)
-        }
-
-        override fun endElement(uri: String, localName: String, qName: String) {
-            val tag = qName.lowercase()
-            when {
-                tag == "channel" -> {
-                    inChannel = false
-                    currentChannelId = ""
-                }
-                tag == "programme" -> {
-                    if (!skipProgramme && currentStart > 0) {
-                        val title = programData["title"]
-                        if (!title.isNullOrBlank()) {
-                            val prog = EpgProgram(
-                                channelId = currentProgramChannelId,
-                                title = title,
-                                description = programData["desc"] ?: "",
-                                startTime = currentStart,
-                                endTime = currentStop,
-                                category = programData["category"] ?: "",
-                                posterUrl = programData["icon"] ?: "",
-                                episodeNum = programData["episodeNum"] ?: "",
-                                rating = programData["rating"] ?: ""
-                            )
-                            val deque = channelsMap.getOrPut(currentProgramChannelId) { ArrayDeque(MAX_PROGRAMS_PER_CHANNEL + 1) }
-                            if (deque.size >= MAX_PROGRAMS_PER_CHANNEL) deque.removeFirst()
-                            deque.addLast(prog)
-                            programCount++
-                        }
+            tag == "programme" -> {
+                if (!skipProgramme && currentStart > 0) {
+                    val title = programData["title"]
+                    if (!title.isNullOrBlank()) {
+                        val prog = EpgProgram(
+                            channelId = currentProgramChannelId,
+                            title = title,
+                            description = programData["desc"] ?: "",
+                            startTime = currentStart,
+                            endTime = currentStop,
+                            category = programData["category"] ?: "",
+                            posterUrl = programData["icon"] ?: "",
+                            episodeNum = programData["episodeNum"] ?: "",
+                            rating = programData["rating"] ?: ""
+                        )
+                        val deque = channelsMap.getOrPut(currentProgramChannelId) { ArrayDeque(maxProgramsPerChannel + 1) }
+                        if (deque.size >= maxProgramsPerChannel) deque.removeFirst()
+                        deque.addLast(prog)
+                        programCount++
                     }
-                    inProgramme = false
-                    skipProgramme = false
-                    currentProgramChannelId = ""
-                    currentStart = 0L
-                    currentStop = 0L
-                    programData.clear()
                 }
-                inChannel -> {
-                    val text = sb.toString().trim()
-                    if (tag == "display-name" && text.isNotEmpty())
-                        displayNames.getOrPut(currentChannelId) { mutableListOf() }.add(text)
-                }
-                inProgramme && !skipProgramme -> {
-                    val text = sb.toString().trim()
-                    when (tag) {
-                        "title"       -> if (!programData.containsKey("title")      && text.isNotEmpty()) programData["title"]      = text
-                        "desc"        -> if (!programData.containsKey("desc")       && text.isNotEmpty()) programData["desc"]       = text
-                        "category"    -> if (!programData.containsKey("category")   && text.isNotEmpty()) programData["category"]   = text
-                        "episode-num" -> if (!programData.containsKey("episodeNum") && text.isNotEmpty()) programData["episodeNum"] = text
-                        "value"       -> if (!programData.containsKey("rating")     && text.isNotEmpty()) programData["rating"]     = text
-                    }
+                inProgramme = false
+                skipProgramme = false
+                currentProgramChannelId = ""
+                currentStart = 0L
+                currentStop = 0L
+                programData.clear()
+            }
+            inChannel -> {
+                val text = sb.toString().trim()
+                if (tag == "display-name" && text.isNotEmpty())
+                    displayNames.getOrPut(currentChannelId) { mutableListOf() }.add(text)
+            }
+            inProgramme && !skipProgramme -> {
+                val text = sb.toString().trim()
+                when (tag) {
+                    "title"       -> if (!programData.containsKey("title")      && text.isNotEmpty()) programData["title"]      = text
+                    "desc"        -> if (!programData.containsKey("desc")       && text.isNotEmpty()) programData["desc"]       = text
+                    "category"    -> if (!programData.containsKey("category")   && text.isNotEmpty()) programData["category"]   = text
+                    "episode-num" -> if (!programData.containsKey("episodeNum") && text.isNotEmpty()) programData["episodeNum"] = text
+                    "value"       -> if (!programData.containsKey("rating")     && text.isNotEmpty()) programData["rating"]     = text
                 }
             }
         }
