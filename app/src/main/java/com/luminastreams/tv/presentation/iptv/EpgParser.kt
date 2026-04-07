@@ -15,7 +15,10 @@ import java.util.zip.GZIPInputStream
 import java.util.zip.ZipInputStream
 import javax.xml.parsers.SAXParserFactory
 
-// File-level helpers — accessible by both handler classes and EpgParser object
+// -------------------------------------------------------------------------
+// File-level helpers
+// -------------------------------------------------------------------------
+
 private fun buildAllowedTokens(allowedIds: Set<String>): HashSet<String> {
     val tokens = HashSet<String>(allowedIds.size * 6)
     for (id in allowedIds) {
@@ -43,6 +46,51 @@ private fun epgIdMatchesTokens(epgId: String, tokens: HashSet<String>): Boolean 
 
 private fun safeFeature(f: SAXParserFactory, name: String, value: Boolean) {
     try { f.setFeature(name, value) } catch (_: Exception) {}
+}
+
+/**
+ * Strips any leading bytes that would cause ExpatParser to throw
+ * "not well-formed (invalid token)" at line 1, column 0.
+ *
+ * Handles:
+ *  - UTF-8 BOM  (EF BB BF)
+ *  - UTF-16 LE BOM (FF FE)
+ *  - UTF-16 BE BOM (FE FF)
+ *  - Any leading whitespace / control characters (\r \n \t space)
+ *
+ * Scans forward to the first '<' byte and returns a ByteArray view
+ * starting there.  If no '<' is found the original array is returned
+ * and the SAX parser will produce a meaningful error.
+ */
+private fun stripXmlPreamble(bytes: ByteArray): ByteArray {
+    var start = 0
+    val len = bytes.size
+    // Skip UTF-8 BOM (EF BB BF)
+    if (len >= 3 &&
+        bytes[0] == 0xEF.toByte() &&
+        bytes[1] == 0xBB.toByte() &&
+        bytes[2] == 0xBF.toByte()
+    ) start = 3
+    // Skip UTF-16 BOMs (FF FE or FE FF)
+    else if (len >= 2 &&
+        ((bytes[0] == 0xFF.toByte() && bytes[1] == 0xFE.toByte()) ||
+         (bytes[0] == 0xFE.toByte() && bytes[1] == 0xFF.toByte()))
+    ) start = 2
+    // Advance past any whitespace / control chars
+    while (start < len && bytes[start] <= 0x20) start++
+    // Now find the first '<' — if we're already at one, this is a no-op
+    if (start < len && bytes[start] == '<'.code.toByte()) {
+        return if (start == 0) bytes else bytes.copyOfRange(start, len)
+    }
+    // Unexpected leading content — scan forward to the first '<'
+    val xmlStart = bytes.indexOf('<'.code.toByte(), start)
+    return if (xmlStart >= 0) bytes.copyOfRange(xmlStart, len) else bytes
+}
+
+/** indexOf for a single byte in a ByteArray starting at [fromIndex]. */
+private fun ByteArray.indexOf(target: Byte, fromIndex: Int = 0): Int {
+    for (i in fromIndex until size) if (this[i] == target) return i
+    return -1
 }
 
 // -------------------------------------------------------------------------
@@ -74,8 +122,8 @@ object EpgParser {
                 }
 
                 Log.d(TAG, "Downloading EPG from $url")
-                val rawBytes = fetchEpgBytes(url)
-                Log.d(TAG, "EPG downloaded: ${rawBytes.size} bytes")
+                val rawBytes = stripXmlPreamble(fetchEpgBytes(url))
+                Log.d(TAG, "EPG downloaded: ${rawBytes.size} bytes (after preamble strip)")
 
                 val allowedEpgIds: Set<String> = if (rawBytes.size <= TWO_PASS_LIMIT_BYTES) {
                     val scanHandler = ChannelScanHandler(allowedTokens)
@@ -260,7 +308,6 @@ private class XmlTvHandler(
 
     private val sb = StringBuilder(512)
     private val programData = HashMap<String, String>(8)
-
     private val maxProgramsPerChannel = 96
 
     private fun parseTimeFast(s: String): Long {
