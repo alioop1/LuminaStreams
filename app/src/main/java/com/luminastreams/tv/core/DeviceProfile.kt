@@ -18,18 +18,21 @@ object DeviceProfile {
         val crossfadeDuration : Int,
         val enableRowFade     : Boolean,
         val enableParallax    : Boolean,
-        val lazyBeyondBounds  : Int
+        val lazyBeyondBounds  : Int,
+        // Max items per row rendered into LazyRow — keeps LOW tier from
+        // paying the recomposition cost of 20 identical invisible cards.
+        val maxRowItems       : Int
     )
 
     // ── Manufacturer / chipset flags ──────────────────────────────────────────
-    var isXiaomi    : Boolean = false; private set
-    var isMeCool    : Boolean = false; private set
-    var isAmlogic   : Boolean = false; private set
-    var isLg        : Boolean = false; private set
-    var isSony      : Boolean = false; private set
-    var isPhilips   : Boolean = false; private set
-    var isNvidia    : Boolean = false; private set
-    var isRockchip  : Boolean = false; private set
+    var isXiaomi     : Boolean = false; private set
+    var isMeCool     : Boolean = false; private set
+    var isAmlogic    : Boolean = false; private set
+    var isLg         : Boolean = false; private set
+    var isSony       : Boolean = false; private set
+    var isPhilips    : Boolean = false; private set
+    var isNvidia     : Boolean = false; private set
+    var isRockchip   : Boolean = false; private set
     var isWeakAmlogic: Boolean = false; private set
 
     // ── Read-only state ────────────────────────────────────────────────────────
@@ -116,8 +119,9 @@ object DeviceProfile {
 
         if (isMeCool || isAmlogic) {
             return when {
-                hw.contains("s922") || model.contains("km7")  -> Tier.HIGH
-                hw.contains("s905x4") || model.contains("km6") -> Tier.LOW
+                hw.contains("s922") || model.contains("km7")   -> Tier.HIGH
+                // S905X4 has Mali-G31 MP2 — can handle MID animations
+                hw.contains("s905x4") || model.contains("km6") -> Tier.MID
                 hw.contains("s905x3")                          -> Tier.LOW
                 hw.contains("s905x2")                          -> Tier.LOW
                 hw.contains("s905x")                           -> Tier.LOW
@@ -157,7 +161,11 @@ object DeviceProfile {
 
     // ── AnimConfig factory ─────────────────────────────────────────────────────
     private fun buildConfig(t: Tier): AnimConfig {
-        if (forceReduceMotion) return AnimConfig(0, 0, 0, 0, false, false, 0)
+        if (forceReduceMotion) return AnimConfig(
+            rowFadeDuration = 0, backdropDuration = 0, heroFadeDuration = 0,
+            crossfadeDuration = 0, enableRowFade = false, enableParallax = false,
+            lazyBeyondBounds = 0, maxRowItems = 10
+        )
         return when (t) {
             Tier.HIGH -> AnimConfig(
                 rowFadeDuration   = 200,
@@ -166,7 +174,8 @@ object DeviceProfile {
                 crossfadeDuration = 200,
                 enableRowFade     = true,
                 enableParallax    = true,
-                lazyBeyondBounds  = 2
+                lazyBeyondBounds  = 2,
+                maxRowItems       = Int.MAX_VALUE
             )
             Tier.MID -> AnimConfig(
                 rowFadeDuration   = 120,
@@ -175,7 +184,8 @@ object DeviceProfile {
                 crossfadeDuration = 80,
                 enableRowFade     = true,
                 enableParallax    = false,
-                lazyBeyondBounds  = 1
+                lazyBeyondBounds  = 1,
+                maxRowItems       = Int.MAX_VALUE
             )
             Tier.LOW -> AnimConfig(
                 rowFadeDuration   = 0,
@@ -184,14 +194,21 @@ object DeviceProfile {
                 crossfadeDuration = 0,
                 enableRowFade     = false,
                 enableParallax    = false,
-                lazyBeyondBounds  = 0
+                // Render 1 extra viewport of cards ahead — enough for smooth
+                // scroll, not so much that Mali-450 stalls on image decodes.
+                lazyBeyondBounds  = 1,
+                // Hard-cap rows at 15 items on LOW tier: fewer bitmaps in
+                // memory, fewer recompositions when focus moves between rows.
+                maxRowItems       = 15
             )
         }
     }
 
     // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
-    // Reduced to prevent OutOfMemoryError on 512MB heap limit devices.
-    // Large buffers were causing LoadTask to exhaust available heap space.
+    // Tightened maxBufferMs on HIGH/MID: 60s was causing OOM on 2 GB heaps
+    // when the player pre-allocated large media buffers alongside Coil.
+    // LOW gets a slightly smaller window but still plays stutter-free on
+    // a reliable connection; the extra head-room mainly matters for live TV.
     data class BufferConfig(
         val minBufferMs       : Int,
         val maxBufferMs       : Int,
@@ -201,9 +218,9 @@ object DeviceProfile {
     )
 
     val bufferConfig: BufferConfig get() = when (effectiveTier()) {
-        Tier.HIGH -> BufferConfig(10_000, 25_000, 2_000, 4_000, 12 * 1024 * 1024)
-        Tier.MID  -> BufferConfig( 8_000, 20_000, 2_000, 4_000,  8 * 1024 * 1024)
-        Tier.LOW  -> BufferConfig(15_000, 30_000, 2_500, 5_000,  8 * 1024 * 1024)
+        Tier.HIGH -> BufferConfig( 8_000, 20_000, 1_500, 3_000, 10 * 1024 * 1024)
+        Tier.MID  -> BufferConfig( 6_000, 15_000, 1_500, 3_000,  6 * 1024 * 1024)
+        Tier.LOW  -> BufferConfig(10_000, 25_000, 2_000, 4_000,  5 * 1024 * 1024)
     }
 
     fun debugInfo(): String =
