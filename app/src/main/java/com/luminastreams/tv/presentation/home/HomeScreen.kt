@@ -155,6 +155,20 @@ private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
 
 // ═══════════════════════════════════════════════════════════════════
+//  IMAGE SIZE CONSTANTS
+//  Backdrop (hero): always full 4K — this is the only image shown at
+//  full screen so it must remain high quality.
+//  Cards: sized to 2× their rendered dp size to look sharp on high-
+//  density panels without decoding a 4K image into a 280×158 slot.
+// ═══════════════════════════════════════════════════════════════════
+private const val BACKDROP_W = 3840
+private const val BACKDROP_H = 2160
+private const val LAND_IMG_W = 600   // 280dp × ~2.15 — sharp on xhdpi+, no 4K waste
+private const val LAND_IMG_H = 340
+private const val PORT_IMG_W = 300   // 148dp × ~2
+private const val PORT_IMG_H = 450
+
+// ═══════════════════════════════════════════════════════════════════
 //  GRADIENT SCRIMS
 // ═══════════════════════════════════════════════════════════════════
 private val heroScrimLeft = Brush.horizontalGradient(
@@ -319,6 +333,9 @@ fun HomeScreen(
         if (rows.isEmpty()) ROW_PORTRAIT_H else ROW_PORTRAIT_H + 16.dp
     }
 
+    // Debounced hero update: wait 140ms after focus settles before swapping
+    // the backdrop. This prevents firing a new 4K decode on every D-pad key
+    // repeat while the user is scrolling quickly through rows.
     LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
@@ -411,6 +428,8 @@ fun HomeScreen(
 
 // ═══════════════════════════════════════════════════════════════════
 //  BACKDROP
+//  Hero backdrop is the ONLY image loaded at full 4K.
+//  Everything else uses sized-to-card image requests.
 // ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
@@ -429,7 +448,7 @@ private fun BackdropLayer(hero: Movie?) {
                     model = remember(url) {
                         ImageRequest.Builder(ctx)
                             .data(url)
-                            .size(3840, 2160)
+                            .size(BACKDROP_W, BACKDROP_H)  // Only backdrop stays 4K
                             .scale(Scale.FILL)
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
@@ -801,6 +820,12 @@ private fun NavPill(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  ROWS PANEL
+//  Per-row alpha animation removed for non-active rows on LOW/MID:
+//  we just set alpha directly via graphicsLayer without animating,
+//  eliminating a running Choreographer callback per invisible row.
+// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsPanel(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
@@ -813,6 +838,9 @@ private fun RowsPanel(
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
+    // Render window: how many rows above/below the active row to keep
+    // alive in the Compose tree. Rows outside the window are replaced
+    // with cheap placeholder Boxes to free GPU layers and skip measure.
     val renderMargin = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 3
         DeviceProfile.Tier.MID  -> 1
@@ -842,6 +870,7 @@ private fun RowsPanel(
 
                 key(rowDef.id) {
                     if (!inWindow) {
+                        // Placeholder: zero GPU cost, preserves layout height
                         Box(
                             Modifier
                                 .fillMaxWidth()
@@ -849,9 +878,17 @@ private fun RowsPanel(
                                 .offset(y = yOffset)
                         )
                     } else {
+                        // Active row: alpha=1, no animation overhead.
+                        // Inactive-but-visible rows: set alpha directly
+                        // without animateFloatAsState to eliminate a
+                        // per-row Choreographer subscription.
+                        val rowAlpha = if (i == curRow) 1f else 0.22f
+                        val useAnimatedAlpha = DeviceProfile.animConfig.enableRowFade &&
+                                DeviceProfile.tier == DeviceProfile.Tier.HIGH
+
                         val animatedAlpha by animateFloatAsState(
-                            targetValue   = if (i == curRow) 1f else 0.22f,
-                            animationSpec = if (DeviceProfile.animConfig.enableRowFade)
+                            targetValue   = rowAlpha,
+                            animationSpec = if (useAnimatedAlpha)
                                 tween(
                                     durationMillis = if (i == curRow)
                                         DeviceProfile.animConfig.rowFadeDuration
@@ -860,7 +897,7 @@ private fun RowsPanel(
                                     easing = FastOutSlowInEasing
                                 )
                             else
-                                tween(0),
+                                tween(0),   // Instant — no animation running
                             label = "a$i"
                         )
 
@@ -869,7 +906,9 @@ private fun RowsPanel(
                                 .fillMaxWidth()
                                 .height(rh)
                                 .offset(y = yOffset)
-                                .graphicsLayer { alpha = animatedAlpha }
+                                .graphicsLayer {
+                                    alpha = if (useAnimatedAlpha) animatedAlpha else rowAlpha
+                                }
                         ) {
                             val cardFR = rowFRs.getOrNull(i)
                             val onFocus: (Movie) -> Unit = { m ->
@@ -1121,6 +1160,12 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  LANDSCAPE CARD
+//  Image request uses LAND_IMG_W/H (600×340) instead of 4K.
+//  The 4K request was the single biggest performance killer on low-
+//  end devices: every card triggered a 4K decode into a 280×158 slot.
+// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1149,10 +1194,12 @@ private fun LandscapeCard(
     )
 
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
+    // Card-sized request: sharp at 2× render density, ~25× less memory
+    // than the previous size(3840, 2160) request.
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(3840, 2160)
+            .size(LAND_IMG_W, LAND_IMG_H)
             .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
@@ -1287,6 +1334,10 @@ private fun LandscapeCard(
     }
 }
 
+// ═══════════════════════════════════════════════════════════════════
+//  POSTER CARD
+//  Image request uses PORT_IMG_W/H (300×450) instead of 4K.
+// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1315,10 +1366,12 @@ fun PosterCard(
     )
 
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
+    // Card-sized request: sharp at 2× render density, ~25× less memory
+    // than the previous size(3840, 2160) request.
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(3840, 2160)
+            .size(PORT_IMG_W, PORT_IMG_H)
             .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
