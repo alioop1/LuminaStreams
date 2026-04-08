@@ -282,11 +282,11 @@ fun AppNavHostContainer(
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     NavHost(
         navController    = navController,
-        startDestination   = "splash",
-        enterTransition    = { if (isLow) EnterTransition.None else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        exitTransition     = { if (isLow) ExitTransition.None  else fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
-        popEnterTransition = { if (isLow) EnterTransition.None else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        popExitTransition  = { if (isLow) ExitTransition.None  else fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
+        startDestination = "splash",
+        enterTransition  = { if (isLow) EnterTransition.None  else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        exitTransition   = { if (isLow) ExitTransition.None   else fadeOut(animationSpec = tween(400, easing = LinearOutSlowInEasing)) },
+        popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
 
         composable("splash") {
