@@ -5,6 +5,7 @@
 )
 package com.luminastreams.tv
 
+import android.content.res.Configuration
 import android.os.Build
 import android.app.Application
 import android.content.Context
@@ -66,9 +67,26 @@ import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
 
+// ── Target logical width in dp for the whole app on any screen size ──────────
+private const val TARGET_DP_WIDTH = 960
+
 class MainActivity : ComponentActivity() {
 
     var soundManager: SoundManager? = null
+
+    /**
+     * Override display density so the app always lays out as if the screen
+     * is TARGET_DP_WIDTH dp wide.  This keeps sizing consistent across a
+     * 27" PC monitor and a 50"+ TV with very different pixel densities.
+     */
+    override fun attachBaseContext(newBase: Context) {
+        val config = Configuration(newBase.resources.configuration)
+        val screenWidthPx = newBase.resources.displayMetrics.widthPixels
+        val targetDensity = screenWidthPx.toFloat() / TARGET_DP_WIDTH
+        config.densityDpi = (targetDensity * 160).toInt()
+        val scaled = newBase.createConfigurationContext(config)
+        super.attachBaseContext(scaled)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
