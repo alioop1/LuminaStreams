@@ -66,7 +66,6 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
@@ -104,9 +103,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ─────────────────────────────────────────────────────────────────────────────
-// StudioBrand helpers (enum has no properties, so we map here)
-// ─────────────────────────────────────────────────────────────────────────────
 private fun StudioBrand.accentColor(): Color = when (this) {
     StudioBrand.NETFLIX   -> Color(0xFFE50914)
     StudioBrand.HBO       -> Color(0xFF6600CC)
@@ -127,9 +123,6 @@ private fun StudioBrand.displayName(): String = when (this) {
     StudioBrand.HULU      -> "Hulu"
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Colour palette
-// ─────────────────────────────────────────────────────────────────────────────
 private val BG        = Color(0xFF070707)
 private val RED       = Color(0xFFE50914)
 private val RED2      = Color(0xFFB20710)
@@ -141,9 +134,6 @@ private val CARD_BG   = Color(0xFF1C1C1C)
 private val NAV_GLASS = Color(0x18FFFFFF)
 private val NAV_FOCUS = Color(0x30FFFFFF)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Dimension tokens
-// ─────────────────────────────────────────────────────────────────────────────
 private val NAV_SEARCH_H    = 28.dp
 private val NAV_PILL_H      = 28.dp
 private val NAV_GAP         = 12.dp
@@ -164,9 +154,6 @@ private const val LAND_IMG_H     = 340
 private const val PORT_IMG_W     = 300
 private const val PORT_IMG_H     = 450
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Gradients
-// ─────────────────────────────────────────────────────────────────────────────
 private val heroScrimLeft = Brush.horizontalGradient(
     colorStops = arrayOf(
         0.00f to Color(0xD0070707),
@@ -193,16 +180,10 @@ private val rowsOverlay = Brush.verticalGradient(
     )
 )
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RTL helper
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun tr(en: String, he: String): String =
     if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Focus state
-// ─────────────────────────────────────────────────────────────────────────────
 @Stable
 class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused    by mutableStateOf(false)
@@ -217,9 +198,6 @@ class HomeFocusState(initialRow: Int = 0) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HomeScreen
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 fun HomeScreen(
     state: HomeState,
@@ -250,16 +228,16 @@ fun HomeScreen(
     val rows: List<RowDef> = buildList {
         val filter = currentFilter
         when (currentTab) {
-            "\u05e8\u05d0\u05e9\u05d9" -> {
-                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Movies",  "\u05e1\u05e8\u05d8\u05d9\u05dd \u05e4\u05d5\u05e4\u05d5\u05dc\u05e8\u05d9\u05d9\u05dd"),  state.movieTrending.take(maxItems)))
+            "ראשי" -> {
+                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Movies",  "סרטים פופולריים"),  state.movieTrending.take(maxItems)))
                 if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,     state.movieHBO.take(maxItems)))
-                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",     tr("Popular Shows",   "\u05e1\u05d3\u05e8\u05d5\u05ea \u05e4\u05d5\u05e4\u05d5\u05dc\u05e8\u05d9\u05d5\u05ea"),  state.tvTrending.take(maxItems)))
+                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",     tr("Popular Shows",   "סדרות פופולריות"),  state.tvTrending.take(maxItems)))
                 if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX, state.movieNetflix.take(maxItems)))
                 if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,  state.movieAmazon.take(maxItems)))
-                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters", "\u05d1\u05e7\u05d5\u05dc\u05e0\u05d5\u05e2"),            state.moviePremieres.take(maxItems)))
+                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters", "בקולנוע"),            state.moviePremieres.take(maxItems)))
                 if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio("tvAppleTV",      StudioBrand.APPLE_TV,state.tvAppleTV.take(maxItems)))
             }
-            "\u05e1\u05e8\u05d8\u05d9\u05dd" -> {
+            "סרטים" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,       state.movieHBO.take(maxItems)))
                 if (filter == null || filter == "AMAZON")    if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    state.movieAmazon.take(maxItems)))
@@ -269,15 +247,15 @@ fun HomeScreen(
                 if (filter == null || filter == "APPLE_TV")  if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio("movieAppleTV",   StudioBrand.APPLE_TV,  state.movieAppleTV.take(maxItems)))
                 if (filter == null || filter == "DISNEY")    if (state.movieDisney.isNotEmpty())    add(RowDef.Studio("movieDisney",    StudioBrand.DISNEY,    state.movieDisney.take(maxItems)))
                 if (filter == null) {
-                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Now",       "\u05e4\u05d5\u05e4\u05d5\u05dc\u05e8\u05d9 \u05e2\u05db\u05e9\u05d9\u05d5"),     state.movieTrending.take(maxItems)))
-                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters",    "\u05d1\u05e7\u05d5\u05dc\u05e0\u05d5\u05e2"),               state.moviePremieres.take(maxItems)))
-                    if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",    tr("Action & Adventure", "\u05e4\u05e2\u05d5\u05dc\u05d4 \u05d5\u05d4\u05e8\u05e4\u05ea\u05e7\u05d0\u05d5\u05ea"),  state.movieAction.take(maxItems)))
-                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     tr("Drama",              "\u05d3\u05e8\u05de\u05d4"),                             state.movieDrama.take(maxItems)))
-                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     tr("Sci-Fi",             "\u05de\u05d3\u05e2 \u05d1\u05d3\u05d9\u05d5\u05e0\u05d9"),               state.movieScifi.take(maxItems)))
-                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  tr("Top Rated",          "\u05d3\u05d9\u05e8\u05d5\u05d2 \u05d2\u05d1\u05d5\u05d4"),               state.movieTopRated.take(maxItems)))
+                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Now",       "פופולרי עכשיו"),     state.movieTrending.take(maxItems)))
+                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters",    "בקולנוע"),               state.moviePremieres.take(maxItems)))
+                    if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",    tr("Action & Adventure", "פעולה והרפתקאות"),  state.movieAction.take(maxItems)))
+                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     tr("Drama",              "דרמה"),                             state.movieDrama.take(maxItems)))
+                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     tr("Sci-Fi",             "מדע בדיוני"),               state.movieScifi.take(maxItems)))
+                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  tr("Top Rated",          "דירוג גבוה"),               state.movieTopRated.take(maxItems)))
                 }
             }
-            "\u05e1\u05d3\u05e8\u05d5\u05ea" -> {
+            "סדרות" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.tvHBO.isNotEmpty())       add(RowDef.Studio("tvHBO",       StudioBrand.HBO,       state.tvHBO.take(maxItems)))
                 if (filter == null || filter == "AMAZON")    if (state.tvAmazon.isNotEmpty())    add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    state.tvAmazon.take(maxItems)))
@@ -287,25 +265,25 @@ fun HomeScreen(
                 if (filter == null || filter == "APPLE_TV")  if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio("tvAppleTV",   StudioBrand.APPLE_TV,  state.tvAppleTV.take(maxItems)))
                 if (filter == null || filter == "DISNEY")    if (state.tvDisney.isNotEmpty())    add(RowDef.Studio("tvDisney",    StudioBrand.DISNEY,    state.tvDisney.take(maxItems)))
                 if (filter == null) {
-                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  tr("Trending Shows",     "\u05e1\u05d3\u05e8\u05d5\u05ea \u05e4\u05d5\u05e4\u05d5\u05dc\u05e8\u05d9\u05d5\u05ea"),  state.tvTrending.take(maxItems)))
-                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", tr("On The Air",         "\u05de\u05e9\u05d5\u05d3\u05e8 \u05db\u05e2\u05ea"),               state.tvPremieres.take(maxItems)))
-                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     tr("Drama",              "\u05d3\u05e8\u05de\u05d4"),                             state.tvDrama.take(maxItems)))
-                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     tr("Crime & Thriller",   "\u05e4\u05e9\u05e2 \u05d5\u05de\u05ea\u05d7"),               state.tvCrime.take(maxItems)))
-                    if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     tr("Sci-Fi & Fantasy",   "\u05de\u05d3\u05e2 \u05d1\u05d3\u05d9\u05d5\u05e0\u05d9 \u05d5\u05e4\u05e0\u05d8\u05d6\u05d9\u05d4"), state.tvScifi.take(maxItems)))
-                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  tr("Top Rated Shows",    "\u05e1\u05d3\u05e8\u05d5\u05ea \u05de\u05d5\u05de\u05dc\u05e6\u05d5\u05ea"),  state.tvTopRated.take(maxItems)))
+                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  tr("Trending Shows",     "סדרות פופולריות"),  state.tvTrending.take(maxItems)))
+                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", tr("On The Air",         "משודר כעת"),               state.tvPremieres.take(maxItems)))
+                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     tr("Drama",              "דרמה"),                             state.tvDrama.take(maxItems)))
+                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     tr("Crime & Thriller",   "פשע ומתח"),               state.tvCrime.take(maxItems)))
+                    if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     tr("Sci-Fi & Fantasy",   "מדע בדיוני ופנטזיה"), state.tvScifi.take(maxItems)))
+                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  tr("Top Rated Shows",    "סדרות מומלצות"),  state.tvTopRated.take(maxItems)))
                 }
             }
             "Fuzer" -> {
                 val newContent = (state.fuzerMovies + state.fuzerSeries).sortedByDescending { it.id }
-                if (newContent.isNotEmpty())                add(RowDef.Regular("fuzer_new", tr("\uD83C\uDD95 New Content",   "\uD83C\uDD95 \u05ea\u05d5\u05db\u05df \u05d7\u05d3\u05e9"),   newContent.take(maxItems)))
-                if (state.fuzerMovies.isNotEmpty())         add(RowDef.Regular("fuzer_m",   tr("\uD83C\uDFAC Movies",        "\uD83C\uDFAC \u05e1\u05e8\u05d8\u05d9\u05dd"),        state.fuzerMovies.take(maxItems)))
-                if (state.fuzerMoviesHD.isNotEmpty())       add(RowDef.Regular("fuzer_mhd", tr("\uD83C\uDFAC Movies HD",    "\uD83C\uDFAC \u05e1\u05e8\u05d8\u05d9\u05dd HD"),    state.fuzerMoviesHD.take(maxItems)))
-                if (state.fuzerMovies4K.isNotEmpty())       add(RowDef.Regular("fuzer_m4k", tr("\u2728 Movies 4K",         "\u2728 \u05e1\u05e8\u05d8\u05d9\u05dd 4K"),         state.fuzerMovies4K.take(maxItems)))
-                if (state.fuzerDubbedMovies.isNotEmpty())   add(RowDef.Regular("fuzer_dm",  tr("\uD83C\uDFA4 Dubbed Movies", "\uD83C\uDFA4 \u05e1\u05e8\u05d8\u05d9\u05dd \u05de\u05d3\u05d5\u05d1\u05d1\u05d9\u05dd"), state.fuzerDubbedMovies.take(maxItems)))
-                if (state.fuzerSeries.isNotEmpty())         add(RowDef.Regular("fuzer_tv",  tr("\uD83D\uDCFA TV Shows",      "\uD83D\uDCFA \u05e1\u05d3\u05e8\u05d5\u05ea"),      state.fuzerSeries.take(maxItems)))
-                if (state.fuzerSeriesHD.isNotEmpty())       add(RowDef.Regular("fuzer_shd", tr("\uD83D\uDCFA TV Shows HD",  "\uD83D\uDCFA \u05e1\u05d3\u05e8\u05d5\u05ea HD"),  state.fuzerSeriesHD.take(maxItems)))
-                if (state.fuzerSeries4K.isNotEmpty())       add(RowDef.Regular("fuzer_s4k", tr("\u2728 TV Shows 4K",       "\u2728 \u05e1\u05d3\u05e8\u05d5\u05ea 4K"),       state.fuzerSeries4K.take(maxItems)))
-                if (state.fuzerDubbedSeries.isNotEmpty())   add(RowDef.Regular("fuzer_ds",  tr("\uD83C\uDFA4 Dubbed Shows",  "\uD83C\uDFA4 \u05e1\u05d3\u05e8\u05d5\u05ea \u05de\u05d3\u05d5\u05d1\u05d1\u05d5\u05ea"),  state.fuzerDubbedSeries.take(maxItems)))
+                if (newContent.isNotEmpty())                add(RowDef.Regular("fuzer_new", tr("🆕 New Content",   "🆕 תוכן חדש"),   newContent.take(maxItems)))
+                if (state.fuzerMovies.isNotEmpty())         add(RowDef.Regular("fuzer_m",   tr("🎬 Movies",        "🎬 סרטים"),        state.fuzerMovies.take(maxItems)))
+                if (state.fuzerMoviesHD.isNotEmpty())       add(RowDef.Regular("fuzer_mhd", tr("🎬 Movies HD",    "🎬 סרטים HD"),    state.fuzerMoviesHD.take(maxItems)))
+                if (state.fuzerMovies4K.isNotEmpty())       add(RowDef.Regular("fuzer_m4k", tr("✨ Movies 4K",         "✨ סרטים 4K"),         state.fuzerMovies4K.take(maxItems)))
+                if (state.fuzerDubbedMovies.isNotEmpty())   add(RowDef.Regular("fuzer_dm",  tr("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), state.fuzerDubbedMovies.take(maxItems)))
+                if (state.fuzerSeries.isNotEmpty())         add(RowDef.Regular("fuzer_tv",  tr("📺 TV Shows",      "📺 סדרות"),      state.fuzerSeries.take(maxItems)))
+                if (state.fuzerSeriesHD.isNotEmpty())       add(RowDef.Regular("fuzer_shd", tr("📺 TV Shows HD",  "📺 סדרות HD"),  state.fuzerSeriesHD.take(maxItems)))
+                if (state.fuzerSeries4K.isNotEmpty())       add(RowDef.Regular("fuzer_s4k", tr("✨ TV Shows 4K",       "✨ סדרות 4K"),       state.fuzerSeries4K.take(maxItems)))
+                if (state.fuzerDubbedSeries.isNotEmpty())   add(RowDef.Regular("fuzer_ds",  tr("🎤 Dubbed Shows",  "🎤 סדרות מדובבות"),  state.fuzerDubbedSeries.take(maxItems)))
             }
         }
     }
@@ -315,14 +293,14 @@ fun HomeScreen(
         else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
     }
 
-    val panelH = remember(rows.size) {
+    val panelH = remember(rows.isEmpty()) {
         if (rows.isEmpty()) ROW_PORTRAIT_H else ROW_PORTRAIT_H + 16.dp
     }
 
     LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
-            delay(200L)
+            delay(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 350L else 200L)
             val m = rows.getOrNull(ri)?.let { r ->
                 when (r) {
                     is RowDef.Regular     -> r.movies
@@ -346,7 +324,7 @@ fun HomeScreen(
         }
     }
 
-    LaunchedEffect(rows) {
+    LaunchedEffect(rows.firstOrNull()?.id) {
         if (focusState.isNavFocused || focusState.heroMovie == null) {
             val m = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r ->
                 when (r) {
@@ -391,9 +369,9 @@ fun HomeScreen(
             },
             onLoadMore        = { id -> viewModel.loadMore(id) },
             onSearch          = { navController.navigate("search") },
-            onHomeTab         = { viewModel.selectTab("\u05e8\u05d0\u05e9\u05d9");  viewModel.setStudioFilter(null) },
-            onMoviesTab       = { viewModel.selectTab("\u05e1\u05e8\u05d8\u05d9\u05dd"); viewModel.setStudioFilter(null) },
-            onSeriesTab       = { viewModel.selectTab("\u05e1\u05d3\u05e8\u05d5\u05ea"); viewModel.setStudioFilter(null) },
+            onHomeTab         = { viewModel.selectTab("ראשי");  viewModel.setStudioFilter(null) },
+            onMoviesTab       = { viewModel.selectTab("סרטים"); viewModel.setStudioFilter(null) },
+            onSeriesTab       = { viewModel.selectTab("סדרות"); viewModel.setStudioFilter(null) },
             onFuzer           = { viewModel.selectTab("Fuzer"); viewModel.loadFuzerContent() },
             onWatchlist       = { navController.navigate("watchlist") },
             onSettings        = { navController.navigate("settings") },
@@ -402,9 +380,6 @@ fun HomeScreen(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Backdrop
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
@@ -413,7 +388,6 @@ private fun BackdropLayer(hero: Movie?) {
 
     var shownUrl  by remember { mutableStateOf<String?>(null) }
     var targetUrl by remember { mutableStateOf<String?>(null) }
-    var crossAlpha by remember { mutableStateOf(1f) }
 
     val heroUrl = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl
 
@@ -421,20 +395,16 @@ private fun BackdropLayer(hero: Movie?) {
         if (heroUrl == shownUrl) return@LaunchedEffect
         targetUrl = heroUrl
         if (backdropDuration > 0 && shownUrl != null) {
-            val steps = 8
-            val stepMs = (backdropDuration / 3L / steps).coerceAtLeast(8L)
-            for (i in steps downTo 0) { crossAlpha = i / steps.toFloat(); delay(stepMs) }
-        } else { crossAlpha = 0f }
-        shownUrl = targetUrl
-        if (backdropDuration > 0) {
-            val steps = 12
-            val stepMs = (backdropDuration * 2L / 3L / steps).coerceAtLeast(8L)
-            for (i in 0..steps) { crossAlpha = i / steps.toFloat(); delay(stepMs) }
+            delay((backdropDuration / 3L).coerceAtLeast(16L))
         }
-        crossAlpha = 1f
+        shownUrl = targetUrl
     }
 
-    val animAlpha by animateFloatAsState(targetValue = crossAlpha, animationSpec = tween(0), label = "bd")
+    val crossAlpha by animateFloatAsState(
+        targetValue = if (shownUrl == targetUrl) 1f else 0f,
+        animationSpec = tween(durationMillis = backdropDuration, easing = LinearEasing),
+        label = "bd"
+    )
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
@@ -456,8 +426,7 @@ private fun BackdropLayer(hero: Movie?) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier
                         .fillMaxSize()
-                        .alpha(animAlpha)
-                        .graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }
+                        .alpha(crossAlpha)
                 )
             }
         }
@@ -466,9 +435,6 @@ private fun BackdropLayer(hero: Movie?) {
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Hero overlay
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun HeroOverlay(hero: Movie?, panelH: Dp) {
     Box(Modifier.fillMaxSize().zIndex(3f)) {
@@ -494,7 +460,7 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (m.year > 0)           { Text(m.year.toString(), color = DIM, fontSize = 13.sp); MetaDot() }
                         if (m.genre.isNotBlank())  { Text(m.genre, color = DIM, fontSize = 13.sp); MetaDot() }
-                        Text(if (m.mediaType == "tv") tr("TV Series", "\u05e1\u05d3\u05e8\u05d4") else tr("Movie", "\u05e1\u05e8\u05d8"), color = DIM, fontSize = 13.sp)
+                        Text(if (m.mediaType == "tv") tr("TV Series", "סדרה") else tr("Movie", "סרט"), color = DIM, fontSize = 13.sp)
                         if (m.rating > 0f) {
                             MetaDot()
                             Row(
@@ -523,11 +489,8 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
     }
 }
 
-@Composable private fun MetaDot() = Text("  \u00b7  ", color = DIM3, fontSize = 14.sp)
+@Composable private fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ContentLayer
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun ContentLayer(
     rows: List<RowDef>, contentAlpha: Float,
@@ -539,8 +502,9 @@ private fun ContentLayer(
     onSeriesTab: () -> Unit, onFuzer: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit, onIptv: () -> Unit
 ) {
-    val firstNavFR   = remember { FocusRequester() }
-    val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
+    val firstNavFR = remember { FocusRequester() }
+    val firstCardFRs = remember { mutableMapOf<String, FocusRequester>() }
+    rows.forEach { r -> firstCardFRs.getOrPut(r.id) { FocusRequester() } }
     var initialFocusDone by remember { mutableStateOf(false) }
 
     val animatedAlpha by animateFloatAsState(
@@ -555,7 +519,7 @@ private fun ContentLayer(
             runCatching { firstNavFR.requestFocus() }
         } else if (rows.isNotEmpty()) {
             val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-            runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
+            runCatching { firstCardFRs[rows.getOrNull(idx)?.id]?.requestFocus() }
         }
     }
 
@@ -564,7 +528,7 @@ private fun ContentLayer(
             delay(380); initialFocusDone = true
             if (!focusState.isNavFocused) {
                 val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-                runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
+                runCatching { firstCardFRs[rows.getOrNull(idx)?.id]?.requestFocus() }
             }
         }
     }
@@ -581,9 +545,8 @@ private fun ContentLayer(
                     true
                 } else false
             }
-            .alpha(animatedAlpha)
+            .graphicsLayer { alpha = animatedAlpha }
     ) {
-        // ── Rows panel ───────────────────────────────────────────────────────
         Column(
             modifier = Modifier.fillMaxSize().padding(bottom = 8.dp),
             verticalArrangement = Arrangement.Bottom
@@ -610,7 +573,7 @@ private fun ContentLayer(
                             activeFilter = activeFilter,
                             modifier     = Modifier
                                 .fillMaxWidth().height(rowHeightFor(rowIdx))
-                                .focusRequester(firstCardFRs.getOrElse(rowIdx) { FocusRequester() })
+                                .focusRequester(firstCardFRs.getOrPut(rowDef.id) { FocusRequester() })
                                 .onFocusChanged { if (it.hasFocus) focusState.currentRowIndex = rowIdx },
                             onFilterClick = onStudioFilterClick
                         )
@@ -622,7 +585,7 @@ private fun ContentLayer(
                                     focusState.currentRowIndex = rowIdx
                                     rowDef.movies.firstOrNull()?.let { onHeroUpdate(it) }
                                 }},
-                            firstCardFR  = firstCardFRs.getOrElse(rowIdx) { FocusRequester() },
+                            firstCardFR  = firstCardFRs.getOrPut(rowDef.id) { FocusRequester() },
                             onHeroUpdate = onHeroUpdate,
                             onMovieClick = onMovieClick,
                             onLoadMore   = { onLoadMore(rowDef.id) }
@@ -636,7 +599,7 @@ private fun ContentLayer(
                                     focusState.currentRowIndex = rowIdx
                                     rowDef.movies.firstOrNull()?.let { onHeroUpdate(it) }
                                 }},
-                            firstCardFR  = firstCardFRs.getOrElse(rowIdx) { FocusRequester() },
+                            firstCardFR  = firstCardFRs.getOrPut(rowDef.id) { FocusRequester() },
                             onHeroUpdate = onHeroUpdate,
                             onMovieClick = onMovieClick,
                             onLoadMore   = { onLoadMore(rowDef.id) }
@@ -646,7 +609,6 @@ private fun ContentLayer(
             }
         }
 
-        // ── Nav bar ──────────────────────────────────────────────────────────
         TopNavBar(
             activeTab    = activeTab,
             isNavFocused = focusState.isNavFocused,
@@ -662,15 +624,12 @@ private fun ContentLayer(
             onNavExit    = {
                 focusState.isNavFocused = false
                 val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-                runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
+                runCatching { firstCardFRs[rows.getOrNull(idx)?.id]?.requestFocus() }
             }
         )
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Top nav bar
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun TopNavBar(
     activeTab: String, isNavFocused: Boolean, firstNavFR: FocusRequester,
@@ -691,7 +650,7 @@ private fun TopNavBar(
         ) {
             NavIconBtn(
                 icon     = Icons.Default.Search,
-                label    = tr("Search", "\u05d7\u05d9\u05e4\u05d5\u05e9"),
+                label    = tr("Search", "חיפוש"),
                 modifier = Modifier
                     .focusRequester(firstNavFR)
                     .focusProperties { down = FocusRequester.Default }
@@ -704,10 +663,10 @@ private fun TopNavBar(
 
             data class TabDef(val key: String, val label: String, val icon: ImageVector, val action: () -> Unit)
             listOf(
-                TabDef("\u05e8\u05d0\u05e9\u05d9",  tr("Home",      "\u05e8\u05d0\u05e9\u05d9"),  Icons.Default.Home,        onHomeTab),
-                TabDef("\u05e1\u05e8\u05d8\u05d9\u05dd", tr("Movies",    "\u05e1\u05e8\u05d8\u05d9\u05dd"), Icons.Default.Movie,       onMoviesTab),
-                TabDef("\u05e1\u05d3\u05e8\u05d5\u05ea", tr("Series",    "\u05e1\u05d3\u05e8\u05d5\u05ea"), Icons.Default.Tv,          onSeriesTab),
-                TabDef("Fuzer",  "Fuzer VIP",                                                         Icons.Default.LocalMovies, onFuzer)
+                TabDef("ראשי",  tr("Home",      "ראשי"),  Icons.Default.Home,        onHomeTab),
+                TabDef("סרטים", tr("Movies",    "סרטים"), Icons.Default.Movie,       onMoviesTab),
+                TabDef("סדרות", tr("Series",    "סדרות"), Icons.Default.Tv,          onSeriesTab),
+                TabDef("Fuzer",  "Fuzer VIP", Icons.Default.LocalMovies, onFuzer)
             ).forEach { tab ->
                 NavTabPill(
                     label    = tab.label,
@@ -723,9 +682,9 @@ private fun TopNavBar(
             }
 
             Spacer(Modifier.weight(1f))
-            NavIconBtn(Icons.Default.Cast,     tr("IPTV",      "IPTV"),                      Modifier, onIptv)
-            NavIconBtn(Icons.Default.Bookmark, tr("Watchlist", "\u05e8\u05e9\u05d9\u05de\u05ea \u05e6\u05e4\u05d9\u05d9\u05d4"), Modifier, onWatchlist)
-            NavIconBtn(Icons.Default.Settings, tr("Settings",  "\u05d4\u05d2\u05d3\u05e8\u05d5\u05ea"),              Modifier, onSettings)
+            NavIconBtn(Icons.Default.Cast,     tr("IPTV",      "IPTV"), Modifier, onIptv)
+            NavIconBtn(Icons.Default.Bookmark, tr("Watchlist", "רשימת צפייה"), Modifier, onWatchlist)
+            NavIconBtn(Icons.Default.Settings, tr("Settings",  "הגדרות"), Modifier, onSettings)
         }
     }
 }
@@ -781,9 +740,6 @@ private fun NavTabPill(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Studio filter ribbon
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun StudioFilterRibbon(
     activeFilter: String?,
@@ -833,9 +789,6 @@ private fun StudioFilterRibbon(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Row variants
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun RegularRow(
     rowDef: RowDef.Regular, isFirst: Boolean,
@@ -844,7 +797,7 @@ private fun RegularRow(
 ) {
     Column(modifier = modifier.padding(bottom = 4.dp)) {
         Text(
-            text       = rowDef.title,          // ← was rowDef.label (field is named 'title' in RowDef.Regular)
+            text       = rowDef.title,
             color      = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold,
             modifier   = Modifier.padding(start = 60.dp, bottom = 10.dp)
         )
@@ -879,10 +832,10 @@ private fun StudioRow(
         ) {
             Box(
                 Modifier.height(16.dp).width(3.dp)
-                    .background(rowDef.brand.accentColor(), RoundedCornerShape(2.dp))  // ← accentColor()
+                    .background(rowDef.brand.accentColor(), RoundedCornerShape(2.dp))
             )
             Text(
-                text       = rowDef.brand.displayName(),                                // ← displayName()
+                text       = rowDef.brand.displayName(),
                 color      = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold
             )
         }
@@ -900,9 +853,6 @@ private fun StudioRow(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Cards
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun LandscapeCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -923,7 +873,7 @@ private fun LandscapeCard(
         border   = ClickableSurfaceDefaults.border(
             border = Border.None, focusedBorder = Border(BorderStroke(2.dp, WHITE))
         ),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)),
+        glow     = if (isLow) ClickableSurfaceDefaults.glow() else ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)),
         modifier = modifier
             .width(LAND_W).height(LAND_H)
             .zIndex(if (focused) 10f else 0f)
@@ -936,7 +886,7 @@ private fun LandscapeCard(
                     model = remember(imgUrl) {
                         ImageRequest.Builder(ctx).data(imgUrl)
                             .size(LAND_IMG_W, LAND_IMG_H).scale(Scale.FILL)
-                            .memoryCachePolicy(CachePolicy.ENABLED).crossfade(!isLow).build()
+                            .memoryCachePolicy(CachePolicy.ENABLED).crossfade(if (isLow) 0 else 150).build()
                     },
                     contentDescription = movie.title, contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -978,7 +928,7 @@ private fun PortraitCard(
         border   = ClickableSurfaceDefaults.border(
             border = Border.None, focusedBorder = Border(BorderStroke(2.dp, WHITE))
         ),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)),
+        glow     = if (isLow) ClickableSurfaceDefaults.glow() else ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)),
         modifier = modifier
             .width(PORT_W).height(PORT_H)
             .zIndex(if (focused) 10f else 0f)
@@ -990,7 +940,7 @@ private fun PortraitCard(
                     model = remember(movie.posterUrl) {
                         ImageRequest.Builder(ctx).data(movie.posterUrl)
                             .size(PORT_IMG_W, PORT_IMG_H).scale(Scale.FILL)
-                            .memoryCachePolicy(CachePolicy.ENABLED).crossfade(!isLow).build()
+                            .memoryCachePolicy(CachePolicy.ENABLED).crossfade(if (isLow) 0 else 150).build()
                     },
                     contentDescription = movie.title, contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize()
@@ -1013,15 +963,12 @@ private fun PortraitCard(
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Loading / Error screens
-// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun HomeLoading() {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Loading...",               color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("Fetching latest content",  color = DIM2,  fontSize = 14.sp)
+            Text("Loading...", color = WHITE, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Text("Fetching latest content", color = DIM2, fontSize = 14.sp)
         }
     }
 }
