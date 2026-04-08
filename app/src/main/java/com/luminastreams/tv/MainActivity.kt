@@ -66,6 +66,10 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
 import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
+import com.luminastreams.tv.core.DeviceProfile
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+
 
 /**
  * Fixed density target for the entire app.
@@ -180,20 +184,27 @@ fun LuminaAppShell() {
 // ── Lumina Light Waves loading indicator ──
 @Composable
 fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
-    val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val waveCount = 5
 
-    val waveAnimations = (0 until waveCount).map { index ->
-        infiniteTransition.animateFloat(
-            initialValue = 0.2f,
-            targetValue  = 1.0f,
-            animationSpec = infiniteRepeatable(
-                animation  = tween(durationMillis = 500, easing = FastOutSlowInEasing),
-                repeatMode = RepeatMode.Reverse,
-                initialStartOffset = StartOffset(offsetMillis = index * 120)
-            ),
-            label = "wave_$index"
-        )
+    // LOW: static bars — 5 concurrent infinite transitions on a low-end
+    // device burn through the frame budget before any UI is visible.
+    val waveHeights: List<Float> = if (isLow) {
+        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)  // static stagger, zero Choreographer
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
+        (0 until waveCount).map { index ->
+            infiniteTransition.animateFloat(
+                initialValue = 0.2f,
+                targetValue  = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation  = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(offsetMillis = index * 120)
+                ),
+                label = "wave_$index"
+            ).value
+        }
     }
 
     Row(
@@ -201,18 +212,15 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        waveAnimations.forEach { anim ->
+        waveHeights.forEach { h ->
             Box(
                 modifier = Modifier
                     .width(6.dp)
-                    .fillMaxHeight(anim.value)
+                    .fillMaxHeight(h)
                     .clip(RoundedCornerShape(50))
                     .background(
                         Brush.verticalGradient(
-                            colors = listOf(
-                                Color(0xFF00E5FF),
-                                Color(0xFFB400FF)
-                            )
+                            colors = listOf(Color(0xFF00E5FF), Color(0xFFB400FF))
                         )
                     )
             )
@@ -222,16 +230,22 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val alpha by infiniteTransition.animateFloat(
-        initialValue  = 0.6f,
-        targetValue   = 1.0f,
-        animationSpec = infiniteRepeatable(
-            animation  = tween(1600, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "alpha"
-    )
+    // LOW: skip the infinite alpha pulse — it redraws a full-screen image
+    // every frame for 3.5 seconds, burning through frame budget on boot.
+    val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
+        1.0f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        infiniteTransition.animateFloat(
+            initialValue  = 0.6f,
+            targetValue   = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation  = tween(1600, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "alpha"
+        ).value
+    }
 
     val context = LocalContext.current
 
@@ -265,13 +279,14 @@ fun AppNavHostContainer(
     val context     = LocalContext.current
     val application = context.applicationContext as Application
 
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     NavHost(
-        navController      = navController,
+        navController    = navController,
         startDestination   = "splash",
-        enterTransition    = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        exitTransition     = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
-        popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
+        enterTransition    = { if (isLow) EnterTransition.None else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        exitTransition     = { if (isLow) ExitTransition.None  else fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
+        popEnterTransition = { if (isLow) EnterTransition.None else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        popExitTransition  = { if (isLow) ExitTransition.None  else fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
 
         composable("splash") {

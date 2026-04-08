@@ -5,13 +5,8 @@
 )
 package com.luminastreams.tv.presentation.main
 
-// ════════════════════════════════════════════════════════════════════════════
-// MainScreen.kt — legacy shell, kept for sidebar component only.
-// All home-screen composables (HomeScreen, ArvioCard, NfCard, HomeLoading,
-// HomeError, NfLoadingSkeleton, NfErrorScreen, LuminaSidebar, NfSidebar)
-// now live exclusively in HomeScreen.kt to avoid "Conflicting overloads".
-// ════════════════════════════════════════════════════════════════════════════
-
+import com.luminastreams.tv.core.DeviceProfile
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -49,6 +44,8 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.runtime.derivedStateOf
+
 
 // ── PremiumVideoSidebar ───────────────────────────────────────────────────────
 @Composable
@@ -60,9 +57,9 @@ fun PremiumVideoSidebar(
 ) {
     var isSidebarFocused by remember { mutableStateOf(false) }
     val sidebarWidth by animateDpAsState(
-        targetValue    = if (isSidebarFocused) 260.dp else 24.dp,
-        animationSpec  = tween(300),
-        label          = "sidebarWidth"
+        targetValue   = if (isSidebarFocused) 260.dp else 24.dp,
+        animationSpec = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) snap() else tween(300),
+        label         = "sidebarWidth"
     )
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route ?: "home"
@@ -102,7 +99,9 @@ fun PremiumVideoSidebar(
                     SidebarQuickActionCircle(Icons.Default.Search)   { navController.navigate("search") }
                 }
                 Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    val selectedTab = viewModel.state.collectAsState().value.selectedTab
+                    val selectedTab by remember(viewModel) {
+                        derivedStateOf { viewModel.state.value.selectedTab }
+                    }
                     SidebarTextMenuItem("סרטים",  currentRoute == "home" && selectedTab == "סרטים") {
                         navController.navigate("home"); viewModel.selectTab("סרטים")
                     }
