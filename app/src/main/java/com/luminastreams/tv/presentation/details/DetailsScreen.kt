@@ -75,7 +75,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.core.content.edit
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -271,7 +270,6 @@ fun DetailsScreen(
     val backBtnFR      = remember { FocusRequester() }
     val firstSourceFR  = remember { FocusRequester() }
 
-    // פוקוס-רקוויסטרים לשורות התוכן (כדי לאפס את הפוקוס בעת עלייה/ירידה)
     val seasonsFR      = remember { FocusRequester() }
     val episodesFR     = remember { FocusRequester() }
     val castFR         = remember { FocusRequester() }
@@ -297,12 +295,10 @@ fun DetailsScreen(
     LaunchedEffect(state.readyToPlayUrl) {
         state.readyToPlayUrl?.let { url ->
             showSources = false
-
             context.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
                 putInt("current_season", currentScrapeSeason ?: -1)
                 putInt("current_episode", currentScrapeEpisode ?: -1)
             }
-
             onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl, media.logoUrl ?: "")
             onEvent(DetailsEvent.ClearPlayUrl)
         }
@@ -323,13 +319,12 @@ fun DetailsScreen(
             focusManager.clearFocus()
         } else onNavigateBack()
     }
-    // Sync watch-progress every time this screen becomes visible
+
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 onEvent(DetailsEvent.RefreshProgress)
-                // Check if PlayerScreen requested auto-play of next episode
                 val prefs = context.getSharedPreferences("player_context", Context.MODE_PRIVATE)
                 val nextS = prefs.getInt("auto_play_season", -1)
                 val nextE = prefs.getInt("auto_play_episode", -1)
@@ -346,36 +341,33 @@ fun DetailsScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
     LaunchedEffect(pendingAutoPlaySeason, pendingAutoPlayEpisode, state.isLoadingData) {
         if (pendingAutoPlaySeason == -1 || pendingAutoPlayEpisode == -1) return@LaunchedEffect
         if (state.isLoadingData || media.imdbId.isBlank()) return@LaunchedEffect
         val s = pendingAutoPlaySeason
         val e = pendingAutoPlayEpisode
-        // Reset keys synchronously — no suspension point before we finish our work,
-        // so Compose cannot cancel this coroutine mid-execution due to key change.
         pendingAutoPlaySeason  = -1
         pendingAutoPlayEpisode = -1
         if (s != state.selectedSeason) onEvent(DetailsEvent.SelectSeason(s))
-        // NO delay here — any suspension point after resetting the keys above
-        // allows Compose to recompose, see the new key values (-1,-1), and
-        // cancel this coroutine before isAutoPlayPending and InitiateScraping run.
         showSources          = false
         currentScrapeSeason  = s
         currentScrapeEpisode = e
         isAutoPlayPending    = true
         onEvent(DetailsEvent.InitiateScraping(media.imdbId, s, e))
     }
+
     LaunchedEffect(state.scrapingStatus, isAutoPlayPending) {
         if (!isAutoPlayPending) return@LaunchedEffect
         if (state.scrapingStatus == ScrapingStatus.Success && state.availableStreams.isNotEmpty()) {
             isAutoPlayPending = false
             onEvent(DetailsEvent.ResolveAndPlayStream(state.availableStreams.first()))
         } else if (state.scrapingStatus is ScrapingStatus.Error) {
-            // On error fall back to showing the sources panel
             isAutoPlayPending = false
             showSources = true
         }
     }
+
     if (state.isLoadingData) {
         Box(Modifier.fillMaxSize().background(BK), Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -391,9 +383,10 @@ fun DetailsScreen(
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationY = -(scrollState.firstVisibleItemScrollOffset * 0.12f).coerceIn(0f, 70f)
         }) {
+            // האצת רקע: ביטול crossfade
             if (media.backdropUrl.isNotEmpty()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(true).memoryCachePolicy(CachePolicy.ENABLED).build(),
+                    model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(false).memoryCachePolicy(CachePolicy.ENABLED).build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             } else if (media.posterUrl.isNotEmpty()) {
@@ -474,7 +467,7 @@ fun DetailsScreen(
                             )
                         }
                         Spacer(Modifier.height(12.dp))
-                        // ── Movie watch-progress bar ─────────────────────────────────────
+
                         if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
                             Spacer(Modifier.height(14.dp))
                             val prog = state.contentProgress ?: 0f
@@ -547,7 +540,6 @@ fun DetailsScreen(
                                     }
                                 }
                             } else {
-                                // ── Compute watch-state labels once ─────────────────────────────────
                                 val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
                                 val continueLabel: String = when {
                                     state.contentIsFinished -> tr("Watch Again", "צפה שוב")
@@ -560,7 +552,6 @@ fun DetailsScreen(
                                     isPartiallyWatched -> tr("Continue", "המשך")
                                     else               -> tr("Play Now", "נגן עכשיו")
                                 }
-                                // Smart scraping target — resume last-watched episode for series
                                 val resumeSeason  = state.lastWatchedSeason  ?: state.selectedSeason
                                 val resumeEpisode = state.lastWatchedEpisode ?: 1
 
@@ -636,7 +627,6 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Seasons + Episodes ──────────────────────────────────
             if (!state.isFuzerDirect && media.isSeries && media.totalSeasons > 0) {
                 item {
                     Column(Modifier.fillMaxWidth().focusGroup()) {
@@ -658,7 +648,7 @@ fun DetailsScreen(
                         ) {
                             item { Spacer(modifier = Modifier.width(56.dp)) }
 
-                            items(media.totalSeasons, key = { idx -> "season_${media.id}_$idx" }) { idx ->
+                            items(media.totalSeasons, key = { idx -> "season_${media.id}_$idx" }, contentType = { _ -> "SeasonTab" }) { idx ->
                                 val n = idx + 1
                                 val sel = state.selectedSeason == n
                                 Surface(
@@ -693,7 +683,7 @@ fun DetailsScreen(
                             ) {
                                 item { Spacer(modifier = Modifier.width(50.dp)) }
 
-                                itemsIndexed(state.episodes, key = { _, ep -> "${media.id}_${ep.id}" }) { idx, ep ->
+                                itemsIndexed(state.episodes, key = { _, ep -> "${media.id}_${ep.id}" }, contentType = { _, _ -> "EpisodeCard" }) { idx, ep ->
                                     val fallbackImage = media.backdropUrl.ifBlank { media.posterUrl }
                                     EpisodeCard(
                                         episode = ep,
@@ -715,7 +705,6 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Cast ───────────────────────────────────────────────
             if (!state.isFuzerDirect && media.cast.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth().focusGroup()) {
@@ -736,7 +725,7 @@ fun DetailsScreen(
                         ) {
                             item { Spacer(modifier = Modifier.width(46.dp)) }
 
-                            itemsIndexed(media.cast) { idx, a ->
+                            itemsIndexed(media.cast, contentType = { _, _ -> "CastCard" }) { idx, a ->
                                 CastMemberCard(
                                     actor = a,
                                     modifier = if (idx == 0) Modifier.focusRequester(castFR) else Modifier
@@ -749,7 +738,6 @@ fun DetailsScreen(
                 }
             }
 
-            // ── Collection ────────────────────────────────────────
             if (!state.isFuzerDirect && media.collectionItems.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth().focusGroup()) {
@@ -771,7 +759,7 @@ fun DetailsScreen(
                         ) {
                             item { Spacer(modifier = Modifier.width(50.dp)) }
 
-                            itemsIndexed(media.collectionItems, key = { _, r -> r.id }) { idx, rec ->
+                            itemsIndexed(media.collectionItems, key = { _, r -> r.id }, contentType = { _, _ -> "CollectionCard" }) { idx, rec ->
                                 val tempMovie = Movie(id = rec.id, title = rec.title, posterUrl = rec.posterUrl, backdropUrl = "", rating = 0f, mediaType = "movie", overview = "", year = 0, genre = "")
                                 com.luminastreams.tv.presentation.home.PosterCard(
                                     movie = tempMovie,
@@ -786,7 +774,6 @@ fun DetailsScreen(
                 }
             }
 
-            // ── More Starring ──────────────────────────────────────
             if (!state.isFuzerDirect && media.starringItems.isNotEmpty()) {
                 item {
                     Column(Modifier.fillMaxWidth().focusGroup()) {
@@ -808,7 +795,7 @@ fun DetailsScreen(
                         ) {
                             item { Spacer(modifier = Modifier.width(50.dp)) }
 
-                            itemsIndexed(media.starringItems, key = { _, r -> r.id }) { idx, rec ->
+                            itemsIndexed(media.starringItems, key = { _, r -> r.id }, contentType = { _, _ -> "StarringCard" }) { idx, rec ->
                                 val tempMovie = Movie(id = rec.id, title = rec.title, posterUrl = rec.posterUrl, backdropUrl = "", rating = 0f, mediaType = if (rec.id.startsWith("tv")) "tv" else "movie", overview = "", year = 0, genre = "")
                                 com.luminastreams.tv.presentation.home.PosterCard(
                                     movie = tempMovie,
@@ -824,7 +811,6 @@ fun DetailsScreen(
             }
         }
 
-        // ── Sources Side Panel ─────────────────────────────────────────────────
         if (!state.isFuzerDirect) {
             AnimatedVisibility(
                 visible  = showSources,
@@ -923,7 +909,7 @@ fun DetailsScreen(
                                     contentPadding      = PaddingValues(bottom = 64.dp),
                                     modifier            = Modifier.focusGroup().lockFocusEdges(lockRight = false, lockDown = true)
                                 ) {
-                                    itemsIndexed(state.availableStreams) { index, stream ->
+                                    itemsIndexed(state.availableStreams, contentType = { _, _ -> "StreamItem" }) { index, stream ->
                                         StreamSourceCard(
                                             source   = stream,
                                             rank     = index + 1,
@@ -1188,7 +1174,7 @@ private fun EpisodeCard(
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(imageUrl)
-                    .crossfade(true)
+                    .crossfade(false)
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
@@ -1206,7 +1192,6 @@ private fun EpisodeCard(
                 }
             }
 
-            // ── Watched badge ────────────────────────────────────────────────
             if (episode.hasWatched) {
                 Box(
                     modifier = Modifier

@@ -9,7 +9,6 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.compose.foundation.BorderStroke
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -26,49 +25,16 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bookmark
-import androidx.compose.material.icons.filled.Cast
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LocalMovies
-import androidx.compose.material.icons.filled.Movie
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Tv
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.filled.*
+import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.Saver
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
@@ -92,7 +58,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
@@ -105,18 +70,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.navigation.NavController
-import androidx.tv.material3.Border
-import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Glow
-import androidx.tv.material3.Icon
-import androidx.tv.material3.Surface
-import androidx.tv.material3.Text
+import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.imageLoader
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import coil.size.Scale
+import coil.size.Size
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
@@ -124,9 +84,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// ═══════════════════════════════════════════════════════════════════
-//  PALETTE
-// ═══════════════════════════════════════════════════════════════════
 private val BG        = Color(0xFF070707)
 private val RED       = Color(0xFFE50914)
 private val RED2      = Color(0xFFB20710)
@@ -139,9 +96,6 @@ private val CARD_BG   = Color(0xFF1C1C1C)
 private val NAV_GLASS = Color(0x18FFFFFF)
 private val NAV_FOCUS = Color(0x30FFFFFF)
 
-// ═══════════════════════════════════════════════════════════════════
-//  LAYOUT
-// ═══════════════════════════════════════════════════════════════════
 private val NAV_SEARCH_H = 28.dp
 private val NAV_PILLS_H  = 34.dp
 private val NAV_PILL_H   = 28.dp
@@ -155,23 +109,6 @@ private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
 
-// ═══════════════════════════════════════════════════════════════════
-//  IMAGE SIZE CONSTANTS
-//  Backdrop (hero): always full 4K — this is the only image shown at
-//  full screen so it must remain high quality.
-//  Cards: sized to 2× their rendered dp size to look sharp on high-
-//  density panels without decoding a 4K image into a 280×158 slot.
-// ═══════════════════════════════════════════════════════════════════
-private const val BACKDROP_W = 3840
-private const val BACKDROP_H = 2160
-private const val LAND_IMG_W = 600   // 280dp × ~2.15 — sharp on xhdpi+, no 4K waste
-private const val LAND_IMG_H = 340
-private const val PORT_IMG_W = 300   // 148dp × ~2
-private const val PORT_IMG_H = 450
-
-// ═══════════════════════════════════════════════════════════════════
-//  GRADIENT SCRIMS
-// ═══════════════════════════════════════════════════════════════════
 private val heroScrimLeft = Brush.horizontalGradient(
     colorStops = arrayOf(
         0.00f to Color(0xD0070707),
@@ -191,24 +128,16 @@ private val heroScrimTop = Brush.verticalGradient(
 private val rowsOverlay = Brush.verticalGradient(
     colorStops = arrayOf(
         0.00f to Color.Transparent,
-        0.30f to Color(0x60070707),
-        0.60f to Color(0xA8070707),
-        0.85f to Color(0xD8070707),
-        1.00f to Color(0xF4070707)
+        0.50f to Color(0xA8070707),
+        1.00f to Color(0xF4070707) // רק 3 נקודות במקום 5
     )
 )
 
-// ═══════════════════════════════════════════════════════════════════
-//  TRANSLATION HELPER
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun tr(en: String, he: String): String {
     return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  FOCUS STATE
-// ═══════════════════════════════════════════════════════════════════
 @Stable
 class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused    by mutableStateOf(false)
@@ -223,9 +152,6 @@ class HomeFocusState(initialRow: Int = 0) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  HOME SCREEN
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun HomeScreen(
     state:         HomeState,
@@ -239,7 +165,6 @@ fun HomeScreen(
     var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }
     var contentAlpha  by remember { mutableStateOf(1f) }
 
-    // LOW tier: skip fade animation entirely — just swap content immediately
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
 
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
@@ -335,13 +260,10 @@ fun HomeScreen(
         if (rows.isEmpty()) ROW_PORTRAIT_H else ROW_PORTRAIT_H + 16.dp
     }
 
-    // Debounced hero update: wait 140ms after focus settles before swapping
-    // the backdrop. This prevents firing a new 4K decode on every D-pad key
-    // repeat while the user is scrolling quickly through rows.
     LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
-            delay(140L)
+            delay(350L) // הגדלת ההשהיה ל-350ms מונעת בקשות 4K מיותרות כשגוללים מהר
             val m = rows.getOrNull(ri)?.let { r ->
                 when (r) {
                     is RowDef.Regular      -> r.movies
@@ -428,11 +350,6 @@ fun HomeScreen(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  BACKDROP
-//  Hero backdrop is the ONLY image loaded at full 4K.
-//  Everything else uses sized-to-card image requests.
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
@@ -465,15 +382,16 @@ private fun BackdropLayer(hero: Movie?) {
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
-        // Stable base layer — no per-frame recomposition
         if (!shownUrl.isNullOrBlank()) {
             AsyncImage(
                 model = remember(shownUrl) {
                     ImageRequest.Builder(ctx)
                         .data(shownUrl)
-                        .size(BACKDROP_W, BACKDROP_H)
+                        .size(Size.ORIGINAL) // משאיר UHD 4K
                         .scale(Scale.FILL)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565) // קריטי! חותך את צריכת ה-RAM של התמונה בחצי
+                        .dispatcher(kotlinx.coroutines.Dispatchers.IO) // מונע תקיעה של ה-Main Thread בזמן הפענוח
+                        .memoryCachePolicy(if (isLow) CachePolicy.DISABLED else CachePolicy.ENABLED) // לא שומרים תמונות ענק בראם של מכשיר חלש
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .allowHardware(true)
                         .crossfade(false)
@@ -484,14 +402,17 @@ private fun BackdropLayer(hero: Movie?) {
                 modifier           = Modifier.fillMaxSize()
             )
         }
-        // New image fades in on top — removed from composition once swap is done
-        if (swapping && !pendingUrl.isNullOrBlank() && pendingUrl != shownUrl) {
+
+        // מניעת Overdraw (ציור כפול) על מכשירים חלשים - מונע קריסת FPS בגלילה
+        if (!isLow && swapping && !pendingUrl.isNullOrBlank() && pendingUrl != shownUrl) {
             AsyncImage(
                 model = remember(pendingUrl) {
                     ImageRequest.Builder(ctx)
                         .data(pendingUrl)
-                        .size(BACKDROP_W, BACKDROP_H)
+                        .size(Size.ORIGINAL)
                         .scale(Scale.FILL)
+                        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                        .dispatcher(kotlinx.coroutines.Dispatchers.IO)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .allowHardware(true)
@@ -503,14 +424,12 @@ private fun BackdropLayer(hero: Movie?) {
                 modifier           = Modifier.fillMaxSize().graphicsLayer { alpha = 1f - overlayAlpha }
             )
         }
+
         Box(Modifier.fillMaxSize().background(heroScrimLeft))
         Box(Modifier.fillMaxSize().background(heroScrimTop))
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  HERO OVERLAY
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroOverlay(hero: Movie?, panelH: Dp) {
     Box(Modifier.fillMaxSize().zIndex(3f)) {
@@ -575,9 +494,6 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
 
 @Composable private fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
-// ═══════════════════════════════════════════════════════════════════
-//  CONTENT LAYER
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun ContentLayer(
     rows: List<RowDef>, contentAlpha: Float,
@@ -593,8 +509,6 @@ private fun ContentLayer(
     val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
     var initialFocusDone by remember { mutableStateOf(false) }
 
-    // LOW/MID: skip animating the content alpha — use the raw value directly
-    // to avoid a Choreographer frame for a simple graphicsLayer alpha change.
     val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
     val animatedContentAlpha by animateFloatAsState(
         targetValue   = contentAlpha,
@@ -638,7 +552,6 @@ private fun ContentLayer(
                         } else {
                             focusState.currentRowIndex--
                             runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
-
                             true
                         }
                     }
@@ -652,7 +565,6 @@ private fun ContentLayer(
                             if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
                                 focusState.currentRowIndex++
                                 runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
-
                                 true
                             } else true
                         }
@@ -661,7 +573,6 @@ private fun ContentLayer(
                         if (focusState.isNavFocused) {
                             focusState.isNavFocused = false
                             runCatching { firstCardFRs.getOrNull(focusState.currentRowIndex)?.requestFocus() }
-
                             true
                         } else false
                     }
@@ -711,9 +622,6 @@ private fun ContentLayer(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  TWO-ROW NAV BAR
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun TwoRowNavBar(
     activeTab: String, firstNavFR: FocusRequester,
@@ -736,7 +644,6 @@ private fun TwoRowNavBar(
     val targetX     = tabPositions[activeTab] ?: 0f
     val targetWidth = tabWidths[activeTab] ?: 0.dp
 
-    // LOW/MID: snap pill indicator instantly — no Choreographer during D-pad nav
     val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
     val pillSpec   = if (isHighTier) tween<Float>(300, easing = FastOutSlowInEasing) else snap()
     val pillDpSpec = if (isHighTier) tween<Dp>(300, easing = FastOutSlowInEasing)    else snap()
@@ -871,18 +778,6 @@ private fun NavPill(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  ROWS PANEL
-//
-//  Performance budget per tier:
-//  HIGH  — full spring slide (400ms), animated row fade, renderMargin=3
-//  MID   — tween(200) slide, instant row alpha, renderMargin=1
-//  LOW   — snap() slide (0ms), no Choreographer at all, renderMargin=1
-//
-//  The Y-slide is the largest source of per-frame recomposition: every
-//  frame during the animation triggers a layout pass on all visible
-//  rows. snap() on LOW eliminates this entirely.
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsPanel(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
@@ -895,8 +790,6 @@ private fun RowsPanel(
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
-    // Render window: rows outside this range are replaced with zero-cost
-    // placeholder Boxes so the GPU has fewer layers to composite.
     val renderMargin = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 3
         DeviceProfile.Tier.MID  -> 1
@@ -909,9 +802,6 @@ private fun RowsPanel(
         -acc
     }
 
-    // LOW  → snap()    : no animation, zero Choreographer callbacks
-    // MID  → tween(200): short slide, fewer redraw frames than 400ms
-    // HIGH → tween(400): original smooth spring feel
     val slideSpec = when (DeviceProfile.tier) {
         DeviceProfile.Tier.LOW  -> snap()
         DeviceProfile.Tier.MID  -> tween<Dp>(200, easing = FastOutSlowInEasing)
@@ -924,7 +814,10 @@ private fun RowsPanel(
     )
 
     Box(Modifier.fillMaxWidth().height(panelH).clipToBounds()) {
-        Box(Modifier.fillMaxWidth().offset(y = animatedY)) {
+        val density = LocalDensity.current
+        Box(Modifier.fillMaxWidth().graphicsLayer {
+            translationY = with(density) { animatedY.toPx() }
+        }) {
             var yAccum = 0.dp
             rows.forEachIndexed { i, rowDef ->
                 val rh       = rowHeightFor(i)
@@ -935,7 +828,6 @@ private fun RowsPanel(
 
                 key(rowDef.id) {
                     if (!inWindow) {
-                        // Placeholder: zero GPU cost, preserves layout height
                         Box(
                             Modifier
                                 .fillMaxWidth()
@@ -943,10 +835,6 @@ private fun RowsPanel(
                                 .offset(y = yOffset)
                         )
                     } else {
-                        // Per-row alpha strategy:
-                        // HIGH — animateFloatAsState with tween for a smooth fade
-                        // MID/LOW — set graphicsLayer alpha directly (no Animator
-                        //           object, no Choreographer subscription per row)
                         val rowAlpha         = if (i == curRow) 1f else 0.22f
                         val useAnimatedAlpha = DeviceProfile.animConfig.enableRowFade &&
                                 DeviceProfile.tier == DeviceProfile.Tier.HIGH
@@ -962,7 +850,7 @@ private fun RowsPanel(
                                     easing = FastOutSlowInEasing
                                 )
                             else
-                                snap(),   // Instant — no animation running
+                                snap(),
                             label = "a$i"
                         )
 
@@ -1225,12 +1113,6 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LANDSCAPE CARD
-//  Image request uses LAND_IMG_W/H (600×340) instead of 4K.
-//  The 4K request was the single biggest performance killer on low-
-//  end devices: every card triggered a 4K decode into a 280×158 slot.
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1252,8 +1134,6 @@ private fun LandscapeCard(
         label         = "lzoom"
     )
 
-    // Overlay shine effect is HIGH-only — it triggers an extra Brush
-    // evaluation and graphicsLayer pass on every focused card repaint.
     val overlayAlpha by animateFloatAsState(
         targetValue   = if (isFocused.value && DeviceProfile.tier == DeviceProfile.Tier.HIGH) 0.18f else 0f,
         animationSpec = tween(180, easing = FastOutSlowInEasing),
@@ -1261,14 +1141,11 @@ private fun LandscapeCard(
     )
 
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
-    // Card-sized request: sharp at 2× render density, ~25× less memory
-    // than the previous size(3840, 2160) request.
+
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(LAND_IMG_W, LAND_IMG_H)
-            .scale(Scale.FILL)
-            .memoryCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.DISABLED) // חובה למניעת GC Thrashing
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
             .crossfade(false)
@@ -1401,10 +1278,6 @@ private fun LandscapeCard(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  POSTER CARD
-//  Image request uses PORT_IMG_W/H (300×450) instead of 4K.
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1433,14 +1306,10 @@ fun PosterCard(
     )
 
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
-    // Card-sized request: sharp at 2× render density, ~25× less memory
-    // than the previous size(3840, 2160) request.
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(PORT_IMG_W, PORT_IMG_H)
-            .scale(Scale.FILL)
-            .memoryCachePolicy(CachePolicy.ENABLED)
+            .memoryCachePolicy(CachePolicy.DISABLED) // חובה
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
             .crossfade(false)
@@ -1598,8 +1467,6 @@ private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: 
     val containerCol = if (isSelected) WHITE.copy(0.15f) else CARD_BG
     val borderCol    = if (isSelected) WHITE else Color.Transparent
 
-    // LOW/MID: no scale animation on studio logo buttons — avoids a
-    // graphicsLayer invalidation on every D-pad move through the ribbon.
     val btnScale = if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) 1.08f else 1.0f
 
     Surface(
@@ -1619,13 +1486,6 @@ private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: 
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LOADING SKELETON
-//  LOW/MID: static shimmer (no infinite transition) — eliminates a
-//  continuous Choreographer subscription that invalidates every frame
-//  while the app is loading.
-//  HIGH: animated shimmer as before.
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun HomeLoading() {
     val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
@@ -1638,7 +1498,6 @@ fun HomeLoading() {
             start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f)
         )
     } else {
-        // Static two-tone gradient — no animation, no redraw loop
         Brush.linearGradient(listOf(Color(0xFF111111), Color(0xFF1E1E1E), Color(0xFF111111)))
     }
 

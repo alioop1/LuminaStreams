@@ -3,17 +3,16 @@ package com.luminastreams.tv.presentation.home
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -42,15 +41,11 @@ fun PosterCard(
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
-    val elevation by animateFloatAsState(
-        targetValue = if (isFocused) 20f else 0f,
+    // במקום if שמכניס ומוציא מהעץ, אנו ממנפים את ה-GPU עם graphicsLayer ואנימציית שקיפות
+    val overlayAlpha by animateFloatAsState(
+        targetValue = if (isFocused || movie.posterUrl.isEmpty()) 1f else 0f,
         animationSpec = tween(200),
-        label = "posterElevation"
-    )
-    val scale by animateFloatAsState(
-        targetValue = if (isFocused) 1.07f else 1f,
-        animationSpec = tween(200),
-        label = "posterScale"
+        label = "overlayAlpha"
     )
 
     Surface(
@@ -62,6 +57,7 @@ fun PosterCard(
             contentColor          = Color.White,
             focusedContentColor   = Color.White
         ),
+        // ה-Surface עושה Scale והצללות ישירות בחומרה, אין צורך ב-animateFloat ידני!
         scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
         border = ClickableSurfaceDefaults.border(
             border        = Border.None,
@@ -79,54 +75,56 @@ fun PosterCard(
             .width(130.dp)
             .aspectRatio(2f / 3f)
             .zIndex(if (isFocused) 10f else 0f)
-            .shadow(elevation.dp, CardShape)
-            .onFocusChanged { isFocused = it.isFocused }
+            .onFocusChanged { isFocused = it.isFocused } // מחקנו את ה-shadow הידני הכבד
     ) {
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clip(CardShape)
         ) {
-            // Poster image
+            // תמונת הפוסטר או רקע אחיד
             if (movie.posterUrl.isNotEmpty()) {
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(movie.posterUrl)
-                        .crossfade(true)
-                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .crossfade(false) // חובה לבטל למניעת קרטועים
+                        .allowHardware(true) // שימוש במאיץ גרפי
+                        .memoryCachePolicy(CachePolicy.DISABLED) // חובה! מונע את חנק ה-RAM
+                        .diskCachePolicy(CachePolicy.ENABLED)
                         .build(),
                     contentDescription = movie.title,
                     contentScale       = ContentScale.Crop,
                     modifier           = Modifier.fillMaxSize()
                 )
             } else {
-                // Fallback gradient when no poster is available
+                // Fallback פשוט וקל לעיבוד (צבע אחיד במקום גרדיאנט שחונק את ה-GPU)
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color(0xFF2C2C2C), Color(0xFF111111))
-                            )
-                        )
+                        .background(Color(0xFF1E1E1E))
                 )
             }
 
-            // Bottom gradient + title overlay
+            // שקיפות (overlay) שמופעלת ונכבית על ה-GPU בלבד בלי לשנות את עץ הרכיבים
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.45f)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.95f))
+                    .fillMaxSize()
+                    .graphicsLayer { alpha = overlayAlpha }
+            ) {
+                // גרדיאנט תחתון לטקסט
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .fillMaxHeight(0.5f)
+                        .align(Alignment.BottomCenter)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.95f))
+                            )
                         )
-                    )
-            )
+                )
 
-            // Title text (only visible when no poster, or on focus for accessibility)
-            if (movie.posterUrl.isEmpty() || isFocused) {
+                // טקסט הכותרת והשנה
                 Column(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -151,7 +149,7 @@ fun PosterCard(
                 }
             }
 
-            // Rating badge (top-right)
+            // תגית הדירוג (אם יש)
             if (movie.rating > 0f) {
                 Box(
                     modifier = Modifier

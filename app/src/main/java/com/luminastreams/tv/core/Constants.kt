@@ -21,35 +21,24 @@ object Constants {
     // ── Tier-aware backdrop helper ─────────────────────────────────────────────
     /**
      * Returns the best backdrop URL for the current device tier.
-     *
-     * Quality floors (TV displays need much higher than phones):
-     *   HIGH → original  (OLED, SHIELD, 4K sets — no compromise)
-     *   MID  → w1280     (solid 1080p output)
-     *   LOW  → w780      (was w500 — raised to prevent visible blur on 720p+ panels)
+     * FORCE ORIGINAL (UHD 4K) FOR ALL TIERS AS REQUESTED.
      */
     fun backdropUrl(path: String?): String {
         if (path.isNullOrBlank() || path == "null") return ""
-        val base = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> IMAGE_ORIGINAL
-            DeviceProfile.Tier.MID  -> IMAGE_W1280
-            DeviceProfile.Tier.LOW  -> IMAGE_W780   // ← was IMAGE_W500, raised for TV panels
-        }
-        return "$base$path"
+        // תמיד מושך איכות מקסימלית (UHD 4K) ל-Hero
+        return "$IMAGE_ORIGINAL$path"
     }
 
     /**
      * Returns the best poster URL for the current device tier.
-     *
-     *   HIGH → original  (sharp on large TV screens)
-     *   MID  → w780      (was w500, raised for portrait poster clarity)
-     *   LOW  → w500      (was w342 — w342 is phone-grade, unacceptable on TV)
+     * Minimum 1080p (W780) even on low end devices.
      */
     fun posterUrl(path: String?): String {
         if (path.isNullOrBlank() || path == "null") return ""
         val base = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> IMAGE_ORIGINAL
-            DeviceProfile.Tier.MID  -> IMAGE_W780   // ← was IMAGE_W500
-            DeviceProfile.Tier.LOW  -> IMAGE_W500   // ← was IMAGE_W342
+            DeviceProfile.Tier.MID  -> IMAGE_W780
+            DeviceProfile.Tier.LOW  -> IMAGE_W780 // הועלה ל-1080P מינימום
         }
         return "$base$path"
     }
