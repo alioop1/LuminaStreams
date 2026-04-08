@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -67,7 +68,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -89,6 +93,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -524,6 +529,9 @@ private fun HeroOverlay(hero: Movie?, panelH: Dp) {
 
 @Composable private fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ContentLayer — nav bar + scrollable movie rows
+// ─────────────────────────────────────────────────────────────────────────────
 @Composable
 private fun ContentLayer(
     rows: List<RowDef>, contentAlpha: Float,
@@ -535,14 +543,14 @@ private fun ContentLayer(
     onSeriesTab: () -> Unit, onFuzer: () -> Unit,
     onWatchlist: () -> Unit, onSettings: () -> Unit, onIptv: () -> Unit
 ) {
-    val firstNavFR = remember { FocusRequester() }
-    val firstCardFRs = remember(rows.size) { List(rows.size) { FocusRequester() } }
+    val firstNavFR    = remember { FocusRequester() }
+    val firstCardFRs  = remember(rows.size) { List(rows.size) { FocusRequester() } }
     var initialFocusDone by remember { mutableStateOf(false) }
 
     val animatedContentAlpha by animateFloatAsState(
-        targetValue = contentAlpha,
+        targetValue  = contentAlpha,
         animationSpec = tween(250, easing = LinearEasing),
-        label = "contentAlpha"
+        label        = "contentAlpha"
     )
 
     LaunchedEffect(Unit) {
@@ -586,6 +594,563 @@ private fun ContentLayer(
             }
             .alpha(animatedContentAlpha)
     ) {
+        // ── Scrollable rows panel ───────────────────────────────────────────
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = 8.dp),
+            verticalArrangement = Arrangement.Bottom
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(panelH)
+                    .focusGroup()
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                        if (ev.key == Key.DirectionUp && focusState.currentRowIndex <= 0) {
+                            focusState.isNavFocused = true
+                            runCatching { firstNavFR.requestFocus() }
+                            true
+                        } else false
+                    },
+                contentPadding = PaddingValues(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(0.dp)
+            ) {
+                itemsIndexed(rows, key = { _, r -> r.id }) { rowIdx, rowDef ->
+                    when (rowDef) {
+                        is RowDef.StudioRibbon -> {
+                            StudioFilterRibbon(
+                                activeFilter       = activeFilter,
+                                modifier           = Modifier
+                                    .fillMaxWidth()
+                                    .height(rowHeightFor(rowIdx))
+                                    .focusRequester(firstCardFRs.getOrElse(rowIdx) { FocusRequester() })
+                                    .onFocusChanged { if (it.hasFocus) focusState.currentRowIndex = rowIdx },
+                                onFilterClick      = onStudioFilterClick
+                            )
+                        }
+                        is RowDef.Studio -> {
+                            StudioRow(
+                                rowDef   = rowDef,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(rowHeightFor(rowIdx))
+                                    .onFocusChanged { if (it.hasFocus) {
+                                        focusState.currentRowIndex = rowIdx
+                                        rowDef.movies.firstOrNull()?.let { onHeroUpdate(it) }
+                                    }},
+                                firstCardFR = firstCardFRs.getOrElse(rowIdx) { FocusRequester() },
+                                onHeroUpdate = onHeroUpdate,
+                                onMovieClick = onMovieClick,
+                                onLoadMore   = { onLoadMore(rowDef.id) }
+                            )
+                        }
+                        is RowDef.Regular -> {
+                            RegularRow(
+                                rowDef   = rowDef,
+                                isFirst  = rowIdx == 0,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(rowHeightFor(rowIdx))
+                                    .onFocusChanged { if (it.hasFocus) {
+                                        focusState.currentRowIndex = rowIdx
+                                        rowDef.movies.firstOrNull()?.let { onHeroUpdate(it) }
+                                    }},
+                                firstCardFR = firstCardFRs.getOrElse(rowIdx) { FocusRequester() },
+                                onHeroUpdate = onHeroUpdate,
+                                onMovieClick = onMovieClick,
+                                onLoadMore   = { onLoadMore(rowDef.id) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Top nav bar ────────────────────────────────────────────────────
+        TopNavBar(
+            activeTab       = activeTab,
+            isNavFocused    = focusState.isNavFocused,
+            firstNavFR      = firstNavFR,
+            onSearch        = onSearch,
+            onHomeTab       = { focusState.isNavFocused = false; onHomeTab() },
+            onMoviesTab     = { focusState.isNavFocused = false; onMoviesTab() },
+            onSeriesTab     = { focusState.isNavFocused = false; onSeriesTab() },
+            onFuzer         = { focusState.isNavFocused = false; onFuzer() },
+            onWatchlist     = onWatchlist,
+            onSettings      = onSettings,
+            onIptv          = onIptv,
+            onNavExit       = {
+                focusState.isNavFocused = false
+                val idx = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
+                runCatching { firstCardFRs.getOrNull(idx)?.requestFocus() }
+            }
+        )
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Top nav bar
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun TopNavBar(
+    activeTab: String,
+    isNavFocused: Boolean,
+    firstNavFR: FocusRequester,
+    onSearch: () -> Unit,
+    onHomeTab: () -> Unit,
+    onMoviesTab: () -> Unit,
+    onSeriesTab: () -> Unit,
+    onFuzer: () -> Unit,
+    onWatchlist: () -> Unit,
+    onSettings: () -> Unit,
+    onIptv: () -> Unit,
+    onNavExit: () -> Unit
+) {
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 18.dp, start = 24.dp, end = 24.dp)
+            .zIndex(10f)
+    ) {
+        Row(
+            modifier            = Modifier.fillMaxWidth().focusGroup(),
+            verticalAlignment   = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Search
+            NavIconBtn(
+                icon       = Icons.Default.Search,
+                label      = tr("Search", "חיפוש"),
+                isFocused  = false,
+                modifier   = Modifier
+                    .focusRequester(firstNavFR)
+                    .focusProperties { down = FocusRequester.Default }
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                            onNavExit(); true
+                        } else false
+                    },
+                onClick    = onSearch
+            )
+
+            Spacer(Modifier.width(4.dp))
+
+            // Tab pills
+            data class TabDef(val key: String, val label: String, val icon: ImageVector, val action: () -> Unit)
+            val tabs = listOf(
+                TabDef("ראשי",   tr("Home",    "ראשי"),   Icons.Default.Home,        onHomeTab),
+                TabDef("סרטים",  tr("Movies",  "סרטים"),  Icons.Default.Movie,       onMoviesTab),
+                TabDef("סדרות",  tr("Series",  "סדרות"),  Icons.Default.Tv,          onSeriesTab),
+                TabDef("Fuzer",  "Fuzer VIP",               Icons.Default.LocalMovies, onFuzer),
+            )
+            tabs.forEach { tab ->
+                val isActive = activeTab == tab.key
+                NavTabPill(
+                    label    = tab.label,
+                    icon     = tab.icon,
+                    isActive = isActive,
+                    modifier = Modifier
+                        .focusProperties { down = FocusRequester.Default }
+                        .onPreviewKeyEvent { ev ->
+                            if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
+                                onNavExit(); true
+                            } else false
+                        },
+                    onClick  = tab.action
+                )
+            }
+
+            Spacer(Modifier.weight(1f))
+
+            // Right-side icon buttons
+            NavIconBtn(Icons.Default.Cast,     tr("IPTV",      "IPTV"),      false, Modifier, onIptv)
+            NavIconBtn(Icons.Default.Bookmark, tr("Watchlist", "רשימת צפייה"), false, Modifier, onWatchlist)
+            NavIconBtn(Icons.Default.Settings, tr("Settings",  "הגדרות"),    false, Modifier, onSettings)
+        }
+    }
+}
+
+@Composable
+private fun NavIconBtn(
+    icon: ImageVector, label: String, isFocused: Boolean,
+    modifier: Modifier = Modifier, onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = Color.Transparent,
+            focusedContainerColor = NAV_FOCUS,
+            contentColor          = DIM2,
+            focusedContentColor   = WHITE
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+        modifier = modifier
+            .size(NAV_SEARCH_H + 8.dp)
+            .onFocusChanged { focused = it.isFocused }
+    ) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Icon(icon, contentDescription = label, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+private fun NavTabPill(
+    label: String, icon: ImageVector, isActive: Boolean,
+    modifier: Modifier = Modifier, onClick: () -> Unit
+) {
+    var focused by remember { mutableStateOf(false) }
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = if (isActive) RED else NAV_GLASS,
+            focusedContainerColor = if (isActive) RED2 else NAV_FOCUS,
+            contentColor          = if (isActive) WHITE else DIM2,
+            focusedContentColor   = WHITE
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        modifier = modifier
+            .height(NAV_PILL_H)
+            .wrapContentWidth()
+            .onFocusChanged { focused = it.isFocused }
+    ) {
+        Row(
+            modifier              = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+            verticalAlignment     = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp))
+            Text(label, fontSize = 13.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium)
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Studio filter ribbon
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun StudioFilterRibbon(
+    activeFilter: String?,
+    modifier: Modifier = Modifier,
+    onFilterClick: (String?) -> Unit
+) {
+    val studios = listOf(
+        "HBO" to StudioBrand.HBO,
+        "NETFLIX" to StudioBrand.NETFLIX,
+        "AMAZON" to StudioBrand.AMAZON,
+        "DISNEY" to StudioBrand.DISNEY,
+        "APPLE_TV" to StudioBrand.APPLE_TV,
+        "PARAMOUNT" to StudioBrand.PARAMOUNT,
+        "HULU" to StudioBrand.HULU
+    )
+    LazyRow(
+        modifier              = modifier.padding(start = 60.dp, top = 16.dp, bottom = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding        = PaddingValues(end = 60.dp)
+    ) {
+        itemsIndexed(studios) { _, (key, brand) ->
+            val isActive = activeFilter == key
+            Surface(
+                onClick  = { onFilterClick(key) },
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                colors   = ClickableSurfaceDefaults.colors(
+                    containerColor        = if (isActive) brand.accentColor else NAV_GLASS,
+                    focusedContainerColor = brand.accentColor,
+                    contentColor          = WHITE,
+                    focusedContentColor   = WHITE
+                ),
+                scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+                border   = ClickableSurfaceDefaults.border(
+                    border        = if (isActive) Border.None else Border(BorderStroke(1.dp, DIM3)),
+                    focusedBorder = Border.None
+                ),
+                modifier = Modifier.height(36.dp).wrapContentWidth()
+            ) {
+                Text(
+                    brand.displayName,
+                    fontSize   = 13.sp,
+                    fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                    modifier   = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Row variants
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun RegularRow(
+    rowDef: RowDef.Regular,
+    isFirst: Boolean,
+    modifier: Modifier = Modifier,
+    firstCardFR: FocusRequester,
+    onHeroUpdate: (Movie) -> Unit,
+    onMovieClick: (String) -> Unit,
+    onLoadMore: () -> Unit
+) {
+    val ctx = LocalContext.current
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+
+    Column(modifier = modifier.padding(bottom = 4.dp)) {
+        Text(
+            text       = rowDef.label,
+            color      = WHITE,
+            fontSize   = 14.sp,
+            fontWeight = FontWeight.Bold,
+            modifier   = Modifier.padding(start = 60.dp, bottom = 10.dp)
+        )
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding        = PaddingValues(start = 60.dp, end = 60.dp),
+            modifier              = Modifier.fillMaxWidth().focusGroup()
+        ) {
+            itemsIndexed(rowDef.movies, key = { _, m -> m.id }) { idx, movie ->
+                val cardMod = if (idx == 0)
+                    Modifier.focusRequester(firstCardFR) else Modifier
+
+                if (isFirst) {
+                    LandscapeCard(
+                        movie        = movie,
+                        modifier     = cardMod,
+                        onHeroUpdate = onHeroUpdate,
+                        onClick      = { onMovieClick(movie.id) }
+                    )
+                } else {
+                    PortraitCard(
+                        movie        = movie,
+                        modifier     = cardMod,
+                        onHeroUpdate = onHeroUpdate,
+                        onClick      = { onMovieClick(movie.id) }
+                    )
+                }
+
+                // Load more when near end
+                if (idx == rowDef.movies.size - 3) {
+                    LaunchedEffect(rowDef.id) { onLoadMore() }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StudioRow(
+    rowDef: RowDef.Studio,
+    modifier: Modifier = Modifier,
+    firstCardFR: FocusRequester,
+    onHeroUpdate: (Movie) -> Unit,
+    onMovieClick: (String) -> Unit,
+    onLoadMore: () -> Unit
+) {
+    Column(modifier = modifier.padding(bottom = 4.dp)) {
+        // Studio brand header
+        Row(
+            modifier          = Modifier.padding(start = 60.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .height(16.dp)
+                    .width(3.dp)
+                    .background(rowDef.brand.accentColor, RoundedCornerShape(2.dp))
+            )
+            Text(
+                text       = rowDef.brand.displayName,
+                color      = WHITE,
+                fontSize   = 14.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding        = PaddingValues(start = 60.dp, end = 60.dp),
+            modifier              = Modifier.fillMaxWidth().focusGroup()
+        ) {
+            itemsIndexed(rowDef.movies, key = { _, m -> m.id }) { idx, movie ->
+                val cardMod = if (idx == 0) Modifier.focusRequester(firstCardFR) else Modifier
+                PortraitCard(
+                    movie        = movie,
+                    modifier     = cardMod,
+                    onHeroUpdate = onHeroUpdate,
+                    onClick      = { onMovieClick(movie.id) }
+                )
+                if (idx == rowDef.movies.size - 3) {
+                    LaunchedEffect(rowDef.id) { onLoadMore() }
+                }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Card components
+// ─────────────────────────────────────────────────────────────────────────────
+@Composable
+private fun LandscapeCard(
+    movie: Movie,
+    modifier: Modifier = Modifier,
+    onHeroUpdate: (Movie) -> Unit,
+    onClick: () -> Unit
+) {
+    val ctx   = LocalContext.current
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+    var focused by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = CARD_BG,
+            focusedContainerColor = CARD_BG,
+            contentColor          = WHITE,
+            focusedContentColor   = WHITE
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border   = ClickableSurfaceDefaults.border(
+            border        = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, WHITE))
+        ),
+        glow     = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)
+        ),
+        modifier = modifier
+            .width(LAND_W)
+            .height(LAND_H)
+            .zIndex(if (focused) 10f else 0f)
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onHeroUpdate(movie)
+            }
+    ) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp))) {
+            val imgUrl = movie.backdropUrl.takeIf { it.isNotBlank() } ?: movie.posterUrl
+            if (imgUrl.isNotBlank()) {
+                AsyncImage(
+                    model = remember(imgUrl) {
+                        ImageRequest.Builder(ctx)
+                            .data(imgUrl)
+                            .size(LAND_IMG_W, LAND_IMG_H)
+                            .scale(Scale.FILL)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .crossfade(!isLow)
+                            .build()
+                    },
+                    contentDescription = movie.title,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier.fillMaxSize()
+                )
+            }
+            Box(
+                Modifier.fillMaxSize().background(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.85f)))
+                )
+            )
+            Column(
+                Modifier.align(Alignment.BottomStart).padding(10.dp)
+            ) {
+                Text(movie.title, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Bold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (movie.year > 0)
+                    Text(movie.year.toString(), color = DIM2, fontSize = 11.sp)
+            }
+            if (movie.rating > 0f) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFFF5C518))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text("%.1f".format(movie.rating), color = Color(0xFF141414), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PortraitCard(
+    movie: Movie,
+    modifier: Modifier = Modifier,
+    onHeroUpdate: (Movie) -> Unit,
+    onClick: () -> Unit
+) {
+    val ctx   = LocalContext.current
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+    var focused by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick  = onClick,
+        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor        = CARD_BG,
+            focusedContainerColor = CARD_BG,
+            contentColor          = WHITE,
+            focusedContentColor   = WHITE
+        ),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
+        border   = ClickableSurfaceDefaults.border(
+            border        = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, WHITE))
+        ),
+        glow     = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(Color.Black.copy(0.8f), 20.dp)
+        ),
+        modifier = modifier
+            .width(PORT_W)
+            .height(PORT_H)
+            .zIndex(if (focused) 10f else 0f)
+            .onFocusChanged {
+                focused = it.isFocused
+                if (it.isFocused) onHeroUpdate(movie)
+            }
+    ) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(10.dp))) {
+            if (movie.posterUrl.isNotBlank()) {
+                AsyncImage(
+                    model = remember(movie.posterUrl) {
+                        ImageRequest.Builder(ctx)
+                            .data(movie.posterUrl)
+                            .size(PORT_IMG_W, PORT_IMG_H)
+                            .scale(Scale.FILL)
+                            .memoryCachePolicy(CachePolicy.ENABLED)
+                            .crossfade(!isLow)
+                            .build()
+                    },
+                    contentDescription = movie.title,
+                    contentScale       = ContentScale.Crop,
+                    modifier           = Modifier.fillMaxSize()
+                )
+            } else {
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF2C2C2C), Color(0xFF111111)))))
+                Text(movie.title, color = DIM, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                    modifier = Modifier.align(Alignment.Center).padding(8.dp),
+                    textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+            Box(
+                Modifier.fillMaxWidth().fillMaxHeight(0.4f).align(Alignment.BottomCenter).background(
+                    Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))
+                )
+            )
+            if (movie.rating > 0f) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFFF5C518))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
+                    Text("%.1f".format(movie.rating), color = Color(0xFF141414), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
     }
 }
 
