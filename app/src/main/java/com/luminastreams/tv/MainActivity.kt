@@ -67,25 +67,38 @@ import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-// ── Target logical width in dp for the whole app on any screen size ──────────
-private const val TARGET_DP_WIDTH = 960
+/**
+ * Fixed density target for the entire app.
+ *
+ * Android TV large screens (50"+ 4K OLEDs) typically report densityDpi=213
+ * which makes every dp physically very large on the panel.  We force 320 dpi
+ * so the UI always renders at the same logical scale as a 1080p PC monitor,
+ * regardless of what the TV OS advertises.
+ *
+ * Tuning guide (rebuild & check after each change):
+ *   320  → matches a standard 1080p PC/monitor (target baseline)
+ *   240  → slightly larger UI (good for very large living-room TVs)
+ *   320  → compact, correct for 50"+
+ *   400  → even smaller (more content visible, smaller text)
+ */
+private const val FORCED_DENSITY_DPI = 320
 
 class MainActivity : ComponentActivity() {
 
     var soundManager: SoundManager? = null
 
-    /**
-     * Override display density so the app always lays out as if the screen
-     * is TARGET_DP_WIDTH dp wide.  This keeps sizing consistent across a
-     * 27" PC monitor and a 50"+ TV with very different pixel densities.
-     */
     override fun attachBaseContext(newBase: Context) {
-        val config = Configuration(newBase.resources.configuration)
-        val screenWidthPx = newBase.resources.displayMetrics.widthPixels
-        val targetDensity = screenWidthPx.toFloat() / TARGET_DP_WIDTH
-        config.densityDpi = (targetDensity * 160).toInt()
-        val scaled = newBase.createConfigurationContext(config)
-        super.attachBaseContext(scaled)
+        val dm = newBase.resources.displayMetrics
+        // Only override if the system density is different from our target.
+        // This avoids double-applying on devices that are already correct.
+        if (dm.densityDpi != FORCED_DENSITY_DPI) {
+            val config = Configuration(newBase.resources.configuration)
+            config.densityDpi = FORCED_DENSITY_DPI
+            val scaled = newBase.createConfigurationContext(config)
+            super.attachBaseContext(scaled)
+        } else {
+            super.attachBaseContext(newBase)
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
