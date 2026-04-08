@@ -119,7 +119,6 @@ import coil.size.Scale
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -154,19 +153,6 @@ private val PORT_W = 148.dp
 private val PORT_H = 222.dp
 private val ROW_LANDSCAPE_H = 194.dp
 private val ROW_PORTRAIT_H  = 260.dp
-
-private val imageOverdraw: Float get() = when (DeviceProfile.tier) {
-    DeviceProfile.Tier.HIGH -> 1.5f
-    DeviceProfile.Tier.MID  -> 1.25f
-    DeviceProfile.Tier.LOW  -> 1.0f
-}
-
-@Composable
-private fun Dp.toQualityPx(): Int {
-    val density = LocalDensity.current
-    val physicalPx = with(density) { this@toQualityPx.toPx() }
-    return (physicalPx * imageOverdraw).roundToInt().coerceAtLeast(1)
-}
 
 // ═══════════════════════════════════════════════════════════════════
 //  GRADIENT SCRIMS
@@ -384,14 +370,7 @@ fun HomeScreen(
         }
 
         BackdropLayer(focusState.heroMovie)
-
-        val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
-        if (isLow) {
-            Box(Modifier.fillMaxSize().background(Color(0xD9070707)))
-        } else {
-            Box(Modifier.fillMaxSize().background(rowsOverlay))
-        }
-
+        Box(Modifier.fillMaxSize().background(rowsOverlay))
         HeroOverlay(focusState.heroMovie, panelH)
 
         val context = LocalContext.current
@@ -436,22 +415,7 @@ fun HomeScreen(
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
-    val cfg = LocalConfiguration.current
-    val dns = LocalDensity.current
-
-    val (bwPx, bhPx) = remember(cfg, dns) {
-        with(dns) {
-            val w = cfg.screenWidthDp.dp.roundToPx()
-            val h = cfg.screenHeightDp.dp.roundToPx()
-            when (DeviceProfile.tier) {
-                DeviceProfile.Tier.HIGH -> w.coerceIn(1, 3840) to h.coerceIn(1, 2160)
-                DeviceProfile.Tier.MID  -> w.coerceIn(1, 1920) to h.coerceIn(1, 1080)
-                DeviceProfile.Tier.LOW  -> w.coerceIn(1, 1280) to h.coerceIn(1,  720)
-            }
-        }
-    }
-
-    val backdropDuration = DeviceProfile.animConfig.backdropDuration.coerceAtLeast(0)
+    val backdropDuration = DeviceProfile.animConfig.backdropDuration.coerceAtLeast(80)
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
@@ -465,7 +429,7 @@ private fun BackdropLayer(hero: Movie?) {
                     model = remember(url) {
                         ImageRequest.Builder(ctx)
                             .data(url)
-                            .size(bwPx, bhPx)
+                            .size(3840, 2160)
                             .scale(Scale.FILL)
                             .memoryCachePolicy(CachePolicy.ENABLED)
                             .diskCachePolicy(CachePolicy.ENABLED)
@@ -480,13 +444,8 @@ private fun BackdropLayer(hero: Movie?) {
             }
         }
 
-        val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
-        if (isLow) {
-            Box(Modifier.fillMaxSize().background(Color(0xD0070707)))
-        } else {
-            Box(Modifier.fillMaxSize().background(heroScrimLeft))
-            Box(Modifier.fillMaxSize().background(heroScrimTop))
-        }
+        Box(Modifier.fillMaxSize().background(heroScrimLeft))
+        Box(Modifier.fillMaxSize().background(heroScrimTop))
     }
 }
 
@@ -759,7 +718,6 @@ private fun TwoRowNavBar(
     }
 }
 
-// ── Logo ─────────────────────────────────────────────────────────────────────
 @Composable
 private fun LuminaLogo() {
     Image(
@@ -770,7 +728,6 @@ private fun LuminaLogo() {
     )
 }
 
-// ── Search button ─────────────────────────────────────────────────────────────
 @Composable
 private fun SearchBarButton(onClick: () -> Unit) {
     Surface(
@@ -801,9 +758,6 @@ private fun SearchBarButton(onClick: () -> Unit) {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  NAV PILL
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun NavPill(
     label: String, icon: ImageVector, isSelected: Boolean,
@@ -847,9 +801,6 @@ private fun NavPill(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  ROWS PANEL
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun RowsPanel(
     rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>,
@@ -964,9 +915,6 @@ private fun RowsPanel(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LANDSCAPE ROW
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeRow(
     title: String, movies: List<Movie>, isActive: Boolean,
@@ -1043,9 +991,6 @@ private fun LandscapeStudioRow(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  PORTRAIT ROW
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun PortraitRow(
     title: String, movies: List<Movie>, isActive: Boolean,
@@ -1147,7 +1092,6 @@ private fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modi
     )
 }
 
-// ── Studio badge ──────────────────────────────────────────────────────────────
 @Composable
 private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false) {
     val a = if (isActive) 1f else 0.4f
@@ -1177,9 +1121,6 @@ private fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean 
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LANDSCAPE CARD
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun LandscapeCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1187,9 +1128,6 @@ private fun LandscapeCard(
 ) {
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
-
-    val targetWidthPx  = LAND_W.toQualityPx()
-    val targetHeightPx = LAND_H.toQualityPx()
 
     val cardAnimSpec = remember {
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
@@ -1211,10 +1149,10 @@ private fun LandscapeCard(
     )
 
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
-    val imageRequest = remember(url, targetWidthPx, targetHeightPx) {
+    val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(targetWidthPx, targetHeightPx)
+            .size(3840, 2160)
             .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
@@ -1349,9 +1287,6 @@ private fun LandscapeCard(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  POSTER CARD
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun PosterCard(
     movie: Movie, modifier: Modifier = Modifier,
@@ -1360,9 +1295,6 @@ fun PosterCard(
 ) {
     val ctx       = LocalContext.current
     val isFocused = remember { mutableStateOf(false) }
-
-    val targetWidthPx  = cardW.toQualityPx()
-    val targetHeightPx = cardH.toQualityPx()
 
     val cardAnimSpec = remember {
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH)
@@ -1383,10 +1315,10 @@ fun PosterCard(
     )
 
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
-    val imageRequest = remember(url, targetWidthPx, targetHeightPx) {
+    val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(targetWidthPx, targetHeightPx)
+            .size(3840, 2160)
             .scale(Scale.FILL)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
@@ -1505,9 +1437,6 @@ fun PosterCard(
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  STUDIO RIBBON
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 private fun StudioRibbonRow(
     isActive: Boolean, cardFR: FocusRequester?,
@@ -1566,9 +1495,6 @@ private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: 
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  LOADING SKELETON
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun HomeLoading() {
     val inf = rememberInfiniteTransition(label = "sk")
@@ -1610,9 +1536,6 @@ fun HomeLoading() {
     }
 }
 
-// ═══════════════════════════════════════════════════════════════════
-//  ERROR
-// ═══════════════════════════════════════════════════════════════════
 @Composable
 fun HomeError(message: String, onRetry: () -> Unit) {
     Box(Modifier.fillMaxSize().background(BG), Alignment.Center) {
