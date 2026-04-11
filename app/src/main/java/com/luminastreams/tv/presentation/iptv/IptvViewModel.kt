@@ -38,6 +38,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private var sleepTimerJob: Job? = null
     private var autoRefreshJob: Job? = null
 
+    private val _sleepTimerMs = MutableStateFlow(0L)
+    val sleepTimerMs: StateFlow<Long> = _sleepTimerMs.asStateFlow()
     @Volatile private var epgLoadInProgress = false
 
     private val epgCacheDir by lazy { application.cacheDir.also { it.mkdirs() } }
@@ -754,14 +756,14 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         sleepTimerJob?.cancel()
         if (timer == SleepTimer.OFF) return
         sleepTimerJob = viewModelScope.launch {
-            val durationMs = timer.minutes * 60_000L
-            val endTime = System.currentTimeMillis() + durationMs
+            val endTime = System.currentTimeMillis() + timer.minutes * 60_000L
             while (true) {
                 val remaining = endTime - System.currentTimeMillis()
                 if (remaining <= 0) break
-                _state.update { it.copy(sleepTimerRemainingMs = remaining.coerceAtLeast(0)) }
+                _sleepTimerMs.update { remaining.coerceAtLeast(0) }
                 delay(1000)
             }
+            _sleepTimerMs.update { 0L }
             _state.update { it.copy(currentChannel = null, sleepTimer = SleepTimer.OFF, sleepTimerRemainingMs = 0L) }
         }
     }

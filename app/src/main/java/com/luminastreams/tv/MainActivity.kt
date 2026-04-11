@@ -85,7 +85,7 @@ import androidx.compose.animation.ExitTransition
  *   320  → compact, correct for 50"+
  *   400  → even smaller (more content visible, smaller text)
  */
-private const val FORCED_DENSITY_DPI = 320
+private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
 

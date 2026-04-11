@@ -103,21 +103,21 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(
-                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
-                        DeviceProfile.isNvidia ||
-                        (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
-            )
+            // תוקן: ביטול Tunneling חובה ל-IPTV כדי שהחלפת אודיו לא תרסק את הנגן
+            .setTunnelingEnabled(false)
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            // תוקן: מאפשר לנגן להתגמש ולהחליף שפות בצורה חלקה
+            .setAllowAudioMixedMimeTypeAdaptiveness(true)
+            .setAllowAudioMixedSampleRateAdaptiveness(true)
             .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
+
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
             "en" -> builder.setPreferredAudioLanguages("eng", "en")
             else -> builder
         }
-        setParameters(params)
+        setParameters(params.build())
     }
 
     // ── LoadControl ────────────────────────────────────────────────────────────
