@@ -53,6 +53,7 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.presentation.player.ExoPlayerWrapper
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -61,7 +62,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import java.text.SimpleDateFormat
 import java.util.*
 
-// Palette
+// ── Palette ────────────────────────────────────────────────────────────────────
 private val BG       = Color(0xFF07070A)
 private val SURFACE  = Color(0xFF12121C)
 private val SURFACE2 = Color(0xFF1C1C2A)
@@ -75,43 +76,83 @@ private val HUD_BG   = Color(0xF00A0A12)
 private val CARD_BG  = Color(0xFF16161F)
 private val GREEN    = Color(0xFF30D158)
 
-// ── Static Gradients (Zero allocations during scroll) ──
+// ── Static gradients — zero allocation per frame ──────────────────────────────
 private val CardGradientNormal  = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.72f)))
 private val CardGradientFocused = Brush.verticalGradient(listOf(Color.Transparent, BG.copy(0.72f)))
 private val ZappingGradientNorm = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.75f)))
 private val ZappingHudBg        = Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.6f), Color.Black.copy(0.96f)))
 private val TopBarGradient      = Brush.verticalGradient(listOf(Color.Black.copy(0.92f), Color.Black.copy(0.55f), Color.Transparent))
 
-// ═══════════════════════════════════════════════
+// ── Perf: static Brushes — zero allocation per frame ─────────────────────────
+private val ProgBarBrush        = Brush.horizontalGradient(listOf(ACCENT, ACCENT2))
+private val ZappingDividerBrush = Brush.horizontalGradient(listOf(Color.Transparent, ACCENT.copy(0.35f), ACCENT.copy(0.5f), ACCENT.copy(0.35f), Color.Transparent))
+private val ZappingLogoBgBrush  = Brush.linearGradient(listOf(Color.White.copy(0.10f), Color.White.copy(0.04f)))
+private val PQSBgBrushLtr       = Brush.horizontalGradient(listOf(Color.Transparent, Color(0xF0080810)))
+private val PQSBgBrushRtl       = Brush.horizontalGradient(listOf(Color(0xF0080810), Color.Transparent))
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // ROOT SCREEN
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
-    val state       by viewModel.state.collectAsState()
+    // 3 focused collectors — each recomposes only its own slice of the UI:
+    //  ch  = channel data (changes on playlist/EPG load)
+    //  pl  = player data  (changes on channel switch)
+    //  ui  = dialog data  (changes on interaction)
+    val ch  by viewModel.channelState.collectAsStateWithLifecycle()
+    val pl  by viewModel.playerState.collectAsStateWithLifecycle()
+    val ui  by viewModel.uiState.collectAsStateWithLifecycle()
+    // Backward-compat alias: assembles full IptvState from sub-states so that
+    // existing state.xxx calls keep working during migration.
+    // Compose will skip any composable whose sub-state didn't change.
+    val state = remember(ch, pl, ui) { IptvState(
+        playlists = ch.playlists, activePlaylistId = ch.activePlaylistId,
+        channels = ch.channels, groups = ch.groups, selectedGroup = ch.selectedGroup,
+        filteredChannels = ch.filteredChannels, searchQuery = ch.searchQuery,
+        epgData = ch.epgData, epgLoadState = ch.epgLoadState,
+        channelLogos = ch.channelLogos, favoriteChannelIds = ch.favoriteChannelIds,
+        recentChannelIds = ch.recentChannelIds, channelSortMode = ch.channelSortMode,
+        loadState = ch.loadState, viewMode = ch.viewMode,
+        currentChannel = pl.currentChannel, currentProgram = pl.currentProgram,
+        nextProgram = pl.nextProgram, isRecording = pl.isRecording,
+        recordingChannelId = pl.recordingChannelId, subtitlesEnabled = pl.subtitlesEnabled,
+        audioTrackIndex = pl.audioTrackIndex, streamQuality = pl.streamQuality,
+        sleepTimer = pl.sleepTimer, sleepTimerRemainingMs = pl.sleepTimerRemainingMs,
+        multiViewChannels = pl.multiViewChannels, showMultiView = pl.showMultiView,
+        showAddPlaylist = ui.showAddPlaylist, showEpgGuide = ui.showEpgGuide,
+        showQrCode = ui.showQrCode, qrCodeChannel = ui.qrCodeChannel,
+        showSleepTimerPicker = ui.showSleepTimerPicker, showSettings = ui.showSettings,
+        showParentalPinEntry = ui.showParentalPinEntry,
+        pendingLockedChannel = ui.pendingLockedChannel,
+        parentalLockEnabled = ui.parentalLockEnabled, parentalPin = ui.parentalPin,
+        addPlaylistName = ui.addPlaylistName, addPlaylistUrl = ui.addPlaylistUrl,
+        addPlaylistEpgUrl = ui.addPlaylistEpgUrl, localIpAddress = ui.localIpAddress,
+        epgDayOffset = ui.epgDayOffset,
+    ) }
     val context     = LocalContext.current
     val exo         = remember { ExoPlayerWrapper(context) }
     val videoAR     by exo.videoAspectRatio.collectAsState()
     val currTracks  by exo.currentTracks.collectAsState()
     val scope       = rememberCoroutineScope()
 
-    var isFullScreen   by remember { mutableStateOf(false) }
-    var focusedChannel by remember { mutableStateOf<IptvChannel?>(null) }
-    var showToast      by remember { mutableStateOf("") }
-    var showZapping    by remember { mutableStateOf(false) }
-    var showSideMenu        by remember { mutableStateOf(false) }
-    var showPlayerSettings  by remember { mutableStateOf(false) }
-    var arMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-    var lastAction     by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var isFullScreen       by remember { mutableStateOf(false) }
+    // focusedChannel moved into DashboardContent composable (perf: isolates recomposition from root)
+    var showToast          by remember { mutableStateOf("") }
+    var showZapping        by remember { mutableStateOf(false) }
+    var showSideMenu       by remember { mutableStateOf(false) }
+    var showPlayerSettings by remember { mutableStateOf(false) }
+    var arMode             by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var lastAction         by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
-    val topBarFR  = remember { FocusRequester() }
-    val epgBtnFR  = remember { FocusRequester() }
-    val addBtnFR  = remember { FocusRequester() }
-    val setgBtnFR = remember { FocusRequester() }
-    val gridFR    = remember { FocusRequester() }
-    val playerFR  = remember { FocusRequester() }
-    val zappingFR = remember { FocusRequester() }
-    val sideFR             = remember { FocusRequester() }
-    val playerSettingsFR   = remember { FocusRequester() }
+    val topBarFR         = remember { FocusRequester() }
+    val epgBtnFR         = remember { FocusRequester() }
+    val addBtnFR         = remember { FocusRequester() }
+    val setgBtnFR        = remember { FocusRequester() }
+    val gridFR           = remember { FocusRequester() }
+    val playerFR         = remember { FocusRequester() }
+    val zappingFR        = remember { FocusRequester() }
+    val sideFR           = remember { FocusRequester() }
+    val playerSettingsFR = remember { FocusRequester() }
 
     val isAnyDialogOpen = state.loadState is IptvLoadState.Loading || state.showAddPlaylist
             || state.showQrCode || state.showSettings || state.showSleepTimerPicker
@@ -157,8 +198,13 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
     }
 
     LaunchedEffect(state.subtitlesEnabled) {
-        exo.player.trackSelectionParameters = exo.player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !state.subtitlesEnabled).build()
+        if (state.subtitlesEnabled) {
+            val params = exo.player.trackSelectionParameters.buildUpon()
+            params.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            exo.player.trackSelectionParameters = params.build()
+        } else {
+            exo.disableSubtitles()
+        }
     }
 
     val activePlaylist = state.playlists.firstOrNull { it.isActive }
@@ -177,18 +223,18 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
         }
     }
 
-    LaunchedEffect(showZapping)       { if (showZapping)       { delay(60); runCatching { zappingFR.requestFocus()       } } }
-    LaunchedEffect(showSideMenu)      { if (showSideMenu)      { delay(60); runCatching { sideFR.requestFocus()          } } }
+    LaunchedEffect(showZapping)        { if (showZapping)        { delay(60); runCatching { zappingFR.requestFocus()       } } }
+    LaunchedEffect(showSideMenu)       { if (showSideMenu)       { delay(60); runCatching { sideFR.requestFocus()          } } }
     LaunchedEffect(showPlayerSettings) { if (showPlayerSettings) { delay(80); runCatching { playerSettingsFR.requestFocus() } } }
 
     BackHandler {
         when {
             showPlayerSettings          -> showPlayerSettings = false
-            state.showEpgGuide         -> viewModel.onEvent(IptvEvent.HideEpgGuide)
-            state.showSettings         -> viewModel.onEvent(IptvEvent.HideIptvSettings)
-            state.showAddPlaylist      -> viewModel.onEvent(IptvEvent.HideAddPlaylist)
-            state.showQrCode           -> viewModel.onEvent(IptvEvent.HideQrCode)
-            state.showSleepTimerPicker -> viewModel.onEvent(IptvEvent.HideSleepTimerPicker)
+            state.showEpgGuide          -> viewModel.onEvent(IptvEvent.HideEpgGuide)
+            state.showSettings          -> viewModel.onEvent(IptvEvent.HideIptvSettings)
+            state.showAddPlaylist       -> viewModel.onEvent(IptvEvent.HideAddPlaylist)
+            state.showQrCode            -> viewModel.onEvent(IptvEvent.HideQrCode)
+            state.showSleepTimerPicker  -> viewModel.onEvent(IptvEvent.HideSleepTimerPicker)
             showZapping || showSideMenu -> {
                 showZapping = false; showSideMenu = false; runCatching { playerFR.requestFocus() }
             }
@@ -199,14 +245,14 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
 
     Box(Modifier.fillMaxSize().background(BG)) {
 
-        // ─── 1. DASHBOARD ───────────────────────────────────────
+        // ── 1. DASHBOARD ──────────────────────────────────────────────────────
         AnimatedVisibility(!isFullScreen, enter = fadeIn(tween(280)), exit = fadeOut(tween(280))) {
             Column(Modifier.fillMaxSize()) {
                 TopNavBar(
-                    state      = state,
-                    topBarFR   = topBarFR, epgBtnFR  = epgBtnFR,
-                    addBtnFR   = addBtnFR, setgBtnFR = setgBtnFR,
-                    gridFR     = gridFR,
+                    state     = state,
+                    topBarFR  = topBarFR, epgBtnFR  = epgBtnFR,
+                    addBtnFR  = addBtnFR, setgBtnFR = setgBtnFR,
+                    gridFR    = gridFR,
                     onBack        = onNavigateBack,
                     onSettings    = { viewModel.onEvent(IptvEvent.ShowIptvSettings) },
                     onEpgGuide    = { viewModel.onEvent(IptvEvent.ShowEpgGuide) },
@@ -219,19 +265,30 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                         emptyStateFR    = gridFR
                     )
                 } else {
-                    Box {
-                        val currentFocus = focusedChannel ?: state.channels.firstOrNull()
-                        HeroEpgSection(currentFocus, state.epgData, currTracks, currentFocus?.id == state.currentChannel?.id)
-                    }
-                    ChannelsDashboard(state, gridFR, topBarFR,
-                        onChannelFocused = { ch -> if(focusedChannel?.id != ch.id) focusedChannel = ch },
-                        onChannelClicked = { ch -> viewModel.onEvent(IptvEvent.SelectChannel(ch)); isFullScreen = true }
+                    // Perf: DashboardContent owns focusedChannel internally.
+                    // Its state changes only recompose DashboardContent, NOT the entire IptvScreen root.
+                    // Perf: pass ch/pl directly — DashboardContent only recomposes when
+                    // channel or player data changes, NOT when dialogs open/close
+                    DashboardContent(
+                        channels         = ch.channels,
+                        filteredChannels = ch.filteredChannels,
+                        favoriteIds      = ch.favoriteChannelIds,
+                        groups           = ch.groups,
+                        epgData          = ch.epgData,
+                        currentChannelId = pl.currentChannel?.id,
+                        gridFR           = gridFR,
+                        navBarFR         = topBarFR,
+                        currTracks       = currTracks,
+                        onChannelClicked = { ch ->
+                            viewModel.onEvent(IptvEvent.SelectChannel(ch))
+                            isFullScreen = true
+                        }
                     )
                 }
             }
         }
 
-        // ─── 2. FULLSCREEN ──────────────────────────────────────
+        // ── 2. FULLSCREEN PLAYER ──────────────────────────────────────────────
         if (isFullScreen) {
             var surfaceReady by remember { mutableStateOf(false) }
 
@@ -248,34 +305,32 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     .onPreviewKeyEvent { ev ->
                         resetIdle()
 
-                        // 1. כפתורי זפזופ פיזיים
                         if (ev.type == KeyEventType.KeyDown) {
                             when (ev.key.nativeKeyCode) {
-                                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP, KeyEvent.KEYCODE_PLUS, KeyEvent.KEYCODE_NUMPAD_ADD -> {
+                                KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PAGE_UP,
+                                KeyEvent.KEYCODE_PLUS, KeyEvent.KEYCODE_NUMPAD_ADD -> {
                                     showZapping = false; showSideMenu = false; showPlayerSettings = false
                                     runCatching { playerFR.requestFocus() }
-                                    switchDown()
-                                    return@onPreviewKeyEvent true
+                                    switchDown(); return@onPreviewKeyEvent true
                                 }
-                                KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN, KeyEvent.KEYCODE_MINUS, KeyEvent.KEYCODE_NUMPAD_SUBTRACT -> {
+                                KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_PAGE_DOWN,
+                                KeyEvent.KEYCODE_MINUS, KeyEvent.KEYCODE_NUMPAD_SUBTRACT -> {
                                     showZapping = false; showSideMenu = false; showPlayerSettings = false
                                     runCatching { playerFR.requestFocus() }
-                                    switchUp()
-                                    return@onPreviewKeyEvent true
+                                    switchUp(); return@onPreviewKeyEvent true
                                 }
                             }
                         }
 
-                        // 2. הנגן מתעלם אם יש פופאפים פתוחים
-                        if (isAnyDialogOpen || showZapping || showSideMenu || showPlayerSettings) return@onPreviewKeyEvent false
+                        if (isAnyDialogOpen || showZapping || showSideMenu || showPlayerSettings)
+                            return@onPreviewKeyEvent false
 
-                        // 3. פתיחת התפריט ב-KeyUp כדי למנוע סגירה כפולה (הבאג שתוקן)
-                        if (ev.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_CENTER || ev.key.nativeKeyCode == KeyEvent.KEYCODE_ENTER) {
+                        if (ev.key.nativeKeyCode == KeyEvent.KEYCODE_DPAD_CENTER ||
+                            ev.key.nativeKeyCode == KeyEvent.KEYCODE_ENTER) {
                             if (ev.type == KeyEventType.KeyUp) showZapping = true
                             return@onPreviewKeyEvent true
                         }
 
-                        // 4. מקשי הניווט בנגן
                         if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                         when (ev.key.nativeKeyCode) {
                             KeyEvent.KEYCODE_DPAD_UP        -> { switchUp();   true }
@@ -294,7 +349,9 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     modifier = Modifier.fillMaxSize().focusable(false),
                     factory  = { ctx ->
                         AspectRatioFrameLayout(ctx).apply {
-                            layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                            layoutParams = FrameLayout.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT
+                            )
                             resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             val sv = SurfaceView(ctx).apply { keepScreenOn = true }
                             sv.holder.addCallback(object : android.view.SurfaceHolder.Callback {
@@ -314,7 +371,7 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     }
                 )
 
-                // ── TOP BAR ──
+                // ── Top HUD ──
                 AnimatedVisibility(
                     visible  = (showZapping || showSideMenu) && !isAnyDialogOpen,
                     enter    = fadeIn(tween(260)) + slideInVertically(spring(stiffness = Spring.StiffnessMediumLow)) { -it },
@@ -327,30 +384,40 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     Box(
                         Modifier.fillMaxWidth()
                             .background(TopBarGradient)
-                            .padding(horizontal = 44.dp, vertical = 0.dp)
-                            .padding(top = 22.dp, bottom = 32.dp)
+                            .padding(start = 44.dp, end = 44.dp, top = 22.dp, bottom = 32.dp)
                     ) {
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(Color.White.copy(0.08f)), Alignment.Center) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                Box(Modifier.size(48.dp).clip(RoundedCornerShape(12.dp))
+                                    .background(WHITE.copy(0.08f)), Alignment.Center) {
                                     if (ch != null) ChannelLogoImage(ch, ch.logoUrl, 36.dp)
                                 }
                                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         LiveBadge()
                                         if (ch?.resolution?.isNotBlank() == true) ResBadge(ch.resolution)
-                                        if (currChIdx >= 0) Text("CH ${currChIdx + 1}", color = WHITE.copy(0.4f), fontSize = 11.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.sp)
+                                        if (currChIdx >= 0) Text("CH ${currChIdx + 1}",
+                                            color = WHITE.copy(0.4f), fontSize = 11.sp,
+                                            fontWeight = FontWeight.Medium, letterSpacing = 1.sp)
                                         StreamTracksBadges(currTracks)
                                     }
-                                    Text(ch?.name ?: "", color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.3).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(ch?.name ?: "", color = WHITE, fontSize = 22.sp,
+                                        fontWeight = FontWeight.Black, letterSpacing = (-0.3).sp,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     if (now != null) {
-                                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                            Text(now.title, color = WHITE.copy(0.65f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Row(verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            Text(now.title, color = WHITE.copy(0.65f), fontSize = 12.sp,
+                                                maxLines = 1, overflow = TextOverflow.Ellipsis)
                                             ProgBar(now.progressFraction, 80.dp)
                                             Text("${now.remainingMinutes}m left", color = WHITE.copy(0.45f), fontSize = 11.sp)
                                         }
                                     } else {
-                                        Text(ch?.groupTitle?.uppercase() ?: "", color = WHITE.copy(0.38f), fontSize = 11.sp, letterSpacing = 1.8.sp)
+                                        Text(ch?.groupTitle?.uppercase() ?: "", color = WHITE.copy(0.38f),
+                                            fontSize = 11.sp, letterSpacing = 1.8.sp)
                                     }
                                 }
                             }
@@ -359,7 +426,7 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     }
                 }
 
-                // Zapping bar
+                // ── Zapping bar ──
                 AnimatedVisibility(
                     visible  = showZapping && state.channels.isNotEmpty() && !isAnyDialogOpen,
                     enter    = fadeIn(tween(200)) + slideInVertically(initialOffsetY = { it }),
@@ -367,20 +434,26 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     modifier = Modifier.align(Alignment.BottomCenter).zIndex(20f)
                 ) {
                     ZappingHud(
-                        channels = state.filteredChannels, currentChannel = state.currentChannel,
-                        epgData = state.epgData, currTracks = currTracks, zappingFR = zappingFR,
+                        channels        = state.filteredChannels,
+                        currentChannel  = state.currentChannel,
+                        epgData         = state.epgData,
+                        currTracks      = currTracks,
+                        zappingFR       = zappingFR,
                         onSelectChannel = { ch ->
-                            if (state.currentChannel?.id != ch.id) { viewModel.onEvent(IptvEvent.SelectChannel(ch)); exo.prepareStream(ch.streamUrl); exo.play() }
+                            if (state.currentChannel?.id != ch.id) {
+                                viewModel.onEvent(IptvEvent.SelectChannel(ch))
+                                exo.prepareStream(ch.streamUrl); exo.play()
+                            }
                             showZapping = false; runCatching { playerFR.requestFocus() }
                         },
                         onOpenCategories = { showZapping = false; showSideMenu = true },
-                        onDismiss     = { showZapping = false; runCatching { playerFR.requestFocus() } },
-                        onIdleReset   = ::resetIdle,
-                        onOpenEpgGuide = { viewModel.onEvent(IptvEvent.ShowEpgGuide) }
+                        onDismiss        = { showZapping = false; runCatching { playerFR.requestFocus() } },
+                        onIdleReset      = ::resetIdle,
+                        onOpenEpgGuide   = { viewModel.onEvent(IptvEvent.ShowEpgGuide) }
                     )
                 }
 
-                // Side menu
+                // ── Side group menu ──
                 val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
                 AnimatedVisibility(
                     visible  = showSideMenu && state.channels.isNotEmpty() && !isAnyDialogOpen,
@@ -389,14 +462,19 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     modifier = Modifier.align(if (isRtl) Alignment.CenterEnd else Alignment.CenterStart).zIndex(30f)
                 ) {
                     SideGroupMenu(
-                        groups = state.groups, selectedGroup = state.selectedGroup, sideFR = sideFR,
-                        onSelectGroup = { g -> viewModel.onEvent(IptvEvent.SelectGroup(g)); showSideMenu = false; showZapping = true },
-                        onDismiss     = { showSideMenu = false; runCatching { playerFR.requestFocus() } },
-                        onIdleReset   = ::resetIdle
+                        groups        = state.groups,
+                        selectedGroup = state.selectedGroup,
+                        sideFR        = sideFR,
+                        onSelectGroup = { g ->
+                            viewModel.onEvent(IptvEvent.SelectGroup(g))
+                            showSideMenu = false; showZapping = true
+                        },
+                        onDismiss   = { showSideMenu = false; runCatching { playerFR.requestFocus() } },
+                        onIdleReset = ::resetIdle
                     )
                 }
 
-                // ── PLAYER QUICK SETTINGS ──────────────────────────
+                // ── Player quick settings ──
                 val isRtlPQS = LocalLayoutDirection.current == LayoutDirection.Rtl
                 AnimatedVisibility(
                     visible  = showPlayerSettings,
@@ -405,94 +483,114 @@ fun IptvScreen(viewModel: IptvViewModel, onNavigateBack: () -> Unit) {
                     modifier = Modifier.align(if (isRtlPQS) Alignment.CenterStart else Alignment.CenterEnd).zIndex(35f)
                 ) {
                     PlayerQuickSettings(
-                        exo          = exo,
-                        currTracks   = currTracks,
-                        arMode       = arMode,
-                        subtitlesOn  = state.subtitlesEnabled,
-                        settingsFR   = playerSettingsFR,
-                        onArChange   = { arMode = it },
-                        onSubtitles  = { viewModel.onEvent(IptvEvent.ToggleSubtitles) },
-                        onDismiss    = { showPlayerSettings = false; runCatching { playerFR.requestFocus() } }
+                        exo         = exo,
+                        currTracks  = currTracks,
+                        arMode      = arMode,
+                        subtitlesOn = state.subtitlesEnabled,
+                        settingsFR  = playerSettingsFR,
+                        onArChange  = { arMode = it },
+                        onSubtitles = { viewModel.onEvent(IptvEvent.ToggleSubtitles) },
+                        onDismiss   = { showPlayerSettings = false; runCatching { playerFR.requestFocus() } }
                     )
                 }
 
+                // ── Hints ──
                 var showHints by remember { mutableStateOf(true) }
                 LaunchedEffect(Unit) { delay(5_000L); showHints = false }
                 AnimatedVisibility(
                     showHints && !showZapping && !showSideMenu && !isAnyDialogOpen,
-                    enter = EnterTransition.None,
-                    exit  = fadeOut(tween(800)),
-                    modifier = Modifier.align(Alignment.BottomStart).padding(horizontal = 32.dp, vertical = 24.dp).zIndex(5f)
+                    enter    = EnterTransition.None,
+                    exit     = fadeOut(tween(800)),
+                    modifier = Modifier.align(Alignment.BottomStart)
+                        .padding(horizontal = 32.dp, vertical = 24.dp).zIndex(5f)
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        HintPill("↑↓", "CH +/-"); HintPill("OK", "Channels"); HintPill("←", "Categories"); HintPill("→", "Settings")
+                        HintPill("↑↓", "CH +/-")
+                        HintPill("OK", "Channels")
+                        HintPill("←", "Categories")
+                        HintPill("→", "Settings")
                     }
                 }
             }
         }
 
-        // ─── DIALOGS ─────────────────────────────────────────────
+        // ── Dialogs ────────────────────────────────────────────────────────────
         if (state.loadState is IptvLoadState.Loading) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f)).zIndex(200f), Alignment.Center) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     com.luminastreams.tv.ui.components.LoadingIndicator()
                     Text("Loading playlist…", color = MUTED, fontSize = 14.sp)
                 }
             }
         }
-        if (state.showAddPlaylist) IptvDialog({ viewModel.onEvent(IptvEvent.HideAddPlaylist) }) { fr, dismiss -> PlaylistManagerDialog(state, fr, dismiss, viewModel::onEvent) }
-        if (state.showSettings)    IptvDialog({ viewModel.onEvent(IptvEvent.HideIptvSettings) }) { fr, dismiss -> SmartSettingsDialog(state, exo, currTracks, fr, dismiss, viewModel::onEvent) }
-        if (state.showEpgGuide)    IptvDialog({ viewModel.onEvent(IptvEvent.HideEpgGuide) }) { fr, dismiss -> FullEpgGuideDialog(state, viewModel, fr, dismiss) }
-        if (state.showQrCode && state.qrCodeChannel != null)
-            IptvDialog({ viewModel.onEvent(IptvEvent.HideQrCode) }) { fr, _ -> ChannelQrDialog(state.qrCodeChannel!!, fr) { viewModel.onEvent(IptvEvent.HideQrCode) } }
+        if (state.showAddPlaylist) IptvDialog({ viewModel.onEvent(IptvEvent.HideAddPlaylist) }) { fr, dismiss ->
+            PlaylistManagerDialog(state, fr, dismiss, viewModel::onEvent)
+        }
+        if (state.showSettings) IptvDialog({ viewModel.onEvent(IptvEvent.HideIptvSettings) }) { fr, dismiss ->
+            SmartSettingsDialog(state, exo, currTracks, fr, dismiss, viewModel::onEvent)
+        }
+        if (state.showEpgGuide) IptvDialog({ viewModel.onEvent(IptvEvent.HideEpgGuide) }) { fr, dismiss ->
+            FullEpgGuideDialog(state, viewModel, fr, dismiss)
+        }
+        if (state.showQrCode && state.qrCodeChannel != null) {
+            IptvDialog({ viewModel.onEvent(IptvEvent.HideQrCode) }) { fr, _ ->
+                ChannelQrDialog(state.qrCodeChannel!!, fr) { viewModel.onEvent(IptvEvent.HideQrCode) }
+            }
+        }
 
+        // ── EPG loading toast ──
         var epgLoadingVisible by remember { mutableStateOf(false) }
         LaunchedEffect(state.epgLoadState) {
             if (state.epgLoadState is IptvLoadState.Loading) {
-                epgLoadingVisible = true
-                delay(30_000L)
-                epgLoadingVisible = false
+                epgLoadingVisible = true; delay(30_000L); epgLoadingVisible = false
             } else {
                 epgLoadingVisible = false
             }
         }
         if (epgLoadingVisible) {
             Box(Modifier.align(Alignment.BottomEnd).padding(14.dp).zIndex(50f)
-                .clip(RoundedCornerShape(20.dp)).background(SURFACE.copy(0.92f)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                .clip(RoundedCornerShape(20.dp)).background(SURFACE.copy(0.92f))
+                .padding(horizontal = 12.dp, vertical = 6.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     com.luminastreams.tv.ui.components.LoadingIndicator(size = 14.dp)
                     Text("Loading EPG…", color = MUTED, fontSize = 11.sp)
                 }
             }
         }
 
-        AnimatedVisibility(showToast.isNotEmpty(), enter = fadeIn() + slideInVertically { it }, exit = fadeOut() + slideOutVertically { it },
+        AnimatedVisibility(showToast.isNotEmpty(),
+            enter    = fadeIn() + slideInVertically { it },
+            exit     = fadeOut() + slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 40.dp).zIndex(100f)) {
-            Box(Modifier.clip(RoundedCornerShape(50)).background(WHITE.copy(0.14f)).padding(horizontal = 24.dp, vertical = 12.dp)) {
+            Box(Modifier.clip(RoundedCornerShape(50)).background(WHITE.copy(0.14f))
+                .padding(horizontal = 24.dp, vertical = 12.dp)) {
                 Text(showToast, color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════
-// CLOCK COMPONENT
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// CLOCK
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun FullscreenClock() {
     var t by remember { mutableStateOf("") }
     LaunchedEffect(Unit) {
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
         while (true) {
-            t = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            t = fmt.format(Date())
             delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
     Text(t, color = WHITE, fontSize = 38.sp, fontWeight = FontWeight.Thin, letterSpacing = (-1).sp)
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // DIALOG WRAPPER
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun IptvDialog(
     onDismiss : () -> Unit,
@@ -503,9 +601,7 @@ private fun IptvDialog(
         LaunchedEffect(Unit) { delay(80); runCatching { fr.requestFocus() } }
         Box(
             Modifier.fillMaxSize().background(Color.Black.copy(0.86f))
-                .pointerInput(Unit) {
-                    detectTapGestures { onDismiss() }
-                },
+                .pointerInput(Unit) { detectTapGestures { onDismiss() } },
             contentAlignment = Alignment.Center
         ) {
             content(fr, onDismiss)
@@ -517,14 +613,15 @@ private fun Modifier.dialogCard(onDismiss: () -> Unit): Modifier =
     this.focusGroup()
         .focusProperties { exit = { FocusRequester.Cancel } }
         .onPreviewKeyEvent { ev ->
-            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) { onDismiss(); true }
-            else false
+            if (ev.type == KeyEventType.KeyDown && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                onDismiss(); true
+            } else false
         }
-        .clickable(MutableInteractionSource(), indication = null) {}
+        .pointerInput(Unit) { detectTapGestures { /* consume tap — prevent backdrop dismiss */ } }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // TOP NAV BAR
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun TopNavBar(
     state     : IptvState,
@@ -539,9 +636,10 @@ private fun TopNavBar(
     onAddPlaylist : () -> Unit
 ) {
     var timeStr by remember { mutableStateOf("") }
+    val fmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     LaunchedEffect(Unit) {
         while (true) {
-            timeStr = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+            timeStr = fmt.format(Date())
             delay(60_000L - System.currentTimeMillis() % 60_000L)
         }
     }
@@ -552,9 +650,9 @@ private fun TopNavBar(
             .focusProperties {
                 exit = { dir ->
                     when (dir) {
-                        FocusDirection.Up -> FocusRequester.Cancel
+                        FocusDirection.Up   -> FocusRequester.Cancel
                         FocusDirection.Down -> gridFR
-                        else -> FocusRequester.Default
+                        else                -> FocusRequester.Default
                     }
                 }
             },
@@ -565,7 +663,8 @@ private fun TopNavBar(
 
         Text("LUMINA IPTV", color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
         if (state.channels.isNotEmpty()) {
-            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(ACCENT.copy(0.18f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(ACCENT.copy(0.18f))
+                .padding(horizontal = 8.dp, vertical = 3.dp)) {
                 Text("${state.channels.size} CH", color = ACCENT2, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
@@ -573,17 +672,21 @@ private fun TopNavBar(
         Spacer(Modifier.weight(1f))
 
         if (state.epgData.isNotEmpty()) {
-            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(GREEN.copy(0.14f)).padding(horizontal = 8.dp, vertical = 3.dp)) {
+            Box(Modifier.clip(RoundedCornerShape(6.dp)).background(GREEN.copy(0.14f))
+                .padding(horizontal = 8.dp, vertical = 3.dp)) {
                 Text("EPG ✓", color = GREEN, fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
         }
 
         Surface(onClick = onEpgGuide,
             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-            colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+            colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF),
+                focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
             modifier = Modifier.height(36.dp).focusRequester(epgBtnFR)
         ) {
-            Row(Modifier.padding(horizontal = 14.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.padding(horizontal = 14.dp).fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Default.CalendarToday, null, Modifier.size(15.dp))
                 Text("TV Guide", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
@@ -591,10 +694,13 @@ private fun TopNavBar(
 
         Surface(onClick = onAddPlaylist,
             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-            colors   = ClickableSurfaceDefaults.colors(containerColor = ACCENT.copy(0.18f), focusedContainerColor = ACCENT, contentColor = ACCENT2, focusedContentColor = WHITE),
+            colors   = ClickableSurfaceDefaults.colors(containerColor = ACCENT.copy(0.18f),
+                focusedContainerColor = ACCENT, contentColor = ACCENT2, focusedContentColor = WHITE),
             modifier = Modifier.height(36.dp).focusRequester(addBtnFR)
         ) {
-            Row(Modifier.padding(horizontal = 14.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(Modifier.padding(horizontal = 14.dp).fillMaxHeight(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 Icon(Icons.Default.PlaylistAdd, null, Modifier.size(15.dp))
                 Text("Add Playlist", fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
@@ -606,28 +712,33 @@ private fun TopNavBar(
 }
 
 @Composable
-private fun NavIconBtn(icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+private fun NavIconBtn(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    modifier: Modifier,
+    onClick: () -> Unit
+) {
     Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(CircleShape),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF),
+            focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
         modifier = modifier) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, null, Modifier.size(19.dp)) }
     }
 }
 
-// ═══════════════════════════════════════════════
-// HERO EPG
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// HERO EPG SECTION
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun HeroEpgSection(
-    channel: IptvChannel?,
-    epgData: Map<String, List<EpgProgram>>,
-    currTracks: androidx.media3.common.Tracks? = null,
+    channel         : IptvChannel?,
+    epgData         : Map<String, List<EpgProgram>>,
+    currTracks      : androidx.media3.common.Tracks? = null,
     isPlayingChannel: Boolean = false
 ) {
     if (channel == null) return
-    val tf       = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-    val epgs     = epgData[channel.id]
-    val nowProg  = remember(epgs) { epgs?.firstOrNull { it.isLiveNow } }
+    val tf = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val epgs    = epgData[channel.id]
+    val nowProg = remember(epgs) { epgs?.firstOrNull { it.isLiveNow } }
     val nextProg = remember(epgs) { epgs?.firstOrNull { it.startTime > System.currentTimeMillis() && !it.isLiveNow } }
 
     Row(Modifier.fillMaxWidth().height(210.dp).padding(horizontal = 48.dp, vertical = 18.dp),
@@ -643,17 +754,23 @@ private fun HeroEpgSection(
                 if (isPlayingChannel && currTracks != null) StreamTracksBadges(currTracks)
             }
             Spacer(Modifier.height(5.dp))
-            Text("${channel.number} · ${channel.name}", color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("${channel.number} · ${channel.name}", color = WHITE, fontSize = 28.sp,
+                fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Spacer(Modifier.height(9.dp))
             if (nowProg != null) {
-                Text(nowProg.title, color = WHITE, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(nowProg.title, color = WHITE, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(5.dp))
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Text("${tf.format(Date(nowProg.startTime))} – ${tf.format(Date(nowProg.endTime))}", color = MUTED, fontSize = 12.sp)
+                    Text("${tf.format(Date(nowProg.startTime))} – ${tf.format(Date(nowProg.endTime))}",
+                        color = MUTED, fontSize = 12.sp)
                     ProgBar(nowProg.progressFraction, 150.dp)
                     Text("${nowProg.remainingMinutes}m left", color = MUTED, fontSize = 12.sp)
                 }
-                nextProg?.let { Text("Next: ${it.title}  ·  ${tf.format(Date(it.startTime))}", color = MUTED.copy(0.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                nextProg?.let {
+                    Text("Next: ${it.title}  ·  ${tf.format(Date(it.startTime))}",
+                        color = MUTED.copy(0.55f), fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             } else {
                 Text(if (epgs == null) "No EPG data" else "No current program info", color = MUTED, fontSize = 14.sp)
             }
@@ -661,31 +778,86 @@ private fun HeroEpgSection(
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// DASHBOARD CONTENT — owns focusedChannel, isolates Hero recomposition from root
+// ═══════════════════════════════════════════════════════════════════════════════
+@Composable
+private fun DashboardContent(
+    channels         : List<IptvChannel>,
+    filteredChannels : List<IptvChannel>,
+    favoriteIds      : Set<String>,
+    groups           : List<String>,
+    epgData          : Map<String, List<EpgProgram>>,
+    currentChannelId : String?,
+    gridFR           : FocusRequester,
+    navBarFR         : FocusRequester,
+    currTracks       : androidx.media3.common.Tracks?,
+    onChannelClicked : (IptvChannel) -> Unit
+) {
+    // focusedChannel owns itself — changing it recomposes ONLY DashboardContent,
+    // not IptvScreen root. No dialog open/close reaches this composable.
+    var focusedChannel by remember { mutableStateOf<IptvChannel?>(null) }
+    val currentFocus   = focusedChannel ?: channels.firstOrNull()
+
+    Box {
+        HeroEpgSection(
+            channel          = currentFocus,
+            epgData          = epgData,
+            currTracks       = currTracks,
+            isPlayingChannel = currentFocus?.id == currentChannelId
+        )
+    }
+    ChannelsDashboard(
+        channels         = channels,
+        filteredChannels = filteredChannels,
+        favoriteIds      = favoriteIds,
+        groups           = groups,
+        gridFR           = gridFR,
+        navBarFR         = navBarFR,
+        onChannelFocused = { ch -> if (focusedChannel?.id != ch.id) focusedChannel = ch },
+        onChannelClicked = onChannelClicked
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
 // CHANNELS DASHBOARD
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ChannelsDashboard(
-    state: IptvState, gridFR: FocusRequester, navBarFR: FocusRequester,
-    onChannelFocused: (IptvChannel) -> Unit, onChannelClicked: (IptvChannel) -> Unit
+    channels        : List<IptvChannel>,
+    filteredChannels: List<IptvChannel>,
+    favoriteIds     : Set<String>,
+    groups          : List<String>,
+    gridFR          : FocusRequester,
+    navBarFR        : FocusRequester,
+    onChannelFocused: (IptvChannel) -> Unit,
+    onChannelClicked: (IptvChannel) -> Unit
 ) {
-    val favorites       = state.channels.filter { it.id in state.favoriteChannelIds }
-    val groupedChannels = remember(state.channels) { state.channels.groupBy { it.groupTitle } }
+    val favorites       = remember(channels, favoriteIds) {
+        channels.filter { it.id in favoriteIds }
+    }
+    val groupedChannels = remember(channels) { channels.groupBy { it.groupTitle } }
 
-    LazyColumn(contentPadding = PaddingValues(bottom = 64.dp), verticalArrangement = Arrangement.spacedBy(18.dp),
+    LazyColumn(contentPadding = PaddingValues(bottom = 64.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize().focusGroup()) {
         if (favorites.isNotEmpty()) {
-            item { HorizontalChannelRow("⭐ Favorites", favorites, true, gridFR, navBarFR, onChannelFocused, onChannelClicked) }
+            item(key = "fav_row") {
+                HorizontalChannelRow("⭐ Favorites", favorites, true, gridFR, navBarFR,
+                    onChannelFocused, onChannelClicked)
+            }
         }
-        state.groups.filter { it != "All" && it != "Favorites" && it != "Recent" }.forEachIndexed { idx, group ->
+        groups.filter { it != "All" && it != "Favorites" && it != "Recent" }.forEachIndexed { idx, group ->
             val chs = groupedChannels[group] ?: return@forEachIndexed
-            item {
+            item(key = "group_$group") {
                 HorizontalChannelRow(
-                    title = group, channels = chs,
+                    title      = group,
+                    channels   = chs,
                     isFirstRow = favorites.isEmpty() && idx == 0,
-                    rowFR = gridFR,
-                    upFR  = if (favorites.isEmpty() && idx == 0) navBarFR else null,
-                    onFocus = onChannelFocused, onClick = onChannelClicked
+                    rowFR      = gridFR,
+                    upFR       = if (favorites.isEmpty() && idx == 0) navBarFR else null,
+                    onFocus    = onChannelFocused,
+                    onClick    = onChannelClicked
                 )
             }
         }
@@ -694,76 +866,109 @@ private fun ChannelsDashboard(
 
 @Composable
 private fun HorizontalChannelRow(
-    title: String, channels: List<IptvChannel>,
-    isFirstRow: Boolean, rowFR: FocusRequester, upFR: FocusRequester?,
-    onFocus: (IptvChannel) -> Unit, onClick: (IptvChannel) -> Unit
+    title     : String,
+    channels  : List<IptvChannel>,
+    isFirstRow: Boolean,
+    rowFR     : FocusRequester,
+    upFR      : FocusRequester?,
+    onFocus   : (IptvChannel) -> Unit,
+    onClick   : (IptvChannel) -> Unit
 ) {
     Column {
-        Row(Modifier.padding(start = 48.dp, bottom = 9.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+        Row(Modifier.padding(start = 48.dp, bottom = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             Box(Modifier.width(3.dp).height(13.dp).background(ACCENT, RoundedCornerShape(2.dp)))
             Text(title, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             Text("${channels.size}", color = MUTED, fontSize = 12.sp)
         }
         LazyRow(
-            contentPadding = PaddingValues(horizontal = 48.dp), horizontalArrangement = Arrangement.spacedBy(13.dp),
-            modifier = Modifier.fillMaxWidth().focusGroup().focusProperties { if (upFR != null) up = upFR }
+            contentPadding = PaddingValues(horizontal = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(13.dp),
+            modifier = Modifier.fillMaxWidth().focusGroup()
+                .focusProperties { if (upFR != null) up = upFR }
         ) {
             itemsIndexed(channels, key = { _, ch -> ch.id }, contentType = { _, _ -> "Ch" }) { idx, ch ->
-                ChannelCard(ch, ch.logoUrl,
-                    if (isFirstRow && idx == 0) Modifier.focusRequester(rowFR) else Modifier,
-                    { onFocus(ch) }, { onClick(ch) })
+                ChannelCard(
+                    channel = ch,
+                    logoUrl = ch.logoUrl,
+                    modifier = if (isFirstRow && idx == 0) Modifier.focusRequester(rowFR) else Modifier,
+                    // Perf: stable lambdas — prevents every ChannelCard recomposing on parent state change
+                    onFocus  = remember(ch.id) { { onFocus(ch) } },
+                    onClick  = remember(ch.id) { { onClick(ch) } }
+                )
             }
         }
     }
 }
 
 @Composable
-private fun ChannelCard(channel: IptvChannel, logoUrl: String, modifier: Modifier, onFocus: () -> Unit, onClick: () -> Unit) {
+private fun ChannelCard(
+    channel : IptvChannel,
+    logoUrl : String,
+    modifier: Modifier,
+    onFocus : () -> Unit,
+    onClick : () -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (focused) 1.08f else 1f, tween(120, easing = FastOutSlowInEasing), label = "cs")
 
-    Box(modifier.width(165.dp).aspectRatio(16f / 9f).graphicsLayer { scaleX = scale; scaleY = scale }) {
-        Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-            scale  = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-            border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border(border = BorderStroke(2.dp, WHITE), shape = RoundedCornerShape(12.dp))),
-            glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+    Box(modifier.width(165.dp).aspectRatio(16f / 9f)
+        .graphicsLayer { scaleX = scale; scaleY = scale }) {
+        Surface(onClick = onClick,
+            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+            colors   = ClickableSurfaceDefaults.colors(containerColor = CARD_BG,
+                focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+            scale    = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+            border   = ClickableSurfaceDefaults.border(border = Border.None,
+                focusedBorder = Border(border = BorderStroke(2.dp, WHITE), shape = RoundedCornerShape(12.dp))),
+            glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         ) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 ChannelLogoImage(channel, logoUrl, 76.dp, focused)
                 Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp))
-                    .background(if (focused) BG.copy(0.7f) else Color.Black.copy(0.6f)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                    Text("${channel.number}", color = if (focused) BG else MUTED, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    .background(if (focused) BG.copy(0.7f) else Color.Black.copy(0.6f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)) {
+                    Text("${channel.number}", color = if (focused) BG else MUTED,
+                        fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                     .background(if (focused) CardGradientFocused else CardGradientNormal)
                     .padding(6.dp)) {
-                    Text(channel.name, color = if (focused) BG else WHITE, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(channel.name, color = if (focused) BG else WHITE,
+                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // ZAPPING HUD
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ZappingHud(
-    channels: List<IptvChannel>, currentChannel: IptvChannel?,
-    epgData: Map<String, List<EpgProgram>>, currTracks: androidx.media3.common.Tracks?,
-    zappingFR: FocusRequester,
+    channels       : List<IptvChannel>,
+    currentChannel : IptvChannel?,
+    epgData        : Map<String, List<EpgProgram>>,
+    currTracks     : androidx.media3.common.Tracks?,
+    zappingFR      : FocusRequester,
     onSelectChannel: (IptvChannel) -> Unit,
     onOpenCategories: () -> Unit,
-    onDismiss: () -> Unit,
-    onIdleReset: () -> Unit,
-    onOpenEpgGuide: () -> Unit
+    onDismiss      : () -> Unit,
+    onIdleReset    : () -> Unit,
+    onOpenEpgGuide : () -> Unit
 ) {
-    val initialIdx = remember(currentChannel?.id) { channels.indexOfFirst { it.id == currentChannel?.id }.let { if (it > 2) it - 2 else 0 }.coerceAtLeast(0) }
+    val initialIdx = remember(currentChannel?.id) {
+        channels.indexOfFirst { it.id == currentChannel?.id }.let { if (it > 2) it - 2 else 0 }.coerceAtLeast(0)
+    }
     val listState  = rememberLazyListState(initialFirstVisibleItemIndex = initialIdx)
     var focusedCh  by remember { mutableStateOf(currentChannel) }
     val scope      = rememberCoroutineScope()
+    val tf         = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     Box(
         Modifier.fillMaxWidth()
@@ -772,27 +977,24 @@ private fun ZappingHud(
             .focusProperties {
                 exit = { dir ->
                     when (dir) {
-                        FocusDirection.Up -> { onOpenCategories(); onIdleReset(); FocusRequester.Cancel }
+                        FocusDirection.Up   -> { onOpenCategories(); onIdleReset(); FocusRequester.Cancel }
                         FocusDirection.Down -> { onDismiss(); FocusRequester.Cancel }
-                        else -> FocusRequester.Default
+                        else                -> FocusRequester.Default
                     }
                 }
             }
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 onIdleReset()
-
                 when (ev.key.nativeKeyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { onDismiss(); true }
                     KeyEvent.KEYCODE_MEDIA_FAST_FORWARD, KeyEvent.KEYCODE_MEDIA_NEXT -> {
                         val target = (listState.firstVisibleItemIndex + 7).coerceAtMost(channels.lastIndex)
-                        scope.launch { listState.animateScrollToItem(target) }
-                        true
+                        scope.launch { listState.animateScrollToItem(target) }; true
                     }
                     KeyEvent.KEYCODE_MEDIA_REWIND, KeyEvent.KEYCODE_MEDIA_PREVIOUS -> {
                         val target = (listState.firstVisibleItemIndex - 7).coerceAtLeast(0)
-                        scope.launch { listState.animateScrollToItem(target) }
-                        true
+                        scope.launch { listState.animateScrollToItem(target) }; true
                     }
                     else -> false
                 }
@@ -800,94 +1002,86 @@ private fun ZappingHud(
     ) {
         Column(Modifier.fillMaxWidth().padding(bottom = 28.dp, top = 44.dp)) {
 
-            // ── INFO SECTION ──────────────────────────────────────
-            focusedCh?.let { fCh ->
-                val tf       = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-                val epgs     = epgData[fCh.id]
-                val nowProg  = epgs?.firstOrNull { it.isLiveNow }
-                val nextProg = epgs?.firstOrNull { it.startTime > System.currentTimeMillis() && !it.isLiveNow }
+            // Info section — key() isolates redraws to this panel only when focus changes
+            key(focusedCh?.id) {
+                focusedCh?.let { fCh ->
+                    val epgs     = epgData[fCh.id]
+                    val nowProg  = epgs?.firstOrNull { it.isLiveNow }
+                    val nextProg = epgs?.firstOrNull { it.startTime > System.currentTimeMillis() && !it.isLiveNow }
 
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 44.dp).padding(bottom = 20.dp),
-                    verticalAlignment = Alignment.Bottom,
-                    horizontalArrangement = Arrangement.spacedBy(18.dp)
-                ) {
-                    Box(
-                        Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
-                            .background(Brush.linearGradient(listOf(Color.White.copy(0.10f), Color.White.copy(0.04f)))),
-                        Alignment.Center
-                    ) {
-                        ChannelLogoImage(fCh, fCh.logoUrl, 54.dp)
-                    }
-
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LiveBadge()
-                            if (fCh.resolution.isNotBlank()) ResBadge(fCh.resolution)
-                            Text("CH ${fCh.number}", color = WHITE.copy(0.35f), fontSize = 11.sp, letterSpacing = 1.sp)
-                            if (fCh.id == currentChannel?.id && currTracks != null) StreamTracksBadges(currTracks)
+                    Row(Modifier.fillMaxWidth().padding(start = 44.dp, end = 44.dp, bottom = 20.dp),
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Box(Modifier.size(72.dp).clip(RoundedCornerShape(16.dp))
+                            .background(ZappingLogoBgBrush),
+                            Alignment.Center) {
+                            ChannelLogoImage(fCh, fCh.logoUrl, 54.dp)
                         }
-                        Text(
-                            fCh.name, color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black,
-                            letterSpacing = (-0.5).sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                        )
-                        if (nowProg != null) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Text(nowProg.title, color = WHITE.copy(0.7f), fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, false))
-                                ProgBar(nowProg.progressFraction, 90.dp)
-                                Text("${nowProg.remainingMinutes}m", color = WHITE.copy(0.45f), fontSize = 12.sp)
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                LiveBadge()
+                                if (fCh.resolution.isNotBlank()) ResBadge(fCh.resolution)
+                                Text("CH ${fCh.number}", color = WHITE.copy(0.35f), fontSize = 11.sp, letterSpacing = 1.sp)
+                                if (fCh.id == currentChannel?.id && currTracks != null) StreamTracksBadges(currTracks)
                             }
-                            nextProg?.let {
-                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Box(Modifier.size(4.dp).background(ACCENT, CircleShape))
-                                    Text("Next: ${it.title}", color = WHITE.copy(0.38f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(tf.format(Date(it.startTime)), color = ACCENT.copy(0.7f), fontSize = 11.sp)
+                            Text(fCh.name, color = WHITE, fontSize = 26.sp, fontWeight = FontWeight.Black,
+                                letterSpacing = (-0.5).sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            if (nowProg != null) {
+                                Row(verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text(nowProg.title, color = WHITE.copy(0.7f), fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f, false))
+                                    ProgBar(nowProg.progressFraction, 90.dp)
+                                    Text("${nowProg.remainingMinutes}m", color = WHITE.copy(0.45f), fontSize = 12.sp)
                                 }
+                                nextProg?.let {
+                                    Row(verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Box(Modifier.size(4.dp).background(ACCENT, CircleShape))
+                                        Text("Next: ${it.title}", color = WHITE.copy(0.38f), fontSize = 11.sp,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(tf.format(Date(it.startTime)), color = ACCENT.copy(0.7f), fontSize = 11.sp)
+                                    }
+                                }
+                            } else {
+                                Text(fCh.groupTitle.uppercase(), color = WHITE.copy(0.3f), fontSize = 11.sp, letterSpacing = 1.8.sp)
                             }
-                        } else {
-                            Text(fCh.groupTitle.uppercase(), color = WHITE.copy(0.3f), fontSize = 11.sp, letterSpacing = 1.8.sp)
                         }
-                    }
-
-                    Surface(
-                        onClick  = { onOpenEpgGuide() },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50.dp)),
-                        colors   = ClickableSurfaceDefaults.colors(
-                            containerColor        = Color.White.copy(0.10f),
-                            focusedContainerColor = ACCENT,
-                            contentColor          = WHITE,
-                            focusedContentColor   = WHITE
-                        ),
-                        modifier = Modifier.height(44.dp).align(Alignment.Bottom)
-                    ) {
-                        Row(
-                            Modifier.padding(horizontal = 18.dp).fillMaxHeight(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        Surface(onClick = { onOpenEpgGuide() },
+                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50.dp)),
+                            colors   = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.10f),
+                                focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                            modifier = Modifier.height(44.dp).align(Alignment.Bottom)
                         ) {
-                            Icon(Icons.Default.CalendarToday, null, Modifier.size(14.dp))
-                            Text("TV Guide", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            Row(Modifier.padding(horizontal = 18.dp).fillMaxHeight(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                                Icon(Icons.Default.CalendarToday, null, Modifier.size(14.dp))
+                                Text("TV Guide", fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
                         }
                     }
                 }
-            }
 
-            Box(Modifier.fillMaxWidth().padding(horizontal = 44.dp).height(1.dp).background(
-                Brush.horizontalGradient(listOf(Color.Transparent, ACCENT.copy(0.35f), ACCENT.copy(0.5f), ACCENT.copy(0.35f), Color.Transparent))
-            ))
+            } // end key(focusedCh?.id)
+
+            Box(Modifier.fillMaxWidth().padding(horizontal = 44.dp).height(1.dp)
+                .background(ZappingDividerBrush))
             Spacer(Modifier.height(18.dp))
 
-            // ── CHANNEL STRIP ─────────────────────────────────────
-            LazyRow(
-                state = listState, contentPadding = PaddingValues(horizontal = 44.dp),
+            // Channel strip
+            LazyRow(state = listState, contentPadding = PaddingValues(horizontal = 44.dp),
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth().focusGroup()
-            ) {
+                modifier = Modifier.fillMaxWidth().focusGroup()) {
                 val currentIdx = channels.indexOfFirst { it.id == currentChannel?.id }.coerceAtLeast(0)
                 itemsIndexed(channels, key = { _, ch -> ch.id }, contentType = { _, _ -> "zap" }) { idx, ch ->
                     ZappingCard(ch, ch.logoUrl, ch.id == currentChannel?.id,
                         if (idx == currentIdx) Modifier.focusRequester(zappingFR) else Modifier,
-                        { focusedCh = ch; onIdleReset() }, { onSelectChannel(ch); onIdleReset() })
+                        { focusedCh = ch; onIdleReset() },
+                        { onSelectChannel(ch); onIdleReset() }
+                    )
                 }
             }
         }
@@ -895,9 +1089,16 @@ private fun ZappingHud(
 }
 
 @Composable
-private fun ZappingCard(channel: IptvChannel, logoUrl: String, isCurrent: Boolean, modifier: Modifier, onFocus: () -> Unit, onClick: () -> Unit) {
+private fun ZappingCard(
+    channel  : IptvChannel,
+    logoUrl  : String,
+    isCurrent: Boolean,
+    modifier : Modifier,
+    onFocus  : () -> Unit,
+    onClick  : () -> Unit
+) {
     var focused by remember { mutableStateOf(false) }
-    val scale   by animateFloatAsState(if (focused) 1.10f else 1f, tween(120, easing = FastOutSlowInEasing), label = "zc")
+    val scale by animateFloatAsState(if (focused) 1.10f else 1f, tween(120, easing = FastOutSlowInEasing), label = "zc")
     val glowAlpha by animateFloatAsState(if (focused) 1f else if (isCurrent) 0.55f else 0f, tween(120), label = "gla")
 
     Box(modifier.width(120.dp).height(82.dp).graphicsLayer { scaleX = scale; scaleY = scale }) {
@@ -905,43 +1106,56 @@ private fun ZappingCard(channel: IptvChannel, logoUrl: String, isCurrent: Boolea
             Box(Modifier.matchParentSize().padding(4.dp).clip(RoundedCornerShape(14.dp))
                 .background(if (focused) ACCENT.copy(glowAlpha * 0.35f) else ACCENT.copy(glowAlpha * 0.25f)))
         }
-
         Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-            colors = ClickableSurfaceDefaults.colors(containerColor = if (isCurrent) ACCENT.copy(0.18f) else Color.White.copy(0.07f), focusedContainerColor = Color(0xFF1A1A2E), contentColor = WHITE, focusedContentColor = WHITE),
-            border = ClickableSurfaceDefaults.border(border = if (isCurrent) Border(border = BorderStroke(1.5.dp, ACCENT.copy(0.7f)), shape = RoundedCornerShape(12.dp)) else Border.None, focusedBorder = Border(border = BorderStroke(2.dp, ACCENT), shape = RoundedCornerShape(12.dp))),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor        = if (isCurrent) ACCENT.copy(0.18f) else WHITE.copy(0.07f),
+                focusedContainerColor = Color(0xFF1A1A2E),
+                contentColor = WHITE, focusedContentColor = WHITE),
+            border = ClickableSurfaceDefaults.border(
+                border = if (isCurrent) Border(border = BorderStroke(1.5.dp, ACCENT.copy(0.7f)),
+                    shape = RoundedCornerShape(12.dp)) else Border.None,
+                focusedBorder = Border(border = BorderStroke(2.dp, ACCENT), shape = RoundedCornerShape(12.dp))),
             scale  = ClickableSurfaceDefaults.scale(focusedScale = 1f),
             glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxSize().onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
+            modifier = Modifier.fillMaxSize()
+                .onFocusChanged { focused = it.isFocused; if (it.isFocused) onFocus() }
         ) {
             Box(Modifier.fillMaxSize(), Alignment.Center) {
                 ChannelLogoImage(channel, logoUrl, 48.dp, focused)
-
                 Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp))
                     .background(Color.Black.copy(0.45f)).padding(horizontal = 5.dp, vertical = 2.dp)) {
                     Text("${channel.number}", color = WHITE.copy(0.6f), fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
                 if (!isCurrent || focused) {
                     Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
-                        .background(ZappingGradientNorm)
-                        .padding(horizontal = 7.dp, vertical = 5.dp)) {
-                        Text(channel.name, color = WHITE, fontSize = 10.sp, fontWeight = if (focused) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        .background(ZappingGradientNorm).padding(horizontal = 7.dp, vertical = 5.dp)) {
+                        Text(channel.name, color = WHITE, fontSize = 10.sp,
+                            fontWeight = if (focused) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
                 }
-                if (isCurrent) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(6.dp).background(RED, CircleShape))
+                if (isCurrent) Box(Modifier.align(Alignment.TopEnd).padding(6.dp).size(6.dp)
+                    .background(RED, CircleShape))
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // SIDE GROUP MENU
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun SideGroupMenu(
-    groups: List<String>, selectedGroup: String, sideFR: FocusRequester,
-    onSelectGroup: (String) -> Unit, onDismiss: () -> Unit, onIdleReset: () -> Unit
+    groups       : List<String>,
+    selectedGroup: String,
+    sideFR       : FocusRequester,
+    onSelectGroup: (String) -> Unit,
+    onDismiss    : () -> Unit,
+    onIdleReset  : () -> Unit
 ) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    // Perf: precompute once — avoids O(n²) groups.contains() inside every itemsIndexed item
+    val isSelectedPresent = selectedGroup in groups
 
     Box(
         Modifier.width(278.dp).fillMaxHeight().background(HUD_BG)
@@ -962,21 +1176,34 @@ private fun SideGroupMenu(
             }
     ) {
         LazyColumn(contentPadding = PaddingValues(top = 42.dp, bottom = 42.dp, start = 14.dp, end = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxSize().focusGroup()) {
-            item { Text("CATEGORIES", color = MUTED.copy(0.55f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(start = 12.dp, bottom = 5.dp)) }
-            itemsIndexed(groups) { idx, group ->
+            verticalArrangement = Arrangement.spacedBy(5.dp),
+            modifier = Modifier.fillMaxSize().focusGroup()) {
+            item {
+                Text("CATEGORIES", color = MUTED.copy(0.55f), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 2.sp, modifier = Modifier.padding(start = 12.dp, bottom = 5.dp))
+            }
+            itemsIndexed(groups, key = { _, g -> g }) { idx, group ->
                 val isSel = group == selectedGroup
                 Surface(onClick = { onSelectGroup(group) },
-                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.2f) else Color.Transparent, focusedContainerColor = ACCENT, contentColor = if (isSel) ACCENT2 else MUTED, focusedContentColor = WHITE),
-                    border = ClickableSurfaceDefaults.border(border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.45f)), shape = RoundedCornerShape(10.dp)) else Border.None, focusedBorder = Border.None),
+                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors   = ClickableSurfaceDefaults.colors(
+                        containerColor        = if (isSel) ACCENT.copy(0.2f) else Color.Transparent,
+                        focusedContainerColor = ACCENT,
+                        contentColor          = if (isSel) ACCENT2 else MUTED,
+                        focusedContentColor   = WHITE),
+                    border = ClickableSurfaceDefaults.border(
+                        border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.45f)),
+                            shape = RoundedCornerShape(10.dp)) else Border.None,
+                        focusedBorder = Border.None),
                     modifier = Modifier.fillMaxWidth().height(48.dp)
-                        .let { m -> if (isSel || (idx == 0 && !groups.contains(selectedGroup))) m.focusRequester(sideFR) else m }
+                        .let { m -> if (isSel || (idx == 0 && !isSelectedPresent)) m.focusRequester(sideFR) else m }
                         .onFocusChanged { if (it.isFocused) onIdleReset() }
                 ) {
                     Box(Modifier.padding(horizontal = 14.dp).fillMaxHeight(), Alignment.CenterStart) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (isSel) Box(Modifier.width(3.dp).height(13.dp).background(ACCENT2, RoundedCornerShape(2.dp)))
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (isSel) Box(Modifier.width(3.dp).height(13.dp)
+                                .background(ACCENT2, RoundedCornerShape(2.dp)))
                             Text(group, fontSize = 14.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                         }
                     }
@@ -986,11 +1213,16 @@ private fun SideGroupMenu(
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // EPG GUIDE DIALOG
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
-private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: FocusRequester, onDismiss: () -> Unit) {
+private fun FullEpgGuideDialog(
+    state    : IptvState,
+    viewModel: IptvViewModel,
+    fr       : FocusRequester,
+    onDismiss: () -> Unit
+) {
     val tf         = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val refreshFR  = remember { FocusRequester() }
     val programsFR = remember { FocusRequester() }
@@ -1001,12 +1233,11 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
             .ifEmpty { state.filteredChannels }
     }
 
-    val openChannel   = remember { state.currentChannel }
-    var selectedCh    by remember { mutableStateOf(openChannel ?: epgChannels.firstOrNull()) }
+    var selectedCh by remember { mutableStateOf(state.currentChannel ?: epgChannels.firstOrNull()) }
 
     LaunchedEffect(epgChannels.size) {
         if (selectedCh == null || epgChannels.none { it.id == selectedCh?.id }) {
-            selectedCh = openChannel?.let { oc -> epgChannels.firstOrNull { it.id == oc.id } }
+            selectedCh = state.currentChannel?.let { oc -> epgChannels.firstOrNull { it.id == oc.id } }
                 ?: epgChannels.firstOrNull()
         }
     }
@@ -1020,7 +1251,6 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
     val sortedPrograms = remember(selectedCh, state.epgData) {
         selectedCh?.let { state.epgData[it.id] }?.sortedBy { it.startTime } ?: emptyList()
     }
-    val programs = sortedPrograms
 
     val progListState = rememberLazyListState()
     val liveProgIdx   = remember(sortedPrograms) {
@@ -1040,14 +1270,19 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
                 Box(Modifier.width(4.dp).height(24.dp).background(ACCENT, RoundedCornerShape(2.dp)))
                 Text("TV Guide", color = WHITE, fontSize = 21.sp, fontWeight = FontWeight.Black)
                 Spacer(Modifier.weight(1f))
-                Text(if (state.epgData.isEmpty()) "No EPG loaded" else "${state.epgData.size} channels", color = MUTED, fontSize = 13.sp)
+                Text(if (state.epgData.isEmpty()) "No EPG loaded" else "${state.epgData.size} channels",
+                    color = MUTED, fontSize = 13.sp)
                 Surface(onClick = { viewModel.onEvent(IptvEvent.RefreshEpg) },
                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                    colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A28), focusedContainerColor = ACCENT, contentColor = MUTED, focusedContentColor = WHITE),
+                    colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF1A1A28),
+                        focusedContainerColor = ACCENT, contentColor = MUTED, focusedContentColor = WHITE),
                     modifier = Modifier.height(32.dp).focusRequester(refreshFR).focusProperties { down = fr }
                 ) {
-                    Row(Modifier.padding(horizontal = 12.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Icon(Icons.Default.Refresh, null, Modifier.size(13.dp)); Text("Refresh EPG", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(Modifier.padding(horizontal = 12.dp).fillMaxHeight(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Icon(Icons.Default.Refresh, null, Modifier.size(13.dp))
+                        Text("Refresh EPG", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1055,17 +1290,17 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
             Box(Modifier.fillMaxWidth().height(1.dp).background(ACCENT.copy(0.28f)))
             Spacer(Modifier.height(13.dp))
 
+            val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
             Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(13.dp)) {
-                val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
                 LazyColumn(
-                    state = chListState,
+                    state    = chListState,
                     modifier = Modifier.width(252.dp).fillMaxHeight().focusGroup()
                         .focusProperties {
                             exit = { dir ->
                                 when (dir) {
                                     if (isRtl) FocusDirection.Left else FocusDirection.Right -> programsFR
-                                    FocusDirection.Up    -> refreshFR
-                                    else                 -> FocusRequester.Default
+                                    FocusDirection.Up -> refreshFR
+                                    else -> FocusRequester.Default
                                 }
                             }
                         },
@@ -1073,62 +1308,90 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
                 ) {
                     itemsIndexed(epgChannels, key = { _, ch -> ch.id }) { idx, ch ->
                         val isSel   = ch.id == selectedCh?.id
-                        val logo    = ch.logoUrl
                         val nowProg = state.epgData[ch.id]?.firstOrNull { it.isLiveNow }
                         Surface(onClick = { selectedCh = ch },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.14f) else Color(0x0DFFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                            border   = ClickableSurfaceDefaults.border(border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.38f)), shape = RoundedCornerShape(10.dp)) else Border.None, focusedBorder = Border.None),
+                            colors   = ClickableSurfaceDefaults.colors(
+                                containerColor        = if (isSel) ACCENT.copy(0.14f) else Color(0x0DFFFFFF),
+                                focusedContainerColor = ACCENT,
+                                contentColor = WHITE, focusedContentColor = WHITE),
+                            border = ClickableSurfaceDefaults.border(
+                                border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.38f)),
+                                    shape = RoundedCornerShape(10.dp)) else Border.None,
+                                focusedBorder = Border.None),
                             modifier = Modifier.fillMaxWidth().height(52.dp)
                                 .let { m -> if (idx == currentChIdx) m.focusRequester(fr) else m }
                                 .focusProperties { if (idx == 0) up = refreshFR }
                         ) {
-                            Row(Modifier.fillMaxSize().padding(horizontal = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                Box(Modifier.size(30.dp).clip(RoundedCornerShape(6.dp)).background(SURFACE2), Alignment.Center) { ChannelLogoImage(ch, logo, 24.dp) }
+                            Row(Modifier.fillMaxSize().padding(horizontal = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Box(Modifier.size(30.dp).clip(RoundedCornerShape(6.dp))
+                                    .background(SURFACE2), Alignment.Center) {
+                                    ChannelLogoImage(ch, ch.logoUrl, 24.dp)
+                                }
                                 Column(Modifier.weight(1f)) {
-                                    Text(ch.name, color = WHITE, fontSize = 13.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    if (nowProg != null) Text(nowProg.title, color = MUTED, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(ch.name, color = WHITE, fontSize = 13.sp,
+                                        fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    if (nowProg != null) Text(nowProg.title, color = MUTED, fontSize = 11.sp,
+                                        maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }
                     }
                 }
 
-                Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(13.dp)).background(SURFACE.copy(0.5f))) {
-                    if (programs.isEmpty()) {
+                Box(Modifier.weight(1f).fillMaxHeight().clip(RoundedCornerShape(13.dp))
+                    .background(SURFACE.copy(0.5f))) {
+                    if (sortedPrograms.isEmpty()) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(Icons.Default.CalendarToday, null, tint = MUTED, modifier = Modifier.size(28.dp))
-                                Text(if (state.epgData.isEmpty()) "Load EPG in playlist settings" else "No data for this channel", color = MUTED, fontSize = 13.sp, textAlign = TextAlign.Center)
+                                Text(if (state.epgData.isEmpty()) "Load EPG in playlist settings" else "No data for this channel",
+                                    color = MUTED, fontSize = 13.sp, textAlign = TextAlign.Center)
                             }
                         }
                     } else {
-                        LazyColumn(state = progListState, contentPadding = PaddingValues(11.dp), verticalArrangement = Arrangement.spacedBy(5.dp),
+                        LazyColumn(state = progListState, contentPadding = PaddingValues(11.dp),
+                            verticalArrangement = Arrangement.spacedBy(5.dp),
                             modifier = Modifier.fillMaxSize().focusGroup()
-                                .focusProperties { exit = { dir -> if (dir == if (isRtl) FocusDirection.Right else FocusDirection.Left) fr else FocusRequester.Default } }
+                                .focusProperties {
+                                    exit = { dir ->
+                                        if (dir == if (isRtl) FocusDirection.Right else FocusDirection.Left) fr
+                                        else FocusRequester.Default
+                                    }
+                                }
                         ) {
-                            itemsIndexed(programs, key = { _, p -> "${p.startTime}_${p.channelId}" }) { idx, p ->
+                            itemsIndexed(sortedPrograms, key = { _, p -> "${p.startTime}_${p.channelId}" }) { idx, p ->
                                 val isLive = p.isLiveNow; val isPast = p.isPast
-                                Row(
-                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
-                                        .background(when { isLive -> ACCENT.copy(0.11f); isPast -> Color.Transparent; else -> Color(0x08FFFFFF) })
-                                        .let { m -> if (idx == 0) m.focusRequester(programsFR) else m }
-                                        .padding(horizontal = 12.dp, vertical = 9.dp),
-                                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)
+                                Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(9.dp))
+                                    .background(when { isLive -> ACCENT.copy(0.11f); isPast -> Color.Transparent; else -> Color(0x08FFFFFF) })
+                                    .let { m -> if (idx == 0) m.focusRequester(programsFR) else m }
+                                    .padding(horizontal = 12.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(11.dp)
                                 ) {
-                                    if (isLive) Box(Modifier.size(7.dp).background(RED, CircleShape)) else Spacer(Modifier.size(7.dp))
+                                    if (isLive) Box(Modifier.size(7.dp).background(RED, CircleShape))
+                                    else Spacer(Modifier.size(7.dp))
                                     Column(Modifier.width(56.dp)) {
-                                        Text(tf.format(Date(p.startTime)), color = if (isLive) ACCENT2 else if (isPast) MUTED.copy(0.5f) else WHITE, fontSize = 12.sp, fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal)
+                                        Text(tf.format(Date(p.startTime)),
+                                            color = if (isLive) ACCENT2 else if (isPast) MUTED.copy(0.5f) else WHITE,
+                                            fontSize = 12.sp, fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal)
                                         Text("${p.durationMinutes}m", color = MUTED.copy(0.5f), fontSize = 10.sp)
                                     }
                                     Box(Modifier.width(2.dp).height(20.dp).background(if (isLive) ACCENT else MUTED2))
                                     Column(Modifier.weight(1f)) {
-                                        Text(p.title, color = if (isPast) MUTED.copy(0.5f) else WHITE, fontSize = 13.sp, fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                        Text(p.title, color = if (isPast) MUTED.copy(0.5f) else WHITE,
+                                            fontSize = 13.sp, fontWeight = if (isLive) FontWeight.Bold else FontWeight.Normal,
+                                            maxLines = 1, overflow = TextOverflow.Ellipsis)
                                         if (p.category.isNotBlank()) Text(p.category, color = MUTED.copy(0.5f), fontSize = 10.sp)
                                     }
                                     if (isLive) Column(horizontalAlignment = Alignment.End) {
                                         Text("${p.remainingMinutes}m left", color = ACCENT2, fontSize = 11.sp)
-                                        Spacer(Modifier.height(3.dp)); ProgBar(p.progressFraction, 70.dp)
+                                        Spacer(Modifier.height(3.dp))
+                                        ProgBar(p.progressFraction, 70.dp)
                                     }
                                 }
                             }
@@ -1140,18 +1403,22 @@ private fun FullEpgGuideDialog(state: IptvState, viewModel: IptvViewModel, fr: F
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // PLAYLIST MANAGER DIALOG
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
-fun PlaylistManagerDialog(state: IptvState, fr: FocusRequester, onDismiss: () -> Unit, onEvent: (IptvEvent) -> Unit) {
+fun PlaylistManagerDialog(
+    state    : IptvState,
+    fr       : FocusRequester,
+    onDismiss: () -> Unit,
+    onEvent  : (IptvEvent) -> Unit
+) {
     val nameFR   = fr
     val urlFR    = remember { FocusRequester() }
     val epgFR    = remember { FocusRequester() }
     val saveFR   = remember { FocusRequester() }
     val deleteFR = remember { FocusRequester() }
     val qrFR     = remember { FocusRequester() }
-
     val hasActive = state.playlists.any { it.isActive }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
@@ -1162,56 +1429,82 @@ fun PlaylistManagerDialog(state: IptvState, fr: FocusRequester, onDismiss: () ->
     ) {
         Row(horizontalArrangement = Arrangement.spacedBy(30.dp)) {
             Column(Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Box(Modifier.width(4.dp).height(24.dp).background(ACCENT, RoundedCornerShape(2.dp)))
                     Text("Manage Playlists", color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black)
                 }
                 Spacer(Modifier.height(20.dp))
-
                 DialogLabel("Playlist Name")
-                DialogInput(state.addPlaylistName, "e.g. My IPTV", nameFR, downFR = urlFR) { onEvent(IptvEvent.UpdateAddPlaylistName(it)) }
+                DialogInput(state.addPlaylistName, "e.g. My IPTV", nameFR, downFR = urlFR) {
+                    onEvent(IptvEvent.UpdateAddPlaylistName(it))
+                }
                 Spacer(Modifier.height(13.dp))
-
                 DialogLabel("M3U / M3U8 URL *")
-                DialogInput(state.addPlaylistUrl, "http://...", urlFR, upFR = nameFR, downFR = epgFR) { onEvent(IptvEvent.UpdateAddPlaylistUrl(it)) }
+                DialogInput(state.addPlaylistUrl, "http://...", urlFR, upFR = nameFR, downFR = epgFR) {
+                    onEvent(IptvEvent.UpdateAddPlaylistUrl(it))
+                }
                 Spacer(Modifier.height(13.dp))
-
                 DialogLabel("EPG XML URL  (optional)")
-                DialogInput(state.addPlaylistEpgUrl, "http://.../epg.xml.gz", epgFR, upFR = urlFR, downFR = saveFR) { onEvent(IptvEvent.UpdateAddPlaylistEpgUrl(it)) }
+                DialogInput(state.addPlaylistEpgUrl, "http://.../epg.xml.gz", epgFR, upFR = urlFR, downFR = saveFR) {
+                    onEvent(IptvEvent.UpdateAddPlaylistEpgUrl(it))
+                }
                 Spacer(Modifier.height(20.dp))
-
                 Row(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
-                    Surface(onClick = { if (state.addPlaylistUrl.isNotBlank()) { onEvent(IptvEvent.ConfirmAddPlaylist); if (state.addPlaylistEpgUrl.isNotBlank()) onEvent(IptvEvent.RefreshEpg) } },
+                    Surface(
+                        onClick = {
+                            if (state.addPlaylistUrl.isNotBlank()) {
+                                onEvent(IptvEvent.ConfirmAddPlaylist)
+                                if (state.addPlaylistEpgUrl.isNotBlank()) onEvent(IptvEvent.RefreshEpg)
+                            }
+                        },
                         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = ACCENT, focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                        colors   = ClickableSurfaceDefaults.colors(containerColor = ACCENT,
+                            focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
                         modifier = Modifier.weight(1f).height(52.dp).focusRequester(saveFR)
-                            .focusProperties { up = epgFR; right = if (isRtl) FocusRequester.Default else if (hasActive) deleteFR else qrFR; left = if (isRtl) if (hasActive) deleteFR else qrFR else FocusRequester.Default }
+                            .focusProperties {
+                                up = epgFR
+                                right = if (isRtl) FocusRequester.Default else if (hasActive) deleteFR else qrFR
+                                left  = if (isRtl) if (hasActive) deleteFR else qrFR else FocusRequester.Default
+                            }
                     ) {
                         Box(Modifier.fillMaxSize(), Alignment.Center) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Save, null, Modifier.size(16.dp)); Text("Save & Connect", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Save, null, Modifier.size(16.dp))
+                                Text("Save & Connect", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                     state.playlists.firstOrNull { it.isActive }?.let { activePl ->
-                        Surface(onClick = { onEvent(IptvEvent.DeletePlaylist(activePl.id)) },
-                            shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-                            colors   = ClickableSurfaceDefaults.colors(containerColor = RED.copy(0.14f), focusedContainerColor = RED, contentColor = RED, focusedContentColor = WHITE),
-                            modifier = Modifier.height(52.dp).focusRequester(deleteFR).focusProperties { up = epgFR; left = if (isRtl) qrFR else saveFR; right = if (isRtl) saveFR else qrFR }
+                        Surface(
+                            onClick = { onEvent(IptvEvent.DeletePlaylist(activePl.id)) },
+                            shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                            colors  = ClickableSurfaceDefaults.colors(containerColor = RED.copy(0.14f),
+                                focusedContainerColor = RED, contentColor = RED, focusedContentColor = WHITE),
+                            modifier = Modifier.height(52.dp).focusRequester(deleteFR)
+                                .focusProperties {
+                                    up    = epgFR
+                                    left  = if (isRtl) qrFR else saveFR
+                                    right = if (isRtl) saveFR else qrFR
+                                }
                         ) {
                             Box(Modifier.padding(horizontal = 17.dp).fillMaxHeight(), Alignment.Center) {
-                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Default.Delete, null, Modifier.size(14.dp)); Text("Remove", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                                Row(horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                    verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Default.Delete, null, Modifier.size(14.dp))
+                                    Text("Remove", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
                         }
                     }
                 }
-
                 state.playlists.firstOrNull { it.isActive }?.let { pl ->
                     Spacer(Modifier.height(13.dp))
-                    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(GREEN.copy(0.08f)).padding(11.dp)) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp))
+                        .background(GREEN.copy(0.08f)).padding(11.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(9.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.CheckCircle, null, tint = GREEN, modifier = Modifier.size(14.dp))
                             Column {
                                 Text("Active: ${pl.name}", color = GREEN, fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -1222,21 +1515,26 @@ fun PlaylistManagerDialog(state: IptvState, fr: FocusRequester, onDismiss: () ->
                 }
             }
 
-            Column(Modifier.width(225.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(11.dp)) {
+            Column(Modifier.width(225.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(11.dp)) {
                 Text("Send from Phone", color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                Text("Scan QR or type URL in your phone browser to send a playlist to your TV", color = MUTED, fontSize = 11.sp, textAlign = TextAlign.Center)
+                Text("Scan QR or type URL in your phone browser to send a playlist to your TV",
+                    color = MUTED, fontSize = 11.sp, textAlign = TextAlign.Center)
                 if (state.localIpAddress.isNotBlank()) {
                     val qrUrl    = "http://${state.localIpAddress}:8080"
                     val qrBitmap = remember(qrUrl) { QrCodeGenerator.generate(qrUrl, 320) }
                     Box(Modifier.size(170.dp).clip(RoundedCornerShape(12.dp)).background(WHITE).padding(8.dp)) {
-                        Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "QR", modifier = Modifier.fillMaxSize())
+                        Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = "QR",
+                            modifier = Modifier.fillMaxSize())
                     }
-                    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(SURFACE2).padding(7.dp), Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
+                        .background(SURFACE2).padding(7.dp), Alignment.Center) {
                         Text(qrUrl, color = ACCENT2, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 } else {
                     Box(Modifier.size(170.dp).clip(RoundedCornerShape(12.dp)).background(SURFACE2), Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(7.dp)) {
                             Icon(Icons.Default.Wifi, null, tint = MUTED, modifier = Modifier.size(28.dp))
                             Text("Not on WiFi", color = MUTED, fontSize = 12.sp)
                         }
@@ -1244,79 +1542,85 @@ fun PlaylistManagerDialog(state: IptvState, fr: FocusRequester, onDismiss: () ->
                 }
                 Surface(onClick = onDismiss,
                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                    modifier = Modifier.fillMaxWidth().height(40.dp).focusRequester(qrFR).focusProperties { left = if (isRtl) FocusRequester.Default else saveFR; right = if (isRtl) saveFR else FocusRequester.Default }
+                    colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF),
+                        focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                    modifier = Modifier.fillMaxWidth().height(40.dp).focusRequester(qrFR)
+                        .focusProperties {
+                            left  = if (isRtl) FocusRequester.Default else saveFR
+                            right = if (isRtl) saveFR else FocusRequester.Default
+                        }
                 ) {
-                    Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Close", fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Text("Close", fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    }
                 }
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // PLAYER QUICK SETTINGS (ASPECT RATIO, AUDIO, SUBS)
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun PlayerQuickSettings(
-    exo: ExoPlayerWrapper,
-    currTracks: androidx.media3.common.Tracks,
-    arMode: Int,
+    exo        : ExoPlayerWrapper,
+    currTracks : androidx.media3.common.Tracks,
+    arMode     : Int,
     subtitlesOn: Boolean,
-    settingsFR: FocusRequester,
-    onArChange: (Int) -> Unit,
+    settingsFR : FocusRequester,
+    onArChange : (Int) -> Unit,
     onSubtitles: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss  : () -> Unit
 ) {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
     val subtitleTracks = remember(currTracks) {
-        val list = mutableListOf<Triple<String, androidx.media3.common.Tracks.Group, Int>>()
-        currTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.forEach { grp ->
-            for (i in 0 until grp.length) {
-                val fmt  = grp.mediaTrackGroup.getFormat(i)
-                val lang = fmt.language?.uppercase() ?: "Sub ${i + 1}"
-                val role = when {
-                    fmt.roleFlags and 0x00000004 != 0 -> " · Forced"
-                    fmt.roleFlags and 0x00000008 != 0 -> " · CC"
-                    else -> ""
+        buildList {
+            currTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }.forEach { grp ->
+                for (i in 0 until grp.length) {
+                    val fmt  = grp.mediaTrackGroup.getFormat(i)
+                    val lang = fmt.language?.uppercase() ?: "Sub ${i + 1}"
+                    val role = when {
+                        fmt.roleFlags and 0x00000004 != 0 -> " · Forced"
+                        fmt.roleFlags and 0x00000008 != 0 -> " · CC"
+                        else -> ""
+                    }
+                    add(Triple("$lang$role", grp, i))
                 }
-                list.add(Triple("$lang$role", grp, i))
             }
         }
-        list
     }
 
-    val arModes = listOf(
-        AspectRatioFrameLayout.RESIZE_MODE_FIT to "Fit",
-        AspectRatioFrameLayout.RESIZE_MODE_FILL to "Fill",
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Zoom",
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH to "Fixed W",
-        AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT to "Fixed H"
-    )
-
     val audioTracks = remember(currTracks) {
-        val list = mutableListOf<Triple<String, androidx.media3.common.Tracks.Group, Int>>()
-        currTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.forEach { grp ->
-            for (i in 0 until grp.length) {
-                val fmt  = grp.mediaTrackGroup.getFormat(i)
-                val lang = fmt.language?.uppercase() ?: "Track ${i + 1}"
-                val ch   = if (fmt.channelCount > 0) " · ${fmt.channelCount}ch" else ""
-                val atm  = if (fmt.sampleMimeType == "audio/eac3-joc") " · Atmos" else ""
-                list.add(Triple("$lang$ch$atm", grp, i))
+        buildList {
+            currTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.forEach { grp ->
+                for (i in 0 until grp.length) {
+                    val fmt  = grp.mediaTrackGroup.getFormat(i)
+                    val isSupported = grp.isTrackSupported(i)
+                    val lang = fmt.language?.uppercase() ?: "Track ${i + 1}"
+                    val ch   = if (fmt.channelCount > 0) " · ${fmt.channelCount}ch" else ""
+                    val atm  = if (fmt.sampleMimeType == "audio/eac3-joc") " · Atmos" else ""
+                    val suppStr = if (!isSupported) " (Unsupported)" else ""
+                    add(Triple("$lang$ch$atm$suppStr", grp, i) to isSupported)
+                }
             }
         }
-        list
+    }
+
+    val arModes = remember {
+        listOf(
+            AspectRatioFrameLayout.RESIZE_MODE_FIT          to "Fit",
+            AspectRatioFrameLayout.RESIZE_MODE_FILL         to "Fill",
+            AspectRatioFrameLayout.RESIZE_MODE_ZOOM         to "Zoom",
+            AspectRatioFrameLayout.RESIZE_MODE_FIXED_WIDTH  to "Fixed W",
+            AspectRatioFrameLayout.RESIZE_MODE_FIXED_HEIGHT to "Fixed H"
+        )
     }
 
     Box(
-        Modifier
-            .width(300.dp)
-            .fillMaxHeight()
-            .background(Brush.horizontalGradient(
-                if (isRtl) listOf(Color(0xF0080810), Color.Transparent)
-                else listOf(Color.Transparent, Color(0xF0080810))
-            ))
+        Modifier.width(300.dp).fillMaxHeight()
+            .background(if (isRtl) PQSBgBrushRtl else PQSBgBrushLtr)
             .focusGroup()
             .focusProperties {
                 exit = { dir ->
@@ -1328,9 +1632,7 @@ private fun PlayerQuickSettings(
             .onPreviewKeyEvent { ev ->
                 if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 when (ev.key.nativeKeyCode) {
-                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
-                        onDismiss(); true
-                    }
+                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> { onDismiss(); true }
                     else -> false
                 }
             }
@@ -1338,41 +1640,52 @@ private fun PlayerQuickSettings(
         Column(
             Modifier
                 .align(if (isRtl) Alignment.CenterStart else Alignment.CenterEnd)
-                .padding(
-                    start = if (isRtl) 32.dp else 16.dp,
-                    end = if (isRtl) 16.dp else 32.dp
-                )
-                .padding(vertical = 40.dp)
+                .padding(start = if (isRtl) 32.dp else 16.dp, end = if (isRtl) 16.dp else 32.dp, top = 40.dp, bottom = 40.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.padding(bottom = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.padding(bottom = 10.dp)) {
                 Box(Modifier.width(3.dp).height(20.dp).background(ACCENT, RoundedCornerShape(2.dp)))
                 Text("Player Settings", color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Black)
             }
 
-            // ── Aspect Ratio ──
-            Text("ASPECT RATIO", color = MUTED.copy(0.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(bottom = 2.dp))
+            // ── Aspect Ratio ──────────────────────────────────────────────
+            Text("ASPECT RATIO", color = MUTED.copy(0.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp, modifier = Modifier.padding(bottom = 2.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 arModes.forEachIndexed { idx, (mode, label) ->
                     val isSel = mode == arMode
                     Surface(
                         onClick = { onArChange(mode) },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.25f) else Color.White.copy(0.07f), focusedContainerColor = ACCENT, contentColor = if (isSel) ACCENT2 else WHITE.copy(0.7f), focusedContentColor = WHITE),
-                        border = ClickableSurfaceDefaults.border(border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.6f)), shape = RoundedCornerShape(8.dp)) else Border.None, focusedBorder = Border.None),
-                        modifier = Modifier.height(34.dp).let { m -> if (idx == 0) m.focusRequester(settingsFR) else m }
+                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        colors  = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (isSel) ACCENT.copy(0.25f) else WHITE.copy(0.07f),
+                            focusedContainerColor = ACCENT,
+                            contentColor          = if (isSel) ACCENT2 else WHITE.copy(0.7f),
+                            focusedContentColor   = WHITE),
+                        border  = ClickableSurfaceDefaults.border(
+                            border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.6f)),
+                                shape = RoundedCornerShape(8.dp)) else Border.None,
+                            focusedBorder = Border.None),
+                        modifier = Modifier.height(34.dp)
+                            .let { m -> if (idx == 0) m.focusRequester(settingsFR) else m }
                     ) {
-                        Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) { Text(label, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal) }
+                        Box(Modifier.padding(horizontal = 10.dp).fillMaxHeight(), Alignment.Center) {
+                            Text(label, fontSize = 11.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
+                        }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
 
-            // ── Subtitles ──
-            Text("SUBTITLES", color = MUTED.copy(0.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(bottom = 2.dp))
+            // ── Subtitles ─────────────────────────────────────────────────
+            Text("SUBTITLES", color = MUTED.copy(0.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold,
+                letterSpacing = 1.5.sp, modifier = Modifier.padding(bottom = 2.dp))
             if (subtitleTracks.isNotEmpty()) {
                 val subOffSel = !subtitlesOn
+                // Off button
                 Surface(
                     onClick = {
                         val params = exo.player.trackSelectionParameters.buildUpon()
@@ -1381,20 +1694,31 @@ private fun PlayerQuickSettings(
                         exo.player.trackSelectionParameters = params.build()
                         if (subtitlesOn) onSubtitles()
                     },
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = if (subOffSel) Color.White.copy(0.12f) else Color.White.copy(0.05f), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                    border = ClickableSurfaceDefaults.border(border = if (subOffSel) Border(border = BorderStroke(1.dp, Color.White.copy(0.3f)), shape = RoundedCornerShape(10.dp)) else Border.None, focusedBorder = Border.None),
+                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors   = ClickableSurfaceDefaults.colors(
+                        containerColor        = if (subOffSel) WHITE.copy(0.12f) else WHITE.copy(0.05f),
+                        focusedContainerColor = ACCENT,
+                        contentColor = WHITE, focusedContentColor = WHITE),
+                    border   = ClickableSurfaceDefaults.border(
+                        border = if (subOffSel) Border(border = BorderStroke(1.dp, WHITE.copy(0.3f)),
+                            shape = RoundedCornerShape(10.dp)) else Border.None,
+                        focusedBorder = Border.None),
                     modifier = Modifier.fillMaxWidth().height(44.dp)
                 ) {
-                    Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.SubtitlesOff, null, Modifier.size(17.dp), tint = if (subOffSel) WHITE else MUTED)
+                    Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.SubtitlesOff, null, Modifier.size(17.dp),
+                                tint = if (subOffSel) WHITE else MUTED)
                             Text("Off", fontSize = 13.sp, fontWeight = if (subOffSel) FontWeight.Bold else FontWeight.Normal)
                         }
                         if (subOffSel) Icon(Icons.Default.Check, null, tint = WHITE.copy(0.6f), modifier = Modifier.size(16.dp))
                     }
                 }
                 Spacer(Modifier.height(4.dp))
+                // Per-track buttons
                 subtitleTracks.forEach { (label, grp, trackIdx) ->
                     val isSel = subtitlesOn && grp.isTrackSelected(trackIdx)
                     Surface(
@@ -1405,14 +1729,24 @@ private fun PlayerQuickSettings(
                             exo.player.trackSelectionParameters = params.build()
                             if (!subtitlesOn) onSubtitles()
                         },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.18f) else Color.White.copy(0.06f), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                        border = ClickableSurfaceDefaults.border(border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.5f)), shape = RoundedCornerShape(10.dp)) else Border.None, focusedBorder = Border.None),
+                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        colors   = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (isSel) ACCENT.copy(0.18f) else WHITE.copy(0.06f),
+                            focusedContainerColor = ACCENT,
+                            contentColor = WHITE, focusedContentColor = WHITE),
+                        border   = ClickableSurfaceDefaults.border(
+                            border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.5f)),
+                                shape = RoundedCornerShape(10.dp)) else Border.None,
+                            focusedBorder = Border.None),
                         modifier = Modifier.fillMaxWidth().height(44.dp)
                     ) {
-                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.Subtitles, null, Modifier.size(17.dp), tint = if (isSel) ACCENT2 else MUTED)
+                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Subtitles, null, Modifier.size(17.dp),
+                                    tint = if (isSel) ACCENT2 else MUTED)
                                 Text(label, fontSize = 13.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                             if (isSel) Icon(Icons.Default.Check, null, tint = ACCENT2, modifier = Modifier.size(16.dp))
@@ -1422,40 +1756,69 @@ private fun PlayerQuickSettings(
                 }
             } else {
                 Surface(
-                    onClick = onSubtitles,
-                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = if (subtitlesOn) ACCENT.copy(0.18f) else Color.White.copy(0.06f), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                    onClick  = onSubtitles,
+                    shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                    colors   = ClickableSurfaceDefaults.colors(
+                        containerColor        = if (subtitlesOn) ACCENT.copy(0.18f) else WHITE.copy(0.06f),
+                        focusedContainerColor = ACCENT,
+                        contentColor = WHITE, focusedContentColor = WHITE),
                     modifier = Modifier.fillMaxWidth().height(48.dp)
                 ) {
-                    Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Subtitles, null, Modifier.size(17.dp), tint = if (subtitlesOn) ACCENT2 else MUTED)
-                            Text(if (subtitlesOn) "Subtitles ON" else "No subs in stream", fontSize = 13.sp, fontWeight = FontWeight.Normal)
+                    Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Subtitles, null, Modifier.size(17.dp),
+                                tint = if (subtitlesOn) ACCENT2 else MUTED)
+                            Text(if (subtitlesOn) "Subtitles ON" else "No subs in stream", fontSize = 13.sp)
                         }
                     }
                 }
             }
             Spacer(Modifier.height(8.dp))
 
-            // ── Audio Tracks ──
+            // ── Audio Tracks ────────────
             if (audioTracks.isNotEmpty()) {
-                Text("AUDIO / LANGUAGE", color = MUTED.copy(0.55f), fontSize = 10.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(bottom = 2.dp))
-                audioTracks.forEach { (label, grp, trackIdx) ->
+                Text("AUDIO / LANGUAGE", color = MUTED.copy(0.55f), fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp,
+                    modifier = Modifier.padding(bottom = 2.dp))
+                audioTracks.forEach { (info, isSupported) ->
+                    val (label, grp, trackIdx) = info
                     val isSel = grp.isTrackSelected(trackIdx)
                     Surface(
                         onClick = {
-                            val params = exo.player.trackSelectionParameters.buildUpon()
-                            params.setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, trackIdx))
-                            exo.player.trackSelectionParameters = params.build()
+                            if (isSupported) {
+                                val params = exo.player.trackSelectionParameters.buildUpon()
+                                params.setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, trackIdx))
+                                exo.player.trackSelectionParameters = params.build()
+
+                                if (exo.player.isCurrentMediaItemLive) {
+                                    exo.player.seekToDefaultPosition()
+                                } else {
+                                    exo.player.seekTo(exo.player.currentPosition)
+                                }
+                            }
                         },
-                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.18f) else Color.White.copy(0.06f), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                        border = ClickableSurfaceDefaults.border(border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.5f)), shape = RoundedCornerShape(10.dp)) else Border.None, focusedBorder = Border.None),
+                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        colors  = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (isSel) ACCENT.copy(0.18f) else WHITE.copy(0.06f),
+                            focusedContainerColor = if (isSupported) ACCENT else RED.copy(0.8f),
+                            contentColor = if (isSupported) WHITE else MUTED.copy(0.4f),
+                            focusedContentColor = WHITE),
+                        border  = ClickableSurfaceDefaults.border(
+                            border = if (isSel) Border(border = BorderStroke(1.dp, ACCENT.copy(0.5f)),
+                                shape = RoundedCornerShape(10.dp)) else Border.None,
+                            focusedBorder = Border.None),
                         modifier = Modifier.fillMaxWidth().height(48.dp)
                     ) {
-                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.VolumeUp, null, Modifier.size(17.dp), tint = if (isSel) ACCENT2 else MUTED)
+                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VolumeUp, null, Modifier.size(17.dp),
+                                    tint = if (isSel) ACCENT2 else if (!isSupported) MUTED.copy(0.4f) else MUTED)
                                 Text(label, fontSize = 13.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                             if (isSel) Icon(Icons.Default.Check, null, tint = ACCENT2, modifier = Modifier.size(16.dp))
@@ -1472,33 +1835,40 @@ private fun PlayerQuickSettings(
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // GLOBAL SETTINGS DIALOG
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun SmartSettingsDialog(
-    state: IptvState, exo: ExoPlayerWrapper,
+    state        : IptvState,
+    exo          : ExoPlayerWrapper,
     currentTracks: androidx.media3.common.Tracks,
-    fr: FocusRequester, onDismiss: () -> Unit, onEvent: (IptvEvent) -> Unit
+    fr           : FocusRequester,
+    onDismiss    : () -> Unit,
+    onEvent      : (IptvEvent) -> Unit
 ) {
-    val subtitlesFR   = fr
-    val editFR        = remember { FocusRequester() }
-    val closeFR       = remember { FocusRequester() }
+    val subtitlesFR = fr
+    val editFR      = remember { FocusRequester() }
+    val closeFR     = remember { FocusRequester() }
 
     val allAudioTracks = remember(currentTracks) {
-        val list = mutableListOf<Pair<String, Pair<androidx.media3.common.Tracks.Group, Int>>>()
-        currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.forEach { grp ->
-            for (i in 0 until grp.length) {
-                val fmt   = grp.mediaTrackGroup.getFormat(i)
-                val lang  = fmt.language?.uppercase() ?: "Track ${i + 1}"
-                val ch    = if (fmt.channelCount > 0) " · ${fmt.channelCount}ch" else ""
-                val atmos = if (fmt.sampleMimeType == "audio/eac3-joc") " · ATMOS" else ""
-                list.add("$lang$ch$atmos" to (grp to i))
+        buildList {
+            currentTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }.forEach { grp ->
+                for (i in 0 until grp.length) {
+                    val fmt   = grp.mediaTrackGroup.getFormat(i)
+                    val isSupported = grp.isTrackSupported(i)
+                    val lang  = fmt.language?.uppercase() ?: "Track ${i + 1}"
+                    val ch    = if (fmt.channelCount > 0) " · ${fmt.channelCount}ch" else ""
+                    val atmos = if (fmt.sampleMimeType == "audio/eac3-joc") " · ATMOS" else ""
+                    val suppStr = if (!isSupported) " (Unsupported)" else ""
+                    add(Triple("$lang$ch$atmos$suppStr", grp, i) to isSupported)
+                }
             }
         }
-        list
     }
-    val audioFRs = remember(allAudioTracks.size) { List(allAudioTracks.size.coerceAtLeast(1)) { FocusRequester() } }
+    val audioFRs = remember(allAudioTracks.size) {
+        List(allAudioTracks.size.coerceAtLeast(1)) { FocusRequester() }
+    }
 
     Box(
         Modifier.width(455.dp).clip(RoundedCornerShape(24.dp))
@@ -1506,7 +1876,8 @@ fun SmartSettingsDialog(
             .dialogCard(onDismiss)
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Box(Modifier.width(4.dp).height(24.dp).background(ACCENT, RoundedCornerShape(2.dp)))
                 Text("Playback Settings", color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black)
             }
@@ -1522,26 +1893,48 @@ fun SmartSettingsDialog(
 
             if (allAudioTracks.isEmpty()) {
                 SettingsTile("Audio Track", "No audio tracks detected", Icons.Default.VolumeUp, false,
-                    Modifier.focusRequester(audioFRs[0]).focusProperties { up = subtitlesFR; down = editFR }) {}
+                    Modifier.focusRequester(audioFRs[0])
+                        .focusProperties { up = subtitlesFR; down = editFR }) {}
             } else {
-                Text("AUDIO TRACKS", color = MUTED.copy(0.55f), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(vertical = 3.dp, horizontal = 3.dp))
-                allAudioTracks.forEachIndexed { idx, (label, ga) ->
-                    val (grp, trackIdx) = ga
-                    val isSel  = grp.isTrackSelected(trackIdx)
-                    val prevFR = if (idx == 0) subtitlesFR else audioFRs[idx - 1]
-                    val nextFR = audioFRs.getOrElse(idx + 1) { editFR }
-                    Surface(onClick = {
-                        val params = exo.player.trackSelectionParameters.buildUpon()
-                        params.setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, trackIdx))
-                        exo.player.trackSelectionParameters = params.build()
-                    },
-                        shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                        colors   = ClickableSurfaceDefaults.colors(containerColor = if (isSel) ACCENT.copy(0.13f) else Color(0x0DFFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                        modifier = Modifier.fillMaxWidth().height(50.dp).focusRequester(audioFRs[idx]).focusProperties { up = prevFR; down = nextFR }
+                Text("AUDIO TRACKS", color = MUTED.copy(0.55f), fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp, modifier = Modifier.padding(vertical = 3.dp, horizontal = 3.dp))
+                allAudioTracks.forEachIndexed { idx, pair ->
+                    val (info, isSupported) = pair
+                    val (label, grp, trackIdx) = info
+                    val isSel   = grp.isTrackSelected(trackIdx)
+                    val prevFR  = if (idx == 0) subtitlesFR else audioFRs[idx - 1]
+                    val nextFR  = audioFRs.getOrElse(idx + 1) { editFR }
+                    Surface(
+                        onClick = {
+                            if (isSupported) {
+                                val params = exo.player.trackSelectionParameters.buildUpon()
+                                params.setOverrideForType(TrackSelectionOverride(grp.mediaTrackGroup, trackIdx))
+                                exo.player.trackSelectionParameters = params.build()
+
+                                if (exo.player.isCurrentMediaItemLive) {
+                                    exo.player.seekToDefaultPosition()
+                                } else {
+                                    exo.player.seekTo(exo.player.currentPosition)
+                                }
+                            }
+                        },
+                        shape   = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        colors  = ClickableSurfaceDefaults.colors(
+                            containerColor        = if (isSel) ACCENT.copy(0.13f) else Color(0x0DFFFFFF),
+                            focusedContainerColor = if (isSupported) ACCENT else RED.copy(0.8f),
+                            contentColor = if (isSupported) WHITE else MUTED.copy(0.4f),
+                            focusedContentColor = WHITE),
+                        modifier = Modifier.fillMaxWidth().height(50.dp)
+                            .focusRequester(audioFRs[idx])
+                            .focusProperties { up = prevFR; down = nextFR }
                     ) {
-                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Icon(Icons.Default.VolumeUp, null, Modifier.size(17.dp), tint = if (isSel) ACCENT2 else MUTED)
+                        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VolumeUp, null, Modifier.size(17.dp),
+                                    tint = if (isSel) ACCENT2 else if (!isSupported) MUTED.copy(0.4f) else MUTED)
                                 Text(label, fontSize = 13.sp, fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal)
                             }
                             if (isSel) Icon(Icons.Default.Check, null, tint = ACCENT2, modifier = Modifier.size(16.dp))
@@ -1552,7 +1945,6 @@ fun SmartSettingsDialog(
             }
 
             Spacer(Modifier.height(5.dp))
-
             SettingsTile("Edit Playlist URL",
                 state.playlists.firstOrNull { it.isActive }?.name ?: "No playlist",
                 Icons.Default.Edit, false,
@@ -1561,25 +1953,20 @@ fun SmartSettingsDialog(
             ) { onEvent(IptvEvent.ShowAddPlaylist) }
 
             Spacer(Modifier.height(12.dp))
-
             Surface(
                 onClick  = onDismiss,
                 shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
                 colors   = ClickableSurfaceDefaults.colors(
                     containerColor        = Color(0x22FFFFFF),
                     focusedContainerColor = WHITE,
-                    contentColor          = WHITE,
-                    focusedContentColor   = BG
-                ),
+                    contentColor = WHITE, focusedContentColor = BG),
                 modifier = Modifier.fillMaxWidth().height(50.dp)
                     .focusRequester(closeFR)
                     .focusProperties { up = editFR; down = subtitlesFR }
             ) {
-                Row(
-                    Modifier.fillMaxSize().padding(horizontal = 13.dp),
+                Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
+                    horizontalArrangement = Arrangement.Center) {
                     Icon(Icons.Default.Close, null, Modifier.size(16.dp))
                     Spacer(Modifier.width(8.dp))
                     Text("Close", fontSize = 14.sp, fontWeight = FontWeight.Bold)
@@ -1590,11 +1977,23 @@ fun SmartSettingsDialog(
 }
 
 @Composable
-private fun SettingsTile(title: String, subtitle: String, icon: androidx.compose.ui.graphics.vector.ImageVector, isActive: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+private fun SettingsTile(
+    title    : String,
+    subtitle : String,
+    icon     : androidx.compose.ui.graphics.vector.ImageVector,
+    isActive : Boolean,
+    modifier : Modifier = Modifier,
+    onClick  : () -> Unit
+) {
     Surface(onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        colors   = ClickableSurfaceDefaults.colors(containerColor = if (isActive) ACCENT.copy(0.12f) else Color(0x0DFFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor        = if (isActive) ACCENT.copy(0.12f) else Color(0x0DFFFFFF),
+            focusedContainerColor = ACCENT,
+            contentColor = WHITE, focusedContentColor = WHITE),
         modifier = modifier.fillMaxWidth().height(54.dp)) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(Modifier.fillMaxSize().padding(horizontal = 13.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween) {
             Row(horizontalArrangement = Arrangement.spacedBy(11.dp), verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, null, Modifier.size(18.dp), tint = if (isActive) ACCENT2 else MUTED)
                 Column {
@@ -1602,29 +2001,34 @@ private fun SettingsTile(title: String, subtitle: String, icon: androidx.compose
                     Text(subtitle, fontSize = 12.sp, color = if (isActive) ACCENT2.copy(0.7f) else MUTED)
                 }
             }
-            if (isActive) Box(Modifier.clip(RoundedCornerShape(4.dp)).background(ACCENT.copy(0.28f)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+            if (isActive) Box(Modifier.clip(RoundedCornerShape(4.dp)).background(ACCENT.copy(0.28f))
+                .padding(horizontal = 6.dp, vertical = 3.dp)) {
                 Text("ON", color = ACCENT2, fontSize = 11.sp, fontWeight = FontWeight.Black)
             } else Icon(Icons.Default.ChevronRight, null, Modifier.size(16.dp), tint = MUTED)
         }
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // CHANNEL QR DIALOG
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun ChannelQrDialog(channel: IptvChannel, fr: FocusRequester, onDismiss: () -> Unit) {
     val qrBitmap = remember(channel.streamUrl) { QrCodeGenerator.generate(channel.streamUrl, 320) }
-    Box(Modifier.width(355.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xFF0F0F18)).padding(26.dp).dialogCard(onDismiss)) {
+    Box(Modifier.width(355.dp).clip(RoundedCornerShape(24.dp)).background(Color(0xFF0F0F18))
+        .padding(26.dp).dialogCard(onDismiss)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(13.dp)) {
             Text(channel.name, color = WHITE, fontSize = 16.sp, fontWeight = FontWeight.Black)
             Text("Stream QR Code", color = MUTED, fontSize = 13.sp)
             Box(Modifier.size(185.dp).clip(RoundedCornerShape(12.dp)).background(WHITE).padding(8.dp)) {
                 Image(bitmap = qrBitmap.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
             }
-            Text(channel.streamUrl.take(60) + if (channel.streamUrl.length > 60) "…" else "", color = MUTED, fontSize = 10.sp, textAlign = TextAlign.Center)
-            Surface(onClick = onDismiss, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x33FFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+            Text(channel.streamUrl.take(60) + if (channel.streamUrl.length > 60) "…" else "",
+                color = MUTED, fontSize = 10.sp, textAlign = TextAlign.Center)
+            Surface(onClick = onDismiss,
+                shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0x33FFFFFF),
+                    focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
                 modifier = Modifier.fillMaxWidth().height(42.dp).focusRequester(fr)) {
                 Box(Modifier.fillMaxSize(), Alignment.Center) { Text("Close", fontWeight = FontWeight.Bold) }
             }
@@ -1632,62 +2036,73 @@ private fun ChannelQrDialog(channel: IptvChannel, fr: FocusRequester, onDismiss:
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // EMPTY STATE
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun IptvEmptyState(onAddClick: () -> Unit, onSettingsClick: () -> Unit, emptyStateFR: FocusRequester) {
     val settingsFR = remember { FocusRequester() }
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center) {
         Box(Modifier.size(74.dp).clip(CircleShape).background(ACCENT.copy(0.1f)), Alignment.Center) {
             Icon(Icons.Default.LiveTv, null, Modifier.size(32.dp), tint = ACCENT2)
         }
         Spacer(Modifier.height(17.dp))
         Text("No Channels Loaded", color = WHITE, fontSize = 23.sp, fontWeight = FontWeight.Black)
         Spacer(Modifier.height(8.dp))
-        Text("Add an M3U playlist to start watching.\nScan the QR code for easy phone setup.", color = MUTED, fontSize = 14.sp, textAlign = TextAlign.Center)
+        Text("Add an M3U playlist to start watching.\nScan the QR code for easy phone setup.",
+            color = MUTED, fontSize = 14.sp, textAlign = TextAlign.Center)
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Surface(onClick = onAddClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(13.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = ACCENT, focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                glow   = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-                modifier = Modifier.height(50.dp).focusRequester(emptyStateFR).focusProperties {
-                    if (isRtl) left = settingsFR else right = settingsFR
-                }
+                colors = ClickableSurfaceDefaults.colors(containerColor = ACCENT,
+                    focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+                modifier = Modifier.height(50.dp).focusRequester(emptyStateFR)
+                    .focusProperties { if (isRtl) left = settingsFR else right = settingsFR }
             ) {
-                Row(Modifier.padding(horizontal = 22.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Icon(Icons.Default.Add, null, Modifier.size(17.dp)); Text("Add Playlist", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.padding(horizontal = 22.dp).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Icon(Icons.Default.Add, null, Modifier.size(17.dp))
+                    Text("Add Playlist", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
             Surface(onClick = onSettingsClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(13.dp)),
-                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF), focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
-                modifier = Modifier.height(50.dp).focusRequester(settingsFR).focusProperties {
-                    if (isRtl) right = emptyStateFR else left = emptyStateFR
-                }
+                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x22FFFFFF),
+                    focusedContainerColor = ACCENT, contentColor = WHITE, focusedContentColor = WHITE),
+                modifier = Modifier.height(50.dp).focusRequester(settingsFR)
+                    .focusProperties { if (isRtl) right = emptyStateFR else left = emptyStateFR }
             ) {
-                Row(Modifier.padding(horizontal = 22.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    Icon(Icons.Default.Settings, null, Modifier.size(17.dp)); Text("Settings", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.padding(horizontal = 22.dp).fillMaxHeight(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    Icon(Icons.Default.Settings, null, Modifier.size(17.dp))
+                    Text("Settings", fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // DIALOG INPUT
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 fun DialogInput(
-    value: String, hint: String,
+    value         : String,
+    hint          : String,
     focusRequester: FocusRequester? = null,
-    upFR: FocusRequester? = null, downFR: FocusRequester? = null,
-    onValueChange: (String) -> Unit
+    upFR          : FocusRequester? = null,
+    downFR        : FocusRequester? = null,
+    onValueChange : (String) -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
     BasicTextField(value = value, onValueChange = onValueChange, singleLine = true,
-        textStyle = TextStyle(color = WHITE, fontSize = 14.sp), cursorBrush = SolidColor(ACCENT2),
+        textStyle = TextStyle(color = WHITE, fontSize = 14.sp),
+        cursorBrush = SolidColor(ACCENT2),
         decorationBox = { inner ->
             Row(Modifier.fillMaxWidth().height(48.dp)
                 .clip(RoundedCornerShape(12.dp))
@@ -1719,24 +2134,21 @@ fun DialogInput(
     )
 }
 
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 // STREAM TRACKS BADGES
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable
 private fun StreamTracksBadges(currTracks: androidx.media3.common.Tracks) {
     val audioLangs = remember(currTracks) {
         currTracks.groups.filter { it.type == C.TRACK_TYPE_AUDIO }
             .flatMap { grp -> (0 until grp.length).mapNotNull { grp.mediaTrackGroup.getFormat(it).language?.uppercase() } }
-            .filter { it.length <= 4 }
-            .toSet().toList()
+            .filter { it.length <= 4 }.toSet().toList()
     }
     val subLangs = remember(currTracks) {
         currTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
             .flatMap { grp -> (0 until grp.length).mapNotNull { grp.mediaTrackGroup.getFormat(it).language?.uppercase() } }
-            .filter { it.length <= 4 }
-            .toSet().toList()
+            .filter { it.length <= 4 }.toSet().toList()
     }
-
     if (audioLangs.isNotEmpty()) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(3.dp)) {
             Icon(Icons.Default.VolumeUp, null, tint = ACCENT2, modifier = Modifier.size(13.dp))
@@ -1751,66 +2163,69 @@ private fun StreamTracksBadges(currTracks: androidx.media3.common.Tracks) {
     }
 }
 
-// ═══════════════════════════════════════════════
-// SHARED SMALL COMPOSABLES
-// ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════
+// SMALL SHARED COMPOSABLES
+// ═══════════════════════════════════════════════════════════════════════════════
 @Composable private fun HintPill(key: String, label: String) {
-    Row(
-        Modifier.clip(RoundedCornerShape(8.dp)).background(Color.White.copy(0.08f)).padding(horizontal = 10.dp, vertical = 5.dp),
+    Row(Modifier.clip(RoundedCornerShape(8.dp)).background(WHITE.copy(0.08f))
+        .padding(horizontal = 10.dp, vertical = 5.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Box(Modifier.clip(RoundedCornerShape(4.dp)).background(Color.White.copy(0.15f)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+        horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Box(Modifier.clip(RoundedCornerShape(4.dp)).background(WHITE.copy(0.15f))
+            .padding(horizontal = 6.dp, vertical = 2.dp)) {
             Text(key, color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Bold)
         }
         Text(label, color = WHITE.copy(0.5f), fontSize = 10.sp)
     }
 }
+
 @Composable private fun LiveBadge() {
     Box(Modifier.clip(RoundedCornerShape(4.dp)).background(RED).padding(horizontal = 7.dp, vertical = 3.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            Box(Modifier.size(5.dp).background(WHITE, CircleShape)); Text("LIVE", color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black)
+            Box(Modifier.size(5.dp).background(WHITE, CircleShape))
+            Text("LIVE", color = WHITE, fontSize = 10.sp, fontWeight = FontWeight.Black)
         }
     }
 }
+
 @Composable private fun ResBadge(res: String) {
-    val color = when { res.contains("4K", true) || res.contains("UHD", true) -> Color(0xFFFF6B35); res.contains("FHD", true) || res.contains("1080", true) -> ACCENT; else -> MUTED }
-    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(0.18f)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text(res, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold) }
+    val color = when {
+        res.contains("4K", true) || res.contains("UHD", true) -> Color(0xFFFF6B35)
+        res.contains("FHD", true) || res.contains("1080", true) -> ACCENT
+        else -> MUTED
+    }
+    Box(Modifier.clip(RoundedCornerShape(4.dp)).background(color.copy(0.18f))
+        .padding(horizontal = 6.dp, vertical = 2.dp)) {
+        Text(res, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+    }
 }
+
 @Composable private fun ProgBar(fraction: Float, width: Dp) {
     Box(Modifier.width(width).height(3.dp).clip(CircleShape).background(WHITE.copy(0.14f))) {
-        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight().background(Brush.horizontalGradient(listOf(ACCENT, ACCENT2))))
+        Box(Modifier.fillMaxWidth(fraction.coerceIn(0f, 1f)).fillMaxHeight()
+            .background(ProgBarBrush))
     }
 }
+
 @Composable private fun DialogLabel(text: String) {
-    Text(text, color = MUTED, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
+    Text(text, color = MUTED, fontSize = 12.sp, fontWeight = FontWeight.Bold,
+        modifier = Modifier.padding(bottom = 6.dp))
 }
-
-// ═══════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════
-private fun resolveChannelLogo(channel: IptvChannel, logos: Map<String, String>): String {
-    if (channel.logoUrl.isNotBlank()) return channel.logoUrl
-    return logos[channel.tvgId.lowercase()] ?: logos[channel.tvgName.lowercase()]
-    ?: logos[channel.id.lowercase()] ?: logos[channel.name.lowercase()]
-    ?: logos.entries.firstOrNull { (k, _) -> channel.name.length >= 4 && k.contains(channel.name.lowercase().take(6)) }?.value ?: ""
-}
-
-private fun resolveEpg(channel: IptvChannel, epgData: Map<String, List<EpgProgram>>): List<EpgProgram>? =
-    epgData[channel.tvgId.lowercase()] ?: epgData[channel.tvgName.lowercase()]
-    ?: epgData[channel.id.lowercase()] ?: epgData[channel.name.lowercase()]
 
 @Composable
-private fun ChannelLogoImage(channel: IptvChannel, logoUrl: String, size: Dp, isFocused: Boolean = false) {
+private fun ChannelLogoImage(
+    channel  : IptvChannel,
+    logoUrl  : String,
+    size     : Dp,
+    isFocused: Boolean = false
+) {
     val ctx      = LocalContext.current
     val initials = channel.name.take(2).uppercase()
-    val initialsText: @Composable () -> Unit = {
-        Text(initials, color = if (isFocused) BG else WHITE, fontSize = (size.value * 0.3f).sp, fontWeight = FontWeight.Black)
-    }
     if (logoUrl.isNotBlank()) {
         var hasError by remember(logoUrl) { mutableStateOf(false) }
         if (hasError) {
-            initialsText()
+            Text(initials, color = if (isFocused) BG else WHITE,
+                fontSize = (size.value * 0.3f).sp, fontWeight = FontWeight.Black)
         } else {
             AsyncImage(
                 model = remember(logoUrl) {
@@ -1830,6 +2245,7 @@ private fun ChannelLogoImage(channel: IptvChannel, logoUrl: String, size: Dp, is
             )
         }
     } else {
-        initialsText()
+        Text(initials, color = if (isFocused) BG else WHITE,
+            fontSize = (size.value * 0.3f).sp, fontWeight = FontWeight.Black)
     }
 }

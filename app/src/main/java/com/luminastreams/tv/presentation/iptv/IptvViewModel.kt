@@ -12,8 +12,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,10 +37,79 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(IptvState())
     val state: StateFlow<IptvState> = _state.asStateFlow()
 
+    // ── Derived focused flows ─────────────────────────────────────────────────
+    // Each re-emits ONLY when its own subset of fields changes.
+    // Compose consumers that collect these will NOT recompose on unrelated changes.
+    // (e.g. opening a dialog won't recompose ChannelsDashboard)
+    val channelState: StateFlow<ChannelState> = _state
+        .map { s -> ChannelState(
+            playlists          = s.playlists,
+            activePlaylistId   = s.activePlaylistId,
+            channels           = s.channels,
+            groups             = s.groups,
+            selectedGroup      = s.selectedGroup,
+            filteredChannels   = s.filteredChannels,
+            searchQuery        = s.searchQuery,
+            epgData            = s.epgData,
+            epgLoadState       = s.epgLoadState,
+            channelLogos       = s.channelLogos,
+            favoriteChannelIds = s.favoriteChannelIds,
+            recentChannelIds   = s.recentChannelIds,
+            channelSortMode    = s.channelSortMode,
+            loadState          = s.loadState,
+            viewMode           = s.viewMode,
+        )}
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, ChannelState())
+
+    val playerState: StateFlow<PlayerState> = _state
+        .map { s -> PlayerState(
+            currentChannel      = s.currentChannel,
+            currentProgram      = s.currentProgram,
+            nextProgram         = s.nextProgram,
+            isRecording         = s.isRecording,
+            recordingChannelId  = s.recordingChannelId,
+            subtitlesEnabled    = s.subtitlesEnabled,
+            audioTrackIndex     = s.audioTrackIndex,
+            streamQuality       = s.streamQuality,
+            sleepTimer          = s.sleepTimer,
+            sleepTimerRemainingMs = s.sleepTimerRemainingMs,
+            multiViewChannels   = s.multiViewChannels,
+            showMultiView       = s.showMultiView,
+            showMiniPlayer      = s.showMiniPlayer,
+        )}
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, PlayerState())
+
+    val uiState: StateFlow<UiState> = _state
+        .map { s -> UiState(
+            showAddPlaylist      = s.showAddPlaylist,
+            showEpgGuide         = s.showEpgGuide,
+            showQrCode           = s.showQrCode,
+            qrCodeChannel        = s.qrCodeChannel,
+            showSleepTimerPicker = s.showSleepTimerPicker,
+            showSettings         = s.showSettings,
+            showParentalPinEntry = s.showParentalPinEntry,
+            pendingLockedChannel = s.pendingLockedChannel,
+            parentalLockEnabled  = s.parentalLockEnabled,
+            parentalPin          = s.parentalPin,
+            addPlaylistName      = s.addPlaylistName,
+            addPlaylistUrl       = s.addPlaylistUrl,
+            addPlaylistEpgUrl    = s.addPlaylistEpgUrl,
+            localIpAddress       = s.localIpAddress,
+            epgDayOffset         = s.epgDayOffset,
+        )}
+        .distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, UiState())
+
     private var epgRefreshJob: Job? = null
     private var webServerJob: Job? = null
     private var sleepTimerJob: Job? = null
     private var autoRefreshJob: Job? = null
+    private var searchJob: Job? = null
+
+    // Perf: pre-built channelId→EPG index, O(1) lookups after initial build
+    private val epgIndex = HashMap<String, List<EpgProgram>>(512)
 
     private val _sleepTimerMs = MutableStateFlow(0L)
     val sleepTimerMs: StateFlow<Long> = _sleepTimerMs.asStateFlow()
@@ -251,30 +324,39 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Perf: shared helper — avoids duplicating the when() block across updateSearch / selectGroup / resortChannels
+    private fun baseChannelsForGroup(s: IptvState, group: String): List<IptvChannel> = when (group) {
+        "All"       -> s.channels
+        "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
+        "Recent"    -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
+        else        -> s.channels.filter { it.groupTitle == group }
+    }
+
     private fun updateSearch(query: String) {
-        _state.update { it.copy(searchQuery = query) }
-        val s = _state.value
-        val base = when (s.selectedGroup) {
-            "All" -> s.channels
-            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
-            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
+        // Perf: cancel previous job, debounce 120ms, filter on Default, single _state.update
+        searchJob?.cancel()
+        searchJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(120)
+            val filtered = withContext(Dispatchers.Default) {
+                val s = _state.value
+                val base = baseChannelsForGroup(s, s.selectedGroup)
+                if (query.isBlank()) base else base.filter { it.name.contains(query, ignoreCase = true) }
+            }
+            _state.update { it.copy(searchQuery = query, filteredChannels = sortChannels(filtered, it.channelSortMode)) }
         }
-        val filtered = if (query.isBlank()) base else base.filter { it.name.contains(query, true) }
-        _state.update { it.copy(filteredChannels = sortChannels(filtered, s.channelSortMode)) }
     }
 
     fun selectGroup(group: String) {
-        val s = _state.value
-        val base: List<IptvChannel> = when (group) {
-            "All" -> s.channels
-            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
-            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == group }
+        // Perf: filter on Default thread, single _state.update
+        viewModelScope.launch {
+            val filtered = withContext(Dispatchers.Default) {
+                val s = _state.value
+                val base = baseChannelsForGroup(s, group)
+                val q = s.searchQuery
+                if (q.isBlank()) base else base.filter { it.name.contains(q, ignoreCase = true) }
+            }
+            _state.update { it.copy(selectedGroup = group, filteredChannels = sortChannels(filtered, it.channelSortMode)) }
         }
-        val q = s.searchQuery
-        val filtered = if (q.isBlank()) base else base.filter { it.name.contains(q, true) }
-        _state.update { it.copy(selectedGroup = group, filteredChannels = sortChannels(filtered, s.channelSortMode)) }
     }
 
     private fun selectChannel(channel: IptvChannel) {
@@ -497,7 +579,10 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        selectGroup(_state.value.selectedGroup)
+        // Perf: build O(1) EPG index once — all future getEpgForChannel calls are O(1) HashMap lookups
+        buildEpgIndex(updatedChannels, mergedEpgData)
+
+        // Perf: filteredChannels already updated above — no extra selectGroup() needed
 
         _state.value.currentChannel?.let { ch ->
             val updatedCh = updatedById[ch.id] ?: ch
@@ -630,7 +715,34 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── EPG Index ────────────────────────────────────────────────────────────────
+    // Builds a HashMap<channelId, programs> once after every EPG load.
+    // Replaces the previous O(n) fuzzy scan that ran on every UI recompose.
+    private fun buildEpgIndex(channels: List<IptvChannel>, dataMap: Map<String, List<EpgProgram>>) {
+        epgIndex.clear()
+        channels.forEach { ch ->
+            val keys = buildChannelKeys(ch)
+            val progs = keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } }
+                ?: dataMap.entries.firstOrNull { (epgKey, progs) ->
+                    progs.isNotEmpty() && keys.any { k ->
+                        k.length >= 3 && (epgKey.contains(k) || k.contains(epgKey))
+                    }
+                }?.value
+            if (progs != null) epgIndex[ch.id] = progs
+        }
+        Log.d(TAG, "epgIndex built: ${epgIndex.size}/${channels.size} channels indexed")
+    }
+
+    private fun buildChannelKeys(ch: IptvChannel) = listOfNotNull(
+        ch.tvgId.lowercase().ifBlank { null },
+        ch.tvgName.lowercase().ifBlank { null },
+        ch.id.lowercase(),
+        ch.name.lowercase()
+    )
+
+    // O(1) EPG lookup via pre-built index. Falls back to live map scan only before index is ready.
     fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
+        epgIndex[channel.id]?.let { return it }  // ← fast path
         val keys = listOfNotNull(
             channel.id,
             channel.tvgId.lowercase().ifBlank { null },
@@ -706,8 +818,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun sortChannels(channels: List<IptvChannel>, mode: ChannelSortMode): List<IptvChannel> {
         return when (mode) {
-            ChannelSortMode.NAME_ASC -> channels.sortedBy { it.name.lowercase() }
-            ChannelSortMode.NAME_DESC -> channels.sortedByDescending { it.name.lowercase() }
+            // Perf: compareTo(ignoreCase=true) avoids creating N*log(N) temporary lowercase Strings
+            ChannelSortMode.NAME_ASC  -> channels.sortedWith(Comparator { a, b -> a.name.compareTo(b.name, ignoreCase = true) })
+            ChannelSortMode.NAME_DESC -> channels.sortedWith(Comparator { a, b -> b.name.compareTo(a.name, ignoreCase = true) })
             ChannelSortMode.NUMBER -> channels.sortedBy { it.number }
             ChannelSortMode.RECENTLY_WATCHED -> {
                 val recentIds = _state.value.recentChannelIds
@@ -719,19 +832,19 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resortChannels(mode: ChannelSortMode) {
-        val s = _state.value
-        val base = when (s.selectedGroup) {
-            "All" -> s.channels
-            "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
-            "Recent" -> s.recentChannelIds.mapNotNull { id -> s.channels.find { it.id == id } }
-            else -> s.channels.filter { it.groupTitle == s.selectedGroup }
-        }.let { list ->
-            val q = s.searchQuery
-            if (q.isBlank()) list else list.filter { it.name.contains(q, true) }
+        // Perf: filter + sort on Default thread, single _state.update
+        viewModelScope.launch {
+            val sorted = withContext(Dispatchers.Default) {
+                val s = _state.value
+                val base = baseChannelsForGroup(s, s.selectedGroup).let { list ->
+                    val q = s.searchQuery
+                    if (q.isBlank()) list else list.filter { it.name.contains(q, ignoreCase = true) }
+                }
+                sortChannels(base, mode)
+            }
+            _state.update { it.copy(filteredChannels = sorted) }
         }
-        _state.update { it.copy(filteredChannels = sortChannels(base, mode)) }
     }
-
     private fun selectPlaylist(playlistId: String) {
         val playlist = _state.value.playlists.find { it.id == playlistId } ?: return
         loadPlaylist(playlist.url, playlist.name, playlist.epgUrl, playlist.id)
@@ -835,6 +948,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         sleepTimerJob?.cancel()
+        searchJob?.cancel()
         autoRefreshJob?.cancel()
         epgRefreshJob?.cancel()
         webServerJob?.cancel()

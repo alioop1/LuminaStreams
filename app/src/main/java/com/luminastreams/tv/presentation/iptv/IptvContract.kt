@@ -104,6 +104,72 @@ sealed interface IptvLoadState {
     object Success : IptvLoadState
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SPLIT STATE — 3 focused StateFlows replace the old 40-field IptvState monolith
+//
+//  ChannelState  — channels, EPG, groups, search  (changes on load)
+//  PlayerState   — current channel / program       (changes on channel switch)
+//  UiState       — dialogs, inputs, settings       (changes on interaction)
+//
+// Effect: opening a dialog now recomposes ONLY the dialog, not the channel grid.
+// ─────────────────────────────────────────────────────────────────────────────
+
+data class ChannelState(
+    val playlists           : List<IptvPlaylist>              = emptyList(),
+    val activePlaylistId    : String?                         = null,
+    val channels            : List<IptvChannel>               = emptyList(),
+    val groups              : List<String>                    = emptyList(),
+    val selectedGroup       : String                          = "All",
+    val filteredChannels    : List<IptvChannel>               = emptyList(),
+    val searchQuery         : String                          = "",
+    val epgData             : Map<String, List<EpgProgram>>   = emptyMap(),
+    val epgLoadState        : IptvLoadState                   = IptvLoadState.Idle,
+    val channelLogos        : Map<String, String>             = emptyMap(),
+    val favoriteChannelIds  : Set<String>                     = emptySet(),
+    val recentChannelIds    : List<String>                    = emptyList(),
+    val channelSortMode     : ChannelSortMode                 = ChannelSortMode.DEFAULT,
+    val loadState           : IptvLoadState                   = IptvLoadState.Idle,
+    val viewMode            : IptvViewMode                    = IptvViewMode.CHANNEL_LIST,
+)
+
+data class PlayerState(
+    val currentChannel      : IptvChannel?   = null,
+    val currentProgram      : EpgProgram?    = null,
+    val nextProgram         : EpgProgram?    = null,
+    val isRecording         : Boolean        = false,
+    val recordingChannelId  : String?        = null,
+    val subtitlesEnabled    : Boolean        = false,
+    val audioTrackIndex     : Int            = 0,
+    val streamQuality       : StreamQuality  = StreamQuality.AUTO,
+    val sleepTimer          : SleepTimer     = SleepTimer.OFF,
+    val sleepTimerRemainingMs: Long          = 0L,
+    val multiViewChannels   : List<IptvChannel> = emptyList(),
+    val showMultiView       : Boolean        = false,
+    val showMiniPlayer      : Boolean        = false,
+    val showChannelInfo     : Boolean        = false,
+    val showChannelGrid     : Boolean        = false,
+)
+
+data class UiState(
+    val showAddPlaylist     : Boolean        = false,
+    val showEpgGuide        : Boolean        = false,
+    val showQrCode          : Boolean        = false,
+    val qrCodeChannel       : IptvChannel?   = null,
+    val showSleepTimerPicker: Boolean        = false,
+    val showSettings        : Boolean        = false,
+    val showParentalPinEntry: Boolean        = false,
+    val pendingLockedChannel: IptvChannel?   = null,
+    val parentalLockEnabled : Boolean        = false,
+    val parentalPin         : String         = "",
+    val addPlaylistName     : String         = "",
+    val addPlaylistUrl      : String         = "",
+    val addPlaylistEpgUrl   : String         = "",
+    val localIpAddress      : String         = "",
+    val epgDayOffset        : Int            = 0,
+)
+
+// Legacy combined state — used in IptvScreen as a backward-compat alias
+// Consumers should migrate to ChannelState / PlayerState / UiState
 @Immutable
 data class IptvState(
     val playlists: List<IptvPlaylist> = emptyList(),

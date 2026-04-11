@@ -46,7 +46,6 @@ class ExoPlayerWrapper(context: Context) {
     private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
-    // preAllocateBuffer capped at a safe byte limit regardless of user setting
     private val preAllocateBuffer = prefs.getBoolean("pre_buffer",          false)
     private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
     private val skipEmbeddedSubs  = prefs.getBoolean("subtitle_cache_only", false)
@@ -103,11 +102,9 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            // תוקן: ביטול Tunneling חובה ל-IPTV כדי שהחלפת אודיו לא תרסק את הנגן
             .setTunnelingEnabled(false)
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
-            // תוקן: מאפשר לנגן להתגמש ולהחליף שפות בצורה חלקה
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
             .setAllowAudioMixedSampleRateAdaptiveness(true)
             .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
@@ -121,9 +118,7 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── LoadControl ────────────────────────────────────────────────────────────
-    // Safe buffer cap: 12 MB max regardless of preAllocateBuffer setting.
-    // Previous values (64 MB) caused OOM when heap was near the 512 MB limit.
-    private val safeTargetBytes = 12 * 1024 * 1024 // 12 MB hard cap
+    private val safeTargetBytes = 12 * 1024 * 1024
 
     private val loadControl: DefaultLoadControl = run {
         val buf = DeviceProfile.bufferConfig
@@ -292,6 +287,47 @@ class ExoPlayerWrapper(context: Context) {
         } catch (e: Exception) {
             _playerError.value = "Failed to prepare: ${e.message}"
         }
+    }
+
+    fun switchAudioTrack(group: Tracks.Group, trackIndex: Int) {
+        val isLive = player.isCurrentMediaItemLive
+        val savedPos = if (!isLive) player.currentPosition else 0L
+
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(
+                    group.mediaTrackGroup, trackIndex
+                )
+            )
+            .build()
+
+        if (isLive) {
+            player.seekToDefaultPosition()
+        }
+    }
+
+    fun disableSubtitles() {
+        stopSubTicker()
+        _currentCues.value = emptyList()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build()
+    }
+
+    fun switchSubtitleTrack(group: Tracks.Group, trackIndex: Int) {
+        stopSubTicker()
+        _currentCues.value = emptyList()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(
+                    group.mediaTrackGroup, trackIndex
+                )
+            )
+            .build()
     }
 
     fun applySubtitle(
