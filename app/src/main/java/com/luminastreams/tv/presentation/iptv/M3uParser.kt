@@ -1,4 +1,3 @@
-// 4. M3uParser.kt
 package com.luminastreams.tv.presentation.iptv
 
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +70,7 @@ object M3uParser {
 
     private fun parseM3u(content: String): List<IptvChannel> {
         if (!content.trimStart().startsWith("#EXTM3U", ignoreCase = true)) {
+            // Try to parse as plain URL list
             return parsePlainUrls(content)
         }
 
@@ -78,6 +78,7 @@ object M3uParser {
         val lines = content.lines()
         var channelNumber = 1
 
+        // Full attr regex - handles quoted and unquoted values
         val attrRegex = Regex("""([a-zA-Z0-9_\-]+)=(?:"([^"]*)"|'([^']*)'|([^\s,]+))""")
 
         var i = 0
@@ -88,14 +89,17 @@ object M3uParser {
                 line.startsWith("#EXTINF:", ignoreCase = true) -> {
                     val attrs = mutableMapOf<String, String>()
 
+                    // Parse all attributes
                     attrRegex.findAll(line).forEach { match ->
                         val key = match.groupValues[1].lowercase()
+                        // Value is in group 2 (double-quoted), 3 (single-quoted), or 4 (unquoted)
                         val value = match.groupValues[2].ifEmpty {
                             match.groupValues[3].ifEmpty { match.groupValues[4] }
                         }
                         attrs[key] = value.trim()
                     }
 
+                    // Channel name: everything after the last comma
                     val commaIdx = line.lastIndexOf(',')
                     val name = if (commaIdx >= 0 && commaIdx < line.length - 1)
                         line.substring(commaIdx + 1).trim()
@@ -103,7 +107,9 @@ object M3uParser {
 
                     if (name.isBlank()) { i++; continue }
 
+                    // Determine group
                     var group = attrs["group-title"] ?: ""
+                    // Look ahead for #EXTGRP
                     if (group.isEmpty()) {
                         for (j in i + 1 until minOf(i + 4, lines.size)) {
                             val peek = lines[j].trim()
@@ -115,6 +121,7 @@ object M3uParser {
                         }
                     }
 
+                    // Find stream URL (next non-comment, non-empty line)
                     var streamUrl = ""
                     var j = i + 1
                     while (j < lines.size) {
@@ -122,7 +129,7 @@ object M3uParser {
                         when {
                             nextLine.isEmpty() -> j++
                             nextLine.startsWith("#EXTGRP:", ignoreCase = true) -> j++
-                            nextLine.startsWith("#") -> j++
+                            nextLine.startsWith("#") -> j++ // skip other directives
                             else -> { streamUrl = nextLine; break }
                         }
                     }
@@ -133,7 +140,10 @@ object M3uParser {
                         val logo = attrs["tvg-logo"] ?: attrs["logo"] ?: ""
                         val catchupSrc = attrs["catchup-source"] ?: attrs["catchup"] ?: ""
                         val catchupDays = attrs["catchup-days"]?.toIntOrNull() ?: 0
+                        @Suppress("unused", "UNUSED_VARIABLE")
+                        val userAgent = attrs["user-agent"] ?: ""
 
+                        // Resolution detection from name or attrs
                         val resolution = when {
                             name.contains("4K", true) || name.contains("UHD", true) -> "4K"
                             name.contains("FHD", true) || name.contains("1080", true) -> "FHD"
@@ -141,11 +151,13 @@ object M3uParser {
                             else -> ""
                         }
 
+                        // Adult content detection
                         val isAdult = group.contains("adult", true) ||
                                 group.contains("18+", true) ||
                                 group.contains("xxx", true) ||
                                 group.contains("erotic", true)
 
+                        // Country from tvg-id or name
                         val country = tvgId.substringAfterLast(".").uppercase().let {
                             if (it.length == 2) it else ""
                         }

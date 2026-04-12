@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace  = "com.luminastreams.tv"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId   = "com.luminastreams.tv"
@@ -58,12 +58,6 @@ android {
         jvmToolchain(21)
     }
 
-    // ✅ FIX 3: opt-in גלובלי ל-UnstableApi — מסיר את כל שגיאות הקומפייל
-    kotlinOptions {
-        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
-    }
-
-    // ✅ stabilityConfigurationFiles (plural) — correct API for Compose compiler plugin
     composeCompiler {
         stabilityConfigurationFiles.add(
             rootProject.layout.projectDirectory.file("stability_config.conf")
@@ -84,38 +78,33 @@ android {
 
     splits {
         abi {
-            isEnable       = false  // APK אחד שעובד על כל הארכיטקטורות
+            isEnable       = false
         }
     }
 
     lint {
-        abortOnError       = false
+        abortOnError   = false
         checkReleaseBuilds = false
     }
 }
 
 dependencies {
-    // ── AndroidX core ──────────────────────────────────────────────────────
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)   // required by TrackSelectionDialogBuilder
+    implementation(libs.androidx.appcompat)
     implementation(libs.material)
 
-    // ── Compose TV ────────────────────────────────────────────────────────
     implementation(libs.androidx.tv.foundation)
     implementation(libs.androidx.tv.material)
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.compose)
 
-    // ── Compose Standard ──────────────────────────────────────────────────
     implementation(libs.androidx.navigation.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
     implementation(libs.androidx.compose.ui.tooling.preview)
-
     implementation(libs.androidx.compose.material.icons.extended)
 
-    // ── Media3 / ExoPlayer — full TV 4K suite ─────────────────────────────
     implementation(libs.androidx.media3.exoplayer)
     implementation(libs.androidx.media3.ui)
     implementation(libs.androidx.media3.exoplayer.hls)
@@ -124,14 +113,10 @@ dependencies {
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.decoder)
 
-    // ── Coil 2 image loading ──────────────────────────────────────────────
     implementation(libs.coil.compose)
-
-    // ── Palette / Security ─────────────────────────────────────────────────
     implementation(libs.androidx.palette.ktx)
     implementation(libs.androidx.security.crypto)
 
-    // ── Networking ────────────────────────────────────────────────────────
     implementation(libs.retrofit)
     implementation(libs.retrofit.converter.gson)
     implementation(libs.okhttp)
@@ -139,14 +124,14 @@ dependencies {
     implementation(libs.jsoup)
     implementation(libs.gson)
 
-    // ── Coroutines ────────────────────────────────────────────────────────
     implementation(libs.kotlinx.coroutines.android)
-    implementation("androidx.datastore:datastore-preferences:1.0.0")
-    // ── Tests ─────────────────────────────────────────────────────────────
+    @Suppress("UseTomlInstead")
+    implementation("androidx.datastore:datastore-preferences:1.2.1")
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
-    implementation("com.google.zxing:core:3.5.3")
+    @Suppress("UseTomlInstead")
+    implementation("com.google.zxing:core:3.5.4")
 }

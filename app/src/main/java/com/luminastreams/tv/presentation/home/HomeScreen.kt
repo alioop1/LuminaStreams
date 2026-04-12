@@ -138,6 +138,34 @@ fun tr(en: String, he: String): String {
     return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
 }
 
+
+private fun mergeStudioContent(vararg groups: List<Movie>): List<Movie> =
+    groups.asSequence()
+        .flatMap { it.asSequence() }
+        .filter { it.id.isNotBlank() }
+        .distinctBy { it.id }
+        .toList()
+
+@Composable
+private fun RememberPagedRowLoad(
+    rowState: androidx.compose.foundation.lazy.LazyListState,
+    onLoadMore: () -> Unit
+) {
+    val currentOnLoadMore by rememberUpdatedState(onLoadMore)
+    LaunchedEffect(rowState) {
+        snapshotFlow {
+            val li = rowState.layoutInfo
+            val total = li.totalItemsCount
+            val lastVisible = li.visibleItemsInfo.lastOrNull()?.index ?: -1
+            total > 0 && lastVisible >= total - 4
+        }
+            .distinctUntilChanged()
+            .collectLatest { shouldLoad ->
+                if (shouldLoad) currentOnLoadMore()
+            }
+    }
+}
+
 @Stable
 class HomeFocusState(initialRow: Int = 0) {
     var isNavFocused    by mutableStateOf(false)
@@ -166,6 +194,28 @@ fun HomeScreen(
     var contentAlpha  by remember { mutableStateOf(1f) }
 
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+    val heroUpdateDelayMs = when (DeviceProfile.tier) {
+        DeviceProfile.Tier.LOW  -> 520L
+        DeviceProfile.Tier.MID  -> 420L
+        DeviceProfile.Tier.HIGH -> 260L
+    }
+
+    // מאגרים משולבים לשימוש בטאב הראשי – מציגים סרטים + סדרות ביחד לכל סטודיו
+    val homeHbo      = remember(state.movieHBO, state.tvHBO)             { mergeStudioContent(state.movieHBO,      state.tvHBO)      }
+    val homeNetflix  = remember(state.movieNetflix, state.tvNetflix)      { mergeStudioContent(state.movieNetflix,  state.tvNetflix)  }
+    val homeAmazon   = remember(state.movieAmazon, state.tvAmazon)        { mergeStudioContent(state.movieAmazon,   state.tvAmazon)   }
+    val homeAppleTv  = remember(state.movieAppleTV, state.tvAppleTV)      { mergeStudioContent(state.movieAppleTV,  state.tvAppleTV)  }
+    val homeDisney   = remember(state.movieDisney, state.tvDisney)        { mergeStudioContent(state.movieDisney,   state.tvDisney)   }
+    val homeParamount= remember(state.movieParamount, state.tvParamount)  { mergeStudioContent(state.movieParamount,state.tvParamount)}
+    val homeHulu     = remember(state.movieHulu, state.tvHulu)            { mergeStudioContent(state.movieHulu,     state.tvHulu)     }
+
+    // fallback: אם אין סרטים לאמזון, נציג סדרות (ולהיפך)
+    val amazonMovies = remember(state.movieAmazon, state.tvAmazon) {
+        state.movieAmazon.ifEmpty { state.tvAmazon }
+    }
+    val amazonSeries = remember(state.tvAmazon, state.movieAmazon) {
+        state.tvAmazon.ifEmpty { state.movieAmazon }
+    }
 
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
         if (currentTab != state.selectedTab || currentFilter != state.selectedStudioFilter) {
@@ -173,7 +223,8 @@ fun HomeScreen(
             if (!isLow) delay(300)
             currentTab    = state.selectedTab
             currentFilter = state.selectedStudioFilter
-            focusState.currentRowIndex = 0
+            // בטאב סרטים/סדרות: מדלגים על ה-Ribbon ומתחילים ישירות בשורת התוכן
+            focusState.currentRowIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
             if (!isLow) { delay(30); contentAlpha = 1f }
         }
     }
@@ -182,18 +233,21 @@ fun HomeScreen(
         val filter = currentFilter
         when (currentTab) {
             "ראשי" -> {
-                if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending", tr("Trending Movies", "סרטים פופולריים"), state.movieTrending))
-                if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,         state.movieHBO))
-                if (state.tvTrending.isNotEmpty())     add(RowDef.Regular("tvTrending",    tr("Popular Shows", "סדרות פופולריות"), state.tvTrending))
-                if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,     state.movieNetflix))
-                if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,      state.movieAmazon))
-                if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",tr("New in Theaters", "בקולנוע"), state.moviePremieres))
-                if (state.tvAppleTV.isNotEmpty())      add(RowDef.Studio("tvAppleTV",      StudioBrand.APPLE_TV,    state.tvAppleTV))
+                if (state.movieTrending.isNotEmpty())   add(RowDef.Regular("movieTrending", tr("Trending Movies", "סרטים פופולריים"), state.movieTrending))
+                if (homeHbo.isNotEmpty())               add(RowDef.Studio("homeHBO",        StudioBrand.HBO,       homeHbo))
+                if (state.tvTrending.isNotEmpty())      add(RowDef.Regular("tvTrending",    tr("Popular Shows",    "סדרות פופולריות"), state.tvTrending))
+                if (homeNetflix.isNotEmpty())           add(RowDef.Studio("homeNetflix",    StudioBrand.NETFLIX,   homeNetflix))
+                if (homeAmazon.isNotEmpty())            add(RowDef.Studio("homeAmazon",     StudioBrand.AMAZON,    homeAmazon))
+                if (homeAppleTv.isNotEmpty())           add(RowDef.Studio("homeAppleTv",    StudioBrand.APPLE_TV,  homeAppleTv))
+                if (homeDisney.isNotEmpty())            add(RowDef.Studio("homeDisney",     StudioBrand.DISNEY,    homeDisney))
+                if (homeParamount.isNotEmpty())         add(RowDef.Studio("homeParamount",  StudioBrand.PARAMOUNT, homeParamount))
+                if (homeHulu.isNotEmpty())              add(RowDef.Studio("homeHulu",       StudioBrand.HULU,      homeHulu))
+                if (state.moviePremieres.isNotEmpty())  add(RowDef.Regular("moviePremieres",tr("New in Theaters", "בקולנוע"), state.moviePremieres))
             }
             "סרטים" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,       state.movieHBO))
-                if (filter == null || filter == "AMAZON")    if (state.movieAmazon.isNotEmpty())    add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    state.movieAmazon))
+                if (filter == null || filter == "AMAZON")    if (amazonMovies.isNotEmpty())         add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    amazonMovies))
                 if (filter == null || filter == "PARAMOUNT") if (state.movieParamount.isNotEmpty()) add(RowDef.Studio("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount))
                 if (filter == null || filter == "HULU")      if (state.movieHulu.isNotEmpty())      add(RowDef.Studio("movieHulu",      StudioBrand.HULU,      state.movieHulu))
                 if (filter == null || filter == "NETFLIX")   if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,   state.movieNetflix))
@@ -211,7 +265,7 @@ fun HomeScreen(
             "סדרות" -> {
                 add(RowDef.StudioRibbon)
                 if (filter == null || filter == "HBO")       if (state.tvHBO.isNotEmpty())       add(RowDef.Studio("tvHBO",       StudioBrand.HBO,       state.tvHBO))
-                if (filter == null || filter == "AMAZON")    if (state.tvAmazon.isNotEmpty())    add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    state.tvAmazon))
+                if (filter == null || filter == "AMAZON")    if (amazonSeries.isNotEmpty())      add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    amazonSeries))
                 if (filter == null || filter == "PARAMOUNT") if (state.tvParamount.isNotEmpty()) add(RowDef.Studio("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount))
                 if (filter == null || filter == "HULU")      if (state.tvHulu.isNotEmpty())      add(RowDef.Studio("tvHulu",      StudioBrand.HULU,      state.tvHulu))
                 if (filter == null || filter == "NETFLIX")   if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio("tvNetflix",   StudioBrand.NETFLIX,   state.tvNetflix))
@@ -256,14 +310,18 @@ fun HomeScreen(
         else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
     }
 
-    val panelH = remember(rows.size) {
-        if (rows.isEmpty()) ROW_PORTRAIT_H else ROW_PORTRAIT_H + 16.dp
+    val panelH = remember(rows, focusState.currentRowIndex) {
+        when (rows.getOrNull(focusState.currentRowIndex)) {
+            is RowDef.StudioRibbon -> 126.dp
+            null -> ROW_PORTRAIT_H
+            else -> ROW_PORTRAIT_H + 16.dp
+        }
     }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(rows, focusState.isNavFocused) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
-            delay(350L) // הגדלת ההשהיה ל-350ms מונעת בקשות 4K מיותרות כשגוללים מהר
+            delay(heroUpdateDelayMs)
             val m = rows.getOrNull(ri)?.let { r ->
                 when (r) {
                     is RowDef.Regular      -> r.movies
@@ -353,7 +411,9 @@ fun HomeScreen(
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
-    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+    val tier = DeviceProfile.tier
+    val isLow = tier == DeviceProfile.Tier.LOW
+    val allowDualBackdrop = tier == DeviceProfile.Tier.HIGH
     val backdropDuration = if (isLow) 0 else DeviceProfile.animConfig.backdropDuration.coerceAtLeast(80)
 
     var shownUrl   by remember { mutableStateOf<String?>(null) }
@@ -389,9 +449,9 @@ private fun BackdropLayer(hero: Movie?) {
                         .data(shownUrl)
                         .size(Size.ORIGINAL) // משאיר UHD 4K
                         .scale(Scale.FILL)
-                        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565) // קריטי! חותך את צריכת ה-RAM של התמונה בחצי
+                        .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                         .dispatcher(kotlinx.coroutines.Dispatchers.IO) // מונע תקיעה של ה-Main Thread בזמן הפענוח
-                        .memoryCachePolicy(if (isLow) CachePolicy.DISABLED else CachePolicy.ENABLED) // לא שומרים תמונות ענק בראם של מכשיר חלש
+                        .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .allowHardware(true)
                         .crossfade(false)
@@ -404,14 +464,14 @@ private fun BackdropLayer(hero: Movie?) {
         }
 
         // מניעת Overdraw (ציור כפול) על מכשירים חלשים - מונע קריסת FPS בגלילה
-        if (!isLow && swapping && !pendingUrl.isNullOrBlank() && pendingUrl != shownUrl) {
+        if (allowDualBackdrop && swapping && !pendingUrl.isNullOrBlank() && pendingUrl != shownUrl) {
             AsyncImage(
                 model = remember(pendingUrl) {
                     ImageRequest.Builder(ctx)
                         .data(pendingUrl)
                         .size(Size.ORIGINAL)
                         .scale(Scale.FILL)
-                        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                        .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                         .dispatcher(kotlinx.coroutines.Dispatchers.IO)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
@@ -698,7 +758,7 @@ private fun TwoRowNavBar(
 @Composable
 private fun LuminaLogo() {
     Image(
-        painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
+        painter = painterResource(id = R.drawable.logo_lumina_unified),
         contentDescription = "Lumina Logo",
         contentScale = ContentScale.Fit,
         modifier = Modifier.height(64.dp)
@@ -918,13 +978,7 @@ private fun LandscapeRow(
 
     LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
 
-    val isAtEnd by remember {
-        derivedStateOf {
-            val li = rowState.layoutInfo
-            li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
-        }
-    }
-    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
+    RememberPagedRowLoad(rowState = rowState, onLoadMore = onLoadMore)
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
@@ -957,13 +1011,7 @@ private fun LandscapeStudioRow(
 
     LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
 
-    val isAtEnd by remember {
-        derivedStateOf {
-            val li = rowState.layoutInfo
-            li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
-        }
-    }
-    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
+    RememberPagedRowLoad(rowState = rowState, onLoadMore = onLoadMore)
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -994,13 +1042,7 @@ private fun PortraitRow(
 
     LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
 
-    val isAtEnd by remember {
-        derivedStateOf {
-            val li = rowState.layoutInfo
-            li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
-        }
-    }
-    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
+    RememberPagedRowLoad(rowState = rowState, onLoadMore = onLoadMore)
 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
@@ -1029,13 +1071,7 @@ private fun PortraitStudioRow(
 
     LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
 
-    val isAtEnd by remember {
-        derivedStateOf {
-            val li = rowState.layoutInfo
-            li.totalItemsCount > 0 && (li.visibleItemsInfo.lastOrNull()?.index ?: 0) >= li.totalItemsCount - 4
-        }
-    }
-    LaunchedEffect(isAtEnd) { if (isAtEnd) onLoadMore() }
+    RememberPagedRowLoad(rowState = rowState, onLoadMore = onLoadMore)
 
     Column {
         Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1145,7 +1181,7 @@ private fun LandscapeCard(
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .memoryCachePolicy(CachePolicy.DISABLED) // חובה למניעת GC Thrashing
+            .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
             .crossfade(false)
@@ -1309,7 +1345,7 @@ fun PosterCard(
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .memoryCachePolicy(CachePolicy.DISABLED) // חובה
+            .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
             .crossfade(false)

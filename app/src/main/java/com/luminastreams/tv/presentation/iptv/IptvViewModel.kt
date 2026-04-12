@@ -37,10 +37,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private val _state = MutableStateFlow(IptvState())
     val state: StateFlow<IptvState> = _state.asStateFlow()
 
-    // ── Derived focused flows ─────────────────────────────────────────────────
-    // Each re-emits ONLY when its own subset of fields changes.
-    // Compose consumers that collect these will NOT recompose on unrelated changes.
-    // (e.g. opening a dialog won't recompose ChannelsDashboard)
     val channelState: StateFlow<ChannelState> = _state
         .map { s -> ChannelState(
             playlists          = s.playlists,
@@ -108,17 +104,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     private var autoRefreshJob: Job? = null
     private var searchJob: Job? = null
 
-    // Perf: pre-built channelId→EPG index, O(1) lookups after initial build
     private val epgIndex = HashMap<String, List<EpgProgram>>(512)
 
     private val _sleepTimerMs = MutableStateFlow(0L)
+    @Suppress("unused")
     val sleepTimerMs: StateFlow<Long> = _sleepTimerMs.asStateFlow()
     @Volatile private var epgLoadInProgress = false
 
     private val epgCacheDir by lazy { application.cacheDir.also { it.mkdirs() } }
     private fun epgCacheFile(epgUrl: String) = File(epgCacheDir, "epg_${epgUrl.hashCode()}.json")
     private fun epgCacheTimeKey(epgUrl: String) = "epg_ts_${epgUrl.hashCode()}"
-    private val EPG_CACHE_TTL_MS = 6 * 3600 * 1000L  // 6 hours
+    private val EPG_CACHE_TTL_MS = 6 * 3600 * 1000L
 
     init {
         loadSavedPlaylists()
@@ -324,7 +320,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // Perf: shared helper — avoids duplicating the when() block across updateSearch / selectGroup / resortChannels
     private fun baseChannelsForGroup(s: IptvState, group: String): List<IptvChannel> = when (group) {
         "All"       -> s.channels
         "Favorites" -> s.channels.filter { it.id in s.favoriteChannelIds }
@@ -333,10 +328,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun updateSearch(query: String) {
-        // Perf: cancel previous job, debounce 120ms, filter on Default, single _state.update
         searchJob?.cancel()
         searchJob = viewModelScope.launch {
-            kotlinx.coroutines.delay(120)
+            delay(120)
             val filtered = withContext(Dispatchers.Default) {
                 val s = _state.value
                 val base = baseChannelsForGroup(s, s.selectedGroup)
@@ -347,7 +341,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectGroup(group: String) {
-        // Perf: filter on Default thread, single _state.update
         viewModelScope.launch {
             val filtered = withContext(Dispatchers.Default) {
                 val s = _state.value
@@ -493,16 +486,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * Resolves the best EPG logo URL for a channel from the EPG logo map.
-     *
-     * Strategy (in priority order):
-     *  1. Exact match on tvgId (lowercase)
-     *  2. Exact match on tvgName (lowercase)
-     *  3. Exact match on channel id (lowercase)
-     *  4. Exact match on channel name (lowercase)
-     *  5. Fuzzy: any logo key that contains one of the channel keys, or vice versa
-     */
     private fun resolveEpgLogo(ch: IptvChannel, logoMap: Map<String, String>): String? {
         if (logoMap.isEmpty()) return null
         val keys = listOfNotNull(
@@ -511,9 +494,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             ch.id.lowercase().ifBlank { null },
             ch.name.lowercase().ifBlank { null }
         )
-        // 1-4: exact match
         keys.forEach { k -> logoMap[k]?.takeIf { it.isNotBlank() }?.let { return it } }
-        // 5: fuzzy substring match
         return logoMap.entries.firstOrNull { (epgKey, logo) ->
             logo.isNotBlank() && keys.any { k ->
                 k.length >= 3 && (epgKey.contains(k) || k.contains(epgKey))
@@ -579,10 +560,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
 
-        // Perf: build O(1) EPG index once — all future getEpgForChannel calls are O(1) HashMap lookups
         buildEpgIndex(updatedChannels, mergedEpgData)
-
-        // Perf: filteredChannels already updated above — no extra selectGroup() needed
 
         _state.value.currentChannel?.let { ch ->
             val updatedCh = updatedById[ch.id] ?: ch
@@ -715,9 +693,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    // ── EPG Index ────────────────────────────────────────────────────────────────
-    // Builds a HashMap<channelId, programs> once after every EPG load.
-    // Replaces the previous O(n) fuzzy scan that ran on every UI recompose.
     private fun buildEpgIndex(channels: List<IptvChannel>, dataMap: Map<String, List<EpgProgram>>) {
         epgIndex.clear()
         channels.forEach { ch ->
@@ -740,9 +715,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         ch.name.lowercase()
     )
 
-    // O(1) EPG lookup via pre-built index. Falls back to live map scan only before index is ready.
     fun getEpgForChannel(channel: IptvChannel, dataMap: Map<String, List<EpgProgram>> = _state.value.epgData): List<EpgProgram> {
-        epgIndex[channel.id]?.let { return it }  // ← fast path
+        epgIndex[channel.id]?.let { return it }
         val keys = listOfNotNull(
             channel.id,
             channel.tvgId.lowercase().ifBlank { null },
@@ -764,7 +738,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d(TAG, "Loading M3U from: $url")
                 val rawChannels = M3uParser.parse(url).getOrThrow()
 
-                // Re-apply any already-loaded EPG logos so they survive M3U reloads.
                 val existingLogoMap = _state.value.channelLogos
                 val channels = if (existingLogoMap.isEmpty()) {
                     rawChannels
@@ -818,7 +791,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun sortChannels(channels: List<IptvChannel>, mode: ChannelSortMode): List<IptvChannel> {
         return when (mode) {
-            // Perf: compareTo(ignoreCase=true) avoids creating N*log(N) temporary lowercase Strings
             ChannelSortMode.NAME_ASC  -> channels.sortedWith(Comparator { a, b -> a.name.compareTo(b.name, ignoreCase = true) })
             ChannelSortMode.NAME_DESC -> channels.sortedWith(Comparator { a, b -> b.name.compareTo(a.name, ignoreCase = true) })
             ChannelSortMode.NUMBER -> channels.sortedBy { it.number }
@@ -832,7 +804,6 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun resortChannels(mode: ChannelSortMode) {
-        // Perf: filter + sort on Default thread, single _state.update
         viewModelScope.launch {
             val sorted = withContext(Dispatchers.Default) {
                 val s = _state.value
@@ -845,6 +816,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             _state.update { it.copy(filteredChannels = sorted) }
         }
     }
+
     private fun selectPlaylist(playlistId: String) {
         val playlist = _state.value.playlists.find { it.id == playlistId } ?: return
         loadPlaylist(playlist.url, playlist.name, playlist.epgUrl, playlist.id)

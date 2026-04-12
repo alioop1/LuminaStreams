@@ -1,4 +1,4 @@
-// 2. IptvContract.kt
+@file:Suppress("unused")
 package com.luminastreams.tv.presentation.iptv
 
 import androidx.compose.runtime.Immutable
@@ -104,16 +104,6 @@ sealed interface IptvLoadState {
     object Success : IptvLoadState
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// SPLIT STATE — 3 focused StateFlows replace the old 40-field IptvState monolith
-//
-//  ChannelState  — channels, EPG, groups, search  (changes on load)
-//  PlayerState   — current channel / program       (changes on channel switch)
-//  UiState       — dialogs, inputs, settings       (changes on interaction)
-//
-// Effect: opening a dialog now recomposes ONLY the dialog, not the channel grid.
-// ─────────────────────────────────────────────────────────────────────────────
-
 data class ChannelState(
     val playlists           : List<IptvPlaylist>              = emptyList(),
     val activePlaylistId    : String?                         = null,
@@ -168,8 +158,6 @@ data class UiState(
     val epgDayOffset        : Int            = 0,
 )
 
-// Legacy combined state — used in IptvScreen as a backward-compat alias
-// Consumers should migrate to ChannelState / PlayerState / UiState
 @Immutable
 data class IptvState(
     val playlists: List<IptvPlaylist> = emptyList(),
