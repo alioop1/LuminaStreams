@@ -141,15 +141,14 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val isSaved        = watchlistManager.isInWatchlist("movie_$id")
                 val collectionId   = dto.belongsToCollection?.id
                 val collectionName = dto.belongsToCollection?.name
-                val collectionItems = if (collectionId != null) fetchCollectionViaHttp(collectionId) else emptyList()
                 val primaryActorId   = dto.credits?.cast?.firstOrNull()?.id
                 val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
-                val starringItems    = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
                 val qualityHint      = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
                 val movieProg        = progressManager.getMovie(scrapeId)
                 val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
                 val fullLogoUrl      = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
 
+                // Show main content immediately — no waiting for collection/starring
                 _state.update {
                     it.copy(
                         isLoadingData     = false,
@@ -163,9 +162,23 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             tmdbRating = dto.voteAverage.toDouble(), imdbRating = dto.voteAverage.toDouble(), ageRating = "R",
                             studios = studios, genres = genres, director = directorName, cast = castList,
                             trailerUrl = trailerUrl, isFavorite = isSaved, collectionName = collectionName,
-                            collectionItems = collectionItems, starringActorName = primaryActorName, starringItems = starringItems
+                            collectionItems = emptyList(), starringActorName = primaryActorName, starringItems = emptyList()
                         )
                     )
+                }
+
+                // Load supplementary data in background — doesn't block UI
+                viewModelScope.launch(Dispatchers.IO) {
+                    val collectionItems = if (collectionId != null) fetchCollectionViaHttp(collectionId) else emptyList()
+                    val starringItems = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
+                    if (collectionItems.isNotEmpty() || starringItems.isNotEmpty()) {
+                        _state.update { st ->
+                            st.copy(mediaInfo = st.mediaInfo.copy(
+                                collectionItems = collectionItems,
+                                starringItems = starringItems
+                            ))
+                        }
+                    }
                 }
             },
             onFailure = { err -> _state.update { it.copy(isLoadingData = false, errorData = err.message) } }
@@ -187,11 +200,11 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val isSaved          = watchlistManager.isInWatchlist("tv_$id")
                 val primaryActorId   = dto.credits?.cast?.firstOrNull()?.id
                 val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
-                val starringItems    = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
                 val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
                 val fullLogoUrl      = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
                 val latestEp         = progressManager.getLatestEpisodeProgress(scrapeId)
 
+                // Show main content immediately
                 _state.update {
                     it.copy(
                         isLoadingData      = false,
@@ -206,9 +219,19 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             isSeries = true, releaseDate = dto.firstAirDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(),
                             imdbRating = dto.voteAverage.toDouble(), ageRating = "TV-MA", studios = studios, genres = genres,
                             director = creatorName, cast = castList, totalSeasons = dto.numberOfSeasons,
-                            trailerUrl = trailerUrl, isFavorite = isSaved, starringActorName = primaryActorName, starringItems = starringItems
+                            trailerUrl = trailerUrl, isFavorite = isSaved, starringActorName = primaryActorName, starringItems = emptyList()
                         )
                     )
+                }
+
+                // Load starring data in background
+                viewModelScope.launch(Dispatchers.IO) {
+                    val starringItems = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
+                    if (starringItems.isNotEmpty()) {
+                        _state.update { st ->
+                            st.copy(mediaInfo = st.mediaInfo.copy(starringItems = starringItems))
+                        }
+                    }
                 }
                 if (dto.numberOfSeasons > 0) onEvent(DetailsEvent.SelectSeason(1))
             },

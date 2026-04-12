@@ -550,29 +550,22 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             mergedEpgData[chId] = progs
         }
 
-        _state.update {
-            it.copy(
+        buildEpgIndex(updatedChannels, mergedEpgData)
+
+        _state.update { currentState ->
+            val updatedCh = currentState.currentChannel?.let { ch -> updatedById[ch.id] ?: ch }
+            val epg = if (updatedCh != null) getEpgForChannel(updatedCh, mergedEpgData) else emptyList()
+            val now = System.currentTimeMillis()
+            currentState.copy(
                 epgData = mergedEpgData,
                 channelLogos = result.channelLogos,
                 channels = updatedChannels,
                 filteredChannels = updatedFilteredChannels,
-                epgLoadState = IptvLoadState.Success
+                epgLoadState = IptvLoadState.Success,
+                currentChannel = updatedCh ?: currentState.currentChannel,
+                currentProgram = if (updatedCh != null) epg.firstOrNull { p -> p.isLiveNow } else currentState.currentProgram,
+                nextProgram = if (updatedCh != null) epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow } else currentState.nextProgram
             )
-        }
-
-        buildEpgIndex(updatedChannels, mergedEpgData)
-
-        _state.value.currentChannel?.let { ch ->
-            val updatedCh = updatedById[ch.id] ?: ch
-            val epg = getEpgForChannel(updatedCh, mergedEpgData)
-            val now = System.currentTimeMillis()
-            _state.update {
-                it.copy(
-                    currentChannel = updatedCh,
-                    currentProgram = epg.firstOrNull { p -> p.isLiveNow },
-                    nextProgram = epg.firstOrNull { p -> p.startTime > now && !p.isLiveNow }
-                )
-            }
         }
     }
 
@@ -695,14 +688,18 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun buildEpgIndex(channels: List<IptvChannel>, dataMap: Map<String, List<EpgProgram>>) {
         epgIndex.clear()
+        val matchedEpgKeys = HashSet<String>(channels.size)
         channels.forEach { ch ->
             val keys = buildChannelKeys(ch)
             val progs = keys.firstNotNullOfOrNull { k -> dataMap[k]?.takeIf { it.isNotEmpty() } }
-                ?: dataMap.entries.firstOrNull { (epgKey, progs) ->
-                    progs.isNotEmpty() && keys.any { k ->
-                        k.length >= 3 && (epgKey.contains(k) || k.contains(epgKey))
-                    }
-                }?.value
+                ?: run {
+                    // Fuzzy fallback: skip EPG entries already claimed by other channels
+                    dataMap.entries.firstOrNull { (epgKey, progs) ->
+                        epgKey !in matchedEpgKeys && progs.isNotEmpty() && keys.any { k ->
+                            k.length >= 3 && (epgKey.contains(k) || k.contains(epgKey))
+                        }
+                    }?.also { matchedEpgKeys.add(it.key) }?.value
+                }
             if (progs != null) epgIndex[ch.id] = progs
         }
         Log.d(TAG, "epgIndex built: ${epgIndex.size}/${channels.size} channels indexed")
