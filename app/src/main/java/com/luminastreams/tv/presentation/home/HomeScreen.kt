@@ -411,14 +411,34 @@ fun HomeScreen(
 @Composable
 private fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
-    var shownUrl by remember { mutableStateOf<String?>(null) }
+    val tier = DeviceProfile.tier
+    val isLow = tier == DeviceProfile.Tier.LOW
+    val allowDualBackdrop = tier == DeviceProfile.Tier.HIGH
+    val backdropDuration = if (isLow) 0 else DeviceProfile.animConfig.backdropDuration.coerceAtLeast(80)
+
+    var shownUrl   by remember { mutableStateOf<String?>(null) }
+    var pendingUrl by remember { mutableStateOf<String?>(null) }
+    var swapping   by remember { mutableStateOf(false) }
+
     val heroUrl = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl
 
     LaunchedEffect(heroUrl) {
         if (heroUrl == shownUrl) return@LaunchedEffect
-        delay(300L) // 60FPS FIX: Debounce 4k backdrop fetch while fast-scrolling
+        pendingUrl = heroUrl
+        swapping = true
+        if (!isLow && backdropDuration > 0 && shownUrl != null) {
+            delay((backdropDuration / 3L).coerceAtLeast(16L))
+        }
         shownUrl = heroUrl
+        if (!isLow) delay(backdropDuration.toLong().coerceAtLeast(16L))
+        swapping = false
     }
+
+    val overlayAlpha by animateFloatAsState(
+        targetValue   = if (swapping) 0f else 1f,
+        animationSpec = if (isLow) snap() else tween(backdropDuration, easing = LinearEasing),
+        label         = "bdAlpha"
+    )
 
     Box(Modifier.fillMaxSize()) {
         Box(Modifier.fillMaxSize().background(BG))
@@ -427,19 +447,41 @@ private fun BackdropLayer(hero: Movie?) {
                 model = remember(shownUrl) {
                     ImageRequest.Builder(ctx)
                         .data(shownUrl)
-                        .size(coil.size.Size.ORIGINAL) // Full resolution requested by user for maximum quality
+                        .size(Size.ORIGINAL) // משאיר UHD 4K
+                        .scale(Scale.FILL)
+                        .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
+                        .dispatcher(kotlinx.coroutines.Dispatchers.IO) // מונע תקיעה של ה-Main Thread בזמן הפענוח
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .diskCachePolicy(CachePolicy.ENABLED)
+                        .allowHardware(true)
+                        .crossfade(false)
+                        .build()
+                },
+                contentDescription = null,
+                contentScale       = ContentScale.Crop,
+                modifier           = Modifier.fillMaxSize()
+            )
+        }
+
+        // מניעת Overdraw (ציור כפול) על מכשירים חלשים - מונע קריסת FPS בגלילה
+        if (allowDualBackdrop && swapping && !pendingUrl.isNullOrBlank() && pendingUrl != shownUrl) {
+            AsyncImage(
+                model = remember(pendingUrl) {
+                    ImageRequest.Builder(ctx)
+                        .data(pendingUrl)
+                        .size(Size.ORIGINAL)
                         .scale(Scale.FILL)
                         .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                         .dispatcher(kotlinx.coroutines.Dispatchers.IO)
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .allowHardware(true)
-                        .crossfade(400) // Safe single-layer transition
+                        .crossfade(false)
                         .build()
                 },
                 contentDescription = null,
                 contentScale       = ContentScale.Crop,
-                modifier           = Modifier.fillMaxSize()
+                modifier           = Modifier.fillMaxSize().graphicsLayer { alpha = 1f - overlayAlpha }
             )
         }
 
@@ -716,7 +758,7 @@ private fun TwoRowNavBar(
 @Composable
 private fun LuminaLogo() {
     Image(
-        painter = painterResource(id = R.drawable.logo_lumina_unified),
+        painter = painterResource(id = com.luminastreams.tv.R.drawable.logo_lumina_unified),
         contentDescription = "Lumina Logo",
         contentScale = ContentScale.Fit,
         modifier = Modifier.height(64.dp)
@@ -855,23 +897,22 @@ private fun RowsPanel(
                     } else {
                         val rowAlpha         = if (i == curRow) 1f else 0.22f
                         val useAnimatedAlpha = DeviceProfile.animConfig.enableRowFade &&
-                                DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                                kotlin.math.abs(i - curRow) <= 1 // only animate adjacent rows
+                                DeviceProfile.tier == DeviceProfile.Tier.HIGH
 
-                        val animatedAlpha = if (!useAnimatedAlpha) rowAlpha else {
-                            val anim by animateFloatAsState(
-                                targetValue   = rowAlpha,
-                                animationSpec = tween(
+                        val animatedAlpha by animateFloatAsState(
+                            targetValue   = rowAlpha,
+                            animationSpec = if (useAnimatedAlpha)
+                                tween(
                                     durationMillis = if (i == curRow)
                                         DeviceProfile.animConfig.rowFadeDuration
                                     else
                                         (DeviceProfile.animConfig.rowFadeDuration / 2).coerceAtLeast(60),
                                     easing = FastOutSlowInEasing
-                                ),
-                                label = "a$i"
-                            )
-                            anim
-                        }
+                                )
+                            else
+                                snap(),
+                            label = "a$i"
+                        )
 
                         Box(
                             Modifier
@@ -1140,7 +1181,6 @@ private fun LandscapeCard(
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(560, 316) // LAND_W × LAND_H @ 2x density
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
@@ -1305,7 +1345,6 @@ fun PosterCard(
     val imageRequest = remember(url) {
         ImageRequest.Builder(ctx)
             .data(url)
-            .size(296, 444) // PORT_W × PORT_H @ 2x density
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)

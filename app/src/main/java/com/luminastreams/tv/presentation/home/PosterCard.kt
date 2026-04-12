@@ -87,10 +87,9 @@ fun PosterCard(
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(movie.posterUrl)
-                        .size(260, 390) // 130dp × aspect(2/3) @ 2x density
                         .crossfade(false) // חובה לבטל למניעת קרטועים
                         .allowHardware(true) // שימוש במאיץ גרפי
-                        .memoryCachePolicy(CachePolicy.ENABLED) // global cache is bounded (32-512 MB)
+                        .memoryCachePolicy(CachePolicy.DISABLED) // חובה! מונע את חנק ה-RAM
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .build(),
                     contentDescription = movie.title,

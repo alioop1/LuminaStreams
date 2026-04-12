@@ -58,7 +58,6 @@ android {
         jvmToolchain(21)
     }
 
-    @Suppress("DEPRECATION")
     kotlinOptions {
         freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
     }
@@ -130,11 +129,12 @@ dependencies {
     implementation(libs.gson)
 
     implementation(libs.kotlinx.coroutines.android)
-    implementation("androidx.datastore:datastore-preferences:1.2.1")
+    implementation("androidx.datastore:datastore-preferences:1.0.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
 
-    implementation("com.google.zxing:core:3.5.4")
+    implementation("com.google.zxing:core:3.5.3")
 }

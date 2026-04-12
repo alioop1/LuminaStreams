@@ -386,7 +386,7 @@ fun DetailsScreen(
             // האצת רקע: ביטול crossfade
             if (media.backdropUrl.isNotEmpty()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(false).size(1920, 1080).memoryCachePolicy(CachePolicy.ENABLED).build(),
+                    model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(false).memoryCachePolicy(CachePolicy.ENABLED).build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             } else if (media.posterUrl.isNotEmpty()) {
@@ -1175,7 +1175,6 @@ private fun EpisodeCard(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(imageUrl)
                     .crossfade(false)
-                    .size(560, 315) // 280dp @ 2x density
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
@@ -1226,7 +1225,7 @@ private fun CastMemberCard(actor: CastMember, modifier: Modifier = Modifier) {
             scale    = ClickableSurfaceDefaults.scale(1.1f),
             modifier = Modifier.size(90.dp).shadow(if (focused) 16.dp else 0.dp, CircleShape)
         ) {
-            AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(actor.imageUrl).crossfade(false).size(180, 180).build(), contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Spacer(Modifier.height(10.dp))
         Text(actor.name, color = if (focused) WH else DM, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, minLines = 2, lineHeight = 16.sp, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
