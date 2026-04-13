@@ -217,15 +217,14 @@ fun HomeScreen(
         state.tvAmazon.ifEmpty { state.movieAmazon }
     }
 
-    var isFirstRender by remember { mutableStateOf(true) }
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
         if (currentTab != state.selectedTab || currentFilter != state.selectedStudioFilter) {
-            // Skip fade-out delay on initial render — saves 300ms cold start (ANR fix)
-            if (!isLow && !isFirstRender) { contentAlpha = 0f; delay(300) }
-            isFirstRender = false
+            if (!isLow) contentAlpha = 0f
+            if (!isLow) delay(300)
             currentTab    = state.selectedTab
             currentFilter = state.selectedStudioFilter
-            focusState.currentRowIndex = 0
+            // בטאב סרטים/סדרות: מדלגים על ה-Ribbon ומתחילים ישירות בשורת התוכן
+            focusState.currentRowIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
             if (!isLow) { delay(30); contentAlpha = 1f }
         }
     }
@@ -247,72 +246,38 @@ fun HomeScreen(
             }
             "סרטים" -> {
                 add(RowDef.StudioRibbon)
-                if (filter != null) {
-                    val studioItems = when (filter) {
-                        "HBO"       -> state.movieHBO
-                        "NETFLIX"   -> state.movieNetflix
-                        "AMAZON"    -> amazonMovies
-                        "DISNEY"    -> state.movieDisney
-                        "APPLE_TV"  -> state.movieAppleTV
-                        "PARAMOUNT" -> state.movieParamount
-                        "HULU"      -> state.movieHulu
-                        else        -> emptyList()
-                    }
-                    val trending  = studioItems.take(20)
-                    val animation = studioItems.filter { "anim" in it.genre.lowercase() || "אנימ" in it.genre }
-                    val topRated  = studioItems.filter { it.rating >= 7.5f }.sortedByDescending { it.rating }.take(20)
-                    if (trending.isNotEmpty())  add(RowDef.Regular("${filter}_movie_tr", tr("Trending",     "טרנדינג"),      trending))
-                    if (animation.isNotEmpty()) add(RowDef.Regular("${filter}_movie_an", tr("Animation",    "אנימציה"),      animation))
-                    if (topRated.isNotEmpty())  add(RowDef.Regular("${filter}_movie_tp", tr("Highly Rated", "דירוג גבוה"),   topRated))
-                } else {
-                    if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,       state.movieHBO))
-                    if (amazonMovies.isNotEmpty())         add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    amazonMovies))
-                    if (state.movieParamount.isNotEmpty()) add(RowDef.Studio("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount))
-                    if (state.movieHulu.isNotEmpty())      add(RowDef.Studio("movieHulu",      StudioBrand.HULU,      state.movieHulu))
-                    if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,   state.movieNetflix))
-                    if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio("movieAppleTV",   StudioBrand.APPLE_TV,  state.movieAppleTV))
-                    if (state.movieDisney.isNotEmpty())    add(RowDef.Studio("movieDisney",    StudioBrand.DISNEY,    state.movieDisney))
-                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Now",       "פופולרי עכשיו"),   state.movieTrending))
-                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters",    "בקולנוע"),         state.moviePremieres))
+                if (filter == null || filter == "HBO")       if (state.movieHBO.isNotEmpty())       add(RowDef.Studio("movieHBO",       StudioBrand.HBO,       state.movieHBO))
+                if (filter == null || filter == "AMAZON")    if (amazonMovies.isNotEmpty())         add(RowDef.Studio("movieAmazon",    StudioBrand.AMAZON,    amazonMovies))
+                if (filter == null || filter == "PARAMOUNT") if (state.movieParamount.isNotEmpty()) add(RowDef.Studio("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount))
+                if (filter == null || filter == "HULU")      if (state.movieHulu.isNotEmpty())      add(RowDef.Studio("movieHulu",      StudioBrand.HULU,      state.movieHulu))
+                if (filter == null || filter == "NETFLIX")   if (state.movieNetflix.isNotEmpty())   add(RowDef.Studio("movieNetflix",   StudioBrand.NETFLIX,   state.movieNetflix))
+                if (filter == null || filter == "APPLE_TV")  if (state.movieAppleTV.isNotEmpty())   add(RowDef.Studio("movieAppleTV",   StudioBrand.APPLE_TV,  state.movieAppleTV))
+                if (filter == null || filter == "DISNEY")    if (state.movieDisney.isNotEmpty())    add(RowDef.Studio("movieDisney",    StudioBrand.DISNEY,    state.movieDisney))
+                if (filter == null) {
+                    if (state.movieTrending.isNotEmpty())  add(RowDef.Regular("movieTrending",  tr("Trending Now", "פופולרי עכשיו"), state.movieTrending))
+                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", tr("New in Theaters", "בקולנוע"), state.moviePremieres))
                     if (state.movieAction.isNotEmpty())    add(RowDef.Regular("movieAction",    tr("Action & Adventure", "פעולה והרפתקאות"), state.movieAction))
-                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     tr("Drama",              "דרמה"),            state.movieDrama))
-                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     tr("Sci-Fi",             "מדע בדיוני"),      state.movieScifi))
-                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  tr("Top Rated",          "דירוג גבוה"),      state.movieTopRated))
+                    if (state.movieDrama.isNotEmpty())     add(RowDef.Regular("movieDrama",     tr("Drama", "דרמה"), state.movieDrama))
+                    if (state.movieScifi.isNotEmpty())     add(RowDef.Regular("movieScifi",     tr("Sci-Fi", "מדע בדיוני"), state.movieScifi))
+                    if (state.movieTopRated.isNotEmpty())  add(RowDef.Regular("movieTopRated",  tr("Top Rated", "דירוג גבוה"), state.movieTopRated))
                 }
             }
             "סדרות" -> {
                 add(RowDef.StudioRibbon)
-                if (filter != null) {
-                    val studioItems = when (filter) {
-                        "HBO"       -> state.tvHBO
-                        "NETFLIX"   -> state.tvNetflix
-                        "AMAZON"    -> amazonSeries
-                        "DISNEY"    -> state.tvDisney
-                        "APPLE_TV"  -> state.tvAppleTV
-                        "PARAMOUNT" -> state.tvParamount
-                        "HULU"      -> state.tvHulu
-                        else        -> emptyList()
-                    }
-                    val trending  = studioItems.take(20)
-                    val animation = studioItems.filter { "anim" in it.genre.lowercase() || "אנימ" in it.genre }
-                    val topRated  = studioItems.filter { it.rating >= 7.5f }.sortedByDescending { it.rating }.take(20)
-                    if (trending.isNotEmpty())  add(RowDef.Regular("${filter}_tv_tr", tr("Trending",     "טרנדינג"),      trending))
-                    if (animation.isNotEmpty()) add(RowDef.Regular("${filter}_tv_an", tr("Animation",    "אנימציה"),      animation))
-                    if (topRated.isNotEmpty())  add(RowDef.Regular("${filter}_tv_tp", tr("Highly Rated", "דירוג גבוה"),   topRated))
-                } else {
-                    if (state.tvHBO.isNotEmpty())       add(RowDef.Studio("tvHBO",       StudioBrand.HBO,       state.tvHBO))
-                    if (amazonSeries.isNotEmpty())      add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    amazonSeries))
-                    if (state.tvParamount.isNotEmpty()) add(RowDef.Studio("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount))
-                    if (state.tvHulu.isNotEmpty())      add(RowDef.Studio("tvHulu",      StudioBrand.HULU,      state.tvHulu))
-                    if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio("tvNetflix",   StudioBrand.NETFLIX,   state.tvNetflix))
-                    if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio("tvAppleTV",   StudioBrand.APPLE_TV,  state.tvAppleTV))
-                    if (state.tvDisney.isNotEmpty())    add(RowDef.Studio("tvDisney",    StudioBrand.DISNEY,    state.tvDisney))
-                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  tr("Trending Shows",   "סדרות פופולריות"),    state.tvTrending))
-                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", tr("On The Air",       "משודר כעת"),          state.tvPremieres))
-                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     tr("Drama",            "דרמה"),               state.tvDrama))
-                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     tr("Crime & Thriller", "פשע ומתח"),           state.tvCrime))
+                if (filter == null || filter == "HBO")       if (state.tvHBO.isNotEmpty())       add(RowDef.Studio("tvHBO",       StudioBrand.HBO,       state.tvHBO))
+                if (filter == null || filter == "AMAZON")    if (amazonSeries.isNotEmpty())      add(RowDef.Studio("tvAmazon",    StudioBrand.AMAZON,    amazonSeries))
+                if (filter == null || filter == "PARAMOUNT") if (state.tvParamount.isNotEmpty()) add(RowDef.Studio("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount))
+                if (filter == null || filter == "HULU")      if (state.tvHulu.isNotEmpty())      add(RowDef.Studio("tvHulu",      StudioBrand.HULU,      state.tvHulu))
+                if (filter == null || filter == "NETFLIX")   if (state.tvNetflix.isNotEmpty())   add(RowDef.Studio("tvNetflix",   StudioBrand.NETFLIX,   state.tvNetflix))
+                if (filter == null || filter == "APPLE_TV")  if (state.tvAppleTV.isNotEmpty())   add(RowDef.Studio("tvAppleTV",   StudioBrand.APPLE_TV,  state.tvAppleTV))
+                if (filter == null || filter == "DISNEY")    if (state.tvDisney.isNotEmpty())    add(RowDef.Studio("tvDisney",    StudioBrand.DISNEY,    state.tvDisney))
+                if (filter == null) {
+                    if (state.tvTrending.isNotEmpty())  add(RowDef.Regular("tvTrending",  tr("Trending Shows", "סדרות פופולריות"), state.tvTrending))
+                    if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", tr("On The Air", "משודר כעת"), state.tvPremieres))
+                    if (state.tvDrama.isNotEmpty())     add(RowDef.Regular("tvDrama",     tr("Drama", "דרמה"), state.tvDrama))
+                    if (state.tvCrime.isNotEmpty())     add(RowDef.Regular("tvCrime",     tr("Crime & Thriller", "פשע ומתח"), state.tvCrime))
                     if (state.tvScifi.isNotEmpty())     add(RowDef.Regular("tvScifi",     tr("Sci-Fi & Fantasy", "מדע בדיוני ופנטזיה"), state.tvScifi))
-                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  tr("Top Rated Shows",  "סדרות מומלצות"),      state.tvTopRated))
+                    if (state.tvTopRated.isNotEmpty())  add(RowDef.Regular("tvTopRated",  tr("Top Rated Shows", "סדרות מומלצות"), state.tvTopRated))
                 }
             }
             "Fuzer" -> {
@@ -342,18 +307,14 @@ fun HomeScreen(
 
     fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) {
         is RowDef.StudioRibbon -> 110.dp
-        else -> if (i == rows.indexOfFirst { it !is RowDef.StudioRibbon }) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
+        else -> if (i == 0 && rows.getOrNull(i) !is RowDef.StudioRibbon) ROW_LANDSCAPE_H else ROW_PORTRAIT_H
     }
 
     val panelH = remember(rows, focusState.currentRowIndex) {
-        val ri = focusState.currentRowIndex
-        when (rows.getOrNull(ri)) {
+        when (rows.getOrNull(focusState.currentRowIndex)) {
             is RowDef.StudioRibbon -> 126.dp
             null -> ROW_PORTRAIT_H
-            else -> {
-                val firstContentIdx = rows.indexOfFirst { it !is RowDef.StudioRibbon }
-                if (ri == firstContentIdx) ROW_LANDSCAPE_H + 16.dp else ROW_PORTRAIT_H + 16.dp
-            }
+            else -> ROW_PORTRAIT_H + 16.dp
         }
     }
 
@@ -486,10 +447,10 @@ private fun BackdropLayer(hero: Movie?) {
                 model = remember(shownUrl) {
                     ImageRequest.Builder(ctx)
                         .data(shownUrl)
-                        .size(1280, 720) // half-screen right 72% — 4K source is wasteful
+                        .size(Size.ORIGINAL) // משאיר UHD 4K
                         .scale(Scale.FILL)
                         .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
-                        .dispatcher(kotlinx.coroutines.Dispatchers.IO)
+                        .dispatcher(kotlinx.coroutines.Dispatchers.IO) // מונע תקיעה של ה-Main Thread בזמן הפענוח
                         .memoryCachePolicy(CachePolicy.ENABLED)
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .allowHardware(true)
@@ -498,7 +459,7 @@ private fun BackdropLayer(hero: Movie?) {
                 },
                 contentDescription = null,
                 contentScale       = ContentScale.Crop,
-                modifier           = Modifier.fillMaxHeight().fillMaxWidth(0.72f).align(Alignment.TopEnd)
+                modifier           = Modifier.fillMaxSize()
             )
         }
 
@@ -508,7 +469,7 @@ private fun BackdropLayer(hero: Movie?) {
                 model = remember(pendingUrl) {
                     ImageRequest.Builder(ctx)
                         .data(pendingUrl)
-                        .size(1280, 720)
+                        .size(Size.ORIGINAL)
                         .scale(Scale.FILL)
                         .bitmapConfig(android.graphics.Bitmap.Config.ARGB_8888)
                         .dispatcher(kotlinx.coroutines.Dispatchers.IO)
@@ -520,7 +481,7 @@ private fun BackdropLayer(hero: Movie?) {
                 },
                 contentDescription = null,
                 contentScale       = ContentScale.Crop,
-                modifier           = Modifier.fillMaxHeight().fillMaxWidth(0.72f).align(Alignment.TopEnd).graphicsLayer { alpha = 1f - overlayAlpha }
+                modifier           = Modifier.fillMaxSize().graphicsLayer { alpha = 1f - overlayAlpha }
             )
         }
 
@@ -890,7 +851,7 @@ private fun RowsPanel(
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
 
     val renderMargin = when (DeviceProfile.tier) {
-        DeviceProfile.Tier.HIGH -> 2  // was 3 — reduces initial PerformTraversals by ~28%
+        DeviceProfile.Tier.HIGH -> 3
         DeviceProfile.Tier.MID  -> 1
         DeviceProfile.Tier.LOW  -> 1
     }
@@ -918,10 +879,9 @@ private fun RowsPanel(
             translationY = with(density) { animatedY.toPx() }
         }) {
             var yAccum = 0.dp
-            val firstContentIdx = rows.indexOfFirst { it !is RowDef.StudioRibbon }
             rows.forEachIndexed { i, rowDef ->
                 val rh       = rowHeightFor(i)
-                val isLand   = (i == firstContentIdx)
+                val isLand   = (i == 0)
                 val isActive = !focusState.isNavFocused && i == curRow
                 val yOffset  = yAccum
                 val inWindow = kotlin.math.abs(i - curRow) <= renderMargin
@@ -1512,10 +1472,7 @@ private fun StudioRibbonRow(
 
     Column(Modifier.padding(vertical = 10.dp)) {
         Text(
-            if (activeFilter != null) {
-                val name = StudioBrand.values().find { it.name == activeFilter }?.displayName ?: activeFilter
-                tr("$name · Categories", "$name · קטגוריות")
-            } else tr("Browse by Studio", "סנן לפי אולפן"),
+            tr("Browse by Studio", "סנן לפי אולפן"),
             color      = WHITE.copy(if (isActive) 1f else 0.4f),
             fontSize   = 14.sp,
             fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
@@ -1543,8 +1500,8 @@ private fun StudioRibbonRow(
 @Composable
 private fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
     val focusState   = remember { mutableStateOf(false) }
-    val containerCol = if (isSelected) RED.copy(0.18f)  else CARD_BG
-    val borderCol    = if (isSelected) RED  else Color.Transparent
+    val containerCol = if (isSelected) WHITE.copy(0.15f) else CARD_BG
+    val borderCol    = if (isSelected) WHITE else Color.Transparent
 
     val btnScale = if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) 1.08f else 1.0f
 

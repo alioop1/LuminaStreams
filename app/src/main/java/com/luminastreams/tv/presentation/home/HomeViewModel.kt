@@ -7,7 +7,6 @@ import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
@@ -71,11 +70,7 @@ class HomeViewModel : ViewModel() {
         .protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
         .build()
 
-    init {
-        loadAll()
-        // Auto-select the featured studio (most recent launch year) on startup
-        selectStudio(StudioBrand.featuredDefault())
-    }
+    init { loadAll() }
 
     fun selectTab(tab: String) = _state.update { it.copy(selectedTab = tab) }
 
@@ -85,103 +80,6 @@ class HomeViewModel : ViewModel() {
     fun retry() {
         if (_state.value.selectedTab == "Fuzer") loadFuzerContent()
         else loadAll()
-    }
-
-    // ── Studio Selection ─────────────────────────────────────────────────────
-
-    private var studioCatalogJob: Job? = null
-
-    /**
-     * Called when the user focuses/selects a studio from the persistent ribbon.
-     * Cancels any prior in-flight load, updates [currentStudioId], then
-     * fetches the new catalog (new-releases + categorized genre rows).
-     */
-    fun selectStudio(brand: StudioBrand) {
-        if (_state.value.currentStudioId == brand &&
-            _state.value.currentStudioCatalog != null) return
-
-        studioCatalogJob?.cancel()
-        _state.update { it.copy(currentStudioId = brand, studioCatalogLoading = true) }
-
-        studioCatalogJob = viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val catalog = loadStudioCatalog(brand)
-                _state.update { it.copy(currentStudioCatalog = catalog, studioCatalogLoading = false) }
-            } catch (e: Exception) {
-                _state.update { it.copy(studioCatalogLoading = false) }
-            }
-        }
-    }
-
-    /**
-     * Loads a full [StudioCatalog] for the given [StudioBrand]:
-     * - New Releases row (sorted by release_date desc) — shown as 16:9 landscape cards
-     * - Genre category rows — shown as 2:3 portrait cards
-     */
-    private suspend fun loadStudioCatalog(brand: StudioBrand): StudioCatalog = coroutineScope {
-        val k      = Constants.TMDB_API_KEY
-        val region = "US"
-        val lang   = "en-US"
-
-        val movieFilter = when {
-            brand.tmdbMovieProviderIds.isNotEmpty() ->
-                "with_watch_providers=${brand.tmdbMovieProviderIds}&watch_region=$region"
-            brand.tmdbMovieCompanyIds.isNotEmpty()  ->
-                "with_companies=${brand.tmdbMovieCompanyIds}"
-            else -> ""
-        }
-        val tvFilter = if (brand.tmdbTvNetworkIds.isNotEmpty())
-            "with_networks=${brand.tmdbTvNetworkIds}" else movieFilter
-
-        // ── New Releases (hero landscape row) — sorted by release_date desc ──
-        val newReleasesDef = async {
-            fetch(
-                "$BASE/discover/movie?api_key=$k&language=$lang" +
-                (if (movieFilter.isNotEmpty()) "&$movieFilter" else "") +
-                "&sort_by=release_date.desc",
-                "movie"
-            ).take(15)
-        }
-
-        // ── Genre category rows (portrait cards) ──────────────────────────────
-        data class GenreSpec(val label: String, val movieGenreId: Int, val tvGenreId: Int)
-
-        val genres = listOf(
-            GenreSpec("Action",    28,    10759),
-            GenreSpec("Drama",     18,    18),
-            GenreSpec("Animation", 16,    16),
-            GenreSpec("Comedy",    35,    35),
-            GenreSpec("Sci-Fi",    878,   10765),
-            GenreSpec("Thriller",  53,    80),
-            GenreSpec("Family",    10751, 10762),
-        )
-
-        // Fire all genre requests in parallel, merge movie + TV results per genre
-        val genreDeferred = genres.map { spec ->
-            spec to async {
-                val mUrl = "$BASE/discover/movie?api_key=$k&language=$lang" +
-                    "&with_genres=${spec.movieGenreId}" +
-                    (if (movieFilter.isNotEmpty()) "&$movieFilter" else "") +
-                    "&sort_by=popularity.desc"
-                val tUrl = "$BASE/discover/tv?api_key=$k&language=$lang" +
-                    "&with_genres=${spec.tvGenreId}" +
-                    (if (tvFilter.isNotEmpty()) "&$tvFilter" else "") +
-                    "&sort_by=popularity.desc"
-                val movies = async { fetch(mUrl, "movie") }
-                val shows  = async { fetch(tUrl, "tv") }
-                (movies.await() + shows.await())
-                    .sortedByDescending { it.rating }
-                    .take(20)
-            }
-        }
-
-        val newReleases = newReleasesDef.await()
-        val categoryRows = genreDeferred.mapNotNull { (spec, deferred) ->
-            val items = deferred.await()
-            if (items.isNotEmpty()) StudioCategoryRow(spec.label, items) else null
-        }
-
-        StudioCatalog(brand = brand, newReleases = newReleases, categoryRows = categoryRows)
     }
 
     // ── Pagination ─────────────────────────────────────────────────────────────
