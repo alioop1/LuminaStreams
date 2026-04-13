@@ -89,7 +89,7 @@ fun PosterCard(
                         .data(movie.posterUrl)
                         .crossfade(false) // חובה לבטל למניעת קרטועים
                         .allowHardware(true) // שימוש במאיץ גרפי
-                        .memoryCachePolicy(CachePolicy.DISABLED) // חובה! מונע את חנק ה-RAM
+                        .memoryCachePolicy(CachePolicy.ENABLED)  // HIGH tier (2952MB) — cache required for smooth scroll
                         .diskCachePolicy(CachePolicy.ENABLED)
                         .build(),
                     contentDescription = movie.title,
