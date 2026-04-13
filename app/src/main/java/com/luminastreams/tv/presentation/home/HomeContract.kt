@@ -19,6 +19,7 @@ data class HomeState(
     // ── Movies ──────────────────────────────────────────────────────────────
     val movieTrending:  List<Movie>  = emptyList(),
     val moviePremieres: List<Movie>  = emptyList(),
+    val movieAnimation: List<Movie>  = emptyList(),
     val movieAction:    List<Movie>  = emptyList(),
     val movieDrama:     List<Movie>  = emptyList(),
     val movieScifi:     List<Movie>  = emptyList(),
@@ -33,6 +34,7 @@ data class HomeState(
     // ── TV Shows ────────────────────────────────────────────────────────────
     val tvTrending:     List<Movie>  = emptyList(),
     val tvPremieres:    List<Movie>  = emptyList(),
+    val tvAnimation:    List<Movie>  = emptyList(),
     val tvDrama:        List<Movie>  = emptyList(),
     val tvCrime:        List<Movie>  = emptyList(),
     val tvScifi:        List<Movie>  = emptyList(),
@@ -66,10 +68,6 @@ data class HomeState(
     val focusedItem:       Movie?       = null,
 )
 
-/**
- * Fuzer category IDs — used by HomeViewModel.loadFuzerContent().
- * Each entry maps a human-readable name to the numeric cat ID on fuzer.xyz.
- */
 object FuzerCats {
     const val MOVIES         = 2
     const val SERIES         = 1
