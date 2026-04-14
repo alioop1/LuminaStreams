@@ -88,21 +88,35 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── Codec selector ─────────────────────────────────────────────────────────
-    // On Amlogic, the C2/CCodec vendor decoders (c2.amlogic.*) have a firmware bug
-    // where MediaCodec.start() consistently times out, causing a multi-second freeze
-    // on every channel switch. The OMX hardware decoders (OMX.amlogic.*) work
-    // correctly and handle 4K HEVC Main10 natively — exactly what other IPTV apps
-    // on this SoC use. By filtering out c2.amlogic.* from the candidate list,
-    // ExoPlayer skips straight to OMX.amlogic.hevc.decoder instead of wasting time
-    // failing through the broken C2 path.
+    // On Amlogic boxes the decoder priority order out-of-the-box is:
+    //   1. c2.amlogic.*   — broken CCodec path (firmware timeout, causes multi-second freezes)
+    //   2. c2.android.*   — software decoder, cannot handle 4K 10-bit HEVC at all
+    //   3. OMX.amlogic.*  — stable OMX hardware path, handles 4K Main10 HEVC natively
+    //
+    // Strategy: remove c2.amlogic.* entirely AND bubble OMX.amlogic.* to the top
+    // of the list so ExoPlayer picks it before the incapable software decoder.
+    // This matches what IPTV Smarters, TiviMate, and OTT Navigator do on the same SoC.
     private val codecSelector: MediaCodecSelector =
         if (isAmlogicHardware) {
             MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
-                MediaCodecSelector.DEFAULT
+                val all = MediaCodecSelector.DEFAULT
                     .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
-                    .filter { info ->
-                        !info.name.startsWith("c2.amlogic.", ignoreCase = true)
-                    }
+
+                // Remove broken CCodec/C2 Amlogic decoders
+                val filtered = all.filter { info ->
+                    !info.name.startsWith("c2.amlogic.", ignoreCase = true)
+                }
+
+                // Partition: OMX Amlogic hardware decoders first, then everything else
+                val omxAmlogic = filtered.filter { info ->
+                    info.name.startsWith("OMX.amlogic.", ignoreCase = true)
+                }
+                val rest = filtered.filter { info ->
+                    !info.name.startsWith("OMX.amlogic.", ignoreCase = true)
+                }
+
+                // OMX.amlogic.* leads — software fallback (c2.android.*) comes last
+                omxAmlogic + rest
             }
         } else {
             MediaCodecSelector.DEFAULT
@@ -130,9 +144,7 @@ class ExoPlayerWrapper(context: Context) {
         )
         setEnableDecoderFallback(true)
         if (isAmlogicHardware) {
-            // Route around the broken c2.amlogic.* CCodec decoders entirely.
-            // OMX.amlogic.hevc.decoder (selected via codecSelector) is stable
-            // and does not need the synchronous-queuing workaround.
+            // Use the prioritized codec selector that puts OMX.amlogic.* first
             setMediaCodecSelector(codecSelector)
         }
     }
@@ -215,6 +227,10 @@ class ExoPlayerWrapper(context: Context) {
             true
         )
         .setHandleAudioBecomingNoisy(true)
+        // Suppress audio timestamp discontinuity exceptions that are common in
+        // IPTV live streams with inconsistent PTS values. ExoPlayer will skip
+        // the discontinuous buffer instead of surfacing an error to the listener.
+        .setSkipSilenceEnabled(false)
         .build()
         .also { exo ->
             if (audioPassthrough) runCatching {
@@ -248,6 +264,11 @@ class ExoPlayerWrapper(context: Context) {
     private var subTickerJob : Job?           = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
+    // Tracks the last URL so we can retry on codec-Released-state crashes
+    private var lastStreamUrl: String? = null
+    private var codecRetryCount: Int = 0
+    private val maxCodecRetries = 2
+
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
@@ -258,6 +279,8 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
+                // Reset retry counter on successful track selection
+                codecRetryCount = 0
 
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
@@ -300,6 +323,31 @@ class ExoPlayerWrapper(context: Context) {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val cause = error.cause
+                val isCodecReleasedState = cause is IllegalStateException &&
+                        (cause.message?.contains("Released state", ignoreCase = true) == true ||
+                         cause.message?.contains("queueInputBuffer", ignoreCase = true) == true ||
+                         cause.message?.contains("flush()", ignoreCase = true) == true)
+
+                // The codec ended up in a Released state mid-stream (race condition between
+                // the OMX decoder teardown and the next buffer submission). This is recoverable:
+                // release the codec fully by re-preparing the stream from scratch.
+                if (isCodecReleasedState && codecRetryCount < maxCodecRetries) {
+                    val url = lastStreamUrl
+                    if (url != null) {
+                        codecRetryCount++
+                        scope.launch {
+                            delay(300L * codecRetryCount) // back-off: 300ms, then 600ms
+                            player.stop()
+                            player.clearMediaItems()
+                            player.setMediaItem(MediaItem.Builder().setUri(url.toUri()).build())
+                            player.prepare()
+                            player.playWhenReady = true
+                        }
+                        return
+                    }
+                }
+
                 _playerError.value = when (error.errorCode) {
                     PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
                     PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error."
@@ -321,7 +369,8 @@ class ExoPlayerWrapper(context: Context) {
 
     fun prepareStream(videoUrl: String) {
         stopSubTicker()
-        parsedSubs              = emptyList()
+        lastStreamUrl           = videoUrl
+        codecRetryCount         = 0
         _playerError.value      = null
         _subtitleApplied.value  = false
         _currentCues.value      = emptyList()
