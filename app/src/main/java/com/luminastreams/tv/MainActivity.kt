@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.os.Bundle
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.*
@@ -45,7 +44,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.luminastreams.tv.core.SoundManager
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -82,19 +80,14 @@ import androidx.compose.animation.ExitTransition
  * Tuning guide (rebuild & check after each change):
  *   320  → matches a standard 1080p PC/monitor (target baseline)
  *   240  → slightly larger UI (good for very large living-room TVs)
- *   320  → compact, correct for 50"+
  *   400  → even smaller (more content visible, smaller text)
  */
 private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
 
-    var soundManager: SoundManager? = null
-
     override fun attachBaseContext(newBase: Context) {
         val dm = newBase.resources.displayMetrics
-        // Only override if the system density is different from our target.
-        // This avoids double-applying on devices that are already correct.
         if (dm.densityDpi != FORCED_DENSITY_DPI) {
             val config = Configuration(newBase.resources.configuration)
             config.densityDpi = FORCED_DENSITY_DPI
@@ -109,7 +102,13 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        window.colorMode = ActivityInfo.COLOR_MODE_HDR
+        // Guard COLOR_MODE_HDR behind HIGH tier + SDK >= P.
+        // LOW/MID tier Amlogic/Mali GPUs don't support wide-color EGL swap
+        // chains and log "Unable to match the desired swap behavior" + jitter.
+        if (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.colorMode = ActivityInfo.COLOR_MODE_HDR
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.attributes = window.attributes.also {
@@ -117,32 +116,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        soundManager = SoundManager(this)
-
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
-    }
-
-    @android.annotation.SuppressLint("RestrictedApi")
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    soundManager?.playClick()
-                }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    soundManager?.playNav()
-                }
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
-    override fun onDestroy() {
-        soundManager?.release()
-        super.onDestroy()
     }
 }
 
@@ -164,9 +140,7 @@ fun LuminaAppShell() {
     }
 
     val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
-
     val navController = rememberNavController()
-
     val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
@@ -187,10 +161,8 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val waveCount = 5
 
-    // LOW: static bars — 5 concurrent infinite transitions on a low-end
-    // device burn through the frame budget before any UI is visible.
     val waveHeights: List<Float> = if (isLow) {
-        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)  // static stagger, zero Choreographer
+        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)
     } else {
         val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
         (0 until waveCount).map { index ->
@@ -230,8 +202,6 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    // LOW: skip the infinite alpha pulse — it redraws a full-screen image
-    // every frame for 3.5 seconds, burning through frame budget on boot.
     val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
         1.0f
     } else {
@@ -247,10 +217,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
         ).value
     }
 
-    val context = LocalContext.current
-
     LaunchedEffect(Unit) {
-        (context as? MainActivity)?.soundManager?.playSplash()
         delay(3500)
         onTimeout()
     }
@@ -333,11 +300,11 @@ fun AppNavHostContainer(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
-                    val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
-                    val safeImdb    = if (imdbId.isBlank()) "_" else imdbId
-                    val safeTitle   = URLEncoder.encode(title, "UTF-8")
+                    val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeImdb     = if (imdbId.isBlank()) "_" else imdbId
+                    val safeTitle    = URLEncoder.encode(title, "UTF-8")
                     val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
-                    val safeLogo    = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+                    val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
@@ -424,7 +391,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
             val vm: IptvViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)

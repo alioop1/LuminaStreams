@@ -8,22 +8,24 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.zip.ZipInputStream
 
+// subdl.com API — free, no API Key required
+// For series: requires &season=X&episode=Y params in the search URL
+// Docs: https://subdl.com/api-doc
+
 class SubtitleScraper {
 
     companion object {
-        // FIX: was "https://api.subdl.com/api/v1/" which produced a malformed URL
-        // "https://api.subdl.com/api/v1/?imdb_id=..." — missing the /subtitles endpoint.
-        private const val SEARCH_BASE = "https://api.subdl.com/api/v1/subtitles"
+        private const val SEARCH_BASE = "https://api.subdl.com/api/v1/"
         private const val DL_BASE     = "https://dl.subdl.com"
         private const val USER_AGENT  = "Mozilla/5.0 (Android TV; Android 12) LuminaStreams/1.0"
-        private const val TIMEOUT_MS  = 12_000
+        private const val TIMEOUT_MS  = 10_000
     }
 
     suspend fun fetchSubtitleInMemory(
-        imdbId   : String,
-        season   : Int?    = null,
-        episode  : Int?    = null,
-        langCode : String  = "heb"
+        imdbId:   String,
+        langCode: String = "heb",
+        season:   Int?   = null,
+        episode:  Int?   = null
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
         try {
             val sdLang = when (langCode.lowercase().take(3)) {
@@ -36,11 +38,14 @@ class SubtitleScraper {
                 else              -> "EN"
             }
 
-            val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
-            // Correct URL: https://api.subdl.com/api/v1/subtitles?imdb_id=...&lang=...
-            var searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
-            if (season != null && episode != null) {
-                searchUrl += "&season_number=$season&episode_number=$episode"
+            val cleanId = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+
+            // Build search URL — append season/episode for series
+            val searchUrl = buildString {
+                append("$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5")
+                if (season != null && episode != null) {
+                    append("&season=$season&episode=$episode")
+                }
             }
 
             val searchConn = openGet(searchUrl)
