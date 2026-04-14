@@ -19,6 +19,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecSelector
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
@@ -37,6 +38,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.Locale
 
 class ExoPlayerWrapper(context: Context) {
 
@@ -71,24 +73,68 @@ class ExoPlayerWrapper(context: Context) {
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
+    // ── Amlogic hardware detection ─────────────────────────────────────────────
+    // DeviceProfile may not recognise every Amlogic box by model string (e.g. YYC/Skyworth
+    // variants report MeCool=false). Cross-check with Build.HARDWARE / Build.SOC_MODEL so
+    // we catch anything whose GPU or SoC family is Amlogic.
+    private val isAmlogicHardware: Boolean = run {
+        val hw  = android.os.Build.HARDWARE.lowercase(Locale.ROOT)
+        val soc = if (android.os.Build.VERSION.SDK_INT >= 31)
+            android.os.Build.SOC_MODEL.lowercase(Locale.ROOT) else ""
+        hw.contains("amlogic") || hw.contains("meson") ||
+                soc.contains("amlogic") || soc.contains("s905") ||
+                soc.contains("s922")   || soc.contains("t962") ||
+                DeviceProfile.isAmlogic || DeviceProfile.isMeCool
+    }
+
+    // ── Codec selector ─────────────────────────────────────────────────────────
+    // On Amlogic, the C2/CCodec vendor decoders (c2.amlogic.*) have a firmware bug
+    // where MediaCodec.start() consistently times out, causing a multi-second freeze
+    // on every channel switch. The OMX hardware decoders (OMX.amlogic.*) work
+    // correctly and handle 4K HEVC Main10 natively — exactly what other IPTV apps
+    // on this SoC use. By filtering out c2.amlogic.* from the candidate list,
+    // ExoPlayer skips straight to OMX.amlogic.hevc.decoder instead of wasting time
+    // failing through the broken C2 path.
+    private val codecSelector: MediaCodecSelector =
+        if (isAmlogicHardware) {
+            MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
+                MediaCodecSelector.DEFAULT
+                    .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
+                    .filter { info ->
+                        !info.name.startsWith("c2.amlogic.", ignoreCase = true)
+                    }
+            }
+        } else {
+            MediaCodecSelector.DEFAULT
+        }
+
     // ── Renderers factory ──────────────────────────────────────────────────────
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
-                !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                isAmlogicHardware ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
+                !hwAcceleration ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.tier == DeviceProfile.Tier.LOW ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                DeviceProfile.isXiaomi ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                 DeviceProfile.isLg   || DeviceProfile.isSony   ||
                         DeviceProfile.isPhilips || DeviceProfile.isNvidia ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
             }
         )
         setEnableDecoderFallback(true)
+        if (isAmlogicHardware) {
+            // Route around the broken c2.amlogic.* CCodec decoders entirely.
+            // OMX.amlogic.hevc.decoder (selected via codecSelector) is stable
+            // and does not need the synchronous-queuing workaround.
+            setMediaCodecSelector(codecSelector)
+        }
     }
 
     // ── Track selector ─────────────────────────────────────────────────────────
@@ -102,7 +148,7 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(false)
+            .setTunnelingEnabled(DeviceProfile.isNvidia)
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
@@ -118,7 +164,10 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── LoadControl ────────────────────────────────────────────────────────────
-    private val safeTargetBytes = 12 * 1024 * 1024
+    // Keep network buffer target modest on Amlogic to reduce channel-switch
+    // latency on live IPTV — the OMX decoder starts faster than the C2 path
+    // so a smaller pre-roll is sufficient.
+    private val safeTargetBytes = if (isAmlogicHardware) 6 * 1024 * 1024 else 12 * 1024 * 1024
 
     private val loadControl: DefaultLoadControl = run {
         val buf = DeviceProfile.bufferConfig
@@ -382,12 +431,13 @@ class ExoPlayerWrapper(context: Context) {
             parsedSubs = parsed
             if (parsedSubs.isEmpty()) return@withContext
             _subtitleApplied.value = true
-            val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
-            subTickerJob = scope.launch {
+            val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 400L else 250L
+            subTickerJob = scope.launch(Dispatchers.Default) {
                 while (isActive) {
-                    val pos    = player.currentPosition
+                    val pos    = withContext(Dispatchers.Main) { player.currentPosition }
                     val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                    _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                    val cues   = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                    withContext(Dispatchers.Main) { _currentCues.value = cues }
                     delay(tickMs)
                 }
             }
