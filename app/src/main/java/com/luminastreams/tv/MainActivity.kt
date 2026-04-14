@@ -5,26 +5,37 @@
 )
 package com.luminastreams.tv
 
+import android.content.res.Configuration
 import android.os.Build
 import android.app.Application
+import android.content.Context
+import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.os.Bundle
+import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.FastOutLinearInEasing
-import androidx.compose.animation.core.LinearOutSlowInEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -34,6 +45,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.luminastreams.tv.core.SoundManager
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -41,6 +53,8 @@ import com.luminastreams.tv.presentation.details.DetailsScreen
 import com.luminastreams.tv.presentation.details.DetailsViewModel
 import com.luminastreams.tv.presentation.home.HomeScreen
 import com.luminastreams.tv.presentation.home.HomeViewModel
+import com.luminastreams.tv.presentation.iptv.IptvScreen
+import com.luminastreams.tv.presentation.iptv.IptvViewModel
 import com.luminastreams.tv.presentation.player.PlayerScreen
 import com.luminastreams.tv.presentation.search.SearchScreen
 import com.luminastreams.tv.presentation.search.SearchViewModel
@@ -49,34 +63,141 @@ import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
+import kotlinx.coroutines.delay
+import java.net.URLDecoder
+import java.net.URLEncoder
+import com.luminastreams.tv.core.DeviceProfile
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+
+
+/**
+ * Fixed density target for the entire app.
+ *
+ * Android TV large screens (50"+ 4K OLEDs) typically report densityDpi=213
+ * which makes every dp physically very large on the panel.  We force 320 dpi
+ * so the UI always renders at the same logical scale as a 1080p PC monitor,
+ * regardless of what the TV OS advertises.
+ *
+ * Tuning guide (rebuild & check after each change):
+ *   320  → matches a standard 1080p PC/monitor (target baseline)
+ *   240  → slightly larger UI (good for very large living-room TVs)
+ *   320  → compact, correct for 50"+
+ *   400  → even smaller (more content visible, smaller text)
+ */
+private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
+
+    var soundManager: SoundManager? = null
+
+    override fun attachBaseContext(newBase: Context) {
+        val dm = newBase.resources.displayMetrics
+        // Only override if the system density is different from our target.
+        // This avoids double-applying on devices that are already correct.
+        if (dm.densityDpi != FORCED_DENSITY_DPI) {
+            val config = Configuration(newBase.resources.configuration)
+            config.densityDpi = FORCED_DENSITY_DPI
+            val scaled = newBase.createConfigurationContext(config)
+            super.attachBaseContext(scaled)
+        } else {
+            super.attachBaseContext(newBase)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        // fix: guard HDR colorMode behind API 26 — below it the constant doesn't exist
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        // FIX: Guard COLOR_MODE_HDR behind HIGH tier + SDK >= P.
+        //
+        // On LOW tier Amlogic/Mali GPUs (S905X, S905W, S905D etc.) setting
+        // COLOR_MODE_HDR forces the EGL surface into a wide-color / HDR10
+        // swap chain that these GPUs' OpenGL ES drivers don't support.
+        // The driver falls back through several swap-behavior candidates and
+        // logs "Unable to match the desired swap behavior" for each one.
+        // Beyond the logspam this can cause frame-pacing jitter (the driver
+        // picks a sub-optimal swap interval) and adds ~2 ms overhead per frame
+        // on already-marginal 30fps hardware — enough to drop frames visibly.
+        //
+        // HIGH tier devices (Nvidia Shield, Sony/LG flagships, Xiaomi PatchWall
+        // high-end) all support wide-color swap chains natively, so we keep
+        // HDR mode enabled for them.
+        if (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
         }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             window.attributes = window.attributes.also {
                 it.preferMinimalPostProcessing = true
             }
         }
+
+        soundManager = SoundManager(this)
+
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
+    }
+
+    @android.annotation.SuppressLint("RestrictedApi")
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.action == KeyEvent.ACTION_DOWN) {
+            when (event.keyCode) {
+                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                    soundManager?.playClick()
+                }
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    soundManager?.playNav()
+                }
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
+
+    override fun onDestroy() {
+        // FIX: Stop all active streams BEFORE release().
+        //
+        // SoundPool's JNI layer tracks "objects" (active stream handles). If
+        // release() is called while a stream is still playing, the native
+        // ObjectManager destructor fires with mObjectCount > 0 and logs:
+        //   "~ObjectManager: mObjectCount: 1 should be zero"
+        //
+        // Calling stopAll() drains the active stream queue synchronously,
+        // so by the time release() destroys the pool the count is already 0.
+        soundManager?.release()
+        soundManager = null
+        super.onDestroy()
     }
 }
 
 @Composable
 fun LuminaAppShell() {
+    val context = LocalContext.current
+    val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+
+    var appLang by remember { mutableStateOf(prefs.getString("app_lang", "he") ?: "he") }
+
+    DisposableEffect(Unit) {
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPrefs, key ->
+            if (key == "app_lang") {
+                appLang = sharedPrefs.getString("app_lang", "he") ?: "he"
+            }
+        }
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
+    val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
+
     val navController = rememberNavController()
-    val repository: MediaRepository = remember { MediaRepositoryImpl() }
+
+    val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
-    CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+    CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
         Box(
             Modifier
                 .fillMaxSize()
@@ -84,6 +205,95 @@ fun LuminaAppShell() {
         ) {
             AppNavHostContainer(navController, homeViewModel, repository)
         }
+    }
+}
+
+// ── Lumina Light Waves loading indicator ──
+@Composable
+fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
+    val waveCount = 5
+
+    // LOW: static bars — 5 concurrent infinite transitions on a low-end
+    // device burn through the frame budget before any UI is visible.
+    val waveHeights: List<Float> = if (isLow) {
+        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)  // static stagger, zero Choreographer
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
+        (0 until waveCount).map { index ->
+            infiniteTransition.animateFloat(
+                initialValue = 0.2f,
+                targetValue  = 1.0f,
+                animationSpec = infiniteRepeatable(
+                    animation  = tween(durationMillis = 500, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(offsetMillis = index * 120)
+                ),
+                label = "wave_$index"
+            ).value
+        }
+    }
+
+    Row(
+        modifier = modifier.height(40.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        waveHeights.forEach { h ->
+            Box(
+                modifier = Modifier
+                    .width(6.dp)
+                    .fillMaxHeight(h)
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color(0xFF00E5FF), Color(0xFFB400FF))
+                        )
+                    )
+            )
+        }
+    }
+}
+
+@Composable
+fun SplashScreen(onTimeout: () -> Unit) {
+    // LOW: skip the infinite alpha pulse — it redraws a full-screen image
+    // every frame for 3.5 seconds, burning through frame budget on boot.
+    val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
+        1.0f
+    } else {
+        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
+        infiniteTransition.animateFloat(
+            initialValue  = 0.6f,
+            targetValue   = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation  = tween(1600, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "alpha"
+        ).value
+    }
+
+    val context = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        (context as? MainActivity)?.soundManager?.playSplash()
+        delay(3500)
+        onTimeout()
+    }
+
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+        Image(
+            painter            = painterResource(id = R.drawable.logo_lumina_glow),
+            contentDescription = "Lumina Logo Background",
+            contentScale       = ContentScale.Crop,
+            modifier           = Modifier.fillMaxSize().alpha(alpha)
+        )
+        LuminaLoadingIndicator(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 80.dp)
+        )
     }
 }
 
@@ -96,14 +306,23 @@ fun AppNavHostContainer(
     val context     = LocalContext.current
     val application = context.applicationContext as Application
 
+    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     NavHost(
         navController    = navController,
-        startDestination = "home",
-        enterTransition  = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        exitTransition   = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) },
+        startDestination = "splash",
+        enterTransition  = { if (isLow) EnterTransition.None  else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
+        exitTransition   = { if (isLow) ExitTransition.None   else fadeOut(animationSpec = tween(400, easing = LinearOutSlowInEasing)) },
         popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
         popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
+
+        composable("splash") {
+            SplashScreen(onTimeout = {
+                navController.navigate("home") {
+                    popUpTo("splash") { inclusive = true }
+                }
+            })
+        }
 
         composable("home") {
             HomeScreen(
@@ -111,7 +330,7 @@ fun AppNavHostContainer(
                 viewModel     = homeViewModel,
                 navController = navController,
                 onMovieClick  = { id ->
-                    val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                    val safeId = URLEncoder.encode(id, "UTF-8")
                     navController.navigate("details?fullId=$safeId")
                 }
             )
@@ -129,7 +348,7 @@ fun AppNavHostContainer(
                 factory = object : ViewModelProvider.Factory {
                     @Suppress("UNCHECKED_CAST")
                     override fun <T : ViewModel> create(modelClass: Class<T>): T =
-                        DetailsViewModel(repository, context) as T
+                        DetailsViewModel(repository, application) as T
                 }
             )
 
@@ -140,34 +359,47 @@ fun AppNavHostContainer(
             DetailsScreen(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
-                onPlayDirectUrl = { videoUrl, imdbId ->
-                    val safeUrl  = java.net.URLEncoder.encode(videoUrl, "UTF-8")
-                    val safeImdb = if (imdbId.isBlank()) "_" else imdbId
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb")
+                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
+                    val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeImdb    = if (imdbId.isBlank()) "_" else imdbId
+                    val safeTitle   = URLEncoder.encode(title, "UTF-8")
+                    val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
+                    val safeLogo    = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
                 onRecommendationClick = { id ->
-                    val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                    val safeId = URLEncoder.encode(id, "UTF-8")
                     navController.navigate("details?fullId=$safeId")
                 }
             )
         }
 
         composable(
-            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}",
+            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&logoUrl={logoUrl}",
             arguments = listOf(
-                navArgument("videoUrl") { type = NavType.StringType; defaultValue = "" },
-                navArgument("imdbId")   { type = NavType.StringType; defaultValue = "_" }
+                navArgument("videoUrl")    { type = NavType.StringType; defaultValue = "" },
+                navArgument("imdbId")      { type = NavType.StringType; defaultValue = "_" },
+                navArgument("title")       { type = NavType.StringType; defaultValue = "" },
+                navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" },
+                navArgument("logoUrl")     { type = NavType.StringType; defaultValue = "" }
             )
         ) { back ->
-            val encodedUrl = back.arguments?.getString("videoUrl") ?: ""
-            val imdbId     = back.arguments?.getString("imdbId")   ?: "_"
-            val videoUrl   = java.net.URLDecoder.decode(encodedUrl, "UTF-8")
+            val videoUrl    = URLDecoder.decode(back.arguments?.getString("videoUrl") ?: "", "UTF-8")
+            val imdbId      = back.arguments?.getString("imdbId") ?: "_"
+            val title       = URLDecoder.decode(back.arguments?.getString("title") ?: "", "UTF-8")
+            val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8")
+                .let { if (it == "none") "" else it }
+            val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8")
+                .let { if (it == "none") "" else it }
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
                     videoUrl       = videoUrl,
                     imdbId         = if (imdbId == "_") "" else imdbId,
+                    title          = title,
+                    backdropUrl    = backdropUrl,
+                    logoUrl        = logoUrl,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -182,7 +414,7 @@ fun AppNavHostContainer(
                 onIntent       = vm::onIntent,
                 onNavigateBack = { navController.popBackStack() },
                 onResultClick  = { result ->
-                    val safeId = java.net.URLEncoder.encode(result.id, "UTF-8")
+                    val safeId = URLEncoder.encode(result.id, "UTF-8")
                     navController.navigate("details?fullId=$safeId")
                 }
             )
@@ -192,11 +424,12 @@ fun AppNavHostContainer(
             val vm: SettingsViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
+            val state = vm.state.collectAsState().value
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 SettingsScreen(
-                    state          = vm.state.collectAsState().value,
+                    state          = state,
                     viewModel      = vm,
-                    isRtl          = false,
+                    isRtl          = state.appLanguage == "he",
                     onNavigateBack = { navController.popBackStack() }
                 )
             }
@@ -211,9 +444,22 @@ fun AppNavHostContainer(
                     viewModel      = vm,
                     onNavigateBack = { navController.popBackStack() },
                     onMovieClick   = { id ->
-                        val safeId = java.net.URLEncoder.encode(id, "UTF-8")
+                        val safeId = URLEncoder.encode(id, "UTF-8")
                         navController.navigate("details?fullId=$safeId")
                     }
+                )
+            }
+        }
+
+        // ── IPTV Live TV ───────────────────────────────────────────────────────
+        composable("iptv") {
+            val vm: IptvViewModel = viewModel(
+                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+            )
+            Box(Modifier.fillMaxSize().background(Color(0xFF050508))) {
+                IptvScreen(
+                    viewModel      = vm,
+                    onNavigateBack = { navController.popBackStack() }
                 )
             }
         }
