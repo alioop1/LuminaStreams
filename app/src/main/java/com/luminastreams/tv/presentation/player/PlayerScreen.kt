@@ -226,6 +226,9 @@ private fun applyResizeMode(
 fun PlayerScreen(
     videoUrl:       String,
     imdbId:         String,
+    title:          String = "",    // ← must be present
+    backdropUrl:    String = "",    // ← must be present
+    logoUrl:        String = "",    // ← must be present
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {

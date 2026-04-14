@@ -76,6 +76,9 @@ class ExoPlayerWrapper(context: Context) {
     private val _videoSize = MutableStateFlow(VideoSize.UNKNOWN)
     val videoSize: StateFlow<VideoSize> = _videoSize.asStateFlow()
 
+    private val _videoAspectRatio = MutableStateFlow(0f)
+    val videoAspectRatio: StateFlow<Float> = _videoAspectRatio.asStateFlow()
+
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
@@ -217,6 +220,10 @@ class ExoPlayerWrapper(context: Context) {
                 // Expose the real pixel dimensions so the aspect-ratio logic can use them
                 _videoSize.value = videoSize
 
+                if (videoSize.height > 0) {
+                    _videoAspectRatio.value = (videoSize.width * videoSize.pixelWidthHeightRatio) / videoSize.height
+                }
+
                 if (_contentFrameRate.value <= 0f) {
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
@@ -257,6 +264,7 @@ class ExoPlayerWrapper(context: Context) {
         _isDolbyVision.value   = false
         _isDolbyAtmos.value    = false
         _videoSize.value       = VideoSize.UNKNOWN
+        _videoAspectRatio.value = 0f
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -325,6 +333,14 @@ class ExoPlayerWrapper(context: Context) {
         parsedSubs = emptyList()
         _currentCues.value = emptyList()
         _subtitleApplied.value = false
+    }
+
+    fun disableSubtitles() {
+        stopSubTicker()
+        val params = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build()
+        player.trackSelectionParameters = params
     }
 
     private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})""")
