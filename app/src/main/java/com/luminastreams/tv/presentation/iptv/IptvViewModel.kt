@@ -31,7 +31,7 @@ import java.io.FileReader
 import java.io.FileWriter
 
 class IptvViewModel(application: Application) : AndroidViewModel(application) {
-    private val TAG = "EPG_DEBUG"
+    private val TAG = "IptvViewModel"
     private val prefs = application.getSharedPreferences("lumina_iptv", Context.MODE_PRIVATE)
     private val _state = MutableStateFlow(IptvState())
     val state: StateFlow<IptvState> = _state.asStateFlow()
@@ -54,8 +54,8 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             loadState          = s.loadState,
             viewMode           = s.viewMode,
         )}
-        // Use reference equality (===) for collection fields so we avoid the catastrophically
-        // expensive structural comparison of epgData (Map<String, List<EpgProgram>> with
+        // Use reference equality (===) for collection fields to avoid the expensive
+        // structural comparison of epgData (Map<String, List<EpgProgram>> with
         // potentially millions of entries). _state.update{it.copy()} reuses the same
         // collection references when those fields were not actually modified.
         .distinctUntilChanged { old, new ->
@@ -398,15 +398,17 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val cacheFile = epgCacheFile(epgUrl)
                 val cacheTs = prefs.getLong(epgCacheTimeKey(epgUrl), 0L)
-                val isCacheValid = (System.currentTimeMillis() - cacheTs) < 24 * 60 * 60 * 1000L // תוקף ל-24 שעות
+                // Cache is valid for 24 hours
+                val isCacheValid = (System.currentTimeMillis() - cacheTs) < 24 * 60 * 60 * 1000L
 
                 if (cacheFile.exists() && cacheFile.length() > 100) {
                     try {
                         val result = withContext(Dispatchers.IO) { deserializeEpgResult(cacheFile) }
                         if (result != null) {
                             applyEpgResult(result)
-                            if (isCacheValid) return@launch // הקאש מעודכן מהיום? עוצרים כאן ולא מעמיסים על האינטרנט.
-                            // אם עבר יום - הצגנו את הישן מיד כדי שהממשק לא ייתקע, ועכשיו נוריד חדש ברקע.
+                            if (isCacheValid) return@launch // Cache is fresh — skip network fetch
+                            // Cache is stale: show cached data immediately so the UI doesn't freeze,
+                            // then fetch a fresh copy in the background.
                         }
                     } catch (e: Exception) {
                         Log.w(TAG, "EPG cache read failed: ${e.message}")
@@ -503,7 +505,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         val updatedChannels = _state.value.channels.map { ch ->
-            // חיסול פריזים: אם לערוץ כבר יש לוגו תקין, מדלגים עליו לחלוטין (חוסך מיליוני ריצות לולאה)
+            // If the channel already has a valid logo, skip EPG logo resolution entirely
             if (ch.logoUrl.isNotBlank()) return@map ch
 
             val epgLogo = resolveEpgLogo(ch, result.channelLogos)
@@ -641,9 +643,9 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun buildEpgIndex(channels: List<IptvChannel>, dataMap: Map<String, List<EpgProgram>>) = withContext(Dispatchers.Default) {
-        // Pre-build a reverse lookup: every epgKey → its programs (already in dataMap).
+        // Pre-build a reverse lookup: every epgKey -> its programs (already in dataMap).
         // Then for each channel, check exact keys first, and only do fuzzy fallback
-        // against a pre-lowercased key set — avoiding O(channels × epg_entries) scans.
+        // against a pre-lowercased key set — avoiding O(channels x epg_entries) scans.
         val epgKeysLower = dataMap.keys.map { it.lowercase() to it }.toMap()
 
         val newIndex = HashMap<String, List<EpgProgram>>(channels.size)
@@ -693,7 +695,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _state.update { it.copy(loadState = IptvLoadState.Loading) }
             try {
-                // העברת חישובי המערך הענקי לליבות הרקע של המעבד כדי לא לתקוע את הממשק
+                // Offload heavy list processing to background CPU threads to keep the UI responsive
                 val (channels, groups, sorted) = withContext(Dispatchers.Default) {
                     val rawChannels = M3uParser.parse(url).getOrThrow()
                     val existingLogoMap = _state.value.channelLogos
@@ -727,8 +729,31 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
                 if (epgUrl.isNotBlank()) {
                     loadEpgWithCache(epgUrl)
                 }
+                // Schedule auto-refresh if the playlist has a non-zero interval
+                scheduleAutoRefresh(playlist)
             } catch (e: Exception) {
                 _state.update { it.copy(loadState = IptvLoadState.Error("Failed: ${e.message?.take(60)}")) }
+            }
+        }
+    }
+
+    /**
+     * Schedules a repeating background refresh for the given playlist based on its
+     * [IptvPlaylist.autoRefreshHours] setting. If the value is 0 or negative, no refresh
+     * is scheduled. Any previously running auto-refresh job is cancelled first.
+     */
+    private fun scheduleAutoRefresh(playlist: IptvPlaylist) {
+        autoRefreshJob?.cancel()
+        val intervalMs = playlist.autoRefreshHours * 60 * 60 * 1000L
+        if (intervalMs <= 0) return
+        autoRefreshJob = viewModelScope.launch {
+            while (true) {
+                delay(intervalMs)
+                // Only refresh if this playlist is still the active one
+                val current = _state.value.playlists.find { it.id == playlist.id && it.isActive }
+                if (current == null) break
+                Log.d(TAG, "Auto-refreshing playlist '${playlist.name}' after ${playlist.autoRefreshHours}h")
+                loadPlaylist(current.url, current.name, current.epgUrl, current.id)
             }
         }
     }
@@ -776,6 +801,7 @@ class IptvViewModel(application: Application) : AndroidViewModel(application) {
         val updated = _state.value.playlists.filter { it.id != playlistId }
         savePlaylistsToPrefs(updated)
         if (_state.value.activePlaylistId == playlistId) {
+            autoRefreshJob?.cancel()
             _state.update {
                 it.copy(
                     playlists = updated, activePlaylistId = null,
