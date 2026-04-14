@@ -12,7 +12,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
 import android.os.Bundle
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.core.*
@@ -45,7 +44,6 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.luminastreams.tv.core.SoundManager
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -82,14 +80,11 @@ import androidx.compose.animation.ExitTransition
  * Tuning guide (rebuild & check after each change):
  *   320  → matches a standard 1080p PC/monitor (target baseline)
  *   240  → slightly larger UI (good for very large living-room TVs)
- *   320  → compact, correct for 50"+
  *   400  → even smaller (more content visible, smaller text)
  */
 private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
-
-    var soundManager: SoundManager? = null
 
     override fun attachBaseContext(newBase: Context) {
         val dm = newBase.resources.displayMetrics
@@ -108,10 +103,8 @@ class MainActivity : ComponentActivity() {
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
         // Guard COLOR_MODE_HDR behind HIGH tier + SDK >= P.
-        // On LOW tier Amlogic/Mali GPUs, COLOR_MODE_HDR forces an EGL
-        // wide-color swap chain the driver doesn't support, causing:
-        //   OpenGLRenderer: Unable to match the desired swap behavior
-        // HIGH tier devices (Shield, Sony/LG flagships) support it natively.
+        // LOW/MID tier Amlogic/Mali GPUs don't support wide-color EGL swap
+        // chains and log "Unable to match the desired swap behavior" + jitter.
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
@@ -123,57 +116,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        soundManager = SoundManager(this)
-
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
-    }
-
-    @android.annotation.SuppressLint("RestrictedApi")
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    soundManager?.playClick()
-                }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    soundManager?.playNav()
-                }
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
-    override fun onStop() {
-        // Release SoundPool here, NOT only in onDestroy().
-        //
-        // When the process is killed by SIGKILL (swipe-to-dismiss, OOM killer,
-        // system resource reclaim), onDestroy() is NOT guaranteed to run.
-        // onStop() IS always dispatched through the normal Activity lifecycle
-        // before any kill can occur, so this is the correct place to free
-        // native audio resources and ensure ~ObjectManager sees mObjectCount==0.
-        soundManager?.release()
-        soundManager = null
-        super.onStop()
-    }
-
-    override fun onStart() {
-        super.onStart()
-        // Re-create SoundManager if the Activity comes back to the foreground
-        // after onStop() released it (e.g. user returns from recents).
-        if (soundManager == null) {
-            soundManager = SoundManager(this)
-        }
-    }
-
-    override fun onDestroy() {
-        // Belt-and-suspenders: release if somehow still alive (e.g. onStop
-        // was skipped in a rare configuration-change path).
-        soundManager?.release()
-        soundManager = null
-        super.onDestroy()
     }
 }
 
@@ -195,9 +140,7 @@ fun LuminaAppShell() {
     }
 
     val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
-
     val navController = rememberNavController()
-
     val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
@@ -274,10 +217,7 @@ fun SplashScreen(onTimeout: () -> Unit) {
         ).value
     }
 
-    val context = LocalContext.current
-
     LaunchedEffect(Unit) {
-        (context as? MainActivity)?.soundManager?.playSplash()
         delay(3500)
         onTimeout()
     }
