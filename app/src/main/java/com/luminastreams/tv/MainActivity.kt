@@ -93,8 +93,6 @@ class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
         val dm = newBase.resources.displayMetrics
-        // Only override if the system density is different from our target.
-        // This avoids double-applying on devices that are already correct.
         if (dm.densityDpi != FORCED_DENSITY_DPI) {
             val config = Configuration(newBase.resources.configuration)
             config.densityDpi = FORCED_DENSITY_DPI
@@ -109,20 +107,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         window.decorView.setBackgroundColor(android.graphics.Color.BLACK)
 
-        // FIX: Guard COLOR_MODE_HDR behind HIGH tier + SDK >= P.
-        //
-        // On LOW tier Amlogic/Mali GPUs (S905X, S905W, S905D etc.) setting
-        // COLOR_MODE_HDR forces the EGL surface into a wide-color / HDR10
-        // swap chain that these GPUs' OpenGL ES drivers don't support.
-        // The driver falls back through several swap-behavior candidates and
-        // logs "Unable to match the desired swap behavior" for each one.
-        // Beyond the logspam this can cause frame-pacing jitter (the driver
-        // picks a sub-optimal swap interval) and adds ~2 ms overhead per frame
-        // on already-marginal 30fps hardware — enough to drop frames visibly.
-        //
-        // HIGH tier devices (Nvidia Shield, Sony/LG flagships, Xiaomi PatchWall
-        // high-end) all support wide-color swap chains natively, so we keep
-        // HDR mode enabled for them.
+        // Guard COLOR_MODE_HDR behind HIGH tier + SDK >= P.
+        // On LOW tier Amlogic/Mali GPUs, COLOR_MODE_HDR forces an EGL
+        // wide-color swap chain the driver doesn't support, causing:
+        //   OpenGLRenderer: Unable to match the desired swap behavior
+        // HIGH tier devices (Shield, Sony/LG flagships) support it natively.
         if (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             window.colorMode = ActivityInfo.COLOR_MODE_HDR
@@ -157,16 +146,31 @@ class MainActivity : ComponentActivity() {
         return super.dispatchKeyEvent(event)
     }
 
+    override fun onStop() {
+        // Release SoundPool here, NOT only in onDestroy().
+        //
+        // When the process is killed by SIGKILL (swipe-to-dismiss, OOM killer,
+        // system resource reclaim), onDestroy() is NOT guaranteed to run.
+        // onStop() IS always dispatched through the normal Activity lifecycle
+        // before any kill can occur, so this is the correct place to free
+        // native audio resources and ensure ~ObjectManager sees mObjectCount==0.
+        soundManager?.release()
+        soundManager = null
+        super.onStop()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        // Re-create SoundManager if the Activity comes back to the foreground
+        // after onStop() released it (e.g. user returns from recents).
+        if (soundManager == null) {
+            soundManager = SoundManager(this)
+        }
+    }
+
     override fun onDestroy() {
-        // FIX: Stop all active streams BEFORE release().
-        //
-        // SoundPool's JNI layer tracks "objects" (active stream handles). If
-        // release() is called while a stream is still playing, the native
-        // ObjectManager destructor fires with mObjectCount > 0 and logs:
-        //   "~ObjectManager: mObjectCount: 1 should be zero"
-        //
-        // Calling stopAll() drains the active stream queue synchronously,
-        // so by the time release() destroys the pool the count is already 0.
+        // Belt-and-suspenders: release if somehow still alive (e.g. onStop
+        // was skipped in a rare configuration-change path).
         soundManager?.release()
         soundManager = null
         super.onDestroy()
@@ -214,10 +218,8 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val waveCount = 5
 
-    // LOW: static bars — 5 concurrent infinite transitions on a low-end
-    // device burn through the frame budget before any UI is visible.
     val waveHeights: List<Float> = if (isLow) {
-        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)  // static stagger, zero Choreographer
+        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)
     } else {
         val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
         (0 until waveCount).map { index ->
@@ -257,8 +259,6 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    // LOW: skip the infinite alpha pulse — it redraws a full-screen image
-    // every frame for 3.5 seconds, burning through frame budget on boot.
     val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
         1.0f
     } else {
@@ -360,11 +360,11 @@ fun AppNavHostContainer(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
-                    val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
-                    val safeImdb    = if (imdbId.isBlank()) "_" else imdbId
-                    val safeTitle   = URLEncoder.encode(title, "UTF-8")
+                    val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeImdb     = if (imdbId.isBlank()) "_" else imdbId
+                    val safeTitle    = URLEncoder.encode(title, "UTF-8")
                     val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
-                    val safeLogo    = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+                    val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
@@ -451,7 +451,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
             val vm: IptvViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
