@@ -35,6 +35,17 @@ object DeviceProfile {
     var isRockchip   : Boolean = false; private set
     var isWeakAmlogic: Boolean = false; private set
 
+    // YYC / Skyworth / generic no-name Android TV boxes that use the Amlogic
+    // SoC but report a non-standard manufacturer string. These boxes have
+    // the same broken CCodec stack and need tunneled video for 4K HDR.
+    var isGenericAmlogicBox: Boolean = false; private set
+
+    // True for ANY device that needs tunneled video to play 4K HDR:
+    // MeCool, generic Amlogic boxes, and any device where the standard
+    // MediaCodec path for HEVC Main10 is broken or missing.
+    val needsTunneledVideo: Boolean
+        get() = isAmlogic || isGenericAmlogicBox || isMeCool
+
     // ── Read-only state ────────────────────────────────────────────────────────
     var gpuRenderer: String = "unknown"; private set
     var totalRamMb : Int    = 0;         private set
@@ -73,6 +84,34 @@ object DeviceProfile {
         isRockchip  = hardware.contains("rockchip") || hardware.contains("rk3588") ||
                 hardware.contains("rk3399")         || board.contains("rk3588")
 
+        // Generic/no-name Android TV boxes that use Amlogic SoC but report
+        // a custom manufacturer (YYC, Skyworth, HiMedia, Tanix, etc.).
+        // Detection strategy: manufacturer is not a known brand AND the SoC
+        // is Amlogic (detected via board name, SOC_MODEL, or known board strings).
+        val socModel = if (Build.VERSION.SDK_INT >= 31)
+            Build.SOC_MODEL.lowercase() else ""
+        val isKnownBrand = isXiaomi || isMeCool || isLg || isSony ||
+                isPhilips || isNvidia || isRockchip ||
+                manufacturer.contains("samsung") || manufacturer.contains("tcl") ||
+                manufacturer.contains("hisense") || manufacturer.contains("sharp")
+        val hasSkyworthy = manufacturer.contains("skyworth") ||
+                manufacturer.contains("yyc") ||
+                manufacturer.contains("hisilicon") ||
+                manufacturer.contains("tanix") ||
+                manufacturer.contains("h96") ||
+                manufacturer.contains("x96") ||
+                model.contains("4k android tv box") ||
+                model.contains("android tv box")
+        val hasAmlogicSoc = socModel.contains("amlogic") ||
+                socModel.contains("s905") || socModel.contains("s922") ||
+                socModel.contains("s912") || socModel.contains("t962") ||
+                board.contains("meson") || board.contains("p212") ||
+                board.contains("p230") || board.contains("p231")
+        isGenericAmlogicBox = hasSkyworthy || (!isKnownBrand && (isAmlogic || hasAmlogicSoc))
+
+        // Treat generic boxes as isAmlogic for all downstream logic
+        if (isGenericAmlogicBox) isAmlogic = true
+
         isWeakAmlogic = isAmlogic && (
                 hardware.contains("s905x")  ||
                         hardware.contains("s905d")  ||
@@ -102,6 +141,7 @@ object DeviceProfile {
             mfr.contains("sony")                                 -> "Adreno/PowerVR (Sony)"
             mfr.contains("xiaomi") && model.contains("mi box")  -> "Mali-G52 (Mi Box)"
             mfr.contains("xiaomi")                               -> "Mali (Xiaomi)"
+            isGenericAmlogicBox                                  -> "Mali (Amlogic/Generic)"
             else                                                 -> "${hw}/${Build.SUPPORTED_ABIS[0]}"
         }
     }
@@ -120,7 +160,6 @@ object DeviceProfile {
         if (isMeCool || isAmlogic) {
             return when {
                 hw.contains("s922") || model.contains("km7")   -> Tier.HIGH
-                // S905X4 has Mali-G31 MP2 — can handle MID animations
                 hw.contains("s905x4") || model.contains("km6") -> Tier.MID
                 hw.contains("s905x3")                          -> Tier.LOW
                 hw.contains("s905x2")                          -> Tier.LOW
@@ -128,6 +167,9 @@ object DeviceProfile {
                 hw.contains("s905d")                           -> Tier.LOW
                 hw.contains("s905w")                           -> Tier.LOW
                 hw.contains("s905")                            -> Tier.LOW
+                // Generic Amlogic box with unknown SoC variant — treat as LOW
+                // to be safe; better to under-animate than to stutter.
+                isGenericAmlogicBox                            -> Tier.LOW
                 else                                           -> Tier.LOW
             }
         }
@@ -194,21 +236,13 @@ object DeviceProfile {
                 crossfadeDuration = 0,
                 enableRowFade     = false,
                 enableParallax    = false,
-                // Render 1 extra viewport of cards ahead — enough for smooth
-                // scroll, not so much that Mali-450 stalls on image decodes.
                 lazyBeyondBounds  = 1,
-                // Hard-cap rows at 15 items on LOW tier: fewer bitmaps in
-                // memory, fewer recompositions when focus moves between rows.
                 maxRowItems       = 15
             )
         }
     }
 
     // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
-    // Tightened maxBufferMs on HIGH/MID: 60s was causing OOM on 2 GB heaps
-    // when the player pre-allocated large media buffers alongside Coil.
-    // LOW gets a slightly smaller window but still plays stutter-free on
-    // a reliable connection; the extra head-room mainly matters for live TV.
     data class BufferConfig(
         val minBufferMs       : Int,
         val maxBufferMs       : Int,
@@ -227,5 +261,6 @@ object DeviceProfile {
         "Tier=${if (forceLowTier) "LOW(forced)" else tier.name} | " +
                 "ReduceMotion=$forceReduceMotion | GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
                 "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | " +
+                "GenericAmlogic=$isGenericAmlogicBox | NeedsTunnel=$needsTunneledVideo | " +
                 "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }

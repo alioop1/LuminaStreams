@@ -74,40 +74,40 @@ class ExoPlayerWrapper(context: Context) {
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
     // ── Amlogic hardware detection ─────────────────────────────────────────────
-    // DeviceProfile may not recognise every Amlogic box by model string (e.g. YYC/Skyworth
-    // variants report MeCool=false). Cross-check with Build.HARDWARE / Build.SOC_MODEL so
-    // we catch anything whose GPU or SoC family is Amlogic.
+    // Covers standard Amlogic (hardware string), MeCool, AND generic/no-name
+    // boxes like YYC/Skyworth that use Amlogic SoCs but report custom brands.
+    // DeviceProfile.needsTunneledVideo is the single source of truth for
+    // whether this device needs the tunneled video path for 4K HDR.
     private val isAmlogicHardware: Boolean = run {
         val hw  = android.os.Build.HARDWARE.lowercase(Locale.ROOT)
         val soc = if (android.os.Build.VERSION.SDK_INT >= 31)
             android.os.Build.SOC_MODEL.lowercase(Locale.ROOT) else ""
+        val mfr = android.os.Build.MANUFACTURER.lowercase(Locale.ROOT)
         hw.contains("amlogic") || hw.contains("meson") ||
                 soc.contains("amlogic") || soc.contains("s905") ||
                 soc.contains("s922")   || soc.contains("t962") ||
-                DeviceProfile.isAmlogic || DeviceProfile.isMeCool
+                mfr.contains("skyworth") || mfr.contains("yyc") ||
+                mfr.contains("tanix")   || mfr.contains("h96")  ||
+                mfr.contains("x96")     ||
+                DeviceProfile.isAmlogic || DeviceProfile.isMeCool ||
+                DeviceProfile.isGenericAmlogicBox
     }
 
     // ── Codec selector ─────────────────────────────────────────────────────────
-    // On Amlogic boxes the decoder priority order out-of-the-box is:
-    //   1. c2.amlogic.*   — broken CCodec path (firmware timeout, causes multi-second freezes)
-    //   2. c2.android.*   — software decoder, cannot handle 4K 10-bit HEVC at all
-    //   3. OMX.amlogic.*  — stable OMX hardware path, handles 4K Main10 HEVC natively
-    //
-    // Strategy: remove c2.amlogic.* entirely AND bubble OMX.amlogic.* to the top
-    // of the list so ExoPlayer picks it before the incapable software decoder.
-    // This matches what IPTV Smarters, TiviMate, and OTT Navigator do on the same SoC.
+    // Remove broken c2.amlogic.* CCodec decoders and promote OMX.amlogic.*
+    // hardware decoders to the top of the list. On YYC/Skyworth boxes that
+    // have no OMX path, this at least removes the broken C2 decoders so
+    // tunneled video (below) can take over for 4K HDR streams.
     private val codecSelector: MediaCodecSelector =
         if (isAmlogicHardware) {
             MediaCodecSelector { mimeType, requiresSecureDecoder, requiresTunnelingDecoder ->
                 val all = MediaCodecSelector.DEFAULT
                     .getDecoderInfos(mimeType, requiresSecureDecoder, requiresTunnelingDecoder)
 
-                // Remove broken CCodec/C2 Amlogic decoders
                 val filtered = all.filter { info ->
                     !info.name.startsWith("c2.amlogic.", ignoreCase = true)
                 }
 
-                // Partition: OMX Amlogic hardware decoders first, then everything else
                 val omxAmlogic = filtered.filter { info ->
                     info.name.startsWith("OMX.amlogic.", ignoreCase = true)
                 }
@@ -115,7 +115,6 @@ class ExoPlayerWrapper(context: Context) {
                     !info.name.startsWith("OMX.amlogic.", ignoreCase = true)
                 }
 
-                // OMX.amlogic.* leads — software fallback (c2.android.*) comes last
                 omxAmlogic + rest
             }
         } else {
@@ -144,7 +143,6 @@ class ExoPlayerWrapper(context: Context) {
         )
         setEnableDecoderFallback(true)
         if (isAmlogicHardware) {
-            // Use the prioritized codec selector that puts OMX.amlogic.* first
             setMediaCodecSelector(codecSelector)
         }
     }
@@ -160,7 +158,16 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(DeviceProfile.isNvidia)
+            // Tunneled video: hands the video surface directly to the system
+            // display pipeline, bypassing the normal MediaCodec capability
+            // checks. This is how TiviMate / IPTV Smarters play 4K HDR10 on
+            // Amlogic boxes that have no standard OMX or C2 HEVC Main10 path.
+            // The system's proprietary Amlogic video firmware handles decoding
+            // natively and reports format_supported=YES via the tunneled path
+            // even for hvc1.2.4.L153.B0 (4K Main10) streams.
+            .setTunnelingEnabled(
+                DeviceProfile.needsTunneledVideo || DeviceProfile.isNvidia
+            )
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
@@ -176,9 +183,6 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── LoadControl ────────────────────────────────────────────────────────────
-    // Keep network buffer target modest on Amlogic to reduce channel-switch
-    // latency on live IPTV — the OMX decoder starts faster than the C2 path
-    // so a smaller pre-roll is sufficient.
     private val safeTargetBytes = if (isAmlogicHardware) 6 * 1024 * 1024 else 12 * 1024 * 1024
 
     private val loadControl: DefaultLoadControl = run {
@@ -227,9 +231,6 @@ class ExoPlayerWrapper(context: Context) {
             true
         )
         .setHandleAudioBecomingNoisy(true)
-        // Suppress audio timestamp discontinuity exceptions that are common in
-        // IPTV live streams with inconsistent PTS values. ExoPlayer will skip
-        // the discontinuous buffer instead of surfacing an error to the listener.
         .setSkipSilenceEnabled(false)
         .build()
         .also { exo ->
@@ -264,7 +265,6 @@ class ExoPlayerWrapper(context: Context) {
     private var subTickerJob : Job?           = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
-    // Tracks the last URL so we can retry on codec-Released-state crashes
     private var lastStreamUrl: String? = null
     private var codecRetryCount: Int = 0
     private val maxCodecRetries = 2
@@ -279,7 +279,6 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onTracksChanged(tracks: Tracks) {
                 _currentTracks.value = tracks
-                // Reset retry counter on successful track selection
                 codecRetryCount = 0
 
                 val fps = tracks.groups
@@ -329,15 +328,12 @@ class ExoPlayerWrapper(context: Context) {
                          cause.message?.contains("queueInputBuffer", ignoreCase = true) == true ||
                          cause.message?.contains("flush()", ignoreCase = true) == true)
 
-                // The codec ended up in a Released state mid-stream (race condition between
-                // the OMX decoder teardown and the next buffer submission). This is recoverable:
-                // release the codec fully by re-preparing the stream from scratch.
                 if (isCodecReleasedState && codecRetryCount < maxCodecRetries) {
                     val url = lastStreamUrl
                     if (url != null) {
                         codecRetryCount++
                         scope.launch {
-                            delay(300L * codecRetryCount) // back-off: 300ms, then 600ms
+                            delay(300L * codecRetryCount)
                             player.stop()
                             player.clearMediaItems()
                             player.setMediaItem(MediaItem.Builder().setUri(url.toUri()).build())
@@ -389,7 +385,6 @@ class ExoPlayerWrapper(context: Context) {
 
     fun switchAudioTrack(group: Tracks.Group, trackIndex: Int) {
         val isLive = player.isCurrentMediaItemLive
-        val savedPos = if (!isLive) player.currentPosition else 0L
 
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
