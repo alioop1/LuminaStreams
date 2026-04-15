@@ -82,14 +82,8 @@ android {
 
     splits {
         abi {
-            isEnable = true
-            reset()
-            // מגדיר בדיוק אילו גרסאות לייצר
-            include("armeabi-v7a", "arm64-v8a")
-            isUniversalApk = false // מונע יצירת APK "שמן" שכולל את שניהם וסתם מכביד על הזיכרון
+            isEnable       = false
         }
-
-
     }
 
     lint {

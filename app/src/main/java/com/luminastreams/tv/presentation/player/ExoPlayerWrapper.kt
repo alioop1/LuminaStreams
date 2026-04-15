@@ -3,16 +3,13 @@
 package com.luminastreams.tv.presentation.player
 
 import android.content.Context
-import android.net.Uri
 import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
-import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
@@ -46,12 +43,12 @@ class ExoPlayerWrapper(context: Context) {
     private val appContext = context.applicationContext
     private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
 
-    private val audioPassthrough   = prefs.getBoolean("audio_passthrough",
+    private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
-    private val hwAcceleration     = prefs.getBoolean("hw_accel",             true)
-    private val preAllocateBuffer  = prefs.getBoolean("pre_buffer",           false)
-    private val audioLangPref      = prefs.getString("preferred_audio_lang",  "original") ?: "original"
-    private val skipEmbeddedSubs   = prefs.getBoolean("subtitle_cache_only",  false)
+    private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
+    private val preAllocateBuffer = prefs.getBoolean("pre_buffer",          false)
+    private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
+    private val skipEmbeddedSubs  = prefs.getBoolean("subtitle_cache_only", false)
 
     val useYellowSubtitles: Boolean = prefs.getBoolean("yellow_subs", false)
     val subtitleFontScale: Float = when (prefs.getString("subtitle_font_scale", "medium")) {
@@ -61,31 +58,30 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
-    // ─── AFR ─────────────────────────────────────────────────────────
+    // ── State flows ────────────────────────────────────────────────────────────
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
-    // ─── Dolby badges ─────────────────────────────────────────────────
+    private val _videoAspectRatio = MutableStateFlow(0f)
+    val videoAspectRatio: StateFlow<Float> = _videoAspectRatio.asStateFlow()
+
     private val _isDolbyVision = MutableStateFlow(false)
     val isDolbyVision: StateFlow<Boolean> = _isDolbyVision.asStateFlow()
 
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
-    // ─── Video size (width × height in pixels) ────────────────────────
-    private val _videoSize = MutableStateFlow(VideoSize.UNKNOWN)
-    val videoSize: StateFlow<VideoSize> = _videoSize.asStateFlow()
-
-    private val _videoAspectRatio = MutableStateFlow(0f)
-    val videoAspectRatio: StateFlow<Float> = _videoAspectRatio.asStateFlow()
-
+    // ── Renderers factory ──────────────────────────────────────────────────────
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                DeviceProfile.tier == DeviceProfile.Tier.LOW ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ->
+                DeviceProfile.isLg   || DeviceProfile.isSony   ||
+                        DeviceProfile.isPhilips || DeviceProfile.isNvidia ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
@@ -95,6 +91,7 @@ class ExoPlayerWrapper(context: Context) {
         setEnableDecoderFallback(true)
     }
 
+    // ── Track selector ─────────────────────────────────────────────────────────
     val trackSelector = DefaultTrackSelector(appContext).apply {
         val builder = buildUponParameters()
             .setPreferredVideoMimeTypes(
@@ -105,35 +102,52 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(
-                DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips ||
-                (DeviceProfile.tier == DeviceProfile.Tier.HIGH &&
-                !DeviceProfile.isXiaomi && !DeviceProfile.isMeCool && !DeviceProfile.isAmlogic)
-            )
+            .setTunnelingEnabled(false)
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            .setAllowAudioMixedMimeTypeAdaptiveness(true)
+            .setAllowAudioMixedSampleRateAdaptiveness(true)
             .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
+
         val params = when (audioLangPref) {
             "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
             "en" -> builder.setPreferredAudioLanguages("eng", "en")
             else -> builder
         }
-        setParameters(params)
+        setParameters(params.build())
     }
 
-    private val loadControl = if (preAllocateBuffer) {
-        DefaultLoadControl.Builder()
-            .setBufferDurationsMs(30_000, 120_000, 5_000, 10_000)
-            .setTargetBufferBytes(64 * 1024 * 1024).build()
-    } else {
-        DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 2_500, 5_000)
-            .setTargetBufferBytes(20 * 1024 * 1024).build()
+    // ── LoadControl ────────────────────────────────────────────────────────────
+    private val safeTargetBytes = 12 * 1024 * 1024
+
+    private val loadControl: DefaultLoadControl = run {
+        val buf = DeviceProfile.bufferConfig
+        if (preAllocateBuffer) {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(15_000, 30_000, 2_500, 5_000)
+                .setTargetBufferBytes(safeTargetBytes)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+        } else {
+            DefaultLoadControl.Builder()
+                .setBufferDurationsMs(
+                    buf.minBufferMs,
+                    buf.maxBufferMs,
+                    buf.bufferForPlayMs,
+                    buf.bufferForReplayMs
+                )
+                .setTargetBufferBytes(minOf(buf.targetBufferBytes, safeTargetBytes))
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+        }
     }
 
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
         .setAllowCrossProtocolRedirects(true)
+        .setConnectTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20_000 else 10_000)
+        .setReadTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30_000 else 15_000)
+
     private val dataSourceFactory  = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
     private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
         .setDataSourceFactory(dataSourceFactory)
@@ -146,7 +160,10 @@ class ExoPlayerWrapper(context: Context) {
         .setAudioAttributes(
             AudioAttributes.Builder()
                 .setUsage(C.USAGE_MEDIA)
-                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true
+                .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                .setSpatializationBehavior(C.SPATIALIZATION_BEHAVIOR_NEVER)
+                .build(),
+            true
         )
         .setHandleAudioBecomingNoisy(true)
         .build()
@@ -161,7 +178,7 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ─── State ────────────────────────────────────────────────────────
+    // ── Player state ───────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -178,8 +195,8 @@ class ExoPlayerWrapper(context: Context) {
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
     private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
-    private var parsedSubs: List<SubEntry> = emptyList()
-    private var subTickerJob: Job? = null
+    private var parsedSubs   : List<SubEntry> = emptyList()
+    private var subTickerJob : Job?           = null
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     init {
@@ -196,8 +213,7 @@ class ExoPlayerWrapper(context: Context) {
                 val fps = tracks.groups
                     .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                    .firstOrNull { it.frameRate > 0f }
-                    ?.frameRate
+                    .firstOrNull { it.frameRate > 0f }?.frameRate
                 if (fps != null && fps > 0f) _contentFrameRate.value = fps
 
                 val hasDv = tracks.groups
@@ -211,25 +227,25 @@ class ExoPlayerWrapper(context: Context) {
                     .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
                     .any {
                         it.sampleMimeType == MimeTypes.AUDIO_E_AC3_JOC ||
-                        (it.sampleMimeType == MimeTypes.AUDIO_E_AC3 && (it.roleFlags and C.ROLE_FLAG_DESCRIBES_MUSIC_AND_SOUND) != 0)
+                                it.codecs?.contains("joc", ignoreCase = true) == true ||
+                                it.label?.contains("atmos", ignoreCase = true) == true ||
+                                it.id?.contains("atmos", ignoreCase = true) == true
                     }
                 _isDolbyAtmos.value = hasAtmos
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
-                // Expose the real pixel dimensions so the aspect-ratio logic can use them
-                _videoSize.value = videoSize
-
-                if (videoSize.height > 0) {
-                    _videoAspectRatio.value = (videoSize.width * videoSize.pixelWidthHeightRatio) / videoSize.height
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    val pixelAspect = if (videoSize.pixelWidthHeightRatio > 0f)
+                        videoSize.pixelWidthHeightRatio else 1f
+                    _videoAspectRatio.value =
+                        (videoSize.width.toFloat() * pixelAspect) / videoSize.height.toFloat()
                 }
-
                 if (_contentFrameRate.value <= 0f) {
                     val fps = player.currentTracks.groups
                         .filter { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }
                         .flatMap { g -> (0 until g.length).map { g.mediaTrackGroup.getFormat(it) } }
-                        .firstOrNull { it.frameRate > 0f }
-                        ?.frameRate
+                        .firstOrNull { it.frameRate > 0f }?.frameRate
                     if (fps != null && fps > 0f) _contentFrameRate.value = fps
                 }
             }
@@ -256,15 +272,14 @@ class ExoPlayerWrapper(context: Context) {
 
     fun prepareStream(videoUrl: String) {
         stopSubTicker()
-        parsedSubs             = emptyList()
-        _playerError.value     = null
-        _subtitleApplied.value = false
-        _currentCues.value     = emptyList()
+        parsedSubs              = emptyList()
+        _playerError.value      = null
+        _subtitleApplied.value  = false
+        _currentCues.value      = emptyList()
         _contentFrameRate.value = 0f
-        _isDolbyVision.value   = false
-        _isDolbyAtmos.value    = false
-        _videoSize.value       = VideoSize.UNKNOWN
         _videoAspectRatio.value = 0f
+        _isDolbyVision.value    = false
+        _isDolbyAtmos.value     = false
         try {
             player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
             player.prepare()
@@ -274,15 +289,57 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
+    fun switchAudioTrack(group: Tracks.Group, trackIndex: Int) {
+        val isLive = player.isCurrentMediaItemLive
+        val savedPos = if (!isLive) player.currentPosition else 0L
+
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(
+                    group.mediaTrackGroup, trackIndex
+                )
+            )
+            .build()
+
+        if (isLive) {
+            player.seekToDefaultPosition()
+        }
+    }
+
+    fun disableSubtitles() {
+        stopSubTicker()
+        _currentCues.value = emptyList()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+            .build()
+    }
+
+    fun switchSubtitleTrack(group: Tracks.Group, trackIndex: Int) {
+        stopSubTicker()
+        _currentCues.value = emptyList()
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(
+                    group.mediaTrackGroup, trackIndex
+                )
+            )
+            .build()
+    }
+
     fun applySubtitle(
-        subtitleUrl: String,
-        lang: String    = "heb",
-        isVtt: Boolean  = false,
-        maxRetries: Int = 2
+        subtitleUrl : String,
+        isVtt       : Boolean = false,
+        maxRetries  : Int     = 2
     ) {
         if (subtitleUrl.startsWith("file://")) {
-            val f = File(Uri.parse(subtitleUrl).path!!)
-            loadAndStartTicker(f, subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            scope.launch {
+                val path = subtitleUrl.toUri().path ?: return@launch
+                loadAndStartTickerAsync(File(path), isVtt || subtitleUrl.endsWith(".vtt", ignoreCase = true))
+            }
             return
         }
         scope.launch(Dispatchers.IO) {
@@ -298,7 +355,7 @@ class ExoPlayerWrapper(context: Context) {
                         val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
                         val file  = File(appContext.cacheDir, "lumina_sub.$ext")
                         file.writeBytes(bytes)
-                        withContext(Dispatchers.Main) { loadAndStartTicker(file, ext == "vtt") }
+                        loadAndStartTickerAsync(file, ext == "vtt")
                         return@launch
                     }
                 } catch (e: Exception) {
@@ -310,40 +367,42 @@ class ExoPlayerWrapper(context: Context) {
         }
     }
 
-    private fun loadAndStartTicker(subFile: File, isVtt: Boolean) {
-        stopSubTicker()
-        _currentCues.value = emptyList()
-        val text = subFile.readText(Charsets.UTF_8)
-        parsedSubs = if (isVtt) parseVtt(text) else parseSrt(text)
-        if (parsedSubs.isEmpty()) return
-        _subtitleApplied.value = true
-        subTickerJob = scope.launch {
-            while (isActive) {
-                val pos = player.currentPosition
-                val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
-                delay(200)
+    private suspend fun loadAndStartTickerAsync(subFile: File, isVtt: Boolean) {
+        val text: String = withContext(Dispatchers.IO) {
+            runCatching { subFile.readText(Charsets.UTF_8) }.getOrNull()
+        } ?: return
+
+        val parsed: List<SubEntry> = withContext(Dispatchers.Default) {
+            if (isVtt) parseVtt(text) else parseSrt(text)
+        }
+
+        withContext(Dispatchers.Main) {
+            stopSubTicker()
+            _currentCues.value = emptyList()
+            parsedSubs = parsed
+            if (parsedSubs.isEmpty()) return@withContext
+            _subtitleApplied.value = true
+            val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
+            subTickerJob = scope.launch {
+                while (isActive) {
+                    val pos    = player.currentPosition
+                    val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
+                    _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                    delay(tickMs)
+                }
             }
         }
     }
 
     private fun stopSubTicker() {
         subTickerJob?.cancel()
-        subTickerJob = null
-        parsedSubs = emptyList()
-        _currentCues.value = emptyList()
+        subTickerJob           = null
+        parsedSubs             = emptyList()
+        _currentCues.value     = emptyList()
         _subtitleApplied.value = false
     }
 
-    fun disableSubtitles() {
-        stopSubTicker()
-        val params = player.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            .build()
-        player.trackSelectionParameters = params
-    }
-
-    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,\.](\d{3})""")
+    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,.](\d{3})""")
     private fun parseTimeMs(s: String): Long {
         val m = srtTimeRegex.find(s) ?: return -1
         val (h, min, sec, ms) = m.destructured
@@ -354,16 +413,17 @@ class ExoPlayerWrapper(context: Context) {
         val entries = mutableListOf<SubEntry>()
         val blocks  = text.trim().replace("\r\n", "\n").split(Regex("\n{2,}"))
         for (block in blocks) {
-            val lines = block.trim().lines()
+            val lines    = block.trim().lines()
             if (lines.size < 2) continue
             val timeLine = lines.firstOrNull { "-->" in it } ?: continue
-            val parts = timeLine.split("-->")
+            val parts    = timeLine.split("-->")
             if (parts.size < 2) continue
             val start = parseTimeMs(parts[0].trim())
             val end   = parseTimeMs(parts[1].trim())
             if (start < 0 || end < 0) continue
-            val textLines = lines.dropWhile { "-->" !in it }.drop(1)
-            val txt = textLines.joinToString("\n").trim().replace(Regex("<[^>]+>"), "")
+            val txt = lines.dropWhile { "-->" !in it }.drop(1)
+                .joinToString("\n").trim()
+                .replace(Regex("<[^>]+>"), "")
             if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
         }
         return entries
@@ -374,16 +434,17 @@ class ExoPlayerWrapper(context: Context) {
         val cleaned = text.replace("\r\n", "\n").removePrefix("\uFEFF")
         val blocks  = cleaned.trim().split(Regex("\n{2,}"))
         for (block in blocks) {
-            val lines = block.trim().lines()
+            val lines    = block.trim().lines()
             val timeLine = lines.firstOrNull { "-->" in it } ?: continue
             val timeOnly = timeLine.split(Regex("\\s+")).take(3).joinToString(" ")
-            val parts = timeOnly.split("-->")
+            val parts    = timeOnly.split("-->")
             if (parts.size < 2) continue
             val start = parseTimeMs(parts[0].trim())
             val end   = parseTimeMs(parts[1].trim())
             if (start < 0 || end < 0) continue
-            val textLines = lines.dropWhile { "-->" !in it }.drop(1)
-            val txt = textLines.joinToString("\n").trim().replace(Regex("<[^>]+>"), "")
+            val txt = lines.dropWhile { "-->" !in it }.drop(1)
+                .joinToString("\n").trim()
+                .replace(Regex("<[^>]+>"), "")
             if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
         }
         return entries
