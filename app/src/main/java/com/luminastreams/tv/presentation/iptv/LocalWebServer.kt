@@ -18,7 +18,8 @@ object LocalWebServer {
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
 
-    private val _playlistFlow = MutableSharedFlow<IncomingPlaylist>()
+    // תיקון #7 — replay=1 מבטיח שהאירוע לא יאבד אם ה-ViewModel עוד לא מאזין
+    private val _playlistFlow = MutableSharedFlow<IncomingPlaylist>(replay = 1)
     val playlistFlow = _playlistFlow.asSharedFlow()
 
     suspend fun start(port: Int = 8080) = withContext(Dispatchers.IO) {
@@ -30,14 +31,14 @@ object LocalWebServer {
                 val client = serverSocket?.accept() ?: break
                 launch(Dispatchers.IO) { handleClient(client) }
             }
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             isRunning = false
         }
     }
 
     fun stop() {
         isRunning = false
-        try { serverSocket?.close() } catch (e: Exception) {}
+        try { serverSocket?.close() } catch (_: Exception) {}
     }
 
     private suspend fun handleClient(socket: Socket) = withContext(Dispatchers.IO) {
@@ -49,7 +50,7 @@ object LocalWebServer {
             val requestLine = reader.readLine() ?: return@withContext
             if (requestLine.contains("favicon.ico")) {
                 out.print("HTTP/1.1 404 Not Found\r\n\r\n")
-                out.flush() // <-- דוחף את הנתונים החוצה
+                out.flush()
                 return@withContext
             }
 
@@ -69,11 +70,14 @@ object LocalWebServer {
                 reader.read(bodyChars, 0, contentLength)
                 val params = String(bodyChars).split("&").associate {
                     val parts = it.split("=")
-                    URLDecoder.decode(parts[0], "UTF-8") to URLDecoder.decode(parts.getOrNull(1) ?: "", "UTF-8")
+                    URLDecoder.decode(parts[0], "UTF-8") to
+                            URLDecoder.decode(parts.getOrNull(1) ?: "", "UTF-8")
                 }
 
                 val url = params["url"] ?: ""
-                if (url.isNotBlank()) {
+                // תיקון #6 — בדיקה שה-URL לא זהה לאחרון שנשלח (מניעת דריסה כפולה)
+                val lastEmitted = _playlistFlow.replayCache.lastOrNull()
+                if (url.isNotBlank() && url != lastEmitted?.url) {
                     _playlistFlow.emit(
                         IncomingPlaylist(
                             name = params["name"]?.takeIf { it.isNotBlank() } ?: "Lumina IPTV",
@@ -81,28 +85,52 @@ object LocalWebServer {
                             epgUrl = params["epg"] ?: ""
                         )
                     )
-                    serveSuccess(out)
                 }
+                serveSuccess(out)
             }
         } finally {
-            try { socket.close() } catch (e: Exception) {}
+            try { socket.close() } catch (_: Exception) {}
         }
     }
 
     private fun serveHtml(out: PrintWriter) {
         val html = """
-            <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <style>body{background:#000000;color:#fff;font-family:sans-serif;padding:20px} input,button{width:100%;padding:15px;margin-top:10px;border-radius:8px;background:#1a1a1a;color:#fff;border:1px solid #333} button{background:#0a84ff;font-weight:bold}</style>
-            </head><body><h2>Lumina Setup</h2><form method="POST">
-            <input name="name" placeholder="Playlist Name"><input name="url" placeholder="M3U URL" required>
-            <input name="epg" placeholder="EPG URL (Optional)"><button type="submit">Send to TV</button></form></body></html>
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { background: #000000; color: #fff; font-family: sans-serif; padding: 20px; }
+                    input, button { width: 100%; padding: 15px; margin-top: 10px; border-radius: 8px;
+                        background: #1a1a1a; color: #fff; border: 1px solid #333; box-sizing: border-box; }
+                    button { background: #0a84ff; font-weight: bold; cursor: pointer; }
+                    label { display: block; margin-top: 14px; font-size: 13px; color: #aaa; }
+                </style>
+            </head>
+            <body>
+                <h2>Lumina Setup</h2>
+                <form method="POST">
+                    <label>שם פלייליסט</label>
+                    <input name="name" placeholder="Lumina IPTV">
+                    <label>M3U URL *</label>
+                    <input name="url" placeholder="http://..." required>
+                    <label>EPG URL (אופציונלי)</label>
+                    <input name="epg" placeholder="http://.../epg.xml">
+                    <button type="submit">שלח לטלוויזיה</button>
+                </form>
+            </body>
+            </html>
         """.trimIndent()
-        out.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n$html")
-        out.flush() // <-- דוחף את הנתונים החוצה
+        out.print("HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n$html")
+        out.flush()
     }
 
     private fun serveSuccess(out: PrintWriter) {
-        out.print("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<body style='background:#000000;color:#30d158;text-align:center;margin-top:50px;font-family:sans-serif'><h1>Success!</h1><p>Look at your TV.</p></body>")
-        out.flush() // <-- דוחף את הנתונים החוצה
+        out.print(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n" +
+                    "<body style='background:#000;color:#30d158;text-align:center;margin-top:50px;font-family:sans-serif'>" +
+                    "<h1>✓ Success!</h1><p>תסתכל על הטלוויזיה.</p></body>"
+        )
+        out.flush()
     }
 }

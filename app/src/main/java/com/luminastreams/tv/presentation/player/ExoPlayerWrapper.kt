@@ -1,4 +1,5 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@file:Suppress("UNUSED", "UNUSED_VARIABLE")
 
 package com.luminastreams.tv.presentation.player
 

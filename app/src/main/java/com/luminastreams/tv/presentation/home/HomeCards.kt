@@ -1,6 +1,6 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.luminastreams.tv.presentation.home
-import androidx.compose.animation.core.*
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,7 +9,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -22,8 +21,6 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.tv.material3.*
 import androidx.compose.foundation.Image
 import androidx.compose.ui.draw.alpha
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.lazy.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
@@ -52,20 +49,34 @@ fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false)
 @Composable
 fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
-    var isFocused by remember { mutableStateOf(false) }
-    val cardAnimSpec = remember { if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) spring<Float>(stiffness = Spring.StiffnessMediumLow) else tween<Float>(90, easing = LinearEasing) }
-    val zoom by animateFloatAsState(targetValue = if (isFocused) 1.06f else 1f, animationSpec = cardAnimSpec, label = "lzoom")
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
-    
+
     val imageRequest = remember(url) {
-        ImageRequest.Builder(ctx).data(url).diskCacheKey(url).memoryCachePolicy(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) CachePolicy.DISABLED else CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED).allowHardware(true).crossfade(false).build()
+        ImageRequest.Builder(ctx)
+            .data(url)
+            .diskCacheKey(url)
+            .size(600) // <-- חובה! מונע קריסת זיכרון מוחלטת
+            .memoryCachePolicy(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) CachePolicy.DISABLED else CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .allowHardware(true)
+            .crossfade(false)
+            .build()
     }
-    
-    Box(if (zoom != 1f) modifier.width(LAND_W).height(LAND_H).graphicsLayer { scaleX=zoom; scaleY=zoom } else modifier.width(LAND_W).height(LAND_H)) {
-        Surface(onClick = onClick, colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG), shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)), border = ClickableSurfaceDefaults.border(Border.None, Border.None), glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None), modifier = Modifier.fillMaxSize().onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused() }) {
+
+    // אין יותר graphicsLayer! אנחנו משתמשים ב-scale המובנה והיעיל של Surface
+    Column(modifier = modifier.width(LAND_W)) {
+        Surface(
+            onClick = onClick,
+            colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f), // מנגנון הגדילה המובנה!
+            border = ClickableSurfaceDefaults.border(Border.None, Border.None),
+            glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None), // מונע קריסות רינדור
+            modifier = Modifier.fillMaxWidth().height(LAND_H).onFocusChanged { if (it.isFocused) onFocused() }
+        ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(8.dp)) }
-            
+
             if (movie.id.startsWith("http")) {
                 val isDubbed = movie.title.contains("מדובב")
                 Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(4.dp)).background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF)).padding(horizontal = 6.dp, vertical = 3.dp)) {
@@ -94,35 +105,47 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
 fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, cardH: Dp = PORT_H, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
     var isFocused by remember { mutableStateOf(false) }
-    val cardAnimSpec = remember { if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) spring<Float>(stiffness = Spring.StiffnessMediumLow) else tween<Float>(90, easing = LinearEasing) }
-    val zoom by animateFloatAsState(targetValue = if (isFocused) 1.08f else 1f, animationSpec = cardAnimSpec, label = "pzoom")
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
-    
+
     val imageRequest = remember(url) {
-        ImageRequest.Builder(ctx).data(url).diskCacheKey(url).memoryCachePolicy(CachePolicy.ENABLED).diskCachePolicy(CachePolicy.ENABLED).apply { if (DeviceProfile.tier == DeviceProfile.Tier.LOW) size(384) }.allowHardware(DeviceProfile.tier != DeviceProfile.Tier.LOW).crossfade(false).build()
+        ImageRequest.Builder(ctx)
+            .data(url)
+            .diskCacheKey(url)
+            .size(400) // <-- מונע תקיעות דיסק
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .allowHardware(DeviceProfile.tier != DeviceProfile.Tier.LOW)
+            .crossfade(false)
+            .build()
     }
-    
+
     Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
-        Box(if (zoom != 1f) Modifier.width(cardW).height(cardH).graphicsLayer { scaleX=zoom; scaleY=zoom } else Modifier.width(cardW).height(cardH)) {
-            Surface(onClick = onClick, colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG), shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)), border = ClickableSurfaceDefaults.border(Border.None, Border.None), glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None), modifier = Modifier.fillMaxSize().onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused() }) {
-                if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-                else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp)) }
-                
-                if (movie.id.startsWith("http")) {
-                    val isDubbed = movie.title.contains("מדובב")
-                    Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                        Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black)
-                    }
+        Surface(
+            onClick = onClick,
+            colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f), // מנגנון מובנה ויעיל
+            border = ClickableSurfaceDefaults.border(Border.None, Border.None),
+            glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused() }
+        ) {
+            if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp)) }
+
+            if (movie.id.startsWith("http")) {
+                val isDubbed = movie.title.contains("מדובב")
+                Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                    Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black)
                 }
-                if (movie.rating > 0f) {
-                    Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
-                        Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
+            }
+            if (movie.rating > 0f) {
+                Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                    Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
-                movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
-                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
-                        Box(Modifier.fillMaxWidth((if (prog >= 0.95f) 1f else prog).coerceIn(0f, 1f)).fillMaxHeight().background(RED))
-                    }
+            }
+            movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
+                    Box(Modifier.fillMaxWidth((if (prog >= 0.95f) 1f else prog).coerceIn(0f, 1f)).fillMaxHeight().background(RED))
                 }
             }
         }

@@ -15,8 +15,10 @@ import java.util.zip.GZIPInputStream
 
 object EpgParser {
     private const val TAG = "EpgParser"
-    // מפענח את הפורמט הסטנדרטי של XMLTV
     private val dateFormat = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.ENGLISH)
+
+    // תיקון #4 — חלון של 7 ימים אחורה במקום 24 שעות
+    private const val EPG_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000L // 7 ימים
 
     suspend fun parseStreaming(
         epgUrl: String,
@@ -30,9 +32,11 @@ object EpgParser {
             setRequestProperty("Accept-Encoding", "gzip")
         }
 
+        // תיקון #5 — inputStream מוגדר מחוץ ל-try כדי לסגור אותו ב-finally
+        var inputStream: InputStream? = null
+
         try {
-            var inputStream: InputStream = conn.inputStream
-            // תמיכה אוטומטית בקבצי GZIP (רוב ספקי ה-IPTV משתמשים בזה)
+            inputStream = conn.inputStream
             if ("gzip".equals(conn.contentEncoding, ignoreCase = true) || epgUrl.endsWith(".gz")) {
                 inputStream = GZIPInputStream(inputStream)
             }
@@ -49,17 +53,14 @@ object EpgParser {
             var start = 0L
             var stop = 0L
 
-            // קריאה זורמת של ה-XML ללא בניית עץ DOM
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 when (eventType) {
                     XmlPullParser.START_TAG -> {
                         when (parser.name) {
                             "programme" -> {
                                 currentChannelId = parser.getAttributeValue(null, "channel") ?: ""
-                                val startStr = parser.getAttributeValue(null, "start")
-                                val stopStr = parser.getAttributeValue(null, "stop")
-                                start = parseTime(startStr)
-                                stop = parseTime(stopStr)
+                                start = parseTime(parser.getAttributeValue(null, "start"))
+                                stop = parseTime(parser.getAttributeValue(null, "stop"))
                             }
                             "title" -> title = parser.nextText()
                             "desc" -> desc = parser.nextText()
@@ -67,8 +68,8 @@ object EpgParser {
                     }
                     XmlPullParser.END_TAG -> {
                         if (parser.name == "programme" && currentChannelId.isNotEmpty()) {
-                            // סינון זבל: שומרים רק תוכניות מהעבר הקרוב והעתיד
-                            if (stop > System.currentTimeMillis() - 86400000) {
+                            // תיקון #4 — 7 ימים אחורה
+                            if (stop > System.currentTimeMillis() - EPG_LOOKBACK_MS) {
                                 batch.add(
                                     EpgProgramEntity(
                                         channelId = currentChannelId,
@@ -76,13 +77,11 @@ object EpgParser {
                                         description = desc,
                                         startTime = start,
                                         endTime = stop,
-                                        posterUrl = "", // אפשר להוסיף חילוץ אייקון אם צריך
+                                        posterUrl = "",
                                         category = ""
                                     )
                                 )
                             }
-
-                            // ניקוי משתנים ושחרור המנה (Batch) ל-DB
                             title = ""; desc = ""
                             if (batch.size >= batchSize) {
                                 onBatchParsed(batch.toList())
@@ -94,16 +93,14 @@ object EpgParser {
                 eventType = parser.next()
             }
 
-            // שמירת שאריות
-            if (batch.isNotEmpty()) {
-                onBatchParsed(batch)
-            }
-
+            if (batch.isNotEmpty()) onBatchParsed(batch)
             Log.d(TAG, "EPG parsing and DB insertion completed.")
 
         } catch (e: Exception) {
             Log.e(TAG, "Error parsing EPG", e)
         } finally {
+            // תיקון #5 — סגירה מפורשת של ה-inputStream לפני disconnect
+            try { inputStream?.close() } catch (_: Exception) {}
             conn.disconnect()
         }
     }
@@ -112,7 +109,7 @@ object EpgParser {
         if (timeStr.isNullOrBlank()) return 0L
         return try {
             dateFormat.parse(timeStr)?.time ?: 0L
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             0L
         }
     }

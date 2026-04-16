@@ -34,10 +34,9 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         .create(TmdbApi::class.java)
 
     private val tmdbLang: String get() {
-        // בודק גם את הגדרות האפליקציה וגם את שפת המכשיר/מערכת בפועל ("iw" זה הקוד הישן של אנדרואיד לעברית)
-        val prefsLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "")
+        val prefsLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+            .getString("app_lang", "")
         val deviceLang = java.util.Locale.getDefault().language
-
         return if (prefsLang == "he" || deviceLang == "he" || deviceLang == "iw") "he" else "en-US"
     }
 
@@ -83,6 +82,67 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         }
     }
 
+    // ── getTrendingTv ──────────────────────────────────────────────────────
+    override suspend fun getTrendingTv(): Result<List<Movie>> = withContext(Dispatchers.IO) {
+        try {
+            val results = coroutineScope {
+                val dramaDef  = async { api.discoverTv(Constants.TMDB_API_KEY, language = tmdbLang, genres = "18") }
+                val scifiDef  = async { api.discoverTv(Constants.TMDB_API_KEY, language = tmdbLang, genres = "10765") }
+                val crimeDef  = async { api.discoverTv(Constants.TMDB_API_KEY, language = tmdbLang, genres = "80") }
+
+                val list = mutableListOf<TmdbMediaDto>()
+                list.addAll(dramaDef.await().results.map { it.copy(mediaType = "tv") })
+                list.addAll(scifiDef.await().results.map { it.copy(mediaType = "tv") })
+                list.addAll(crimeDef.await().results.map { it.copy(mediaType = "tv") })
+                list
+            }
+                .filter { it.posterPath != null && it.backdropPath != null }
+                .map { it.toMovie("tv") }
+                .distinctBy { it.id }
+
+            Result.success(results)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    // ── getSimilarMedia ────────────────────────────────────────────────────
+    // משתמש ב-discoverMedia הקיים — מסנן לפי ז'אנרים של הפריט הנוכחי
+    override suspend fun getSimilarMedia(id: String, type: String): Result<List<Movie>> =
+        withContext(Dispatchers.IO) {
+            try {
+                // שולף את ז'אנרי הפריט ואז מחפש דומים
+                val genreIds: List<Int> = if (type == "tv") {
+                    val details = api.getTvDetails(id, Constants.TMDB_API_KEY, language = tmdbLang)
+                    details.genres?.map { it.id } ?: emptyList()
+                } else {
+                    val details = api.getMovieDetails(id, Constants.TMDB_API_KEY, language = tmdbLang)
+                    details.genres?.map { it.id } ?: emptyList()
+                }
+
+                val genreParam = genreIds.take(2).joinToString(",") // מקסימום 2 ז'אנרים
+
+                val results = api.discoverMedia(
+                    type     = type,
+                    genreId  = genreParam.ifBlank { null },
+                    year     = null,
+                    sortBy   = "popularity.desc",
+                    language = tmdbLang,
+                    page     = 1,
+                    apiKey   = Constants.TMDB_API_KEY
+                )
+                    .results
+                    .filter { it.posterPath != null && it.id.toString() != id.removePrefix("${type}_") }
+                    .map { it.toMovie(type) }
+                    .distinctBy { it.id }
+                    .take(20)
+
+                Result.success(results)
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     override suspend fun searchMovies(query: String): Result<List<Movie>> =
         Result.success(emptyList())
 
@@ -116,13 +176,13 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
     ): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             val items = api.discoverMedia(
-                type    = type,
-                genreId = genreId,
-                year    = year,
-                sortBy  = sortBy,
+                type     = type,
+                genreId  = genreId,
+                year     = year,
+                sortBy   = sortBy,
                 language = tmdbLang,
-                page    = page,
-                apiKey  = Constants.TMDB_API_KEY
+                page     = page,
+                apiKey   = Constants.TMDB_API_KEY
             )
                 .results
                 .filter { it.posterPath != null }

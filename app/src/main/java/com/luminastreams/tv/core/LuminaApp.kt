@@ -69,9 +69,9 @@ class LuminaApp : Application() {
         // ── Memory cache ────────────────────────────────────────────────────────
         // HIGH gets a larger slice so 4K assets stay warm between screen transitions.
         val memoryCachePercent = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> 0.20   // ← was 0.15; more room for original-res assets
-            DeviceProfile.Tier.MID  -> 0.10   // ← was 0.08
-            DeviceProfile.Tier.LOW  -> 0.06   // ← was 0.05
+            DeviceProfile.Tier.HIGH -> 0.08   // ירד מ-0.20 ל-0.08
+            DeviceProfile.Tier.MID  -> 0.06
+            DeviceProfile.Tier.LOW  -> 0.04
         }
         val memoryCacheBytes = (maxHeap * memoryCachePercent).toLong()
             .coerceIn(32 * 1024 * 1024L, 512 * 1024 * 1024L)   // 32 MB–512 MB

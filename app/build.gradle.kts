@@ -2,19 +2,19 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.compose.compiler)
-    id("com.google.devtools.ksp") version "2.1.0-1.0.29"
+    alias(libs.plugins.ksp)
 }
 
 android {
-    namespace  = "com.luminastreams.tv"
+    namespace = "com.luminastreams.tv"
     compileSdk = 35
 
     defaultConfig {
-        applicationId   = "com.luminastreams.tv"
-        minSdk          = 26
-        targetSdk       = 35
-        versionCode     = 1
-        versionName     = "1.0.0-Lumina"
+        applicationId = "com.luminastreams.tv"
+        minSdk = 26
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0.0-Lumina"
         vectorDrawables.useSupportLibrary = true
     }
 
@@ -24,25 +24,25 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile     = file("keystore.jks")
+            storeFile = file("keystore.jks")
             storePassword = "lumina123"
-            keyAlias      = "lumina"
-            keyPassword   = "lumina123"
+            keyAlias = "lumina"
+            keyPassword = "lumina123"
         }
     }
 
-    buildTypes {;
+    buildTypes {
         getByName("debug") {
-            isDebuggable      = true
-            isMinifyEnabled   = false
+            isDebuggable = true
+            isMinifyEnabled = false
             isShrinkResources = false
         }
         getByName("release") {
-            isDebuggable      = false
-            isMinifyEnabled   = true
+            isDebuggable = false
+            isMinifyEnabled = true
             isShrinkResources = true
-            isProfileable     = true
-            signingConfig     = signingConfigs.getByName("release")
+            isProfileable = true
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -57,10 +57,9 @@ android {
 
     kotlin {
         jvmToolchain(21)
-    }
-
-    kotlinOptions {
-        freeCompilerArgs += listOf("-opt-in=androidx.media3.common.util.UnstableApi")
+        compilerOptions {
+            freeCompilerArgs.add("-opt-in=androidx.media3.common.util.UnstableApi")
+        }
     }
 
     composeCompiler {
@@ -83,12 +82,12 @@ android {
 
     splits {
         abi {
-            isEnable       = false
+            isEnable = false
         }
     }
 
     lint {
-        abortOnError   = false
+        abortOnError = false
         checkReleaseBuilds = false
     }
 }
@@ -130,17 +129,15 @@ dependencies {
     implementation(libs.gson)
 
     implementation(libs.kotlinx.coroutines.android)
-    implementation("androidx.datastore:datastore-preferences:1.0.0")
+
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.zxing.core)
+
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
-
-    implementation("com.google.zxing:core:3.5.3")
-
-    val room_version = "2.6.1"
-    implementation("androidx.room:room-runtime:$room_version")
-    implementation("androidx.room:room-ktx:$room_version")
-    ksp("androidx.room:room-compiler:$room_version")
 }

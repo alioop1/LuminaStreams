@@ -87,14 +87,6 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
 
     fun selectGroup(group: String) { _selectedGroup.value = group }
 
-    fun toggleFavorite(channelId: String, currentStatus: Boolean) {
-        viewModelScope.launch { repository.toggleFavorite(channelId, !currentStatus) }
-    }
-
-    fun markChannelAsWatched(channelId: String) {
-        viewModelScope.launch { repository.updateLastWatched(channelId) }
-    }
-
     fun openQrSetup() {
         _ipAddress.value = "http://${getLocalIpAddress()}:8080"
         _showQrScreen.value = true
@@ -124,6 +116,6 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
             addresses.firstOrNull { it.startsWith("192.168.") }
                 ?: addresses.firstOrNull { it.startsWith("10.") }
                 ?: addresses.firstOrNull() ?: ""
-        } catch (e: Exception) { "" }
+        } catch (_: Exception) { "" }
     }
 }

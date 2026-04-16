@@ -68,7 +68,6 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import com.luminastreams.tv.core.DeviceProfile
 import androidx.compose.animation.EnterTransition
-import androidx.compose.animation.ExitTransition
 import com.luminastreams.tv.presentation.iptv.IptvPlayerScreen
 
 
@@ -82,10 +81,10 @@ import com.luminastreams.tv.presentation.iptv.IptvPlayerScreen
  * regardless of what the TV OS advertises.
  *
  * Tuning guide (rebuild & check after each change):
- *   320  → matches a standard 1080p PC/monitor (target baseline)
- *   240  → slightly larger UI (good for very large living-room TVs)
- *   320  → compact, correct for 50"+
- *   400  → even smaller (more content visible, smaller text)
+ * 320  → matches a standard 1080p PC/monitor (target baseline)
+ * 240  → slightly larger UI (good for very large living-room TVs)
+ * 320  → compact, correct for 50"+
+ * 400  → even smaller (more content visible, smaller text)
  */
 private const val FORCED_DENSITY_DPI = 240
 
@@ -286,7 +285,7 @@ fun AppNavHostContainer(
         navController    = navController,
         startDestination = "splash",
         enterTransition  = { if (isLow) EnterTransition.None  else fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
-        exitTransition   = { if (isLow) ExitTransition.None   else fadeOut(animationSpec = tween(400, easing = LinearOutSlowInEasing)) },
+        exitTransition   = { if (isLow) androidx.compose.animation.ExitTransition.None   else fadeOut(animationSpec = tween(400, easing = LinearOutSlowInEasing)) },
         popEnterTransition = { fadeIn(animationSpec  = tween(400, easing = LinearOutSlowInEasing)) },
         popExitTransition  = { fadeOut(animationSpec = tween(200, easing = FastOutLinearInEasing)) }
     ) {
@@ -435,8 +434,8 @@ fun AppNavHostContainer(
 
             // יצירת ה-ViewModel החדש והמהיר שלנו
             val vm: IptvViewModel = viewModel(
-                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                factory = object : ViewModelProvider.Factory {
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
                         @Suppress("UNCHECKED_CAST")
                         return IptvViewModel(repository) as T
                     }
@@ -456,25 +455,25 @@ fun AppNavHostContainer(
 
 // ── IPTV Player (נגן ייעודי ללייב) ───────────────────────────────────────
         composable("iptv_player/{streamUrl}") { backStackEntry ->
-            val streamUrl = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
+            val streamUrl = URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
 
             // שולפים את ה-ViewModel כדי שיוכל לנהל את העברת הערוצים
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val vm: com.luminastreams.tv.presentation.iptv.IptvViewModel = viewModel(
-                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
-                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+            val vm: IptvViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
                         @Suppress("UNCHECKED_CAST")
-                        return com.luminastreams.tv.presentation.iptv.IptvViewModel(app.iptvRepository) as T
+                        return IptvViewModel(app.iptvRepository) as T
                     }
                 }
             )
 
-            com.luminastreams.tv.presentation.iptv.IptvPlayerScreen(
+            IptvPlayerScreen(
                 streamUrl = streamUrl,
                 onChannelUp = {
                     vm.getNextChannelUrl(streamUrl)?.let { nextUrl ->
-                        val safeUrl = java.net.URLEncoder.encode(nextUrl, "UTF-8")
+                        val safeUrl = URLEncoder.encode(nextUrl, "UTF-8")
                         navController.navigate("iptv_player/$safeUrl") {
                             popUpTo("iptv") { inclusive = false } // דורס את המסך הנוכחי לזאפינג חלק (מונע OOM)
                         }
@@ -482,7 +481,7 @@ fun AppNavHostContainer(
                 },
                 onChannelDown = {
                     vm.getPrevChannelUrl(streamUrl)?.let { prevUrl ->
-                        val safeUrl = java.net.URLEncoder.encode(prevUrl, "UTF-8")
+                        val safeUrl = URLEncoder.encode(prevUrl, "UTF-8")
                         navController.navigate("iptv_player/$safeUrl") {
                             popUpTo("iptv") { inclusive = false }
                         }

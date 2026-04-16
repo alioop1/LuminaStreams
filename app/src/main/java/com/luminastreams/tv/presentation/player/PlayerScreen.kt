@@ -6,6 +6,7 @@
 
 package com.luminastreams.tv.presentation.player
 
+import kotlinx.coroutines.isActive
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -68,7 +69,6 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 import com.luminastreams.tv.data.local.WatchProgressManager
@@ -327,6 +327,7 @@ fun PlayerScreen(
         }
     }
 
+    // התיקון: איחוד כל פעולות ה-Polling שקשורות להתקדמות הווידאו למקום אחד יעיל שעובד רק כשהווידאו מתנגן!
     LaunchedEffect(prepared, isPlaying) {
         if (!prepared || !isPlaying) return@LaunchedEffect
         var tickCount = 0
@@ -335,12 +336,14 @@ fun PlayerScreen(
             val pos = exo.player.currentPosition
             val dur = exo.player.duration.coerceAtLeast(1L)
 
+            // Next episode logic
             val remaining = dur - pos
             if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
                 dur > 60_000 && remaining in 1L..45_000L) {
                 showNextEpisodeCard = true
             }
 
+            // Save Progress logic (every 5 seconds)
             if (tickCount % 5 == 0) {
                 if (pos > 10_000L && progressKey.isNotEmpty()) {
                     if (pos.toFloat() / dur.toFloat() < 0.95f) {
@@ -362,6 +365,7 @@ fun PlayerScreen(
 
     LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
 
+    // Countdown auto-play
     LaunchedEffect(showNextEpisodeCard) {
         if (!showNextEpisodeCard) return@LaunchedEffect
         nextEpisodeCountdown = 10
@@ -489,12 +493,7 @@ fun PlayerScreen(
                 val surfaceView = SurfaceView(ctx).apply {
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     keepScreenOn = true
-
-                    // תיקון למניעת קפיאת ה-Z-Order ב-NVIDIA Shield בצירוף Dolby Vision:
-                    if (!com.luminastreams.tv.core.DeviceProfile.isNvidia) {
-                        setZOrderMediaOverlay(true)
-                    }
-
+                    setZOrderMediaOverlay(true)
                     applySurfaceDolbyVision(this)
                     addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                         override fun onViewAttachedToWindow(v: android.view.View) {
@@ -1065,6 +1064,7 @@ fun PlayerProgressControls(
     var videoDuration   by remember { mutableLongStateOf(1L) }
     var seekFocused     by remember { mutableStateOf(false) }
 
+    // התיקון: עדכון שורת הזמן מתבצע אך ורק כאשר הווידאו באמת מתנגן
     LaunchedEffect(isPlaying) {
         while (isActive && isPlaying) {
             currentPosition = exoWrapper.player.currentPosition
