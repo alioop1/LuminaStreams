@@ -55,7 +55,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
         ImageRequest.Builder(ctx)
             .data(url)
             .diskCacheKey(url)
-            .size(600) // <-- חובה! מונע קריסת זיכרון מוחלטת
+            .size(600)
             .memoryCachePolicy(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) CachePolicy.DISABLED else CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
@@ -63,15 +63,14 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             .build()
     }
 
-    // אין יותר graphicsLayer! אנחנו משתמשים ב-scale המובנה והיעיל של Surface
     Column(modifier = modifier.width(LAND_W)) {
         Surface(
             onClick = onClick,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f), // מנגנון הגדילה המובנה!
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
-            glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None), // מונע קריסות רינדור
+            glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier.fillMaxWidth().height(LAND_H).onFocusChanged { if (it.isFocused) onFocused() }
         ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -111,7 +110,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
         ImageRequest.Builder(ctx)
             .data(url)
             .diskCacheKey(url)
-            .size(400) // <-- מונע תקיעות דיסק
+            .size(400)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(DeviceProfile.tier != DeviceProfile.Tier.LOW)
@@ -124,7 +123,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             onClick = onClick,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f), // מנגנון מובנה ויעיל
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused() }

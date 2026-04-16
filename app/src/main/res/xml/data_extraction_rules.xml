@@ -5,21 +5,20 @@
         <!-- גיבוי העדפות משתמש (שפה, ערכת נושא, הגדרות וכו') -->
         <include domain="sharedpref" path="."/>
 
-        <!-- אל תגבה את ה-DB של IPTV — גדול ומתחדש בכל טעינה -->
-        <exclude domain="database" path="iptv_database"/>
+        <!-- אל תגבה את ה-DB של IPTV -->
+        <exclude domain="database" path="lumina_iptv.db"/>
 
         <!-- אל תגבה קבצי cache -->
-        <exclude domain="file" path=".cache"/>
-        <exclude domain="external" path=".cache"/>
+        <exclude domain="file" path="image_cache"/>
+        <exclude domain="external" path="image_cache"/>
     </cloud-backup>
 
     <device-transfer>
-        <!-- העברה בין מכשירים — אותן הגדרות כמו cloud backup -->
         <include domain="sharedpref" path="."/>
 
-        <exclude domain="database" path="iptv_database"/>
-        <exclude domain="file" path=".cache"/>
-        <exclude domain="external" path=".cache"/>
+        <exclude domain="database" path="lumina_iptv.db"/>
+        <exclude domain="file" path="image_cache"/>
+        <exclude domain="external" path="image_cache"/>
     </device-transfer>
 
 </data-extraction-rules>

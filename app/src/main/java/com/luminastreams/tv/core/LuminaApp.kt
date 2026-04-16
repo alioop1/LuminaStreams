@@ -47,7 +47,7 @@ class LuminaApp : Application() {
             LuminaDatabase::class.java,
             "lumina_iptv.db"
         )
-            .fallbackToDestructiveMigration(true)
+            .fallbackToDestructiveMigration(dropAllTables = true)
             .build()
 
         iptvRepository = IptvRepository(database.iptvDao())

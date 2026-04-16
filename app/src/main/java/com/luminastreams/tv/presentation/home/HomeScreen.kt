@@ -80,10 +80,11 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         if (tabChanged || filterChanged) {
             if (!isLow) contentAlpha = 0f
             if (!isLow) delay(250)
-            currentTab = state.selectedTab; currentFilter = state.selectedStudioFilter
+            currentTab = state.selectedTab
+            currentFilter = state.selectedStudioFilter
             val targetIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
             if (tabChanged) focusState.currentRowIndex = 0
-            else if (filterChanged) { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
+            else { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
             if (!isLow) { delay(30); contentAlpha = 1f }
         }
     }
