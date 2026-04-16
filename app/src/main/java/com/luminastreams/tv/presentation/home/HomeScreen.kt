@@ -29,17 +29,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
-// הפונקציה הבלעדית שבונה את 3 הקטגוריות (חדש, אנימציה, הכי טוב) עבור כל אולפן!
 fun generateStudioRows(baseId: String, brand: StudioBrand, movies: List<Movie>, _tr: (String, String) -> String): List<RowDef> {
     val list = mutableListOf<RowDef>()
-    // מוודא שאין סרטים כפולים כדי למנוע קריסות קומפוז!
     val uniqueMovies = movies.distinctBy { it.id }
     if (uniqueMovies.isEmpty()) return list
 
-    // 1. שורה ראשונה (LANDSCAPE) - שורת האולפן שמציגה את התוכן החדש/הנוכחי ללא סוף
     list.add(RowDef.Studio("${baseId}::new", brand, uniqueMovies))
 
-    // 2. שורה שנייה (PORTRAIT) - אנימציה מתוך תוכן האולפן
     val ani = uniqueMovies.filter {
         it.genre.contains("Animation", ignoreCase = true) ||
                 it.genre.contains("Kids", ignoreCase = true) ||
@@ -50,7 +46,6 @@ fun generateStudioRows(baseId: String, brand: StudioBrand, movies: List<Movie>, 
         list.add(RowDef.Regular("${baseId}::ani", _tr("Animation", "אנימציה"), ani))
     }
 
-    // 3. שורה שלישית (PORTRAIT) - הכי טוב בכל הזמנים מתוך תוכן האולפן
     val top = uniqueMovies.filter { it.rating > 0f }.sortedByDescending { it.rating }
     if (top.isNotEmpty()) {
         list.add(RowDef.Regular("${baseId}::top", _tr("Best of All Time", "הכי טוב בכל הזמנים"), top))
@@ -80,14 +75,15 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val amazonSeries  = remember(state.tvAmazon, state.movieAmazon) { state.tvAmazon.ifEmpty { state.movieAmazon } }
 
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
-        val tabChanged = currentTab != state.selectedTab
+        val tabChanged    = currentTab    != state.selectedTab
         val filterChanged = currentFilter != state.selectedStudioFilter
         if (tabChanged || filterChanged) {
             if (!isLow) contentAlpha = 0f
             if (!isLow) delay(250)
             currentTab = state.selectedTab; currentFilter = state.selectedStudioFilter
             val targetIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
-            if (tabChanged) focusState.currentRowIndex = 0 else if (filterChanged) { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
+            if (tabChanged) focusState.currentRowIndex = 0
+            else if (filterChanged) { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
             if (!isLow) { delay(30); contentAlpha = 1f }
         }
     }

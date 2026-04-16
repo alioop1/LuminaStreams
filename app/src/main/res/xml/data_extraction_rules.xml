@@ -9,8 +9,8 @@
         <exclude domain="database" path="iptv_database"/>
 
         <!-- אל תגבה קבצי cache -->
-        <exclude domain="cache" path="."/>
-        <exclude domain="external-cache" path="."/>
+        <exclude domain="file" path=".cache"/>
+        <exclude domain="external" path=".cache"/>
     </cloud-backup>
 
     <device-transfer>
@@ -18,8 +18,8 @@
         <include domain="sharedpref" path="."/>
 
         <exclude domain="database" path="iptv_database"/>
-        <exclude domain="cache" path="."/>
-        <exclude domain="external-cache" path="."/>
+        <exclude domain="file" path=".cache"/>
+        <exclude domain="external" path=".cache"/>
     </device-transfer>
 
 </data-extraction-rules>

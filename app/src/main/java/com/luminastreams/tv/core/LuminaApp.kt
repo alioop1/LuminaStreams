@@ -21,18 +21,15 @@ class LuminaApp : Application() {
     lateinit var repository: MediaRepository
         private set
 
-    // הוספת מסד הנתונים
     lateinit var database: LuminaDatabase
         private set
 
-    // הוספת מנהל הנתונים של ה-IPTV
     lateinit var iptvRepository: IptvRepository
         private set
 
     override fun onCreate() {
         super.onCreate()
 
-        // MUST initialise device profile first
         DeviceProfile.init(this)
 
         val prefs = getSharedPreferences("lumina_settings", MODE_PRIVATE)
@@ -43,16 +40,14 @@ class LuminaApp : Application() {
 
         setupCoil()
 
-        // אתחול המאגר הישן של הסרטים
         repository = MediaRepositoryImpl(this)
 
-        // אתחול מסד הנתונים והמאגר החדש של ה-IPTV
         database = Room.databaseBuilder(
             this,
             LuminaDatabase::class.java,
             "lumina_iptv.db"
         )
-            .fallbackToDestructiveMigration()
+            .fallbackToDestructiveMigration(true)
             .build()
 
         iptvRepository = IptvRepository(database.iptvDao())
@@ -66,21 +61,18 @@ class LuminaApp : Application() {
     private fun setupCoil() {
         val maxHeap = Runtime.getRuntime().maxMemory()
 
-        // ── Memory cache ────────────────────────────────────────────────────────
-        // HIGH gets a larger slice so 4K assets stay warm between screen transitions.
         val memoryCachePercent = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> 0.08   // ירד מ-0.20 ל-0.08
+            DeviceProfile.Tier.HIGH -> 0.08
             DeviceProfile.Tier.MID  -> 0.06
             DeviceProfile.Tier.LOW  -> 0.04
         }
         val memoryCacheBytes = (maxHeap * memoryCachePercent).toLong()
-            .coerceIn(32 * 1024 * 1024L, 512 * 1024 * 1024L)   // 32 MB–512 MB
+            .coerceIn(32 * 1024 * 1024L, 512 * 1024 * 1024L)
 
-        // ── Disk cache ──────────────────────────────────────────────────────────
         val diskCacheBytes = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> 1024 * 1024 * 1024L   // 1 GB  (was 512 MB)
-            DeviceProfile.Tier.MID  ->  512 * 1024 * 1024L   // 512 MB (was 256 MB)
-            DeviceProfile.Tier.LOW  ->  256 * 1024 * 1024L   // 256 MB (was 96 MB — far too small for TV)
+            DeviceProfile.Tier.HIGH -> 1024 * 1024 * 1024L
+            DeviceProfile.Tier.MID  ->  512 * 1024 * 1024L
+            DeviceProfile.Tier.LOW  ->  256 * 1024 * 1024L
         }
 
         val connectTimeout = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 12L
@@ -93,7 +85,6 @@ class LuminaApp : Application() {
                 d.maxRequests        = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 6 else 12
                 d.maxRequestsPerHost = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 3 else 6
             })
-            // Aggressive image CDN keep-alive
             .connectionPool(
                 okhttp3.ConnectionPool(
                     if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 5 else 10,
@@ -102,11 +93,10 @@ class LuminaApp : Application() {
             )
             .build()
 
-        // ── Bitmap config ───────────────────────────────────────────────────────
         val bitmapConfig = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> Bitmap.Config.HARDWARE   // GPU texture, zero copy
-            DeviceProfile.Tier.MID  -> Bitmap.Config.HARDWARE   // GPU texture
-            DeviceProfile.Tier.LOW  -> Bitmap.Config.ARGB_8888  // CPU, full color, no driver issues
+            DeviceProfile.Tier.HIGH -> Bitmap.Config.HARDWARE
+            DeviceProfile.Tier.MID  -> Bitmap.Config.HARDWARE
+            DeviceProfile.Tier.LOW  -> Bitmap.Config.ARGB_8888
         }
 
         val imageLoader = ImageLoader.Builder(this)

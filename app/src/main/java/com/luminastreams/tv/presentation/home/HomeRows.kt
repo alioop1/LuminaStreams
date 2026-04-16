@@ -155,7 +155,6 @@ fun LandscapeRow(title: String, movies: List<Movie>, isActive: Boolean, cardFR: 
     Column {
         RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
         LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
-            // ה-ID כבר מובטח להיות ייחודי בזכות distinctBy ששמנו
             itemsIndexed(movies, key = { _, m -> m.id }) { i, movie -> LandscapeCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, { onFocus(movie) }) { onClick(movie.id) } }
         }
     }
@@ -226,19 +225,19 @@ fun studioLabel(b: StudioBrand): String {
 
 @Composable
 fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    var focusState by remember { mutableStateOf(false) }
-    val containerCol = if (isSelected) WHITE.copy(0.15f) else CARD_BG
-    val borderCol = if (isSelected) WHITE else Color.Transparent
     Surface(
         onClick = onClick,
         scale = ClickableSurfaceDefaults.scale(focusedScale = if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) 1.08f else 1.0f),
-        colors = ClickableSurfaceDefaults.colors(containerColor = containerCol, focusedContainerColor = WHITE),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (isSelected) WHITE.copy(0.15f) else CARD_BG,
+            focusedContainerColor = WHITE
+        ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         border = ClickableSurfaceDefaults.border(
-            border = Border(border = BorderStroke(1.5.dp, borderCol), shape = RoundedCornerShape(12.dp)),
+            border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(12.dp)),
             focusedBorder = Border(border = BorderStroke(2.5.dp, WHITE), shape = RoundedCornerShape(12.dp))
         ),
-        modifier = modifier.width(130.dp).height(65.dp).onFocusChanged { focusState = it.isFocused }
+        modifier = modifier.width(130.dp).height(65.dp)
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { StudioBadge(brand = brand, isActive = true, isLarge = true) }
     }
