@@ -5,10 +5,13 @@ import android.content.ComponentCallbacks2
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.util.Log
+import androidx.room.Room
 import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import com.luminastreams.tv.data.local.LuminaDatabase
+import com.luminastreams.tv.data.repository.IptvRepository
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import okhttp3.OkHttpClient
@@ -16,6 +19,15 @@ import java.util.concurrent.TimeUnit
 
 class LuminaApp : Application() {
     lateinit var repository: MediaRepository
+        private set
+
+    // הוספת מסד הנתונים
+    lateinit var database: LuminaDatabase
+        private set
+
+    // הוספת מנהל הנתונים של ה-IPTV
+    lateinit var iptvRepository: IptvRepository
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -31,7 +43,19 @@ class LuminaApp : Application() {
 
         setupCoil()
 
+        // אתחול המאגר הישן של הסרטים
         repository = MediaRepositoryImpl(this)
+
+        // אתחול מסד הנתונים והמאגר החדש של ה-IPTV
+        database = Room.databaseBuilder(
+            this,
+            LuminaDatabase::class.java,
+            "lumina_iptv.db"
+        )
+            .fallbackToDestructiveMigration()
+            .build()
+
+        iptvRepository = IptvRepository(database.iptvDao())
 
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
             Runtime.getRuntime().gc()
@@ -79,16 +103,6 @@ class LuminaApp : Application() {
             .build()
 
         // ── Bitmap config ───────────────────────────────────────────────────────
-        //
-        // CRITICAL FIX: Previously LOW tier used allowRgb565(true) which forces
-        // 16-bit color (RGB_565). This causes severe color banding on TV displays —
-        // especially visible on gradients and backdrop images.
-        //
-        // Fix: ALWAYS use ARGB_8888 (32-bit). Use hardware bitmaps on HIGH/MID to
-        // keep GPU memory usage efficient while retaining full color fidelity.
-        //
-        // LOW tier gets software ARGB_8888 (no hardware bitmap) to avoid driver
-        // bugs on cheap Amlogic SoCs, but still full 32-bit color.
         val bitmapConfig = when (DeviceProfile.tier) {
             DeviceProfile.Tier.HIGH -> Bitmap.Config.HARDWARE   // GPU texture, zero copy
             DeviceProfile.Tier.MID  -> Bitmap.Config.HARDWARE   // GPU texture
@@ -108,13 +122,8 @@ class LuminaApp : Application() {
                     .build()
             }
             .okHttpClient(okhttp)
-            // ── Quality flags ──────────────────────────────────────────────────
-            // crossfade: purely visual, enable on MID+ for polish
             .crossfade(DeviceProfile.tier != DeviceProfile.Tier.LOW)
-            // respectCacheHeaders: false = always use our disk cache, ignore server
-            // Cache-Control headers that might force redownloads
             .respectCacheHeaders(false)
-            // bitmapConfig: ensures all decoded bitmaps use chosen config globally
             .bitmapConfig(bitmapConfig)
             .build()
 

@@ -69,6 +69,8 @@ import java.net.URLEncoder
 import com.luminastreams.tv.core.DeviceProfile
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import com.luminastreams.tv.presentation.iptv.IptvPlayerScreen
+
 
 
 /**
@@ -424,17 +426,70 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Live TV ───────────────────────────────────────────────────────
+// ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
+            // הזרקת ה-Repository מה-Application שלנו (LuminaApp)
+            val context = LocalContext.current
+            val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val repository = app.iptvRepository
+
+            // יצירת ה-ViewModel החדש והמהיר שלנו
             val vm: IptvViewModel = viewModel(
-                factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        @Suppress("UNCHECKED_CAST")
+                        return IptvViewModel(repository) as T
+                    }
+                }
             )
-            Box(Modifier.fillMaxSize().background(Color(0xFF050508))) {
+
+            Box(Modifier.fillMaxSize().background(Color(0xFF000000))) { // True Black לאולד
                 IptvScreen(
-                    viewModel      = vm,
-                    onNavigateBack = { navController.popBackStack() }
+                    viewModel = vm,
+                    onPlayChannel = { streamUrl ->
+                        val safeUrl = URLEncoder.encode(streamUrl, "UTF-8")
+                        navController.navigate("iptv_player/$safeUrl")
+                    }
                 )
             }
+        }
+
+// ── IPTV Player (נגן ייעודי ללייב) ───────────────────────────────────────
+        composable("iptv_player/{streamUrl}") { backStackEntry ->
+            val streamUrl = java.net.URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
+
+            // שולפים את ה-ViewModel כדי שיוכל לנהל את העברת הערוצים
+            val context = LocalContext.current
+            val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val vm: com.luminastreams.tv.presentation.iptv.IptvViewModel = viewModel(
+                factory = object : androidx.lifecycle.ViewModelProvider.Factory {
+                    override fun <T : androidx.lifecycle.ViewModel> create(modelClass: Class<T>): T {
+                        @Suppress("UNCHECKED_CAST")
+                        return com.luminastreams.tv.presentation.iptv.IptvViewModel(app.iptvRepository) as T
+                    }
+                }
+            )
+
+            com.luminastreams.tv.presentation.iptv.IptvPlayerScreen(
+                streamUrl = streamUrl,
+                onChannelUp = {
+                    vm.getNextChannelUrl(streamUrl)?.let { nextUrl ->
+                        val safeUrl = java.net.URLEncoder.encode(nextUrl, "UTF-8")
+                        navController.navigate("iptv_player/$safeUrl") {
+                            popUpTo("iptv") { inclusive = false } // דורס את המסך הנוכחי לזאפינג חלק (מונע OOM)
+                        }
+                    }
+                },
+                onChannelDown = {
+                    vm.getPrevChannelUrl(streamUrl)?.let { prevUrl ->
+                        val safeUrl = java.net.URLEncoder.encode(prevUrl, "UTF-8")
+                        navController.navigate("iptv_player/$safeUrl") {
+                            popUpTo("iptv") { inclusive = false }
+                        }
+                    }
+                },
+                onBackPressed = { navController.popBackStack() }
+            )
         }
     }
 }

@@ -58,7 +58,6 @@ class ExoPlayerWrapper(context: Context) {
         else     -> 1.00f
     }
 
-    // ── State flows ────────────────────────────────────────────────────────────
     private val _contentFrameRate = MutableStateFlow(0f)
     val contentFrameRate: StateFlow<Float> = _contentFrameRate.asStateFlow()
 
@@ -71,7 +70,6 @@ class ExoPlayerWrapper(context: Context) {
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
-    // ── Renderers factory ──────────────────────────────────────────────────────
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
@@ -80,9 +78,10 @@ class ExoPlayerWrapper(context: Context) {
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isLg   || DeviceProfile.isSony   ||
-                        DeviceProfile.isPhilips || DeviceProfile.isNvidia ->
+                DeviceProfile.isLg   || DeviceProfile.isSony   || DeviceProfile.isPhilips ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
+                DeviceProfile.isNvidia ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
@@ -91,7 +90,6 @@ class ExoPlayerWrapper(context: Context) {
         setEnableDecoderFallback(true)
     }
 
-    // ── Track selector ─────────────────────────────────────────────────────────
     val trackSelector = DefaultTrackSelector(appContext).apply {
         val builder = buildUponParameters()
             .setPreferredVideoMimeTypes(
@@ -102,7 +100,7 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(false)
+            .setTunnelingEnabled(!DeviceProfile.isNvidia) // כבוי בשילד למניעת ANR, פועל בשאר
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
@@ -117,7 +115,6 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params.build())
     }
 
-    // ── LoadControl ────────────────────────────────────────────────────────────
     private val safeTargetBytes = 12 * 1024 * 1024
 
     private val loadControl: DefaultLoadControl = run {
@@ -178,7 +175,6 @@ class ExoPlayerWrapper(context: Context) {
             }
         }
 
-    // ── Player state ───────────────────────────────────────────────────────────
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
@@ -383,11 +379,21 @@ class ExoPlayerWrapper(context: Context) {
             if (parsedSubs.isEmpty()) return@withContext
             _subtitleApplied.value = true
             val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
-            subTickerJob = scope.launch {
+
+            subTickerJob = scope.launch(Dispatchers.Default) {
+                var lastActiveTexts = listOf<String>()
                 while (isActive) {
-                    val pos    = player.currentPosition
+                    val pos = withContext(Dispatchers.Main) { player.currentPosition }
                     val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                    _currentCues.value = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                    val currentTexts = active.map { it.text }
+
+                    if (currentTexts != lastActiveTexts) {
+                        lastActiveTexts = currentTexts
+                        val newCues = active.map { entry -> Cue.Builder().setText(entry.text).build() }
+                        withContext(Dispatchers.Main) {
+                            _currentCues.value = newCues
+                        }
+                    }
                     delay(tickMs)
                 }
             }

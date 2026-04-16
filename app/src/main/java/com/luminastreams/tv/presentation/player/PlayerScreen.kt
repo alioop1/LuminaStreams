@@ -68,6 +68,7 @@ import androidx.media3.ui.CaptionStyleCompat
 import androidx.media3.ui.SubtitleView
 import androidx.tv.material3.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 import com.luminastreams.tv.data.local.WatchProgressManager
@@ -257,11 +258,9 @@ fun PlayerScreen(
     val seasonPref  = remember { playerPrefs.getInt("current_season", -1) }
     val episodePref = remember { playerPrefs.getInt("current_episode", -1) }
 
-// מחיל את העונה והפרק רק אם זה סרט/סדרה רגילה (יש imdbId). ב-IPTV ה-imdbId ריק ולכן הפופ-אפ לא יקפוץ.
     val season  = if (seasonPref  != -1 && imdbId.isNotBlank()) seasonPref  else null
     val episode = if (episodePref != -1 && imdbId.isNotBlank()) episodePref else null
 
-    // Next episode detection
     val totalEpisodesInSeason = remember { playerPrefs.getInt("total_episodes_in_season", -1) }
     val totalSeasonsInShow    = remember { playerPrefs.getInt("total_seasons", -1) }
 
@@ -273,50 +272,14 @@ fun PlayerScreen(
             totalSeasonsInShow > 0 && season < totalSeasonsInShow ->
                 Pair(season + 1, 1)
             totalEpisodesInSeason == -1 ->
-                Pair(season, episode + 1) // Unknown count, just try next
-            else -> Pair(null, null) // Last episode of show
+                Pair(season, episode + 1)
+            else -> Pair(null, null)
         }
     }
 
     var showNextEpisodeCard  by remember { mutableStateOf(false) }
     var nextEpCardDismissed  by remember { mutableStateOf(false) }
     var nextEpisodeCountdown by remember { mutableIntStateOf(10) }
-
-    // Poll for near-end state
-    LaunchedEffect(prepared) {
-        if (!prepared) return@LaunchedEffect
-        while (true) {
-            delay(1000)
-            val pos = exo.player.currentPosition
-            val dur = exo.player.duration
-            val remaining = dur - pos
-
-            if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
-                dur > 60_000 && remaining in 1L..45_000L) {
-                showNextEpisodeCard = true
-            }
-        }
-    }
-
-    // Countdown auto-play
-    LaunchedEffect(showNextEpisodeCard) {
-        if (!showNextEpisodeCard) return@LaunchedEffect
-        nextEpisodeCountdown = 10
-        for (i in 10 downTo 1) {
-            nextEpisodeCountdown = i
-            delay(1000)
-            if (!showNextEpisodeCard) return@LaunchedEffect
-        }
-        // Auto-play next episode
-        if (showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null) {
-            playerPrefs.edit {
-                putInt("auto_play_season", nextEpSeason)
-                putInt("auto_play_episode", nextEpEpisode)
-            }
-            exo.pause()
-            onNavigateBack()
-        }
-    }
 
     val progressManager = remember { WatchProgressManager(context) }
     val progressKey = remember(imdbId, season, episode) {
@@ -364,30 +327,58 @@ fun PlayerScreen(
         }
     }
 
+    LaunchedEffect(prepared, isPlaying) {
+        if (!prepared || !isPlaying) return@LaunchedEffect
+        var tickCount = 0
+        while (isActive) {
+            delay(1000)
+            val pos = exo.player.currentPosition
+            val dur = exo.player.duration.coerceAtLeast(1L)
+
+            val remaining = dur - pos
+            if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
+                dur > 60_000 && remaining in 1L..45_000L) {
+                showNextEpisodeCard = true
+            }
+
+            if (tickCount % 5 == 0) {
+                if (pos > 10_000L && progressKey.isNotEmpty()) {
+                    if (pos.toFloat() / dur.toFloat() < 0.95f) {
+                        progressManager.save(progressKey, pos, dur)
+                    } else {
+                        progressManager.save(progressKey, dur, dur)
+                    }
+                }
+            }
+            tickCount++
+        }
+    }
+
     LaunchedEffect(prepared) {
         if (prepared && savedPosition > 30_000L && !resumeHandled) {
             delay(800); showResumeDialog = true
         }
     }
 
-    LaunchedEffect(prepared) {
-        if (!prepared) return@LaunchedEffect
-        while (true) {
-            delay(5_000)
-            val pos = exo.player.currentPosition
-            val dur = exo.player.duration
-            if (pos > 10_000L && dur > 0L && progressKey.isNotEmpty()) {
-                if (pos.toFloat() / dur.toFloat() < 0.95f) { // Bumped threshold to 95%
-                    progressManager.save(progressKey, pos, dur)
-                } else {
-                    // Save as 100% completed so the red line reaches the very end
-                    progressManager.save(progressKey, dur, dur)
-                }
+    LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
+
+    LaunchedEffect(showNextEpisodeCard) {
+        if (!showNextEpisodeCard) return@LaunchedEffect
+        nextEpisodeCountdown = 10
+        for (i in 10 downTo 1) {
+            nextEpisodeCountdown = i
+            delay(1000)
+            if (!showNextEpisodeCard) return@LaunchedEffect
+        }
+        if (showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null) {
+            playerPrefs.edit {
+                putInt("auto_play_season", nextEpSeason)
+                putInt("auto_play_episode", nextEpEpisode)
             }
+            exo.pause()
+            onNavigateBack()
         }
     }
-
-    LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
 
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
@@ -455,7 +446,6 @@ fun PlayerScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            // שינוי 1: חייב להיות שקוף כדי שהווידאו יעבור דרך ה-Compose
             .background(Color.Transparent)
             .focusTarget()
             .onKeyEvent { event ->
@@ -489,7 +479,6 @@ fun PlayerScreen(
             }
     ) {
         AndroidView(
-            // שינוי 2: שקוף! שלא יחסום את ה-Surface
             modifier = Modifier.fillMaxSize().background(Color.Transparent),
             factory = { ctx ->
                 val arLayout = AspectRatioFrameLayout(ctx).apply {
@@ -501,8 +490,10 @@ fun PlayerScreen(
                     layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     keepScreenOn = true
 
-                    // שינוי 3: קריטי! בלעדיו המסך יישאר שחור ב-Tunneling
-                    setZOrderMediaOverlay(true)
+                    // תיקון למניעת קפיאת ה-Z-Order ב-NVIDIA Shield בצירוף Dolby Vision:
+                    if (!com.luminastreams.tv.core.DeviceProfile.isNvidia) {
+                        setZOrderMediaOverlay(true)
+                    }
 
                     applySurfaceDolbyVision(this)
                     addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
@@ -536,7 +527,6 @@ fun PlayerScreen(
             }
         )
 
-        // Loading overlay before playback starts
         AnimatedVisibility(
             visible = !hasStartedPlaying && error == null,
             enter = fadeIn(tween(200)),
@@ -571,7 +561,6 @@ fun PlayerScreen(
             }
         }
 
-        // Info Badges (Top Right)
         var activeVideoFormat by remember { mutableStateOf<Format?>(null) }
         LaunchedEffect(currentTracks) {
             val format = currentTracks.groups
@@ -615,7 +604,6 @@ fun PlayerScreen(
             }
         }
 
-// ── NEXT EPISODE CARD ──────────────────────────────────────────────────────
         AnimatedVisibility(
             visible  = showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null,
             enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
@@ -628,12 +616,8 @@ fun PlayerScreen(
             val nextFR = remember { FocusRequester() }
             val dismissFR = remember { FocusRequester() }
 
-            // שימוש ב-showNextEpisodeCard כטריגר והגדלת ההשהיה מבטיחים שהפוקוס ייתפס
             LaunchedEffect(showNextEpisodeCard) {
-                if (showNextEpisodeCard) {
-                    delay(150)
-                    runCatching { nextFR.requestFocus() }
-                }
+                if (showNextEpisodeCard) { delay(150); runCatching { nextFR.requestFocus() } }
             }
 
             Column(
@@ -643,20 +627,13 @@ fun PlayerScreen(
                     .background(Color(0xF0101018))
                     .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
                     .padding(horizontal = 20.dp, vertical = 18.dp)
-                    .focusGroup() // מגדיר את האזור כקבוצת פוקוס עצמאית
+                    .focusGroup()
                     .onPreviewKeyEvent { ev ->
-                        // כליאת הפוקוס בתוך הפופאפ ומניעת בריחה לנגן שברקע
                         if (ev.type == KeyEventType.KeyDown) {
                             when (ev.key) {
-                                Key.DirectionUp, Key.DirectionDown -> true // חוסם מעבר למעלה/למטה
-                                Key.DirectionLeft -> {
-                                    runCatching { if (isRtl) dismissFR.requestFocus() else nextFR.requestFocus() }
-                                    true
-                                }
-                                Key.DirectionRight -> {
-                                    runCatching { if (isRtl) nextFR.requestFocus() else dismissFR.requestFocus() }
-                                    true
-                                }
+                                Key.DirectionUp, Key.DirectionDown -> true
+                                Key.DirectionLeft -> { runCatching { if (isRtl) dismissFR.requestFocus() else nextFR.requestFocus() }; true }
+                                Key.DirectionRight -> { runCatching { if (isRtl) nextFR.requestFocus() else dismissFR.requestFocus() }; true }
                                 else -> false
                             }
                         } else false
@@ -675,18 +652,8 @@ fun PlayerScreen(
                 )
                 Spacer(Modifier.height(14.dp))
 
-                // Countdown progress bar
-                Box(
-                    Modifier.fillMaxWidth().height(3.dp)
-                        .clip(RoundedCornerShape(50))
-                        .background(WHITE.copy(0.15f))
-                ) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth((10f - nextEpisodeCountdown) / 10f)
-                            .fillMaxHeight()
-                            .background(RED)
-                    )
+                Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(WHITE.copy(0.15f))) {
+                    Box(Modifier.fillMaxWidth((10f - nextEpisodeCountdown) / 10f).fillMaxHeight().background(RED))
                 }
                 Spacer(Modifier.height(14.dp))
 
@@ -694,19 +661,12 @@ fun PlayerScreen(
                     Surface(
                         onClick = {
                             if (nextEpSeason != null && nextEpEpisode != null) {
-                                playerPrefs.edit {
-                                    putInt("auto_play_season", nextEpSeason)
-                                    putInt("auto_play_episode", nextEpEpisode)
-                                }
-                                exo.pause()
-                                onNavigateBack()
+                                playerPrefs.edit { putInt("auto_play_season", nextEpSeason); putInt("auto_play_episode", nextEpEpisode) }
+                                exo.pause(); onNavigateBack()
                             }
                         },
                         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = RED, focusedContainerColor = WHITE,
-                            contentColor = WHITE, focusedContentColor = Color.Black
-                        ),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
                         modifier = Modifier.weight(1f).height(46.dp).focusRequester(nextFR)
@@ -721,14 +681,8 @@ fun PlayerScreen(
                     Surface(
                         onClick = { showNextEpisodeCard = false; nextEpCardDismissed = true },
                         shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(
-                            containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE,
-                            contentColor = WHITE, focusedContentColor = Color.Black
-                        ),
-                        border = ClickableSurfaceDefaults.border(
-                            border = Border(androidx.compose.foundation.BorderStroke(1.dp, WHITE.copy(0.2f))),
-                            focusedBorder = Border.None
-                        ),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
+                        border = ClickableSurfaceDefaults.border(border = Border(androidx.compose.foundation.BorderStroke(1.dp, WHITE.copy(0.2f))), focusedBorder = Border.None),
                         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                         modifier = Modifier.height(46.dp).focusRequester(dismissFR)
                     ) {
@@ -740,7 +694,6 @@ fun PlayerScreen(
             }
         }
 
-        // Resume dialog
         if (showResumeDialog) {
             val resumeFR    = remember { FocusRequester() }
             val fromStartFR = remember { FocusRequester() }
@@ -785,7 +738,6 @@ fun PlayerScreen(
             }
         }
 
-        // Error screen
         if (error != null) {
             val errorFR = remember { FocusRequester() }
             LaunchedEffect(error) { delay(100); runCatching { errorFR.requestFocus() } }
@@ -815,7 +767,6 @@ fun PlayerScreen(
             }
         }
 
-        // Main Player Controls
         AnimatedVisibility(
             visible  = showControls && error == null && !showResumeDialog,
             enter    = fadeIn(tween(200)),
@@ -836,7 +787,6 @@ fun PlayerScreen(
                     }
                 }
 
-                // Popup Menus
                 AnimatedVisibility(
                     visible = activeMenu != ActiveMenu.NONE,
                     enter = slideInVertically(initialOffsetY = { 30 }) + fadeIn(tween(200)),
@@ -1115,8 +1065,8 @@ fun PlayerProgressControls(
     var videoDuration   by remember { mutableLongStateOf(1L) }
     var seekFocused     by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        while (true) {
+    LaunchedEffect(isPlaying) {
+        while (isActive && isPlaying) {
             currentPosition = exoWrapper.player.currentPosition
             videoDuration   = exoWrapper.player.duration.coerceAtLeast(1L)
             delay(500)
