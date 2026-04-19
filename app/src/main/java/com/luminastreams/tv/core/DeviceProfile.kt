@@ -4,9 +4,6 @@ import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 
-/**
- * Detects hardware tier at app start and exposes animation/quality configs.
- */
 object DeviceProfile {
 
     enum class Tier { LOW, MID, HIGH }
@@ -19,12 +16,9 @@ object DeviceProfile {
         val enableRowFade     : Boolean,
         val enableParallax    : Boolean,
         val lazyBeyondBounds  : Int,
-        // Max items per row rendered into LazyRow — keeps LOW tier from
-        // paying the recomposition cost of 20 identical invisible cards.
         val maxRowItems       : Int
     )
 
-    // ── Manufacturer / chipset flags ──────────────────────────────────────────
     var isXiaomi     : Boolean = false; private set
     var isMeCool     : Boolean = false; private set
     var isAmlogic    : Boolean = false; private set
@@ -34,15 +28,15 @@ object DeviceProfile {
     var isNvidia     : Boolean = false; private set
     var isRockchip   : Boolean = false; private set
     var isWeakAmlogic: Boolean = false; private set
+    // S905X4 flag — Mali-G31 MP2, 4GB RAM, can do HIGH visuals but no tunneling
+    var isS905X4     : Boolean = false; private set
 
-    // ── Read-only state ────────────────────────────────────────────────────────
     var gpuRenderer: String = "unknown"; private set
     var totalRamMb : Int    = 0;         private set
 
     lateinit var tier      : Tier;       private set
     lateinit var animConfig: AnimConfig; private set
 
-    // ── User overrides ─────────────────────────────────────────────────────────
     var forceLowTier: Boolean = false
         set(value) { field = value; animConfig = buildConfig(effectiveTier()) }
 
@@ -51,7 +45,6 @@ object DeviceProfile {
 
     private fun effectiveTier(): Tier = if (forceLowTier) Tier.LOW else tier
 
-    // ── Initialisation ─────────────────────────────────────────────────────────
     fun init(context: Context) {
         totalRamMb = readTotalRam(context)
 
@@ -80,14 +73,16 @@ object DeviceProfile {
                         hardware.contains("s905l")  ||
                         hardware.contains("s905")   ||
                         board.contains("s905")
-                ) && !hardware.contains("s922")
+                ) && !hardware.contains("s922") && !hardware.contains("s905x4")
+
+        // S905X4 = Mali-G31 MP2 — strong enough for HIGH visuals, no tunneling
+        isS905X4 = hardware.contains("s905x4") || model.contains("km6")
 
         gpuRenderer = buildGpuLabel(manufacturer, hardware, model, board)
         tier        = detectTier(hardware, model, board)
         animConfig  = buildConfig(effectiveTier())
     }
 
-    // ── GPU label ──────────────────────────────────────────────────────────────
     private fun buildGpuLabel(mfr: String, hw: String, model: String, board: String): String {
         return when {
             mfr.contains("nvidia")                               -> "Tegra (Nvidia)"
@@ -106,7 +101,6 @@ object DeviceProfile {
         }
     }
 
-    // ── Tier detection ─────────────────────────────────────────────────────────
     private fun detectTier(hw: String, model: String, board: String): Tier {
         if (isNvidia)  return Tier.HIGH
         if (isLg)      return Tier.HIGH
@@ -120,8 +114,9 @@ object DeviceProfile {
         if (isMeCool || isAmlogic) {
             return when {
                 hw.contains("s922") || model.contains("km7")   -> Tier.HIGH
-                // S905X4 has Mali-G31 MP2 — can handle MID animations
-                hw.contains("s905x4") || model.contains("km6") -> Tier.MID
+                // S905X4 / KM6: Mali-G31 MP2 + 4GB RAM → HIGH
+                // (tunneling disabled separately in ExoPlayerWrapper)
+                hw.contains("s905x4") || model.contains("km6") -> Tier.HIGH
                 hw.contains("s905x3")                          -> Tier.LOW
                 hw.contains("s905x2")                          -> Tier.LOW
                 hw.contains("s905x")                           -> Tier.LOW
@@ -151,7 +146,6 @@ object DeviceProfile {
         }
     }
 
-    // ── RAM ───────────────────────────────────────────────────────────────────
     private fun readTotalRam(context: Context): Int {
         val am   = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val info = ActivityManager.MemoryInfo()
@@ -159,7 +153,6 @@ object DeviceProfile {
         return (info.totalMem / 1024 / 1024).toInt()
     }
 
-    // ── AnimConfig factory ─────────────────────────────────────────────────────
     private fun buildConfig(t: Tier): AnimConfig {
         if (forceReduceMotion) return AnimConfig(
             rowFadeDuration = 0, backdropDuration = 0, heroFadeDuration = 0,
@@ -173,9 +166,11 @@ object DeviceProfile {
                 heroFadeDuration  = 350,
                 crossfadeDuration = 200,
                 enableRowFade     = true,
-                enableParallax    = true,
+                // Parallax disabled on Mali-G31 (S905X4) — not enough fillrate
+                enableParallax    = !isS905X4,
                 lazyBeyondBounds  = 2,
-                maxRowItems       = Int.MAX_VALUE
+                // Cap row items on S905X4 to avoid Mali-G31 overdraw
+                maxRowItems       = if (isS905X4) 20 else Int.MAX_VALUE
             )
             Tier.MID -> AnimConfig(
                 rowFadeDuration   = 120,
@@ -194,21 +189,12 @@ object DeviceProfile {
                 crossfadeDuration = 0,
                 enableRowFade     = false,
                 enableParallax    = false,
-                // Render 1 extra viewport of cards ahead — enough for smooth
-                // scroll, not so much that Mali-450 stalls on image decodes.
                 lazyBeyondBounds  = 1,
-                // Hard-cap rows at 15 items on LOW tier: fewer bitmaps in
-                // memory, fewer recompositions when focus moves between rows.
                 maxRowItems       = 15
             )
         }
     }
 
-    // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
-    // Tightened maxBufferMs on HIGH/MID: 60s was causing OOM on 2 GB heaps
-    // when the player pre-allocated large media buffers alongside Coil.
-    // LOW gets a slightly smaller window but still plays stutter-free on
-    // a reliable connection; the extra head-room mainly matters for live TV.
     data class BufferConfig(
         val minBufferMs       : Int,
         val maxBufferMs       : Int,
@@ -218,14 +204,16 @@ object DeviceProfile {
     )
 
     val bufferConfig: BufferConfig get() = when (effectiveTier()) {
+        // Shield + KM7 + KM6 all get the same HIGH buffer profile
         Tier.HIGH -> BufferConfig( 8_000, 20_000, 1_500, 3_000, 10 * 1024 * 1024)
-        Tier.MID  -> BufferConfig( 6_000, 15_000, 1_500, 3_000,  6 * 1024 * 1024)
+        // Raised targetBufferBytes from 6MB → 10MB to match HIGH
+        Tier.MID  -> BufferConfig( 6_000, 15_000, 1_500, 3_000, 10 * 1024 * 1024)
         Tier.LOW  -> BufferConfig(10_000, 25_000, 2_000, 4_000,  5 * 1024 * 1024)
     }
 
     fun debugInfo(): String =
         "Tier=${if (forceLowTier) "LOW(forced)" else tier.name} | " +
                 "ReduceMotion=$forceReduceMotion | GPU=$gpuRenderer | RAM=${totalRamMb}MB | " +
-                "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | " +
+                "Nvidia=$isNvidia | Xiaomi=$isXiaomi | MeCool=$isMeCool | S905X4=$isS905X4 | " +
                 "rowFade=${animConfig.rowFadeDuration}ms | parallax=${animConfig.enableParallax}"
 }
