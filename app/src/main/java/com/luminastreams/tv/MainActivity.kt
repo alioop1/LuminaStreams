@@ -36,7 +36,6 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.runtime.tooling.CompositionData
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -73,20 +72,6 @@ import com.luminastreams.tv.core.DeviceProfile
 import androidx.compose.animation.EnterTransition
 import com.luminastreams.tv.presentation.player.IptvPlayerScreen
 
-/**
- * Fixed density target for the entire app.
- *
- * Android TV large screens (50"+ 4K OLEDs) typically report densityDpi=213
- * which makes every dp physically very large on the panel.  We force 320 dpi
- * so the UI always renders at the same logical scale as a 1080p PC monitor,
- * regardless of what the TV OS advertises.
- *
- * Tuning guide (rebuild & check after each change):
- * 320  → matches a standard 1080p PC/monitor (target baseline)
- * 240  → slightly larger UI (good for very large living-room TVs)
- * 320  → compact, correct for 50"+
- * 400  → even smaller (more content visible, smaller text)
- */
 private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
@@ -175,9 +160,7 @@ fun LuminaAppShell() {
     }
 
     val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
-
     val navController = rememberNavController()
-
     val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
     val homeViewModel: HomeViewModel = viewModel()
 
@@ -192,34 +175,31 @@ fun LuminaAppShell() {
     }
 }
 
-// ── Shimmer effect using drawWithContent — avoids per-frame Offset allocation ──
-fun Modifier.shimmerEffect(isHighTier: Boolean): Modifier =
-    if (!isHighTier) this.background(Color(0xFF1E1E1E))
-    else this.composed {
-        val transition = rememberInfiniteTransition(label = "shimmer")
-        val shimmerAlpha by transition.animateFloat(
-            initialValue = 0f,
-            targetValue  = 1f,
-            animationSpec = infiniteRepeatable(
-                animation  = tween(1200, easing = LinearEasing),
-                repeatMode = RepeatMode.Restart
+// ── Shimmer — @Composable so rememberInfiniteTransition is legal here ──
+@Composable
+fun Modifier.shimmerEffect(isHighTier: Boolean): Modifier {
+    if (!isHighTier) return this.background(Color(0xFF1E1E1E))
+
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val shimmerAlpha by transition.animateFloat(
+        initialValue = 0f,
+        targetValue  = 1f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmerAlpha"
+    )
+    return this.drawWithContent {
+        drawContent()
+        drawRect(
+            brush = Brush.linearGradient(
+                colors = listOf(Color(0xFF111111), Color(0xFF282828), Color(0xFF111111))
             ),
-            label = "shimmerAlpha"
+            alpha = 0.6f + shimmerAlpha * 0.4f
         )
-        this.drawWithContent {
-            drawContent()
-            drawRect(
-                brush = Brush.linearGradient(
-                    colors = listOf(
-                        Color(0xFF111111),
-                        Color(0xFF282828),
-                        Color(0xFF111111)
-                    )
-                ),
-                alpha = 0.6f + shimmerAlpha * 0.4f
-            )
-        }
     }
+}
 
 // ── Lumina Light Waves loading indicator ──
 @Composable
@@ -369,11 +349,11 @@ fun AppNavHostContainer(
                 state           = detailsViewModel.state.collectAsState().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
-                    val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
-                    val safeImdb    = if (imdbId.isBlank()) "_" else imdbId
-                    val safeTitle   = URLEncoder.encode(title, "UTF-8")
+                    val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeImdb     = if (imdbId.isBlank()) "_" else imdbId
+                    val safeTitle    = URLEncoder.encode(title, "UTF-8")
                     val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
-                    val safeLogo    = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+                    val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
@@ -460,11 +440,10 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
-            val context = LocalContext.current
-            val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val activity = context as androidx.activity.ComponentActivity
+            val ctx = LocalContext.current
+            val app = ctx.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val activity = ctx as androidx.activity.ComponentActivity
 
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
@@ -493,13 +472,12 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Player ───────────────────────────────────────────────────────
         composable("iptv_player/{streamUrl}") { backStackEntry ->
             val streamUrl = URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
 
-            val context = LocalContext.current
-            val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val activity = context as androidx.activity.ComponentActivity
+            val ctx = LocalContext.current
+            val app = ctx.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val activity = ctx as androidx.activity.ComponentActivity
 
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
