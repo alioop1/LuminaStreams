@@ -1,0 +1,24 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="80dp"
+    android:viewportWidth="200"
+    android:viewportHeight="80">
+  <!-- Lumina glyph - L shape with glow accent -->
+  <path
+    android:fillColor="#FFFFFF"
+    android:pathData="M20,10 H32 V58 H60 V68 H20 Z"/>
+  <!-- Glow dot accent -->
+  <path
+    android:fillColor="#7B6FFF"
+    android:pathData="M56,14 Q64,14 64,22 Q64,30 56,30 Q48,30 48,22 Q48,14 56,14 Z"/>
+  <!-- LUMINA text -->
+  <path
+    android:fillColor="#FFFFFF"
+    android:pathData="M72,28 H78 V52 H72 Z
+             M82,28 H90 L96,44 L102,28 H110 V52 H104 V38 L99,50 H93 L88,38 V52 H82 Z
+             M114,28 H120 V46 Q120,49 123,49 Q126,49 126,46 V28 H132 V46 Q132,54 123,54 Q114,54 114,46 Z
+             M136,28 H142 L150,42 V28 H156 V52 H150 L142,38 V52 H136 Z
+             M160,28 H166 V52 H160 Z
+             M170,28 H180 Q186,28 186,34 Q186,38 183,39 L188,52 H182 L177,40 V52 H170 Z
+             M176,32 V37 H179 Q181,37 181,34.5 Q181,32 179,32 Z"/>
+</vector>
