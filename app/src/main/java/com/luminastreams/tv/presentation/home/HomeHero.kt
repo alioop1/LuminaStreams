@@ -4,7 +4,6 @@ package com.luminastreams.tv.presentation.home
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -25,7 +24,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.Text
 import coil.compose.AsyncImage
-import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.Movie
 
@@ -34,32 +32,30 @@ fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
     val heroUrl = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl
 
-    val fades = remember {
-        listOf(
-            Brush.horizontalGradient(0.0f to BG, 0.20f to Color.Transparent),
-            Brush.horizontalGradient(0.80f to Color.Transparent, 1.0f to BG),
-            Brush.verticalGradient(0.0f to BG, 0.15f to Color.Transparent),
-            Brush.verticalGradient(0.40f to Color.Transparent, 1.0f to BG)
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val edgeShadow = remember(isRtl) {
+        Brush.horizontalGradient(
+            *if (isRtl) arrayOf(0.0f to Color(0x0D000000), 0.15f to Color.Transparent)
+            else arrayOf(0.85f to Color.Transparent, 1.0f to Color(0x0D000000))
         )
     }
 
+    val bottomFade = remember {
+        Brush.verticalGradient(0.55f to Color.Transparent, 1.0f to BG)
+    }
+
     Box(Modifier.fillMaxSize().background(BG)) {
-        // Nuvio Logic: Crossfade חוסך 80% מהמאמץ של ה-GPU לעומת Slide על תמונת ענק
         Crossfade(
             targetState = heroUrl,
             animationSpec = tween(600, easing = LinearEasing),
-            label = "backdropNuvio",
-            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
+            label = "backdropCrossfade",
+            modifier = Modifier.fillMaxWidth().fillMaxHeight(0.75f)
         ) { url ->
             if (!url.isNullOrBlank()) {
                 AsyncImage(
                     model = ImageRequest.Builder(ctx)
                         .data(url)
-                        .memoryCacheKey("hero_$url") // מפתח ייעודי מונע טעינה כפולה
-                        .diskCacheKey("hero_$url")
-                        .memoryCachePolicy(CachePolicy.ENABLED)
-                        .diskCachePolicy(CachePolicy.ENABLED)
-                        .allowHardware(true) // Nuvio Magic: עוקף את ה-CPU ישירות לכרטיס מסך!
+                        .size(coil.size.Size(1280, 720)) // פענוח קל שלא קורס
                         .crossfade(false)
                         .build(),
                     contentDescription = null,
@@ -69,51 +65,40 @@ fun BackdropLayer(hero: Movie?) {
             }
         }
 
-        fades.forEach { Box(Modifier.fillMaxWidth().fillMaxHeight(0.85f).background(it)) }
+        // הצללות פשוטות שעובדות תמיד ללא קריסות GPU!
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.75f).background(edgeShadow))
+        Box(Modifier.fillMaxWidth().fillMaxHeight(0.75f).background(bottomFade))
     }
 }
 
 @Composable
-fun MetaDot() = Text("  •  ", color = WHITE.copy(alpha = 0.5f), fontSize = 14.sp)
+fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
 @Composable
 fun HeroOverlay(hero: Movie?, panelH: Dp) {
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-
     Box(Modifier.fillMaxSize().zIndex(3f)) {
-        // הטקסט מחליק ב-60FPS נקי כי הוא שוקל כלום לכרטיס המסך
-        AnimatedContent(
-            targetState = hero,
-            transitionSpec = {
-                (fadeIn(tween(400)) + slideInHorizontally(tween(600, easing = FastOutSlowInEasing)) { if (isRtl) -it/8 else it/8 }).togetherWith(
-                    fadeOut(tween(400)) + slideOutHorizontally(tween(600, easing = FastOutSlowInEasing)) { if (isRtl) it/8 else -it/8 }
-                )
-            },
-            label = "textSlide",
-            modifier = Modifier.align(Alignment.BottomStart).padding(start = 52.dp, bottom = panelH + 32.dp)
-        ) { m ->
-            if (m != null) {
+        hero?.let { m ->
+            key(m.id) {
                 Column(
-                    modifier = Modifier.widthIn(max = 680.dp).background(Color(0x4D000000), RoundedCornerShape(32.dp)).border(1.dp, Color(0x26FFFFFF), RoundedCornerShape(32.dp)).padding(32.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 60.dp, end = 400.dp, bottom = panelH + 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    val tsz = when { m.title.length > 26 -> 32.sp; m.title.length > 16 -> 40.sp; else -> 48.sp }
-                    Text(m.title, color = WHITE, fontSize = tsz, fontWeight = FontWeight.Black, lineHeight = (tsz.value * 1.1f).sp, letterSpacing = (-0.5).sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
-
+                    val tsz = when { m.title.length > 26 -> 28.sp; m.title.length > 16 -> 34.sp; else -> 44.sp }
+                    Text(m.title, color = WHITE, fontSize = tsz, fontWeight = FontWeight.Black, lineHeight = (tsz.value * 1.15f).sp, letterSpacing = (-0.3).sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (m.year > 0) { Text(m.year.toString(), color = WHITE, fontSize = 14.sp, fontWeight = FontWeight.SemiBold); MetaDot() }
-                        if (m.genre.isNotBlank()) { Text(m.genre, color = WHITE.copy(alpha = 0.8f), fontSize = 14.sp); MetaDot() }
-                        Text(if (m.mediaType == "tv") tr("TV Series", "סדרה") else tr("Movie", "סרט"), color = WHITE.copy(alpha = 0.8f), fontSize = 14.sp)
+                        if (m.year > 0) { Text(m.year.toString(), color = DIM, fontSize = 13.sp); MetaDot() }
+                        if (m.genre.isNotBlank()) { Text(m.genre, color = DIM, fontSize = 13.sp); MetaDot() }
+                        Text(if (m.mediaType == "tv") tr("TV Series", "סדרה") else tr("Movie", "סרט"), color = DIM, fontSize = 13.sp)
                         if (m.rating > 0f) {
                             MetaDot()
-                            Row(modifier = Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFFF5C518)).padding(horizontal = 8.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Text("IMDb", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Black)
-                                Text("%.1f".format(m.rating), color = Color.Black, fontSize = 13.sp, fontWeight = FontWeight.ExtraBold)
+                            Row(modifier = Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFFF5C518)).padding(horizontal = 8.dp, vertical = 3.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("IMDb", color = Color(0xFF141414), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold)
+                                Text("%.1f".format(m.rating), color = Color(0xFF141414), fontSize = 12.sp, fontWeight = FontWeight.Black)
                             }
                         }
                     }
                     if (m.overview.isNotBlank()) {
-                        Text(m.overview, color = WHITE.copy(alpha = 0.6f), fontSize = 15.sp, lineHeight = 24.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Text(m.overview, color = DIM2, fontSize = 13.sp, lineHeight = 20.sp, maxLines = 4, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 640.dp))
                     }
                 }
             }

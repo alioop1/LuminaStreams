@@ -1,18 +1,18 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 package com.luminastreams.tv.presentation.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.AbsoluteAlignment
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
@@ -45,39 +45,30 @@ fun ClockText() {
             delay(60_000L - (System.currentTimeMillis() % 60_000L))
         }
     }
-    Text(time, color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+    Text(time, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
 }
 
 @Composable
 fun LuminaLogo() {
-    val logoPainter = painterResource(R.drawable.logo_lumina_unified)
-    Image(
-        painter = logoPainter,
-        contentDescription = "Lumina Logo",
-        contentScale = ContentScale.Fit,
-        // הגובה הוגדל ל-90 כדי שייראה גדול ומרשים, השארנו את הריווח מלמעלה
-        modifier = Modifier.height(90.dp).padding(top = 4.dp)
-    )
+    Image(painterResource(R.drawable.logo_lumina_unified), "Lumina Logo", contentScale = ContentScale.Fit, modifier = Modifier.height(64.dp))
 }
 
 @Composable
 fun SearchBarButton(onClick: () -> Unit) {
     Surface(
         onClick = onClick,
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color(0x33FFFFFF), focusedContainerColor = Color.White, contentColor = WHITE, focusedContentColor = Color.Black),
+        colors = ClickableSurfaceDefaults.colors(containerColor = NAV_GLASS, focusedContainerColor = Color(0x44FFFFFF), contentColor = DIM2, focusedContentColor = WHITE),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
         border = ClickableSurfaceDefaults.border(
-            border = Border(border = BorderStroke(1.dp, Color.Transparent), shape = RoundedCornerShape(50)),
-            focusedBorder = Border(border = BorderStroke(2.dp, Color.White), shape = RoundedCornerShape(50))
+            border = Border(border = BorderStroke(1.dp, Color(0x25FFFFFF)), shape = RoundedCornerShape(50)),
+            focusedBorder = Border(border = BorderStroke(1.5.dp, Color(0x70FFFFFF)), shape = RoundedCornerShape(50))
         ),
         glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-        modifier = Modifier.height(38.dp).width(160.dp)
+        modifier = Modifier.height(34.dp).width(260.dp)
     ) {
-        Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-            Icon(Icons.Default.Search, null, Modifier.size(16.dp))
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(tr("Search", "חיפוש"), fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxSize().padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Icon(Icons.Default.Search, null, Modifier.size(13.dp))
+            Text(tr("Search movies, shows...", "חיפוש סרטים וסדרות..."), fontSize = 12.sp)
         }
     }
 }
@@ -85,45 +76,22 @@ fun SearchBarButton(onClick: () -> Unit) {
 @Composable
 fun NavPill(label: String, icon: ImageVector, isSelected: Boolean, focusRequester: FocusRequester? = null, onClick: () -> Unit, onTabPositioned: (Float, Dp) -> Unit) {
     val density = LocalDensity.current
-    val interactionSource = remember { MutableInteractionSource() }
-    val isPressed by interactionSource.collectIsPressedAsState()
-
-    val pressScale by animateFloatAsState(
-        targetValue = if (isPressed) 0.96f else 1.0f,
-        animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
-        label = "pressScale"
-    )
-
-    val contentColor = if (isSelected) RED else WHITE.copy(alpha = 0.7f)
-
+    val contentColor = if (isSelected) Color(0xFF0C0C0C) else WHITE
     Surface(
         onClick = onClick,
-        interactionSource = interactionSource,
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color.Transparent,
-            pressedContainerColor = Color(0x20FFFFFF),
-            contentColor = contentColor,
-            focusedContentColor = RED
-        ),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = NAV_FOCUS, pressedContainerColor = Color(0x20FFFFFF), contentColor = contentColor, focusedContentColor = contentColor),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
-        modifier = Modifier
-            .height(38.dp)
-            .wrapContentWidth()
-            .graphicsLayer {
-                scaleX = pressScale
-                scaleY = pressScale
-            }
-            .onGloballyPositioned { coords ->
-                onTabPositioned(coords.positionInParent().x, with(density) { coords.size.width.toDp() })
-            }
-            .let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
+        border = ClickableSurfaceDefaults.border(
+            border = Border.None,
+            focusedBorder = Border(border = BorderStroke(1.5.dp, Color(0x66FFFFFF)), shape = RoundedCornerShape(50))
+        ),
+        glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        modifier = Modifier.height(NAV_PILL_H).wrapContentWidth().onGloballyPositioned { coords -> onTabPositioned(coords.positionInParent().x, with(density) { coords.size.width.toDp() }) }.let { if (focusRequester != null) it.focusRequester(focusRequester) else it }
     ) {
-        Box(Modifier.fillMaxHeight().wrapContentWidth().padding(horizontal = 20.dp), contentAlignment = Alignment.Center) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(icon, null, Modifier.size(16.dp))
-                Text(label, fontSize = 14.sp, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold, maxLines = 1)
+        Box(Modifier.fillMaxHeight().wrapContentWidth().padding(horizontal = 16.dp), contentAlignment = Alignment.Center) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(icon, null, Modifier.size(14.dp))
+                Text(label, fontSize = 13.sp, fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1)
             }
         }
     }
@@ -136,37 +104,30 @@ fun TwoRowNavBar(activeTab: String, firstNavFR: FocusRequester, onSearch: () -> 
     val targetX = tabPositions[activeTab] ?: 0f
     val targetWidth = tabWidths[activeTab] ?: 0.dp
     val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
-
-    val pillSpec = if (isHighTier) spring<Float>(dampingRatio = 0.65f, stiffness = 150f) else snap()
-    val pillDpSpec = if (isHighTier) spring<Dp>(dampingRatio = 0.65f, stiffness = 150f) else snap()
+    val pillSpec = if (isHighTier) tween<Float>(300, easing = FastOutSlowInEasing) else snap()
+    val pillDpSpec = if (isHighTier) tween<Dp>(300, easing = FastOutSlowInEasing) else snap()
     val animatedX by animateFloatAsState(targetValue = targetX, animationSpec = pillSpec, label = "pillX")
     val animatedWidth by animateDpAsState(targetValue = targetWidth, animationSpec = pillDpSpec, label = "pillW")
 
-    Box(modifier = modifier.fillMaxWidth().padding(top = 32.dp).onFocusChanged { if (it.hasFocus) onNavFocus() }) {
-        Box(Modifier.align(Alignment.TopStart).padding(start = 52.dp)) { LuminaLogo() }
-        Box(Modifier.align(Alignment.TopEnd).padding(end = 52.dp, top = 16.dp)) { ClockText() }
-
-        Box(
-            Modifier.align(Alignment.TopCenter)
-                .background(Color(0x66000000), RoundedCornerShape(50))
-                .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(50))
-                .padding(8.dp)
-        ) {
-            Box {
-                if (animatedWidth > 0.dp) {
-                    androidx.compose.material3.Surface(modifier = Modifier.width(animatedWidth).height(38.dp).graphicsLayer { translationX = animatedX }, color = WHITE, shape = RoundedCornerShape(50)) {}
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    NavPill(tr("Home", "ראשי"), Icons.Default.Home, activeTab == "ראשי", firstNavFR, onHomeTab) { o, w -> tabPositions["ראשי"] = o; tabWidths["ראשי"] = w }
-                    NavPill(tr("Movies", "סרטים"), Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab) { o, w -> tabPositions["סרטים"] = o; tabWidths["סרטים"] = w }
-                    NavPill(tr("TV Shows", "סדרות"), Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab) { o, w -> tabPositions["סדרות"] = o; tabWidths["סדרות"] = w }
-                    NavPill("Fuzer", Icons.Default.LocalMovies, activeTab == "Fuzer", null, onFuzer) { o, w -> tabPositions["Fuzer"] = o; tabWidths["Fuzer"] = w }
-                    NavPill(tr("Live TV", "טלוויזיה חיה"), Icons.Default.Cast, activeTab == "iptv", null, onIptv) { o, w -> tabPositions["iptv"] = o; tabWidths["iptv"] = w }
-                    NavPill(tr("Watchlist", "רשימה"), Icons.Default.Bookmark, activeTab == "Watchlist", null, onWatchlist) { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
-                    NavPill(tr("Settings", "הגדרות"), Icons.Default.Settings, activeTab == "Settings", null, onSettings) { o, w -> tabPositions["Settings"] = o; tabWidths["Settings"] = w }
-                    Spacer(Modifier.width(16.dp))
-                    SearchBarButton(onClick = onSearch)
-                }
+    Column(modifier = modifier.onFocusChanged { if (it.hasFocus) onNavFocus() }) {
+        Row(modifier = Modifier.fillMaxWidth().height(NAV_SEARCH_H).padding(horizontal = 52.dp), verticalAlignment = Alignment.CenterVertically) {
+            LuminaLogo(); Spacer(Modifier.weight(1f)); ClockText()
+        }
+        Spacer(Modifier.height(NAV_GAP))
+        Box(modifier = Modifier.fillMaxWidth().height(NAV_PILLS_H).padding(horizontal = 52.dp), contentAlignment = AbsoluteAlignment.CenterLeft) {
+            if (animatedWidth > 0.dp) {
+                androidx.compose.material3.Surface(modifier = Modifier.width(animatedWidth).height(NAV_PILL_H).graphicsLayer { translationX = animatedX }, color = WHITE, shape = RoundedCornerShape(50)) {}
+            }
+            Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                NavPill(tr("Home", "ראשי"), Icons.Default.Home, activeTab == "ראשי", firstNavFR, onHomeTab) { o, w -> tabPositions["ראשי"] = o; tabWidths["ראשי"] = w }
+                NavPill(tr("Movies", "סרטים"), Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab) { o, w -> tabPositions["סרטים"] = o; tabWidths["סרטים"] = w }
+                NavPill(tr("TV Shows", "סדרות"), Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab) { o, w -> tabPositions["סדרות"] = o; tabWidths["סדרות"] = w }
+                NavPill("Fuzer", Icons.Default.LocalMovies, activeTab == "Fuzer", null, onFuzer) { o, w -> tabPositions["Fuzer"] = o; tabWidths["Fuzer"] = w }
+                NavPill(tr("Live TV", "טלוויזיה חיה"), Icons.Default.Cast, false, null, onIptv) { o, w -> tabPositions["iptv"] = o; tabWidths["iptv"] = w }
+                NavPill(tr("Watchlist", "רשימת צפייה"), Icons.Default.Bookmark, false, null, onWatchlist) { o, w -> tabPositions["Watchlist"] = o; tabWidths["Watchlist"] = w }
+                NavPill(tr("Settings", "הגדרות"), Icons.Default.Settings, false, null, onSettings) { o, w -> tabPositions["Settings"] = o; tabWidths["Settings"] = w }
+                Spacer(Modifier.weight(1f))
+                SearchBarButton(onClick = onSearch)
             }
         }
     }

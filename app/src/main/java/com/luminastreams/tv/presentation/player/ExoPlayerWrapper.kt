@@ -75,13 +75,9 @@ class ExoPlayerWrapper(context: Context) {
         setExtensionRendererMode(
             when {
                 !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                // Amlogic/MeCool: always prefer the platform hardware decoder (MediaCodec)
-                // Software fallback (FFmpeg ext) is slower on Mali-G31/Mali-450
-                DeviceProfile.isAmlogic || DeviceProfile.isMeCool ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
                 DeviceProfile.tier == DeviceProfile.Tier.LOW ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                DeviceProfile.isXiaomi ->
+                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
+                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
                 DeviceProfile.isLg   || DeviceProfile.isSony   || DeviceProfile.isPhilips ->
                     DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
@@ -105,15 +101,7 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            // Tunneling:
-            // - Nvidia Shield: OFF — causes ANR on Tegra
-            // - Amlogic/MeCool (S905X4, S922X, etc.): OFF — Mali driver bug causes frame drops
-            // - Everyone else: ON — gives the video pipeline a dedicated thread
-            .setTunnelingEnabled(
-                !DeviceProfile.isNvidia &&
-                !DeviceProfile.isAmlogic &&
-                !DeviceProfile.isMeCool
-            )
+            .setTunnelingEnabled(!DeviceProfile.isNvidia) // כבוי בשילד למניעת ANR, פועל בשאר
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
