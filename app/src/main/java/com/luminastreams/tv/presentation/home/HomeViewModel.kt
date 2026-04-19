@@ -34,8 +34,8 @@ class HomeViewModel : ViewModel() {
 
     private val backdropSize: String get() = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> "original"
-        DeviceProfile.Tier.MID  -> "original"
-        DeviceProfile.Tier.LOW  -> "original"
+        DeviceProfile.Tier.MID  -> "w1280" // שיפור: רזולוציה אופטימלית לביצועים
+        DeviceProfile.Tier.LOW  -> "w780"  // אופטימיזציה למכשירים חלשים
     }
 
     private val posterSize: String get() = when (DeviceProfile.tier) {

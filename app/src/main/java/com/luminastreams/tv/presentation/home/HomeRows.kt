@@ -1,9 +1,11 @@
 @file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package com.luminastreams.tv.presentation.home
+
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -17,8 +19,8 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -27,9 +29,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Glow
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 
@@ -45,8 +47,7 @@ fun ContentLayer(
     val firstNavFR = remember { FocusRequester() }
     val firstCardFRs = remember { List(30) { FocusRequester() } }
     var initialFocusDone by remember { mutableStateOf(false) }
-    val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
-    val animatedContentAlpha by animateFloatAsState(targetValue = contentAlpha, animationSpec = if (isHighTier) tween(250, easing = LinearEasing) else snap(), label = "contentAlpha")
+    val animatedContentAlpha by animateFloatAsState(targetValue = contentAlpha, animationSpec = tween(300, easing = FastOutSlowInEasing), label = "contentAlpha")
 
     LaunchedEffect(Unit) {
         delay(150)
@@ -82,22 +83,23 @@ fun ContentLayer(
             else -> false
         }
     }) {
-        TwoRowNavBar(activeTab, firstNavFR, onSearch, onHomeTab, onMoviesTab, onSeriesTab, onFuzer, onWatchlist, onSettings, onIptv, { focusState.isNavFocused = true; focusState.currentRowIndex = 0 }, Modifier.fillMaxWidth().height(NAV_H).align(Alignment.TopStart).zIndex(10f))
-        Box(Modifier.fillMaxWidth().height(panelH).align(Alignment.BottomStart).graphicsLayer { alpha = animatedContentAlpha }) {
-            RowsPanel(rows, focusState, firstCardFRs, panelH, rowHeightFor, firstContentIndex, activeFilter, onStudioFilterClick, onLoadMore, onHeroUpdate, onMovieClick)
+        TwoRowNavBar(activeTab, firstNavFR, onSearch, onHomeTab, onMoviesTab, onSeriesTab, onFuzer, onWatchlist, onSettings, onIptv, { focusState.isNavFocused = true; focusState.currentRowIndex = 0 }, Modifier.fillMaxWidth().height(NAV_H + 40.dp).align(Alignment.TopStart).zIndex(10f))
+
+        Box(Modifier.fillMaxWidth().height(panelH + 40.dp).align(Alignment.BottomStart).graphicsLayer { alpha = animatedContentAlpha }) {
+            RowsPanel(rows, focusState, firstCardFRs, firstContentIndex, activeFilter, onStudioFilterClick, onLoadMore, onHeroUpdate, onMovieClick)
         }
     }
 }
 
 @Composable
 private fun RowWrapper(
-    rowDef: RowDef, rh: Dp, yOffset: Dp, isActive: Boolean, isLand: Boolean,
+    rowDef: RowDef, isActive: Boolean, isLand: Boolean,
     cardFR: FocusRequester?, activeFilter: String?,
     onFocus: (Movie) -> Unit, onItemClick: (String) -> Unit,
     onLoadMore: (String) -> Unit, onStudioFilterClick: (String?) -> Unit
 ) {
-    val animatedAlpha by animateFloatAsState(targetValue = if (isActive) 1f else 0.22f, animationSpec = tween(300), label = "rowAlpha")
-    Box(Modifier.fillMaxWidth().height(rh).offset(y = yOffset).graphicsLayer { alpha = animatedAlpha }) {
+    val animatedAlpha by animateFloatAsState(targetValue = if (isActive) 1f else 0.4f, animationSpec = tween(300), label = "rowAlpha")
+    Box(Modifier.fillMaxWidth().graphicsLayer { alpha = animatedAlpha }) {
         if (rowDef is RowDef.StudioRibbon) StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
         else if (isLand) {
             when (rowDef) {
@@ -116,32 +118,32 @@ private fun RowWrapper(
 }
 
 @Composable
-fun RowsPanel(rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, panelH: Dp, rowHeightFor: (Int) -> Dp, firstContentIndex: Int, activeFilter: String?, onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit, onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit) {
+fun RowsPanel(rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, firstContentIndex: Int, activeFilter: String?, onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit, onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit) {
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-    val renderMargin = when (DeviceProfile.tier) { DeviceProfile.Tier.HIGH -> 3; else -> 1 }
-    val targetYOffset: Dp = remember(curRow, rows.size) { var acc = 0.dp; for (i in 0 until curRow) acc += rowHeightFor(i); -acc }
-    val slideSpec = when (DeviceProfile.tier) { DeviceProfile.Tier.LOW -> snap(); DeviceProfile.Tier.MID -> tween<Dp>(200, easing = FastOutSlowInEasing); DeviceProfile.Tier.HIGH -> tween<Dp>(400, easing = FastOutSlowInEasing) }
-    val animatedY by animateDpAsState(targetValue = targetYOffset, animationSpec = slideSpec, label = "rowsSlide")
 
-    Box(Modifier.fillMaxWidth().height(panelH).clipToBounds()) {
-        val density = LocalDensity.current
-        Box(Modifier.fillMaxWidth().graphicsLayer { translationY = with(density) { animatedY.toPx() } }) {
-            var yAccum = 0.dp
-            rows.forEachIndexed { i, rowDef ->
-                val rh = rowHeightFor(i); val isLand = (i == firstContentIndex); val isActive = !focusState.isNavFocused && i == curRow
-                val yOffset = yAccum; val inWindow = kotlin.math.abs(i - curRow) <= renderMargin
+    // Nuvio Logic: שימוש ב-LazyColumn נותן מנוע גלילה נטיבי, חלק, וממוחזר במקום להזיז Box ענקית מחוץ למסך
+    val listState = rememberLazyListState()
 
-                key(rowDef.id) {
-                    if (!inWindow) {
-                        Box(Modifier.fillMaxWidth().height(rh).offset(y = yOffset))
-                    } else {
-                        val cardFR = rowFRs.getOrNull(i)
-                        val onFocusMemo = remember(i) { { m: Movie -> focusState.currentRowIndex = i; focusState.isNavFocused = false; onItemFocus(m) } }
-                        RowWrapper(rowDef, rh, yOffset, isActive, isLand, cardFR, activeFilter, onFocusMemo, onItemClick, onLoadMore, onStudioFilterClick)
-                    }
-                }
-                yAccum += rh
+    // אנימציית גלילה טבעית וחלקה של אנדרואיד
+    LaunchedEffect(curRow) {
+        listState.animateScrollToItem(curRow)
+    }
+
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.fillMaxSize().clipToBounds(),
+        contentPadding = PaddingValues(bottom = 30.dp),
+        userScrollEnabled = false // השלט קובע את הפוקוס, המערכת גוללת אוטומטית
+    ) {
+        itemsIndexed(items = rows, key = { _, r -> r.id }, contentType = { _, _ -> "rowType" }) { i, rowDef ->
+            val isLand = (i == firstContentIndex)
+            val isActive = !focusState.isNavFocused && i == curRow
+            val cardFR = rowFRs.getOrNull(i)
+            val onFocusMemo = remember(i) { { m: Movie -> focusState.currentRowIndex = i; focusState.isNavFocused = false; onItemFocus(m) } }
+
+            Box(Modifier.fillMaxWidth().padding(vertical = 10.dp)) {
+                RowWrapper(rowDef, isActive, isLand, cardFR, activeFilter, onFocusMemo, onItemClick, onLoadMore, onStudioFilterClick)
             }
         }
     }
@@ -153,9 +155,11 @@ fun LandscapeRow(title: String, movies: List<Movie>, isActive: Boolean, cardFR: 
     val rowState = rememberLazyListState(); LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
     RememberPagedRowLoad(rowState, onLoadMore)
     Column {
-        RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { i, movie -> LandscapeCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, { onFocus(movie) }) { onClick(movie.id) } }
+        RowLabel(title, isActive, Modifier.padding(start = 52.dp, bottom = 14.dp))
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(items = movies, key = { _, m -> m.id }, contentType = { _, _ -> "landscapeCard" }) { i, movie ->
+                LandscapeCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, { onFocus(movie) }) { onClick(movie.id) }
+            }
         }
     }
 }
@@ -166,9 +170,11 @@ fun LandscapeStudioRow(brand: StudioBrand, movies: List<Movie>, isActive: Boolea
     val rowState = rememberLazyListState(); LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
     RememberPagedRowLoad(rowState, onLoadMore)
     Column {
-        Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { StudioBadge(brand, isActive); Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal) }
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { i, movie -> LandscapeCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, { onFocus(movie) }) { onClick(movie.id) } }
+        Row(Modifier.padding(start = 52.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { StudioBadge(brand, isActive); Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(28.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(items = movies, key = { _, m -> m.id }, contentType = { _, _ -> "landscapeCard" }) { i, movie ->
+                LandscapeCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, { onFocus(movie) }) { onClick(movie.id) }
+            }
         }
     }
 }
@@ -179,9 +185,11 @@ fun PortraitRow(title: String, movies: List<Movie>, isActive: Boolean, cardFR: F
     val rowState = rememberLazyListState(); LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
     RememberPagedRowLoad(rowState, onLoadMore)
     Column {
-        RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { i, movie -> PosterCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) } }
+        RowLabel(title, isActive, Modifier.padding(start = 52.dp, bottom = 14.dp))
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(items = movies, key = { _, m -> m.id }, contentType = { _, _ -> "portraitCard" }) { i, movie ->
+                PosterCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
+            }
         }
     }
 }
@@ -192,9 +200,11 @@ fun PortraitStudioRow(brand: StudioBrand, movies: List<Movie>, isActive: Boolean
     val rowState = rememberLazyListState(); LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
     RememberPagedRowLoad(rowState, onLoadMore)
     Column {
-        Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) { StudioBadge(brand, isActive); Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal) }
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { i, movie -> PosterCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) } }
+        Row(Modifier.padding(start = 52.dp, bottom = 14.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) { StudioBadge(brand, isActive); Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 16.sp, fontWeight = FontWeight.Bold) }
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 20.dp), horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(items = movies, key = { _, m -> m.id }, contentType = { _, _ -> "portraitCard" }) { i, movie ->
+                PosterCard(movie, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
+            }
         }
     }
 }
@@ -203,10 +213,12 @@ fun PortraitStudioRow(brand: StudioBrand, movies: List<Movie>, isActive: Boolean
 fun StudioRibbonRow(isActive: Boolean, cardFR: FocusRequester?, activeFilter: String?, onStudioFilterClick: (String?) -> Unit) {
     val brands = listOf(StudioBrand.HBO, StudioBrand.NETFLIX, StudioBrand.AMAZON, StudioBrand.DISNEY, StudioBrand.APPLE_TV, StudioBrand.PARAMOUNT, StudioBrand.HULU)
     val rowState = rememberLazyListState()
-    Column(Modifier.padding(vertical = 10.dp)) {
-        Text(tr("Browse by Studio", "סנן לפי אולפן"), color = WHITE.copy(if (isActive) 1f else 0.4f), fontSize = 14.sp, fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal, modifier = Modifier.padding(start = 52.dp, bottom = 12.dp))
-        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
-            itemsIndexed(brands, key = { _, b -> b.name }) { i, brand -> StudioLogoButton(brand, activeFilter == brand.name, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier) { onStudioFilterClick(brand.name) } }
+    Column {
+        Text(tr("Browse by Studio", "סנן לפי רשתות שידור"), color = WHITE.copy(if (isActive) 1f else 0.5f), fontSize = 16.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 52.dp, bottom = 16.dp))
+        LazyRow(state = rowState, contentPadding = PaddingValues(horizontal = 52.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth()) {
+            itemsIndexed(items = brands, key = { _, b -> b.name }, contentType = { _, _ -> "studioButton" }) { i, brand ->
+                StudioLogoButton(brand, activeFilter == brand.name, if (i == 0 && cardFR != null) Modifier.focusRequester(cardFR) else Modifier) { onStudioFilterClick(brand.name) }
+            }
         }
     }
 }
@@ -225,19 +237,31 @@ fun studioLabel(b: StudioBrand): String {
 
 @Composable
 fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isFocused) 1.10f else 1.0f,
+        animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+        label = "scale"
+    )
+
     Surface(
         onClick = onClick,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = if (DeviceProfile.tier == DeviceProfile.Tier.HIGH) 1.08f else 1.0f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) WHITE.copy(0.15f) else CARD_BG,
+            containerColor = if (isSelected) Color(0x33FFFFFF) else Color(0x1AFFFFFF),
             focusedContainerColor = WHITE
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
         border = ClickableSurfaceDefaults.border(
-            border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(12.dp)),
-            focusedBorder = Border(border = BorderStroke(2.5.dp, WHITE), shape = RoundedCornerShape(12.dp))
+            border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(20.dp)),
+            focusedBorder = Border(border = BorderStroke(3.dp, WHITE), shape = RoundedCornerShape(20.dp))
         ),
-        modifier = modifier.width(130.dp).height(65.dp)
+        glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
+        modifier = modifier
+            .width(140.dp)
+            .height(75.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { isFocused = it.isFocused }
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) { StudioBadge(brand = brand, isActive = true, isLarge = true) }
     }
