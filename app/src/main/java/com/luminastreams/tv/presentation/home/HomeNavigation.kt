@@ -55,7 +55,8 @@ fun LuminaLogo() {
         painter = logoPainter,
         contentDescription = "Lumina Logo",
         contentScale = ContentScale.Fit,
-        modifier = Modifier.height(64.dp)
+        // הגובה הוגדל ל-90 כדי שייראה גדול ומרשים, השארנו את הריווח מלמעלה
+        modifier = Modifier.height(90.dp).padding(top = 4.dp)
     )
 }
 
