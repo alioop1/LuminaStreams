@@ -1,16 +1,17 @@
 package com.luminastreams.tv.data.local.iptv
 
-import androidx.room.*
+import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface IptvDao {
 
+    // --- Playlists ---
     @Query("SELECT * FROM playlists ORDER BY lastUpdated DESC")
     fun getAllPlaylists(): Flow<List<PlaylistEntity>>
-
-    @Query("SELECT * FROM playlists WHERE isActive = 1 LIMIT 1")
-    suspend fun getActivePlaylist(): PlaylistEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPlaylist(playlist: PlaylistEntity)
@@ -18,36 +19,85 @@ interface IptvDao {
     @Query("UPDATE playlists SET isActive = 0")
     suspend fun deactivateAllPlaylists()
 
+    // --- Channels ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChannels(channels: List<ChannelEntity>)
+
+    @Query("DELETE FROM channels WHERE playlistId = :playlistId")
+    suspend fun clearChannels(playlistId: String)
 
     @Query("SELECT * FROM channels WHERE playlistId = :playlistId ORDER BY number ASC")
     fun getChannelsForPlaylist(playlistId: String): Flow<List<ChannelEntity>>
 
-    @Query("SELECT DISTINCT groupTitle FROM channels WHERE playlistId = :playlistId ORDER BY groupTitle ASC")
+    @Query("SELECT DISTINCT groupTitle FROM channels WHERE playlistId = :playlistId")
     fun getGroupsForPlaylist(playlistId: String): Flow<List<String>>
 
     @Query("SELECT * FROM channels WHERE playlistId = :playlistId AND groupTitle = :group ORDER BY number ASC")
     suspend fun getChannelsByGroup(playlistId: String, group: String): List<ChannelEntity>
 
-    @Query("SELECT * FROM channels WHERE isFavorite = 1 ORDER BY name ASC")
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 ORDER BY number ASC")
     fun getFavoriteChannels(): Flow<List<ChannelEntity>>
 
-    @Query("UPDATE channels SET isFavorite = :isFavorite WHERE id = :channelId")
-    suspend fun updateFavoriteStatus(channelId: String, isFavorite: Boolean)
+    // הזרקת הלוגואים (רק אם הערוץ ללא לוגו)
+    @Query("""
+        UPDATE channels 
+        SET logoUrl = :logoUrl 
+        WHERE playlistId = :playlistId 
+        AND logoUrl = '' 
+        AND (
+            tvgId = :epgId 
+            OR name = :epgId 
+            OR REPLACE(LOWER(name), ' ', '') = REPLACE(LOWER(:epgId), ' ', '')
+            OR :epgId LIKE '%' || name || '%'
+            OR name LIKE '%' || :epgId || '%'
+        )
+    """)
+    suspend fun updateChannelLogo(playlistId: String, epgId: String, logoUrl: String)
 
-    @Query("UPDATE channels SET lastWatched = :timestamp WHERE id = :channelId")
-    suspend fun updateLastWatched(channelId: String, timestamp: Long)
-
-    @Query("DELETE FROM channels WHERE playlistId = :playlistId")
-    suspend fun clearChannels(playlistId: String)
-
+    // --- EPG ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEpgPrograms(programs: List<EpgProgramEntity>)
 
-    @Query("SELECT * FROM epg_programs WHERE channelId = :channelId AND endTime > :currentTime ORDER BY startTime ASC")
-    suspend fun getEpgForChannel(channelId: String, currentTime: Long): List<EpgProgramEntity>
-
     @Query("DELETE FROM epg_programs")
     suspend fun clearAllEpg()
+
+    // EPG נוכחי (ל-Header)
+    @Query("""
+        SELECT * FROM epg_programs 
+        WHERE (
+            channelId COLLATE NOCASE IN (:id, :tvgId, :tvgName, :name)
+            OR channelId COLLATE NOCASE LIKE '%' || :cleanName || '%'
+        )
+        AND endTime > :currentTime 
+        ORDER BY startTime ASC 
+        LIMIT 1
+    """)
+    suspend fun getCurrentEpgForChannel(
+        id: String,
+        tvgId: String,
+        tvgName: String,
+        name: String,
+        cleanName: String,
+        currentTime: Long
+    ): EpgProgramEntity?
+
+    // EPG עתידי (עבור ה- TV Guide)
+    @Query("""
+        SELECT * FROM epg_programs 
+        WHERE (
+            channelId COLLATE NOCASE IN (:id, :tvgId, :tvgName, :name)
+            OR channelId COLLATE NOCASE LIKE '%' || :cleanName || '%'
+        )
+        AND endTime > :currentTime 
+        ORDER BY startTime ASC 
+        LIMIT 10
+    """)
+    suspend fun getFutureEpgForChannel(
+        id: String,
+        tvgId: String,
+        tvgName: String,
+        name: String,
+        cleanName: String,
+        currentTime: Long
+    ): List<EpgProgramEntity>
 }

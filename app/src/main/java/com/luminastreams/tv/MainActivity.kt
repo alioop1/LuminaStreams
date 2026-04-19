@@ -68,10 +68,7 @@ import java.net.URLDecoder
 import java.net.URLEncoder
 import com.luminastreams.tv.core.DeviceProfile
 import androidx.compose.animation.EnterTransition
-import com.luminastreams.tv.presentation.iptv.IptvPlayerScreen
-
-
-
+import com.luminastreams.tv.presentation.player.IptvPlayerScreen
 /**
  * Fixed density target for the entire app.
  *
@@ -94,8 +91,6 @@ class MainActivity : ComponentActivity() {
 
     override fun attachBaseContext(newBase: Context) {
         val dm = newBase.resources.displayMetrics
-        // Only override if the system density is different from our target.
-        // This avoids double-applying on devices that are already correct.
         if (dm.densityDpi != FORCED_DENSITY_DPI) {
             val config = Configuration(newBase.resources.configuration)
             config.densityDpi = FORCED_DENSITY_DPI
@@ -188,10 +183,8 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val waveCount = 5
 
-    // LOW: static bars — 5 concurrent infinite transitions on a low-end
-    // device burn through the frame budget before any UI is visible.
     val waveHeights: List<Float> = if (isLow) {
-        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)  // static stagger, zero Choreographer
+        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)
     } else {
         val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
         (0 until waveCount).map { index ->
@@ -231,8 +224,6 @@ fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    // LOW: skip the infinite alpha pulse — it redraws a full-screen image
-    // every frame for 3.5 seconds, burning through frame budget on boot.
     val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
         1.0f
     } else {
@@ -425,42 +416,52 @@ fun AppNavHostContainer(
             }
         }
 
-// ── IPTV Live TV ───────────────────────────────────────────────────────
+        // ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
-            // הזרקת ה-Repository מה-Application שלנו (LuminaApp)
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val repository = app.iptvRepository
+            val activity = context as ComponentActivity
 
-            // יצירת ה-ViewModel החדש והמהיר שלנו
+            // הזרקת ה-ViewModel ברמת ה-Activity כדי לשמר סטטוס למעבר לנגן
             val vm: IptvViewModel = viewModel(
+                viewModelStoreOwner = activity,
                 factory = object : ViewModelProvider.Factory {
                     override fun <T : ViewModel> create(modelClass: Class<T>): T {
                         @Suppress("UNCHECKED_CAST")
-                        return IptvViewModel(repository) as T
+                        return IptvViewModel(app.iptvRepository) as T
                     }
                 }
             )
 
-            Box(Modifier.fillMaxSize().background(Color(0xFF000000))) { // True Black לאולד
+            // איתור הכתובת של הערוץ שנבחר
+            val channels by vm.channels.collectAsState()
+
+            Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
                 IptvScreen(
                     viewModel = vm,
-                    onPlayChannel = { streamUrl ->
-                        val safeUrl = URLEncoder.encode(streamUrl, "UTF-8")
-                        navController.navigate("iptv_player/$safeUrl")
+                    onPlayChannel = { channelId ->
+                        val selectedChannel = channels.find { it.id == channelId }
+                        val streamUrl = selectedChannel?.streamUrl ?: ""
+                        if (streamUrl.isNotBlank()) {
+                            val safeUrl = URLEncoder.encode(streamUrl, "UTF-8")
+                            navController.navigate("iptv_player/$safeUrl")
+                        }
                     }
                 )
             }
         }
 
-// ── IPTV Player (נגן ייעודי ללייב) ───────────────────────────────────────
+        // ── IPTV Player (נגן ייעודי ללייב) ───────────────────────────────────────
         composable("iptv_player/{streamUrl}") { backStackEntry ->
             val streamUrl = URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
 
-            // שולפים את ה-ViewModel כדי שיוכל לנהל את העברת הערוצים
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val activity = context as ComponentActivity
+
+            // שולפים את אותו ה-ViewModel בדיוק (עם הקטגוריה שנשמרה!)
             val vm: IptvViewModel = viewModel(
+                viewModelStoreOwner = activity,
                 factory = object : ViewModelProvider.Factory {
                     override fun <T : ViewModel> create(modelClass: Class<T>): T {
                         @Suppress("UNCHECKED_CAST")
@@ -470,23 +471,8 @@ fun AppNavHostContainer(
             )
 
             IptvPlayerScreen(
-                streamUrl = streamUrl,
-                onChannelUp = {
-                    vm.getNextChannelUrl(streamUrl)?.let { nextUrl ->
-                        val safeUrl = URLEncoder.encode(nextUrl, "UTF-8")
-                        navController.navigate("iptv_player/$safeUrl") {
-                            popUpTo("iptv") { inclusive = false } // דורס את המסך הנוכחי לזאפינג חלק (מונע OOM)
-                        }
-                    }
-                },
-                onChannelDown = {
-                    vm.getPrevChannelUrl(streamUrl)?.let { prevUrl ->
-                        val safeUrl = URLEncoder.encode(prevUrl, "UTF-8")
-                        navController.navigate("iptv_player/$safeUrl") {
-                            popUpTo("iptv") { inclusive = false }
-                        }
-                    }
-                },
+                initialChannelUrl = streamUrl,
+                viewModel = vm,
                 onBackPressed = { navController.popBackStack() }
             )
         }

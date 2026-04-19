@@ -9,7 +9,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object M3uParser {
-
     private const val TAG = "M3uParser"
 
     suspend fun parseStreaming(
@@ -18,6 +17,8 @@ object M3uParser {
         batchSize: Int = 500,
         onBatchParsed: suspend (List<ChannelEntity>) -> Unit
     ) = withContext(Dispatchers.IO) {
+
+        Log.d(TAG, "Starting M3U Download: $url")
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 20_000
             readTimeout = 60_000
@@ -32,10 +33,8 @@ object M3uParser {
             var currentGroup: String? = null
             var channelNumber = 1
 
-            // Regex מהיר לשליפת נתונים מ-EXTINF
-            val attrRegex = Regex("""([a-zA-Z0-9_\-]+)=(?:"([^"]*)"|'([^']*)'|([^\s,]+))""")
+            val attrRegex = Regex("""([a-zA-Z0-9_\-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s,]+))""")
 
-            // useLines מבטיח קריאה של שורה אחת בכל פעם ופינוי מהזיכרון
             InputStreamReader(conn.inputStream, Charsets.UTF_8).useLines { lines ->
                 lines.forEach { rawLine ->
                     val line = rawLine.trim()
@@ -59,12 +58,13 @@ object M3uParser {
                         line.startsWith("#EXTGRP:") -> {
                             currentGroup = line.substringAfter(":").trim()
                         }
-                        !line.startsWith("#") -> { // זוהי שורת ה-URL
+                        !line.startsWith("#") -> {
                             currentInfo?.let { attrs ->
                                 val group = attrs["group-title"] ?: currentGroup ?: "General"
                                 val name = attrs["_extracted_name"] ?: "Channel $channelNumber"
                                 val tvgId = attrs["tvg-id"] ?: ""
                                 val tvgName = attrs["tvg-name"] ?: ""
+                                val logoUrl = attrs["tvg-logo"] ?: attrs["logo"] ?: attrs["icon"] ?: ""
 
                                 val channelId = if (tvgId.isNotEmpty()) tvgId else "${name.hashCode()}_$channelNumber"
                                 val isAdult = group.contains("adult", true) || group.contains("xxx", true)
@@ -75,23 +75,18 @@ object M3uParser {
                                             id = channelId,
                                             playlistId = playlistId,
                                             name = name,
-                                            logoUrl = attrs["tvg-logo"] ?: "",
+                                            logoUrl = logoUrl,
                                             streamUrl = line,
                                             groupTitle = group.ifEmpty { "General" },
                                             tvgId = tvgId,
                                             tvgName = tvgName,
                                             isAdult = false,
                                             number = channelNumber,
-                                            resolution = if (name.contains(
-                                                    "4K",
-                                                    true
-                                                )
-                                            ) "4K" else if (name.contains("HD", true)) "HD" else ""
+                                            resolution = if (name.contains("4K", true)) "4K" else if (name.contains("HD", true)) "HD" else ""
                                         )
                                     )
                                     channelNumber++
 
-                                    // שחרור מנה (Batch) ל-Room וניקוי הרשימה
                                     if (batch.size >= batchSize) {
                                         onBatchParsed(batch.toList())
                                         batch.clear()
@@ -104,12 +99,8 @@ object M3uParser {
                 }
             }
 
-            // שחרור שאריות (המנה האחרונה)
-            if (batch.isNotEmpty()) {
-                onBatchParsed(batch)
-            }
-
-            Log.d(TAG, "Parsing completed. Total channels processed: $channelNumber")
+            if (batch.isNotEmpty()) onBatchParsed(batch)
+            Log.d(TAG, "M3U Parsing completed. Total channels: ${channelNumber - 1}")
 
         } finally {
             conn.disconnect()

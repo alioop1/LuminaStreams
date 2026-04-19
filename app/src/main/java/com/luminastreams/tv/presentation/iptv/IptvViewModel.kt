@@ -21,22 +21,29 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
     private val _selectedGroup = MutableStateFlow("All")
     val selectedGroup = _selectedGroup.asStateFlow()
 
-    // הנתונים שמוצגים ב-UI
-    val channels: StateFlow<List<ChannelEntity>> = combine(activePlaylist, _selectedGroup) { playlist, group ->
+    private val _activeCategory = MutableStateFlow("All")
+
+    val channels: StateFlow<List<ChannelEntity>> = combine(activePlaylist, _activeCategory) { playlist, category ->
         if (playlist == null) flowOf(emptyList())
-        else when (group) {
+        else when (category) {
             "All" -> repository.getChannels(playlist.id)
             "Favorites" -> repository.getFavoriteChannels()
-            else -> flow { emit(repository.dao.getChannelsByGroup(playlist.id, group)) }
+            else -> flow { emit(repository.dao.getChannelsByGroup(playlist.id, category)) }
         }
     }.flatMapLatest { it }.stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    fun selectGroup(group: String) {
+        _selectedGroup.value = group
+        if (group != "Settings" && group != "EPG Guide") {
+            _activeCategory.value = group
+        }
+    }
 
     val groups: StateFlow<List<String>> = activePlaylist.flatMapLatest { playlist ->
         if (playlist != null) repository.getGroups(playlist.id).map { listOf("All", "Favorites") + it }
         else flowOf(listOf("All", "Favorites"))
     }.stateIn(viewModelScope, SharingStarted.Lazily, listOf("All", "Favorites"))
 
-    // EPG לערוץ שמוצג כרגע
     private val _focusedEpg = MutableStateFlow<EpgProgramEntity?>(null)
     val focusedEpg = _focusedEpg.asStateFlow()
 
@@ -46,28 +53,46 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
     private val _ipAddress = MutableStateFlow("")
     val ipAddress = _ipAddress.asStateFlow()
 
+    private val _isLoading = MutableStateFlow(false)
+
+    // מניעת אזהרת Unused
+    @Suppress("unused")
+    val isLoading = _isLoading.asStateFlow()
+
     init {
         viewModelScope.launch {
-            LocalWebServer.playlistFlow.collect { playlist ->
-                _showQrScreen.value = false
-                LocalWebServer.stop()
-                repository.loadAndSavePlaylist(playlist.name, playlist.url, playlist.epgUrl)
-                if (playlist.epgUrl.isNotBlank()) repository.loadEpg(playlist.epgUrl)
+            activePlaylist.filterNotNull().collectLatest { playlist ->
+                val oneWeekInMs = 7L * 24 * 60 * 60 * 1000
+                val now = System.currentTimeMillis()
+
+                if (now - playlist.lastUpdated > oneWeekInMs) {
+                    try {
+                        if (playlist.epgUrl.isNotBlank()) {
+                            repository.loadEpg(playlist.epgUrl, playlist.id)
+                        }
+                        repository.dao.insertPlaylist(playlist.copy(lastUpdated = now))
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
             }
         }
     }
 
-    // -- פונקציות ה-EPG והזאפינג המתוקנות --
-
-    fun onChannelFocused(channelId: String) {
+    fun onChannelFocused(channel: ChannelEntity) {
         viewModelScope.launch {
-            _focusedEpg.value = repository.getCurrentProgram(channelId)
+            _focusedEpg.value = repository.getCurrentProgram(channel)
         }
     }
 
+    suspend fun getProgramsForChannel(channel: ChannelEntity, currentTime: Long): List<EpgProgramEntity> {
+        val startTime = currentTime - (24 * 60 * 60 * 1000)
+        return repository.getFuturePrograms(channel, startTime)
+    }
+
     fun getNextChannelUrl(currentUrl: String): String? {
-        val currentList = channels.value // גישה לערך הנוכחי של ה-StateFlow
-        val idx = currentList.indexOfFirst { it.streamUrl == currentUrl }
+        val currentList = channels.value
+        val idx = currentList.indexOfFirst { currentUrl.startsWith(it.streamUrl) }
         return if (idx != -1 && idx < currentList.size - 1) {
             currentList[idx + 1].streamUrl
         } else {
@@ -77,7 +102,7 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
 
     fun getPrevChannelUrl(currentUrl: String): String? {
         val currentList = channels.value
-        val idx = currentList.indexOfFirst { it.streamUrl == currentUrl }
+        val idx = currentList.indexOfFirst { currentUrl.startsWith(it.streamUrl) }
         return if (idx > 0) {
             currentList[idx - 1].streamUrl
         } else {
@@ -85,37 +110,55 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
         }
     }
 
-    fun selectGroup(group: String) { _selectedGroup.value = group }
-
     fun openQrSetup() {
-        _ipAddress.value = "http://${getLocalIpAddress()}:8080"
+        val ip = getLocalIpAddress()
+        _ipAddress.value = if (ip == "ERROR") "Network Error: Connect to Wi-Fi/LAN" else "http://$ip:8080"
         _showQrScreen.value = true
-        viewModelScope.launch { LocalWebServer.start(8080) }
     }
 
     fun closeQrSetup() {
         _showQrScreen.value = false
-        LocalWebServer.stop()
+    }
+
+    fun addManualPlaylist(name: String, url: String, epgUrl: String) {
+        if (url.isBlank() || _isLoading.value) return
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val newPlaylistId = repository.loadAndSavePlaylist(
+                    name = name.ifBlank { "My Playlist" },
+                    url = url.trim(),
+                    epgUrl = epgUrl.trim()
+                )
+                if (epgUrl.isNotBlank()) {
+                    repository.loadEpg(epgUrl.trim(), newPlaylistId)
+                }
+                closeQrSetup()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isLoading.value = false
+            }
+        }
     }
 
     private fun getLocalIpAddress(): String {
-        return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return ""
-            val addresses = mutableListOf<String>()
-            while (interfaces.hasMoreElements()) {
-                val ni = interfaces.nextElement()
-                if (ni.isLoopback || !ni.isUp) continue
-                val inetAddresses = ni.inetAddresses
-                while (inetAddresses.hasMoreElements()) {
-                    val addr = inetAddresses.nextElement()
+        try {
+            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return "ERROR"
+            for (ni in interfaces) {
+                if (ni.isLoopback || !ni.isUp || ni.isVirtual) continue
+                for (addr in ni.inetAddresses) {
                     if (!addr.isLoopbackAddress && addr is Inet4Address) {
-                        addresses.add(addr.hostAddress ?: "")
+                        val ip = addr.hostAddress ?: ""
+                        if (ip.startsWith("192.168.") || ip.startsWith("10.") || ip.startsWith("172.")) {
+                            return ip
+                        }
                     }
                 }
             }
-            addresses.firstOrNull { it.startsWith("192.168.") }
-                ?: addresses.firstOrNull { it.startsWith("10.") }
-                ?: addresses.firstOrNull() ?: ""
-        } catch (_: Exception) { "" }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return "ERROR"
     }
 }

@@ -1,28 +1,42 @@
-package com.luminastreams.tv.presentation.iptv
+package com.luminastreams.tv.presentation.player
 
 import android.view.KeyEvent
-import android.view.ViewGroup
 import android.widget.FrameLayout
+import androidx.activity.compose.BackHandler
 import androidx.annotation.OptIn
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.media3.common.C
+import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -30,304 +44,268 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.DefaultLoadControl
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory
+import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
+import androidx.media3.extractor.DefaultExtractorsFactory
+import androidx.media3.extractor.ts.DefaultTsPayloadReaderFactory
+import androidx.media3.extractor.ts.TsExtractor
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.tv.material3.ClickableSurfaceDefaults
-import androidx.tv.material3.Surface
-import androidx.tv.material3.Text
+import androidx.tv.material3.*
+import coil.compose.AsyncImage
+import com.luminastreams.tv.data.local.iptv.EpgProgramEntity
+import com.luminastreams.tv.presentation.iptv.IptvViewModel
+import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
-import androidx.compose.ui.unit.dp
 
-data class StreamTrack(
-    val group: Tracks.Group,
-    val trackIndex: Int,
-    val name: String,
-    val isSelected: Boolean
-)
+data class StreamTrackInfo(val group: Tracks.Group, val trackIndex: Int, val format: Format, val isSelected: Boolean)
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalTvMaterial3Api::class)
 @Composable
-fun IptvPlayerScreen(
-    streamUrl: String,
-    onChannelUp: () -> Unit,
-    onChannelDown: () -> Unit,
-    onBackPressed: () -> Unit
-) {
+fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBackPressed: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val focusRequester = remember { FocusRequester() }
-    val settingsFocusRequester = remember { FocusRequester() }
+    val channels by viewModel.channels.collectAsState()
 
+    var currentUrl by remember { mutableStateOf(initialChannelUrl) }
     var showSettings by remember { mutableStateOf(false) }
+    var showEpg by remember { mutableStateOf(false) }
     var currentResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
-    var audioTracks by remember { mutableStateOf<List<StreamTrack>>(emptyList()) }
-    var subTracks by remember { mutableStateOf<List<StreamTrack>>(emptyList()) }
+    var playerError by remember { mutableStateOf<String?>(null) }
+    var actionMessage by remember { mutableStateOf<String?>(null) }
+    var showOsd by remember { mutableStateOf(false) }
+    var osdTimerKey by remember { mutableIntStateOf(0) }
 
-    // תיקון #1 — מונה ניסיונות retry למניעת לולאה אינסופית
-    var retryCount by remember { mutableIntStateOf(0) }
-    val maxRetries = 3
+    val currentChannel = remember(currentUrl) { channels.find { currentUrl.startsWith(it.streamUrl) } }
+    var currentEpg by remember { mutableStateOf<EpgProgramEntity?>(null) }
 
-    val loadControl = remember {
-        DefaultLoadControl.Builder()
-            .setBufferDurationsMs(32000, 64000, 2500, 5000)
-            .build()
+    LaunchedEffect(actionMessage) { if (actionMessage != null) { delay(3500); actionMessage = null } }
+    LaunchedEffect(showOsd, osdTimerKey, currentUrl) { if (showOsd && !showSettings && !showEpg) { delay(5000); showOsd = false } }
+
+    LaunchedEffect(currentChannel) {
+        if (currentChannel != null) {
+            val programs = viewModel.getProgramsForChannel(currentChannel, System.currentTimeMillis())
+            currentEpg = programs.firstOrNull { System.currentTimeMillis() in it.startTime..it.endTime } ?: programs.firstOrNull()
+        }
     }
+
+    BackHandler(enabled = showSettings) { showSettings = false }
+    BackHandler(enabled = showEpg) { showEpg = false }
+    BackHandler(enabled = showOsd) { showOsd = false }
+    BackHandler(enabled = !showSettings && !showEpg && !showOsd) { onBackPressed() }
 
     val exoPlayer = remember {
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("VLC/3.0.18 LibVLC/3.0.18")
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15000)
-            .setReadTimeoutMs(15000)
-
-        val mediaSourceFactory = DefaultMediaSourceFactory(context)
-            .setDataSourceFactory(dataSourceFactory)
-
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(mediaSourceFactory)
-            .setLoadControl(loadControl)
-            .build().apply {
-                playWhenReady = true
-                repeatMode = Player.REPEAT_MODE_OFF
-            }
+        val renderersFactory = DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
+        val trackSelector = DefaultTrackSelector(context).apply { setParameters(buildUponParameters().setSelectUndeterminedTextLanguage(true).setExceedRendererCapabilitiesIfNecessary(true).setExceedAudioConstraintsIfNecessary(true)) }
+        ExoPlayer.Builder(context, renderersFactory).setTrackSelector(trackSelector).build().apply { playWhenReady = true }
     }
 
-    DisposableEffect(exoPlayer) {
-        val listener = object : Player.Listener {
-            override fun onTracksChanged(tracks: Tracks) {
-                val newAudio = mutableListOf<StreamTrack>()
-                val newSubs = mutableListOf<StreamTrack>()
-                for (group in tracks.groups) {
-                    for (i in 0 until group.length) {
-                        val format = group.getTrackFormat(i)
-                        val isSelected = group.isTrackSelected(i)
-                        val lang = format.language ?: "Unknown"
-                        val name = Locale(lang).displayLanguage.ifBlank { "Track ${i + 1}" }
-                        if (group.type == C.TRACK_TYPE_AUDIO) {
-                            newAudio.add(StreamTrack(group, i, name, isSelected))
-                        } else if (group.type == C.TRACK_TYPE_TEXT) {
-                            newSubs.add(StreamTrack(group, i, name, isSelected))
-                        }
-                    }
-                }
-                audioTracks = newAudio
-                subTracks = newSubs
-            }
+    LaunchedEffect(currentUrl) {
+        playerError = null
+        showSettings = false
+        showEpg = false
+        showOsd = true
+        osdTimerKey++
 
-            // תיקון #1 — מקסימום 3 ניסיונות retry, אחר כך מפסיק
-            override fun onPlayerError(error: PlaybackException) {
-                if (retryCount < maxRetries) {
-                    retryCount++
-                    exoPlayer.seekToDefaultPosition()
-                    exoPlayer.prepare()
-                    exoPlayer.play()
-                }
-                // אחרי maxRetries — מפסיק, הנגן נשאר בstate שגוי וניתן לטפל ב-UI
-            }
+        val isDifferentUrl = exoPlayer.currentMediaItem?.localConfiguration?.uri?.toString() != currentUrl
 
-            override fun onPlaybackStateChanged(playbackState: Int) {
-                // איפוס מונה ה-retry כשהנגן עולה בהצלחה
-                if (playbackState == Player.STATE_READY) {
-                    retryCount = 0
-                }
-            }
-        }
-        exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
-    }
+        if (isDifferentUrl) {
+            val httpDataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setUserAgent("VLC/3.0.0")
+            val tsFlags = DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
+            val isHls = currentChannel?.streamUrl?.contains(".m3u8", ignoreCase = true) == true
 
-    LaunchedEffect(streamUrl) {
-        if (streamUrl.isNotBlank()) {
-            retryCount = 0 // איפוס בכל מעבר ערוץ
-            exoPlayer.setMediaItem(MediaItem.fromUri(streamUrl))
+            val mediaItem = MediaItem.Builder().setUri(currentUrl).setMimeType(if (isHls) androidx.media3.common.MimeTypes.APPLICATION_M3U8 else androidx.media3.common.MimeTypes.VIDEO_MP2T).build()
+            val mediaSource = if (isHls) { HlsMediaSource.Factory(httpDataSourceFactory).setExtractorFactory(DefaultHlsExtractorFactory(tsFlags, true)).createMediaSource(mediaItem) } else { ProgressiveMediaSource.Factory(httpDataSourceFactory, DefaultExtractorsFactory().setTsExtractorMode(TsExtractor.MODE_MULTI_PMT).setTsExtractorFlags(tsFlags)).createMediaSource(mediaItem) }
+
+            exoPlayer.setMediaSource(mediaSource)
             exoPlayer.prepare()
-            exoPlayer.play()
+            exoPlayer.playWhenReady = true
         }
     }
 
     DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) exoPlayer.pause()
-            else if (event == Lifecycle.Event.ON_RESUME) exoPlayer.play()
+        val lifecycleObserver = LifecycleEventObserver { _, event ->
+            when (event) { Lifecycle.Event.ON_PAUSE -> exoPlayer.pause(); Lifecycle.Event.ON_RESUME -> exoPlayer.play(); Lifecycle.Event.ON_DESTROY -> exoPlayer.release(); else -> {} }
         }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose {
-            lifecycleOwner.lifecycle.removeObserver(observer)
-            exoPlayer.release()
-        }
+        val playerListener = object : Player.Listener { override fun onPlayerError(error: PlaybackException) { playerError = "Stream Error: ${error.errorCodeName}" } }
+        exoPlayer.addListener(playerListener)
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        onDispose { exoPlayer.removeListener(playerListener); lifecycleOwner.lifecycle.removeObserver(lifecycleObserver); exoPlayer.release() }
     }
 
-    val selectTrack = { track: StreamTrack, type: Int ->
-        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-            .setOverrideForType(TrackSelectionOverride(track.group.mediaTrackGroup, track.trackIndex))
-            .setTrackTypeDisabled(type, false)
-            .build()
-    }
+    val playerFocusRequester = remember { FocusRequester() }
+    val settingsFocusRequester = remember { FocusRequester() }
 
-    val disableSubtitles = {
-        exoPlayer.trackSelectionParameters = exoPlayer.trackSelectionParameters.buildUpon()
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-            .build()
-        subTracks = subTracks.map { it.copy(isSelected = false) }
-    }
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-            .onPreviewKeyEvent { keyEvent ->
-                if (keyEvent.type == KeyEventType.KeyDown) {
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MENU -> {
-                            showSettings = !showSettings
-                            true
-                        }
-                        // תיקון #3 — DPAD_LEFT סוגר את ה-settings panel
-                        KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (showSettings) { showSettings = false; true } else false
-                        }
-                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PLUS,
-                        KeyEvent.KEYCODE_NUMPAD_ADD, KeyEvent.KEYCODE_PAGE_UP -> {
-                            if (!showSettings) onChannelUp()
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_MINUS,
-                        KeyEvent.KEYCODE_NUMPAD_SUBTRACT, KeyEvent.KEYCODE_PAGE_DOWN -> {
-                            if (!showSettings) onChannelDown()
-                            true
-                        }
-                        KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> {
-                            if (showSettings) showSettings = false else onBackPressed()
-                            true
-                        }
-                        else -> false
-                    }
-                } else if (keyEvent.type == KeyEventType.KeyUp) {
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER, KeyEvent.KEYCODE_MENU,
-                        KeyEvent.KEYCODE_DPAD_LEFT,
-                        KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP, KeyEvent.KEYCODE_PLUS,
-                        KeyEvent.KEYCODE_NUMPAD_ADD, KeyEvent.KEYCODE_PAGE_UP,
-                        KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN, KeyEvent.KEYCODE_MINUS,
-                        KeyEvent.KEYCODE_NUMPAD_SUBTRACT, KeyEvent.KEYCODE_PAGE_DOWN,
-                        KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> true
-                        else -> false
-                    }
-                } else false
-            }
-            .focusRequester(focusRequester)
-            .focusable()
-    ) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                    isFocusable = false
-                    isFocusableInTouchMode = false
-                    layoutParams = FrameLayout.LayoutParams(
-                        ViewGroup.LayoutParams.MATCH_PARENT,
-                        ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                }
-            },
+            factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(-1, -1); resizeMode = currentResizeMode } },
             update = { view -> view.resizeMode = currentResizeMode },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().focusRequester(playerFocusRequester).focusable(enabled = !showSettings && !showEpg)
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown) {
+                        when (event.nativeKeyEvent.keyCode) {
+                            KeyEvent.KEYCODE_DPAD_UP -> { if (!showSettings && !showEpg) viewModel.getNextChannelUrl(currentUrl)?.let { currentUrl = it }; true }
+                            KeyEvent.KEYCODE_DPAD_DOWN -> { if (!showSettings && !showEpg) viewModel.getPrevChannelUrl(currentUrl)?.let { currentUrl = it }; true }
+                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (playerError == null && !showSettings && !showEpg) { if (showOsd) { showOsd = false; showEpg = true } else { showOsd = true; osdTimerKey++ } }; true }
+                            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MENU -> { if (!showSettings && !showEpg) { showSettings = true; showOsd = false }; true }
+                            else -> false
+                        }
+                    } else false
+                }
         )
 
-        if (showSettings) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(350.dp)
-                    .align(Alignment.CenterEnd)
-                    .background(Color(0xE60A0A12))
-                    .padding(24.dp)
-            ) {
-                LazyColumn(modifier = Modifier.focusRequester(settingsFocusRequester)) {
-                    item {
-                        Text("יחס תמונה (Aspect Ratio)", color = Color.Gray,
-                            modifier = Modifier.padding(bottom = 8.dp))
-                    }
-                    item {
-                        SettingRow("התאמה למסך (Fit)",
-                            currentResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) {
-                            currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+        AnimatedVisibility(
+            visible = actionMessage != null,
+            enter = fadeIn(tween(500)) + slideInVertically(animationSpec = tween(500, easing = LinearOutSlowInEasing), initialOffsetY = { -80 }),
+            exit = fadeOut(tween(300)) + slideOutVertically(animationSpec = tween(300, easing = FastOutLinearInEasing), targetOffsetY = { -80 }),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp)
+        ) {
+            Box(modifier = Modifier.background(Color(0xD9000000), RoundedCornerShape(32.dp)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(32.dp)).padding(horizontal = 32.dp, vertical = 16.dp)) {
+                Text(text = actionMessage ?: "", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+
+        if (playerError != null) {
+            Box(modifier = Modifier.fillMaxSize().background(Color(0x99000000)), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(text = "Playback Interrupted", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold)
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(text = playerError!!, color = Color.White.copy(alpha = 0.6f), fontSize = 16.sp)
+                }
+            }
+        }
+
+        AnimatedVisibility(
+            visible = showOsd && playerError == null && !showSettings && !showEpg,
+            enter = fadeIn(tween(500)) + slideInVertically(animationSpec = tween(500, easing = LinearOutSlowInEasing), initialOffsetY = { 80 }),
+            exit = fadeOut(tween(300)) + slideOutVertically(animationSpec = tween(300, easing = FastOutLinearInEasing), targetOffsetY = { 80 }),
+            modifier = Modifier.align(Alignment.BottomCenter)
+        ) {
+            Box(modifier = Modifier.padding(bottom = 48.dp, start = 64.dp, end = 64.dp).fillMaxWidth().background(Color(0xD9000000), RoundedCornerShape(40.dp)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(40.dp)).padding(horizontal = 40.dp, vertical = 24.dp)) {
+                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                        Box(modifier = Modifier.size(88.dp).background(Color.White, RoundedCornerShape(24.dp)).padding(8.dp), contentAlignment = Alignment.Center) {
+                            if (currentChannel?.logoUrl?.isNotBlank() == true) AsyncImage(model = currentChannel.logoUrl, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                            else Text(currentChannel?.name?.take(1) ?: "", color = Color.Black, fontSize = 32.sp, fontWeight = FontWeight.Bold)
                         }
-                    }
-                    item {
-                        SettingRow("מתיחה (Fill)",
-                            currentResizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL) {
-                            currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
-                        }
-                    }
-                    item {
-                        SettingRow("תקריב (Zoom)",
-                            currentResizeMode == AspectRatioFrameLayout.RESIZE_MODE_ZOOM) {
-                            currentResizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                        }
-                    }
-                    item { Spacer(modifier = Modifier.height(24.dp)) }
-                    item {
-                        Text("שפת שמע (Audio)", color = Color.Gray,
-                            modifier = Modifier.padding(bottom = 8.dp))
-                    }
-                    if (audioTracks.isEmpty()) {
-                        item { Text("ערוץ שמע יחיד", color = Color.White, modifier = Modifier.padding(8.dp)) }
-                    } else {
-                        items(audioTracks) { track ->
-                            SettingRow(track.name, track.isSelected) {
-                                selectTrack(track, C.TRACK_TYPE_AUDIO)
+                        Spacer(modifier = Modifier.width(24.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                if ((currentChannel?.number ?: 0) > 0) { Text(text = "${currentChannel?.number}", color = Color.White.copy(alpha = 0.5f), fontSize = 22.sp, fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.width(12.dp)) }
+                                Text(text = currentChannel?.name ?: "", color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            if (currentEpg != null) {
+                                val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.US) }
+                                Text(text = "${timeFormat.format(Date(currentEpg!!.startTime))} - ${timeFormat.format(Date(currentEpg!!.endTime))}  •  ${currentEpg!!.title}", color = Color.White.copy(alpha = 0.7f), fontSize = 16.sp, fontWeight = FontWeight.Normal)
                             }
                         }
                     }
-                    item { Spacer(modifier = Modifier.height(24.dp)) }
-                    item {
-                        Text("כתוביות (Subtitles)", color = Color.Gray,
-                            modifier = Modifier.padding(bottom = 8.dp))
-                    }
-                    item {
-                        SettingRow("ללא כתוביות", subTracks.none { it.isSelected }) {
-                            disableSubtitles()
-                        }
-                    }
-                    items(subTracks) { track ->
-                        SettingRow(track.name, track.isSelected) {
-                            selectTrack(track, C.TRACK_TYPE_TEXT)
-                        }
+                    Column(horizontalAlignment = Alignment.End) {
+                        val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+                        Text(text = dateFormat.format(Date()), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Light)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = "OK for Guide • ► for Options", color = Color.White.copy(alpha = 0.4f), fontSize = 13.sp)
                     }
                 }
             }
-            // תיקון #2 — requestFocus עם try/catch למניעת crash אם ה-LazyColumn לא מוכן
-            LaunchedEffect(Unit) {
-                try { settingsFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+
+        LaunchedEffect(showSettings, showEpg) {
+            if (showSettings) settingsFocusRequester.requestFocus()
+            else playerFocusRequester.requestFocus()
+        }
+
+        AnimatedVisibility(
+            visible = showSettings,
+            enter = fadeIn(tween(500)) + slideInHorizontally(animationSpec = tween(500, easing = LinearOutSlowInEasing), initialOffsetX = { 100 }),
+            exit = fadeOut(tween(300)) + slideOutHorizontally(animationSpec = tween(300, easing = FastOutLinearInEasing), targetOffsetX = { 100 }),
+            modifier = Modifier.align(Alignment.CenterEnd)
+        ) {
+            PlayerSettingsOverlay(player = exoPlayer, currentResizeMode = currentResizeMode, modifier = Modifier.focusRequester(settingsFocusRequester), onResizeModeChange = { currentResizeMode = it }, onClose = { showSettings = false; showOsd = true; osdTimerKey++ })
+        }
+
+        // (הסרתי את חלון ה-EPG מכאן כפי שביקשת קודם כדי למנוע כפילויות, הוא נשאר במסך הראשי)
+    }
+}
+
+@OptIn(UnstableApi::class, ExperimentalTvMaterial3Api::class)
+@Composable
+fun PlayerSettingsOverlay(player: ExoPlayer, currentResizeMode: Int, modifier: Modifier = Modifier, onResizeModeChange: (Int) -> Unit, onClose: () -> Unit) {
+    var audioTracks by remember { mutableStateOf<List<StreamTrackInfo>>(emptyList()) }
+    var subTracks by remember { mutableStateOf<List<StreamTrackInfo>>(emptyList()) }
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val closeKey = if (isRtl) KeyEvent.KEYCODE_DPAD_RIGHT else KeyEvent.KEYCODE_DPAD_LEFT
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                val tempAudio = mutableListOf<StreamTrackInfo>(); val tempSubs = mutableListOf<StreamTrackInfo>()
+                for (group in tracks.groups) {
+                    for (i in 0 until group.length) {
+                        val format = group.getTrackFormat(i); val isSelected = group.isTrackSelected(i)
+                        if (group.type == C.TRACK_TYPE_AUDIO) tempAudio.add(StreamTrackInfo(group, i, format, isSelected))
+                        else if (group.type == C.TRACK_TYPE_TEXT) tempSubs.add(StreamTrackInfo(group, i, format, isSelected))
+                    }
+                }
+                audioTracks = tempAudio; subTracks = tempSubs
             }
-        } else {
-            LaunchedEffect(Unit) {
-                try { focusRequester.requestFocus() } catch (_: Exception) {}
+        }
+        player.addListener(listener); listener.onTracksChanged(player.currentTracks); onDispose { player.removeListener(listener) }
+    }
+
+    Box(modifier = modifier.fillMaxHeight().width(400.dp).background(Color(0xD9000000), RoundedCornerShape(topStart = 40.dp, bottomStart = 40.dp)).border(1.dp, Color.White.copy(alpha = 0.05f), RoundedCornerShape(topStart = 40.dp, bottomStart = 40.dp)).padding(40.dp)
+        .onPreviewKeyEvent { event -> if (event.type == KeyEventType.KeyDown && (event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK || event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE || event.nativeKeyEvent.keyCode == closeKey)) { onClose(); true } else false }
+    ) {
+        Column {
+            Text("Options", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Light)
+            Spacer(modifier = Modifier.height(40.dp))
+            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                item { Text("ASPECT RATIO", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Spacer(modifier = Modifier.height(8.dp))
+                    listOf(AspectRatioFrameLayout.RESIZE_MODE_FIT to "Original", AspectRatioFrameLayout.RESIZE_MODE_FILL to "Stretch", AspectRatioFrameLayout.RESIZE_MODE_ZOOM to "Crop").forEach { (mode, label) ->
+                        SettingsButton(text = label, isSelected = currentResizeMode == mode, onClick = { onResizeModeChange(mode) })
+                    }
+                }
+                if (audioTracks.isNotEmpty()) {
+                    item { Spacer(modifier = Modifier.height(24.dp)); Text("AUDIO", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Spacer(modifier = Modifier.height(8.dp)) }
+                    itemsIndexed(audioTracks) { index, trackInfo ->
+                        val label = trackInfo.format.label ?: trackInfo.format.language?.uppercase()?.replace("UND", "UNKNOWN") ?: "UNKNOWN"
+                        SettingsButton(text = "Track ${index + 1}: $label", isSelected = trackInfo.isSelected, onClick = { player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_AUDIO).addOverride(TrackSelectionOverride(trackInfo.group.mediaTrackGroup, trackInfo.trackIndex)).build() })
+                    }
+                }
+                if (subTracks.isNotEmpty()) {
+                    item { Spacer(modifier = Modifier.height(24.dp)); Text("SUBTITLES", color = Color.White.copy(alpha = 0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp); Spacer(modifier = Modifier.height(8.dp))
+                        SettingsButton(text = "Off", isSelected = !subTracks.any { it.isSelected }, onClick = { player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().clearOverridesOfType(C.TRACK_TYPE_TEXT).setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true).build() })
+                    }
+                    itemsIndexed(subTracks) { index, trackInfo ->
+                        val label = trackInfo.format.label ?: trackInfo.format.language?.uppercase()?.replace("UND", "UNKNOWN") ?: "UNKNOWN"
+                        SettingsButton(text = "Subtitle ${index + 1}: $label", isSelected = trackInfo.isSelected, onClick = { player.trackSelectionParameters = player.trackSelectionParameters.buildUpon().setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false).clearOverridesOfType(C.TRACK_TYPE_TEXT).addOverride(TrackSelectionOverride(trackInfo.group.mediaTrackGroup, trackInfo.trackIndex)).build() })
+                    }
+                }
             }
         }
     }
 }
 
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-private fun SettingRow(text: String, isSelected: Boolean, onClick: () -> Unit) {
+fun SettingsButton(text: String, isSelected: Boolean, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
     Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(shape = RoundedCornerShape(8.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) Color.White.copy(alpha = 0.15f) else Color.Transparent,
-            focusedContainerColor = Color(0xFF2A2A35)
-        ),
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+        onClick = onClick, modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp).onFocusChanged { isFocused = it.isFocused },
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        colors = ClickableSurfaceDefaults.colors(containerColor = if (isSelected) Color.White.copy(alpha = 0.15f) else Color.Transparent, focusedContainerColor = Color.White, contentColor = Color.White, focusedContentColor = Color.Black),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f)
     ) {
-        Box(modifier = Modifier.padding(12.dp)) {
-            Text(text = text, color = if (isSelected) Color.White else Color.LightGray)
+        Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (isSelected) { Text("✓", color = if (isFocused) Color.Black else Color.White, fontWeight = FontWeight.Bold); Spacer(modifier = Modifier.width(12.dp)) }
+            Text(text = text, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, fontSize = 16.sp)
         }
     }
 }
