@@ -1,6 +1,9 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 package com.luminastreams.tv.presentation.home
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -59,7 +62,7 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     var currentTab by remember { mutableStateOf(state.selectedTab) }
     var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }
-    var contentAlpha by remember { mutableStateOf(1f) }
+    var contentAlpha by remember { mutableFloatStateOf(1f) }
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val heroUpdateDelayMs = when (DeviceProfile.tier) { DeviceProfile.Tier.LOW -> 520L; DeviceProfile.Tier.MID -> 420L; DeviceProfile.Tier.HIGH -> 260L }
 
@@ -91,40 +94,40 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val rows: List<RowDef> = remember(state, homeHbo, homeNetflix, homeAmazon, homeAppleTv, homeDisney, homeParamount, homeHulu, amazonMovies, amazonSeries, currentTab, currentFilter, isRtl) {
-        val _tr = { en: String, he: String -> if (isRtl) he else en }
+        val trFunc = { en: String, he: String -> if (isRtl) he else en }
         buildList {
             val filter = currentFilter
             when (currentTab) {
                 "ראשי" -> {
-                    if (state.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", _tr("Trending Movies", "סרטים פופולריים"), state.movieTrending.distinctBy { it.id }))
+                    if (state.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Movies", "סרטים פופולריים"), state.movieTrending.distinctBy { it.id }))
                     if (homeHbo.isNotEmpty()) add(RowDef.Studio("homeHBO", StudioBrand.HBO, homeHbo))
-                    if (state.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", _tr("Popular Shows", "סדרות פופולריות"), state.tvTrending.distinctBy { it.id }))
+                    if (state.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), state.tvTrending.distinctBy { it.id }))
                     if (homeNetflix.isNotEmpty()) add(RowDef.Studio("homeNetflix", StudioBrand.NETFLIX, homeNetflix))
                     if (homeAmazon.isNotEmpty()) add(RowDef.Studio("homeAmazon", StudioBrand.AMAZON, homeAmazon))
                     if (homeAppleTv.isNotEmpty()) add(RowDef.Studio("homeAppleTv", StudioBrand.APPLE_TV, homeAppleTv))
                     if (homeDisney.isNotEmpty()) add(RowDef.Studio("homeDisney", StudioBrand.DISNEY, homeDisney))
                     if (homeParamount.isNotEmpty()) add(RowDef.Studio("homeParamount", StudioBrand.PARAMOUNT, homeParamount))
                     if (homeHulu.isNotEmpty()) add(RowDef.Studio("homeHulu", StudioBrand.HULU, homeHulu))
-                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",_tr("New in Theaters", "בקולנוע"), state.moviePremieres.distinctBy { it.id }))
+                    if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",trFunc("New in Theaters", "בקולנוע"), state.moviePremieres.distinctBy { it.id }))
                 }
                 "סרטים" -> {
                     add(RowDef.StudioRibbon)
                     if (filter != null) {
                         val amzId = if (state.movieAmazon.isNotEmpty()) "movieAmazon" else "tvAmazon"
                         when (filter) {
-                            "HBO"       -> addAll(generateStudioRows("movieHBO", StudioBrand.HBO, state.movieHBO, _tr))
-                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonMovies, _tr))
-                            "PARAMOUNT" -> addAll(generateStudioRows("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount, _tr))
-                            "HULU"      -> addAll(generateStudioRows("movieHulu", StudioBrand.HULU, state.movieHulu, _tr))
-                            "NETFLIX"   -> addAll(generateStudioRows("movieNetflix", StudioBrand.NETFLIX, state.movieNetflix, _tr))
-                            "APPLE_TV"  -> addAll(generateStudioRows("movieAppleTV", StudioBrand.APPLE_TV, state.movieAppleTV, _tr))
-                            "DISNEY"    -> addAll(generateStudioRows("movieDisney", StudioBrand.DISNEY, state.movieDisney, _tr))
+                            "HBO"       -> addAll(generateStudioRows("movieHBO", StudioBrand.HBO, state.movieHBO, trFunc))
+                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonMovies, trFunc))
+                            "PARAMOUNT" -> addAll(generateStudioRows("movieParamount", StudioBrand.PARAMOUNT, state.movieParamount, trFunc))
+                            "HULU"      -> addAll(generateStudioRows("movieHulu", StudioBrand.HULU, state.movieHulu, trFunc))
+                            "NETFLIX"   -> addAll(generateStudioRows("movieNetflix", StudioBrand.NETFLIX, state.movieNetflix, trFunc))
+                            "APPLE_TV"  -> addAll(generateStudioRows("movieAppleTV", StudioBrand.APPLE_TV, state.movieAppleTV, trFunc))
+                            "DISNEY"    -> addAll(generateStudioRows("movieDisney", StudioBrand.DISNEY, state.movieDisney, trFunc))
                         }
                     } else {
-                        if (state.movieAction.isNotEmpty()) add(RowDef.Regular("movieAction", _tr("Action & Adventure", "פעולה והרפתקאות"), state.movieAction.distinctBy { it.id }))
-                        if (state.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", _tr("Trending Now", "פופולרי עכשיו"), state.movieTrending.distinctBy { it.id }))
-                        if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", _tr("In Theaters", "בקולנוע"), state.moviePremieres.distinctBy { it.id }))
-                        if (state.movieAnimation.isNotEmpty()) add(RowDef.Regular("movieAnimation", _tr("Animations", "אנימציה"), state.movieAnimation.distinctBy { it.id }))
+                        if (state.movieAction.isNotEmpty()) add(RowDef.Regular("movieAction", trFunc("Action & Adventure", "פעולה והרפתקאות"), state.movieAction.distinctBy { it.id }))
+                        if (state.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Now", "פופולרי עכשיו"), state.movieTrending.distinctBy { it.id }))
+                        if (state.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", trFunc("In Theaters", "בקולנוע"), state.moviePremieres.distinctBy { it.id }))
+                        if (state.movieAnimation.isNotEmpty()) add(RowDef.Regular("movieAnimation", trFunc("Animations", "אנימציה"), state.movieAnimation.distinctBy { it.id }))
                     }
                 }
                 "סדרות" -> {
@@ -132,32 +135,32 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                     if (filter != null) {
                         val amzId = if (state.tvAmazon.isNotEmpty()) "tvAmazon" else "movieAmazon"
                         when (filter) {
-                            "HBO"       -> addAll(generateStudioRows("tvHBO", StudioBrand.HBO, state.tvHBO, _tr))
-                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonSeries, _tr))
-                            "PARAMOUNT" -> addAll(generateStudioRows("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount, _tr))
-                            "HULU"      -> addAll(generateStudioRows("tvHulu", StudioBrand.HULU, state.tvHulu, _tr))
-                            "NETFLIX"   -> addAll(generateStudioRows("tvNetflix", StudioBrand.NETFLIX, state.tvNetflix, _tr))
-                            "APPLE_TV"  -> addAll(generateStudioRows("tvAppleTV", StudioBrand.APPLE_TV, state.tvAppleTV, _tr))
-                            "DISNEY"    -> addAll(generateStudioRows("tvDisney", StudioBrand.DISNEY, state.tvDisney, _tr))
+                            "HBO"       -> addAll(generateStudioRows("tvHBO", StudioBrand.HBO, state.tvHBO, trFunc))
+                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonSeries, trFunc))
+                            "PARAMOUNT" -> addAll(generateStudioRows("tvParamount", StudioBrand.PARAMOUNT, state.tvParamount, trFunc))
+                            "HULU"      -> addAll(generateStudioRows("tvHulu", StudioBrand.HULU, state.tvHulu, trFunc))
+                            "NETFLIX"   -> addAll(generateStudioRows("tvNetflix", StudioBrand.NETFLIX, state.tvNetflix, trFunc))
+                            "APPLE_TV"  -> addAll(generateStudioRows("tvAppleTV", StudioBrand.APPLE_TV, state.tvAppleTV, trFunc))
+                            "DISNEY"    -> addAll(generateStudioRows("tvDisney", StudioBrand.DISNEY, state.tvDisney, trFunc))
                         }
                     } else {
-                        if (state.tvDrama.isNotEmpty()) add(RowDef.Regular("tvDrama", _tr("Drama", "דרמה"), state.tvDrama.distinctBy { it.id }))
-                        if (state.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", _tr("Trending Shows", "סדרות פופולריות"), state.tvTrending.distinctBy { it.id }))
-                        if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", _tr("New Episodes", "פרקים חדשים"), state.tvPremieres.distinctBy { it.id }))
-                        if (state.tvAnimation.isNotEmpty()) add(RowDef.Regular("tvAnimation", _tr("Animations", "אנימציה"), state.tvAnimation.distinctBy { it.id }))
+                        if (state.tvDrama.isNotEmpty()) add(RowDef.Regular("tvDrama", trFunc("Drama", "דרמה"), state.tvDrama.distinctBy { it.id }))
+                        if (state.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Trending Shows", "סדרות פופולריות"), state.tvTrending.distinctBy { it.id }))
+                        if (state.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", trFunc("New Episodes", "פרקים חדשים"), state.tvPremieres.distinctBy { it.id }))
+                        if (state.tvAnimation.isNotEmpty()) add(RowDef.Regular("tvAnimation", trFunc("Animations", "אנימציה"), state.tvAnimation.distinctBy { it.id }))
                     }
                 }
                 "Fuzer" -> {
                     val newContent = (state.fuzerMovies + state.fuzerSeries).sortedByDescending { it.id }.distinctBy { it.id }
-                    if (newContent.isNotEmpty()) add(RowDef.Regular("fuzer_new", _tr("🆕 New Content", "🆕 תוכן חדש"), newContent))
-                    if (state.fuzerMovies.isNotEmpty()) add(RowDef.Regular("fuzer_m", _tr("🎬 Movies", "🎬 סרטים"), state.fuzerMovies.distinctBy { it.id }))
-                    if (state.fuzerMoviesHD.isNotEmpty()) add(RowDef.Regular("fuzer_mhd", _tr("🎬 Movies HD", "🎬 סרטים HD"), state.fuzerMoviesHD.distinctBy { it.id }))
-                    if (state.fuzerMovies4K.isNotEmpty()) add(RowDef.Regular("fuzer_m4k", _tr("✨ Movies 4K", "✨ סרטים 4K"), state.fuzerMovies4K.distinctBy { it.id }))
-                    if (state.fuzerDubbedMovies.isNotEmpty()) add(RowDef.Regular("fuzer_dm", _tr("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), state.fuzerDubbedMovies.distinctBy { it.id }))
-                    if (state.fuzerSeries.isNotEmpty()) add(RowDef.Regular("fuzer_tv", _tr("📺 TV Shows", "📺 סדרות"), state.fuzerSeries.distinctBy { it.id }))
-                    if (state.fuzerSeriesHD.isNotEmpty()) add(RowDef.Regular("fuzer_shd", _tr("📺 TV Shows HD", "📺 סדרות HD"), state.fuzerSeriesHD.distinctBy { it.id }))
-                    if (state.fuzerSeries4K.isNotEmpty()) add(RowDef.Regular("fuzer_s4k", _tr("✨ TV Shows 4K", "✨ סדרות 4K"), state.fuzerSeries4K.distinctBy { it.id }))
-                    if (state.fuzerDubbedSeries.isNotEmpty()) add(RowDef.Regular("fuzer_ds", _tr("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), state.fuzerDubbedSeries.distinctBy { it.id }))
+                    if (newContent.isNotEmpty()) add(RowDef.Regular("fuzer_new", trFunc("🆕 New Content", "🆕 תוכן חדש"), newContent))
+                    if (state.fuzerMovies.isNotEmpty()) add(RowDef.Regular("fuzer_m", trFunc("🎬 Movies", "🎬 סרטים"), state.fuzerMovies.distinctBy { it.id }))
+                    if (state.fuzerMoviesHD.isNotEmpty()) add(RowDef.Regular("fuzer_mhd", trFunc("🎬 Movies HD", "🎬 סרטים HD"), state.fuzerMoviesHD.distinctBy { it.id }))
+                    if (state.fuzerMovies4K.isNotEmpty()) add(RowDef.Regular("fuzer_m4k", trFunc("✨ Movies 4K", "✨ סרטים 4K"), state.fuzerMovies4K.distinctBy { it.id }))
+                    if (state.fuzerDubbedMovies.isNotEmpty()) add(RowDef.Regular("fuzer_dm", trFunc("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), state.fuzerDubbedMovies.distinctBy { it.id }))
+                    if (state.fuzerSeries.isNotEmpty()) add(RowDef.Regular("fuzer_tv", trFunc("📺 TV Shows", "📺 סדרות"), state.fuzerSeries.distinctBy { it.id }))
+                    if (state.fuzerSeriesHD.isNotEmpty()) add(RowDef.Regular("fuzer_shd", trFunc("📺 TV Shows HD", "📺 סדרות HD"), state.fuzerSeriesHD.distinctBy { it.id }))
+                    if (state.fuzerSeries4K.isNotEmpty()) add(RowDef.Regular("fuzer_s4k", trFunc("✨ TV Shows 4K", "✨ סדרות 4K"), state.fuzerSeries4K.distinctBy { it.id }))
+                    if (state.fuzerDubbedSeries.isNotEmpty()) add(RowDef.Regular("fuzer_ds", trFunc("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), state.fuzerDubbedSeries.distinctBy { it.id }))
                 }
             }
         }
@@ -187,7 +190,10 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     BackHandler(enabled = focusState.isNavFocused) { focusState.isNavFocused = false }
 
     Box(Modifier.fillMaxSize().background(BG)) {
-        when { state.isLoading -> { HomeLoading(); return@Box }; state.error != null -> { HomeError(state.error!!) { viewModel.retry() }; return@Box } }
+        when {
+            state.isLoading -> { HomeLoading(); return@Box }
+            state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
+        }
         BackdropLayer(focusState.heroMovie)
         HeroOverlay(focusState.heroMovie, panelH)
         val context = LocalContext.current
