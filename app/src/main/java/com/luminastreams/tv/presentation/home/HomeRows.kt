@@ -13,6 +13,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -98,8 +99,8 @@ private fun RowWrapper(
     onFocus: (Movie) -> Unit, onItemClick: (String) -> Unit,
     onLoadMore: (String) -> Unit, onStudioFilterClick: (String?) -> Unit
 ) {
-    val animatedAlpha by animateFloatAsState(targetValue = if (isActive) 1f else 0.4f, animationSpec = tween(300), label = "rowAlpha")
-    Box(Modifier.fillMaxWidth().graphicsLayer { alpha = animatedAlpha }) {
+    val animatedAlpha by animateFloatAsState(targetValue = if (isActive) 1f else 0.4f, animationSpec = tween(180), label = "rowAlpha")
+    Box(Modifier.fillMaxWidth().alpha(animatedAlpha)) {
         if (rowDef is RowDef.StudioRibbon) StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
         else if (isLand) {
             when (rowDef) {
@@ -121,20 +122,17 @@ private fun RowWrapper(
 fun RowsPanel(rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, firstContentIndex: Int, activeFilter: String?, onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit, onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit) {
     if (rows.isEmpty()) return
     val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-
-    // Nuvio Logic: שימוש ב-LazyColumn נותן מנוע גלילה נטיבי, חלק, וממוחזר במקום להזיז Box ענקית מחוץ למסך
     val listState = rememberLazyListState()
 
-    // אנימציית גלילה טבעית וחלקה של אנדרואיד
     LaunchedEffect(curRow) {
-        listState.animateScrollToItem(curRow)
+        listState.scrollToItem(curRow)
     }
 
     LazyColumn(
         state = listState,
         modifier = Modifier.fillMaxSize().clipToBounds(),
         contentPadding = PaddingValues(bottom = 30.dp),
-        userScrollEnabled = false // השלט קובע את הפוקוס, המערכת גוללת אוטומטית
+        userScrollEnabled = false
     ) {
         itemsIndexed(items = rows, key = { _, r -> r.id }, contentType = { _, _ -> "rowType" }) { i, rowDef ->
             val isLand = (i == firstContentIndex)
