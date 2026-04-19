@@ -5,7 +5,10 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -14,9 +17,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -62,7 +65,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     var currentTab by remember { mutableStateOf(state.selectedTab) }
     var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }
-    var contentAlpha by remember { mutableFloatStateOf(1f) }
+    // ── perf: use a boolean visible flag instead of Float alpha to avoid GPU layer per frame ──
+    var contentVisible by remember { mutableStateOf(true) }
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val heroUpdateDelayMs = when (DeviceProfile.tier) { DeviceProfile.Tier.LOW -> 520L; DeviceProfile.Tier.MID -> 420L; DeviceProfile.Tier.HIGH -> 260L }
 
@@ -81,14 +85,14 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         val tabChanged    = currentTab    != state.selectedTab
         val filterChanged = currentFilter != state.selectedStudioFilter
         if (tabChanged || filterChanged) {
-            if (!isLow) contentAlpha = 0f
+            if (!isLow) contentVisible = false
             if (!isLow) delay(250)
             currentTab = state.selectedTab
             currentFilter = state.selectedStudioFilter
             val targetIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
             if (tabChanged) focusState.currentRowIndex = 0
             else { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
-            if (!isLow) { delay(30); contentAlpha = 1f }
+            if (!isLow) { delay(30); contentVisible = true }
         }
     }
 
@@ -194,40 +198,52 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             state.isLoading -> { HomeLoading(); return@Box }
             state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
         }
-        BackdropLayer(focusState.heroMovie)
+
+        // ── perf: graphicsLayer isolates BackdropLayer repaints from the rest of the UI ──
+        Box(Modifier.fillMaxSize().graphicsLayer { }) {
+            BackdropLayer(focusState.heroMovie)
+        }
+
         HeroOverlay(focusState.heroMovie, panelH)
         val context = LocalContext.current
 
-        ContentLayer(
-            rows = rows,
-            contentAlpha = contentAlpha,
-            focusState = focusState,
-            activeTab = state.selectedTab,
-            activeFilter = currentFilter,
-            panelH = panelH,
-            rowHeightFor = { i -> rowHeightFor(i) },
-            firstContentIndex = firstContentIndex,
-            onMovieClick = { id ->
-                if (DeviceProfile.tier == DeviceProfile.Tier.LOW) context.imageLoader.memoryCache?.clear()
-                onMovieClick(id)
-            },
-            onHeroUpdate = { focusState.heroMovie = it },
-            onStudioFilterClick = { filter ->
-                if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null) else viewModel.setStudioFilter(filter)
-            },
-            onLoadMore = { id ->
-                val realId = id.substringBefore("::")
-                viewModel.loadMore(realId)
-            },
-            onSearch = { navController.navigate("search") },
-            onHomeTab = { viewModel.selectTab("ראשי"); viewModel.setStudioFilter(null) },
-            onMoviesTab = { viewModel.selectTab("סרטים"); viewModel.setStudioFilter(null) },
-            onSeriesTab = { viewModel.selectTab("סדרות"); viewModel.setStudioFilter(null) },
-            onFuzer = { viewModel.selectTab("Fuzer"); viewModel.loadFuzerContent() },
-            onWatchlist = { navController.navigate("watchlist") },
-            onSettings = { navController.navigate("settings") },
-            onIptv = { navController.navigate("iptv") }
-        )
+        // ── perf: AnimatedVisibility avoids creating a GPU layer on every frame (was: alpha Float) ──
+        AnimatedVisibility(
+            visible = contentVisible,
+            enter = if (isLow) fadeIn(tween(0)) else fadeIn(tween(250)),
+            exit  = if (isLow) fadeOut(tween(0)) else fadeOut(tween(200))
+        ) {
+            ContentLayer(
+                rows = rows,
+                contentAlpha = 1f,
+                focusState = focusState,
+                activeTab = state.selectedTab,
+                activeFilter = currentFilter,
+                panelH = panelH,
+                rowHeightFor = { i -> rowHeightFor(i) },
+                firstContentIndex = firstContentIndex,
+                onMovieClick = { id ->
+                    if (DeviceProfile.tier == DeviceProfile.Tier.LOW) context.imageLoader.memoryCache?.clear()
+                    onMovieClick(id)
+                },
+                onHeroUpdate = { focusState.heroMovie = it },
+                onStudioFilterClick = { filter ->
+                    if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null) else viewModel.setStudioFilter(filter)
+                },
+                onLoadMore = { id ->
+                    val realId = id.substringBefore("::")
+                    viewModel.loadMore(realId)
+                },
+                onSearch = { navController.navigate("search") },
+                onHomeTab = { viewModel.selectTab("ראשי"); viewModel.setStudioFilter(null) },
+                onMoviesTab = { viewModel.selectTab("סרטים"); viewModel.setStudioFilter(null) },
+                onSeriesTab = { viewModel.selectTab("סדרות"); viewModel.setStudioFilter(null) },
+                onFuzer = { viewModel.selectTab("Fuzer"); viewModel.loadFuzerContent() },
+                onWatchlist = { navController.navigate("watchlist") },
+                onSettings = { navController.navigate("settings") },
+                onIptv = { navController.navigate("iptv") }
+            )
+        }
     }
 }
 
@@ -236,8 +252,9 @@ fun HomeLoading() {
     val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
     val shimmer: Brush = if (isHighTier) {
         val inf = rememberInfiniteTransition(label = "sk")
-        val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "sp")
-        Brush.linearGradient(listOf(Color(0xFF111111), Color(0xFF282828), Color(0xFF111111)), start = Offset(p * 2400f - 1200f, 0f), end = Offset(p * 2400f, 600f))
+        val alpha by inf.animateFloat(0.3f, 0.9f, infiniteRepeatable(tween(800, easing = LinearEasing), RepeatMode.Reverse), label = "sp")
+        // ── perf: static gradient, only alpha animates — no per-frame Offset allocation ──
+        Brush.linearGradient(listOf(Color(0xFF111111), Color(0xFF282828), Color(0xFF111111)))
     } else Brush.linearGradient(listOf(Color(0xFF111111), Color(0xFF1E1E1E), Color(0xFF111111)))
 
     Box(Modifier.fillMaxSize().background(BG)) {
