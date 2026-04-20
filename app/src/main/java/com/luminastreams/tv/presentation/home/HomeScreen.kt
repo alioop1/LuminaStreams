@@ -17,7 +17,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
@@ -25,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavController
 import androidx.tv.material3.*
-import coil.imageLoader
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
@@ -85,8 +83,6 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    // OPTIMIZATION: Background Thread Aggregation
-    // Moves all massive .distinctBy and .sortedBy iterations off the Main/UI thread.
     val rows by produceState<List<RowDef>>(initialValue = emptyList(), state, currentTab, currentFilter, isRtl) {
         value = withContext(Dispatchers.Default) {
             val trFunc = { en: String, he: String -> if (isRtl) he else en }
@@ -204,7 +200,6 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         }
         BackdropLayer(focusState.heroMovie)
         HeroOverlay(focusState.heroMovie, panelH)
-        val context = LocalContext.current
 
         ContentLayer(
             rows = rows,
@@ -215,10 +210,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             panelH = panelH,
             rowHeightFor = { i -> rowHeightFor(i) },
             firstContentIndex = firstContentIndex,
-            onMovieClick = { id ->
-                if (DeviceProfile.tier == DeviceProfile.Tier.LOW) context.imageLoader.memoryCache?.clear()
-                onMovieClick(id)
-            },
+            // FIX: Removed cache clear, so it won't stutter on back button navigation
+            onMovieClick = onMovieClick,
             onHeroUpdate = { focusState.heroMovie = it },
             onStudioFilterClick = { filter ->
                 if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null) else viewModel.setStudioFilter(filter)

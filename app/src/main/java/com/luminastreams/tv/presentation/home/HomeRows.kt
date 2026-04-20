@@ -3,7 +3,7 @@
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class
 )
-@file:Suppress("SpellCheckingInspection") // Ignores spellcheck for 'Fuzer' and other domain terms
+@file:Suppress("SpellCheckingInspection")
 
 package com.luminastreams.tv.presentation.home
 
@@ -11,6 +11,7 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -18,12 +19,12 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clipToBounds
+
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.platform.LocalDensity
+
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
@@ -75,7 +76,6 @@ fun ContentLayer(
         if (focusState.focusTrigger > 0) {
             focusState.currentRowIndex = firstContentIndex
             focusState.isNavFocused = false
-            // Fixed: Unused 'i' parameter replaced with repeat block
             repeat(5) {
                 delay(80)
                 if (runCatching { firstCardFRs.getOrNull(firstContentIndex)?.requestFocus(); true }.getOrDefault(false)) return@repeat
@@ -140,72 +140,54 @@ fun RowsPanel(
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (rows.isEmpty()) return
-    val density = LocalDensity.current
-    val renderMargin = when (DeviceProfile.tier) { DeviceProfile.Tier.HIGH -> 3; else -> 1 }
 
-    val animatedY = remember { Animatable(0f) }
+    // FIX: Using LazyColumn here instead of a Box to virtualize the rows!
+    val verticalScrollState = rememberLazyListState()
 
     LaunchedEffect(focusState.currentRowIndex, rows.size) {
         val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-        var targetY = 0f
-        for (i in 0 until curRow) {
-            targetY += with(density) { rowHeightFor(i).toPx() }
-        }
-
-        // Fixed: Restored explicit <Float> types to resolve compiler inference errors
-        val animSpec = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.LOW -> snap<Float>()
-            DeviceProfile.Tier.MID -> tween<Float>(200, easing = FastOutSlowInEasing)
-            DeviceProfile.Tier.HIGH -> tween<Float>(400, easing = FastOutSlowInEasing)
-        }
-        animatedY.animateTo(-targetY, animationSpec = animSpec)
+        verticalScrollState.animateScrollToItem(curRow)
     }
 
-    Box(Modifier.fillMaxWidth().height(panelH).clipToBounds()) {
-        Box(Modifier.fillMaxWidth().graphicsLayer { translationY = animatedY.value }) {
-            var yOffsetAccumulator = 0.dp
-            rows.forEachIndexed { index, rowDef ->
-                val rh = rowHeightFor(index)
-                val isLand = (index == firstContentIndex)
-                val yOffset = yOffsetAccumulator
+    LazyColumn(
+        state = verticalScrollState,
+        modifier = Modifier.fillMaxWidth().height(panelH),
+        contentPadding = PaddingValues(bottom = 60.dp)
+    ) {
+        itemsIndexed(rows, key = { _, item -> item.id }) { index, rowDef ->
+            val rh = rowHeightFor(index)
+            val isLand = (index == firstContentIndex)
 
-                key(rowDef.id) {
-                    IsolatedRowWrapper(
-                        index = index,
-                        rowDef = rowDef,
-                        rh = rh,
-                        yOffset = yOffset,
-                        isLand = isLand,
-                        focusState = focusState,
-                        cardFR = rowFRs.getOrNull(index),
-                        activeFilter = activeFilter,
-                        renderMargin = renderMargin,
-                        onFocus = { m ->
-                            focusState.currentRowIndex = index
-                            focusState.isNavFocused = false
-                            onItemFocus(m)
-                        },
-                        onItemClick = onItemClick,
-                        onLoadMore = onLoadMore,
-                        onStudioFilterClick = onStudioFilterClick
-                    )
-                }
-                yOffsetAccumulator += rh
-            }
+            IsolatedRowWrapper(
+                index = index,
+                rowDef = rowDef,
+                rh = rh,
+                isLand = isLand,
+                focusState = focusState,
+                cardFR = rowFRs.getOrNull(index),
+                activeFilter = activeFilter,
+                onFocus = { m ->
+                    focusState.currentRowIndex = index
+                    focusState.isNavFocused = false
+                    onItemFocus(m)
+                },
+                onItemClick = onItemClick,
+                onLoadMore = onLoadMore,
+                onStudioFilterClick = onStudioFilterClick
+            )
         }
     }
 }
 
 @Composable
 private fun IsolatedRowWrapper(
-    index: Int, rowDef: RowDef, rh: Dp, yOffset: Dp, isLand: Boolean,
-    focusState: HomeFocusState, cardFR: FocusRequester?, activeFilter: String?, renderMargin: Int,
+    index: Int, rowDef: RowDef, rh: Dp, isLand: Boolean,
+    focusState: HomeFocusState, cardFR: FocusRequester?, activeFilter: String?,
     onFocus: (Movie) -> Unit, onItemClick: (String) -> Unit,
     onLoadMore: (String) -> Unit, onStudioFilterClick: (String?) -> Unit
 ) {
     val curRow = focusState.currentRowIndex
     val isActive = !focusState.isNavFocused && curRow == index
-    val inWindow = kotlin.math.abs(index - curRow) <= renderMargin
 
     val animatedAlpha by animateFloatAsState(
         targetValue = if (isActive) 1f else 0.22f,
@@ -213,22 +195,20 @@ private fun IsolatedRowWrapper(
         label = "rowAlpha"
     )
 
-    Box(Modifier.fillMaxWidth().height(rh).offset(y = yOffset).graphicsLayer { alpha = animatedAlpha }) {
-        if (inWindow) {
-            if (rowDef is RowDef.StudioRibbon) {
-                StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
-            } else if (isLand) {
-                when (rowDef) {
-                    is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                    is RowDef.Studio -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                    else -> {}
-                }
-            } else {
-                when (rowDef) {
-                    is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                    is RowDef.Studio -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                    else -> {}
-                }
+    Box(Modifier.fillMaxWidth().height(rh).graphicsLayer { alpha = animatedAlpha }) {
+        if (rowDef is RowDef.StudioRibbon) {
+            StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
+        } else if (isLand) {
+            when (rowDef) {
+                is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                is RowDef.Studio -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                else -> {}
+            }
+        } else {
+            when (rowDef) {
+                is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                is RowDef.Studio -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                else -> {}
             }
         }
     }
@@ -308,7 +288,6 @@ fun StudioRibbonRow(isActive: Boolean, cardFR: FocusRequester?, activeFilter: St
     }
 }
 
-// Fixed: Function name capitalization
 @Composable
 fun studioLabel(b: StudioBrand): String {
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl

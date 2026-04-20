@@ -28,7 +28,7 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
-import com.luminastreams.tv.core.DeviceProfile
+
 import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
 
@@ -66,11 +66,9 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             .data(url)
             .diskCacheKey(url)
             .size(600)
-            // OPTIMIZATION: NEVER disable memory cache! Doing so forces the TV to decompress
-            // JPEGs on the Main Thread every single time you scroll! Always keep it enabled.
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(true)
+            .allowHardware(true) // FIX: ALWAYS ENABLE HARDWARE BITMAPS
             .crossfade(false)
             .build()
     }
@@ -128,10 +126,9 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             .data(url)
             .diskCacheKey(url)
             .size(400)
-            // OPTIMIZATION: NEVER disable memory cache for scrolling objects.
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(DeviceProfile.tier != DeviceProfile.Tier.LOW)
+            .allowHardware(true) // FIX: ALWAYS ENABLE HARDWARE BITMAPS
             .crossfade(false)
             .build()
     }

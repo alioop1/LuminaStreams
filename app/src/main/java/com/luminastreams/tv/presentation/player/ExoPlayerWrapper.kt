@@ -23,18 +23,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import com.luminastreams.tv.core.DeviceProfile
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -47,7 +38,6 @@ class ExoPlayerWrapper(context: Context) {
     private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
         DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
     private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
-    private val preAllocateBuffer = prefs.getBoolean("pre_buffer",          false)
     private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
     private val skipEmbeddedSubs  = prefs.getBoolean("subtitle_cache_only", false)
 
@@ -89,6 +79,11 @@ class ExoPlayerWrapper(context: Context) {
             }
         )
         setEnableDecoderFallback(true)
+
+        // Safely map Dolby Vision Profile 7 to HEVC to prevent Android TV crashes
+        runCatching {
+            this::class.java.getMethod("setMapDV7ToHevc", Boolean::class.java).invoke(this, true)
+        }
     }
 
     val trackSelector = DefaultTrackSelector(appContext).apply {
@@ -101,7 +96,8 @@ class ExoPlayerWrapper(context: Context) {
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
                 MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
             )
-            .setTunnelingEnabled(!DeviceProfile.isNvidia) // כבוי בשילד למניעת ANR, פועל בשאר
+            // DISABLED hardware tunneling by default to prevent severe Android TV UI lag
+            .setTunnelingEnabled(prefs.getBoolean("tunneling_enabled", false))
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
@@ -116,29 +112,17 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params.build())
     }
 
-    private val safeTargetBytes = 12 * 1024 * 1024
-
-    private val loadControl: DefaultLoadControl = run {
-        val buf = DeviceProfile.bufferConfig
-        if (preAllocateBuffer) {
-            DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15_000, 30_000, 2_500, 5_000)
-                .setTargetBufferBytes(safeTargetBytes)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-        } else {
-            DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    buf.minBufferMs,
-                    buf.maxBufferMs,
-                    buf.bufferForPlayMs,
-                    buf.bufferForReplayMs
-                )
-                .setTargetBufferBytes(minOf(buf.targetBufferBytes, safeTargetBytes))
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-        }
-    }
+    // Increased to 100MB buffer + 70 Seconds duration to handle heavy 4K REMUX files
+    private val loadControl: DefaultLoadControl = DefaultLoadControl.Builder()
+        .setTargetBufferBytes(100 * 1024 * 1024)
+        .setBufferDurationsMs(
+            DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
+            70_000,
+            5_000,
+            5_000
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
 
     private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
         .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -191,17 +175,12 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
-    private data class SubEntry(val startMs: Long, val endMs: Long, val text: String)
-    private var parsedSubs   : List<SubEntry> = emptyList()
-    private var subTickerJob : Job?           = null
-    private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
-
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
 
             override fun onCues(cueGroup: CueGroup) {
-                if (parsedSubs.isEmpty()) _currentCues.value = cueGroup.cues
+                _currentCues.value = cueGroup.cues
             }
 
             override fun onTracksChanged(tracks: Tracks) {
@@ -268,8 +247,6 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String) {
-        stopSubTicker()
-        parsedSubs              = emptyList()
         _playerError.value      = null
         _subtitleApplied.value  = false
         _currentCues.value      = emptyList()
@@ -288,25 +265,16 @@ class ExoPlayerWrapper(context: Context) {
 
     fun switchAudioTrack(group: Tracks.Group, trackIndex: Int) {
         val isLive = player.isCurrentMediaItemLive
-        val savedPos = if (!isLive) player.currentPosition else 0L
-
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_AUDIO)
             .setOverrideForType(
-                androidx.media3.common.TrackSelectionOverride(
-                    group.mediaTrackGroup, trackIndex
-                )
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, trackIndex)
             )
             .build()
-
-        if (isLive) {
-            player.seekToDefaultPosition()
-        }
+        if (isLive) player.seekToDefaultPosition()
     }
 
     fun disableSubtitles() {
-        stopSubTicker()
-        _currentCues.value = emptyList()
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
@@ -314,147 +282,45 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun switchSubtitleTrack(group: Tracks.Group, trackIndex: Int) {
-        stopSubTicker()
-        _currentCues.value = emptyList()
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
             .setOverrideForType(
-                androidx.media3.common.TrackSelectionOverride(
-                    group.mediaTrackGroup, trackIndex
-                )
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, trackIndex)
             )
             .build()
     }
 
-    fun applySubtitle(
-        subtitleUrl : String,
-        isVtt       : Boolean = false,
-        maxRetries  : Int     = 2
-    ) {
-        if (subtitleUrl.startsWith("file://")) {
-            scope.launch {
-                val path = subtitleUrl.toUri().path ?: return@launch
-                loadAndStartTickerAsync(File(path), isVtt || subtitleUrl.endsWith(".vtt", ignoreCase = true))
-            }
-            return
-        }
-        scope.launch(Dispatchers.IO) {
-            var lastErr: Exception? = null
-            repeat(maxRetries + 1) { attempt ->
-                try {
-                    val conn = URL(subtitleUrl).openConnection() as HttpURLConnection
-                    conn.setRequestProperty("User-Agent", "Mozilla/5.0")
-                    conn.connectTimeout = 12_000
-                    conn.readTimeout    = 12_000
-                    if (conn.responseCode in 200..299) {
-                        val bytes = conn.inputStream.readBytes()
-                        val ext   = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
-                        val file  = File(appContext.cacheDir, "lumina_sub.$ext")
-                        file.writeBytes(bytes)
-                        loadAndStartTickerAsync(file, ext == "vtt")
-                        return@launch
-                    }
-                } catch (e: Exception) {
-                    lastErr = e
-                    if (attempt < maxRetries) delay(1_500L * (attempt + 1))
-                }
-            }
-            lastErr?.printStackTrace()
-        }
-    }
+    // Replaced manual ticker with Native ExoPlayer Subtitle sideloading
+    fun applySubtitle(subtitleUrl: String, isVtt: Boolean = false, maxRetries: Int = 2) {
+        val currentMediaItem = player.currentMediaItem ?: return
+        val currentPosition = player.currentPosition
+        val wasPlaying = player.isPlaying
 
-    private suspend fun loadAndStartTickerAsync(subFile: File, isVtt: Boolean) {
-        val text: String = withContext(Dispatchers.IO) {
-            runCatching { subFile.readText(Charsets.UTF_8) }.getOrNull()
-        } ?: return
+        val mimeType = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true))
+            MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
 
-        val parsed: List<SubEntry> = withContext(Dispatchers.Default) {
-            if (isVtt) parseVtt(text) else parseSrt(text)
-        }
+        val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(subtitleUrl.toUri())
+            .setMimeType(mimeType)
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            .build()
 
-        withContext(Dispatchers.Main) {
-            stopSubTicker()
-            _currentCues.value = emptyList()
-            parsedSubs = parsed
-            if (parsedSubs.isEmpty()) return@withContext
-            _subtitleApplied.value = true
-            val tickMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 300L else 200L
+        val newMediaItem = currentMediaItem.buildUpon()
+            .setSubtitleConfigurations(listOf(subtitleConfig))
+            .build()
 
-            subTickerJob = scope.launch(Dispatchers.Default) {
-                var lastActiveTexts = listOf<String>()
-                while (isActive) {
-                    val pos = withContext(Dispatchers.Main) { player.currentPosition }
-                    val active = parsedSubs.filter { it.startMs <= pos && pos < it.endMs }
-                    val currentTexts = active.map { it.text }
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
+            .build()
 
-                    if (currentTexts != lastActiveTexts) {
-                        lastActiveTexts = currentTexts
-                        val newCues = active.map { entry -> Cue.Builder().setText(entry.text).build() }
-                        withContext(Dispatchers.Main) {
-                            _currentCues.value = newCues
-                        }
-                    }
-                    delay(tickMs)
-                }
-            }
-        }
-    }
+        player.setMediaItem(newMediaItem, currentPosition)
+        player.prepare()
+        player.playWhenReady = wasPlaying
 
-    private fun stopSubTicker() {
-        subTickerJob?.cancel()
-        subTickerJob           = null
-        parsedSubs             = emptyList()
-        _currentCues.value     = emptyList()
-        _subtitleApplied.value = false
-    }
-
-    private val srtTimeRegex = Regex("""(\d{2}):(\d{2}):(\d{2})[,.](\d{3})""")
-    private fun parseTimeMs(s: String): Long {
-        val m = srtTimeRegex.find(s) ?: return -1
-        val (h, min, sec, ms) = m.destructured
-        return h.toLong() * 3_600_000 + min.toLong() * 60_000 + sec.toLong() * 1_000 + ms.toLong()
-    }
-
-    private fun parseSrt(text: String): List<SubEntry> {
-        val entries = mutableListOf<SubEntry>()
-        val blocks  = text.trim().replace("\r\n", "\n").split(Regex("\n{2,}"))
-        for (block in blocks) {
-            val lines    = block.trim().lines()
-            if (lines.size < 2) continue
-            val timeLine = lines.firstOrNull { "-->" in it } ?: continue
-            val parts    = timeLine.split("-->")
-            if (parts.size < 2) continue
-            val start = parseTimeMs(parts[0].trim())
-            val end   = parseTimeMs(parts[1].trim())
-            if (start < 0 || end < 0) continue
-            val txt = lines.dropWhile { "-->" !in it }.drop(1)
-                .joinToString("\n").trim()
-                .replace(Regex("<[^>]+>"), "")
-            if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
-        }
-        return entries
-    }
-
-    private fun parseVtt(text: String): List<SubEntry> {
-        val entries = mutableListOf<SubEntry>()
-        val cleaned = text.replace("\r\n", "\n").removePrefix("\uFEFF")
-        val blocks  = cleaned.trim().split(Regex("\n{2,}"))
-        for (block in blocks) {
-            val lines    = block.trim().lines()
-            val timeLine = lines.firstOrNull { "-->" in it } ?: continue
-            val timeOnly = timeLine.split(Regex("\\s+")).take(3).joinToString(" ")
-            val parts    = timeOnly.split("-->")
-            if (parts.size < 2) continue
-            val start = parseTimeMs(parts[0].trim())
-            val end   = parseTimeMs(parts[1].trim())
-            if (start < 0 || end < 0) continue
-            val txt = lines.dropWhile { "-->" !in it }.drop(1)
-                .joinToString("\n").trim()
-                .replace(Regex("<[^>]+>"), "")
-            if (txt.isNotEmpty()) entries.add(SubEntry(start, end, txt))
-        }
-        return entries
+        _subtitleApplied.value = true
     }
 
     fun play()  { player.play() }
@@ -465,8 +331,6 @@ class ExoPlayerWrapper(context: Context) {
     }
     fun clearError() { _playerError.value = null }
     fun release() {
-        stopSubTicker()
-        scope.cancel()
         try { player.release() } catch (_: Exception) {}
     }
 }

@@ -100,11 +100,8 @@ class LuminaApp : Application() {
             )
             .build()
 
-        val bitmapConfig = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> Bitmap.Config.HARDWARE
-            DeviceProfile.Tier.MID  -> Bitmap.Config.HARDWARE
-            DeviceProfile.Tier.LOW  -> Bitmap.Config.ARGB_8888
-        }
+        // FIX: Hardware bitmaps ENABLED for all tiers to keep UI thread clean
+        val bitmapConfig = Bitmap.Config.HARDWARE
 
         val imageLoader = ImageLoader.Builder(this)
             .components {
