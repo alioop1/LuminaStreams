@@ -38,12 +38,10 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    // OPTIMIZATION: Pass the language direction to the ViewModel so it computes row text in the background!
     LaunchedEffect(isRtl) {
         viewModel.setLanguage(isRtl)
     }
 
-    // OPTIMIZATION: UI Thread is 100% free! We simply observe the completely pre-calculated list.
     val rows by viewModel.uiRows.collectAsStateWithLifecycle()
 
     var currentTab by remember { mutableStateOf(state.selectedTab) }
@@ -53,15 +51,20 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
         val tabChanged    = currentTab    != state.selectedTab
         val filterChanged = currentFilter != state.selectedStudioFilter
-        if (tabChanged || filterChanged) {
+
+        if (tabChanged) {
             if (!isLow) contentAlpha = 0f
             if (!isLow) delay(250)
             currentTab = state.selectedTab
             currentFilter = state.selectedStudioFilter
             val targetIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
-            if (tabChanged) focusState.currentRowIndex = 0
-            else { focusState.currentRowIndex = targetIndex; focusState.focusTrigger++ }
+            focusState.currentRowIndex = targetIndex
+            focusState.focusTrigger++
             if (!isLow) { delay(30); contentAlpha = 1f }
+        } else if (filterChanged) {
+            // FIX: Don't fade out or force focus when just changing a studio filter.
+            // This prevents the lag and keeps your focus locked on the Studio Button!
+            currentFilter = state.selectedStudioFilter
         }
     }
 
@@ -123,7 +126,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             rowHeightFor = { i -> rowHeightFor(i) },
             firstContentIndex = firstContentIndex,
             onMovieClick = onMovieClick,
-            onHeroUpdate = { focusState.heroMovie = it },
+            // FIX: Don't allow null to overwrite the heroMovie (prevents black background on Studio Row focus)
+            onHeroUpdate = { if (it != null) focusState.heroMovie = it },
             onStudioFilterClick = { filter ->
                 if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null) else viewModel.setStudioFilter(filter)
             },
