@@ -1,3 +1,4 @@
+@file:Suppress("ASSIGNED_BUT_NEVER_READ", "UNUSED_VALUE", "UNUSED_VARIABLE", "UNUSED_PARAMETER", "SpellCheckingInspection")
 @file:OptIn(
     ExperimentalTvMaterial3Api::class,
     ExperimentalComposeUiApi::class,
@@ -5,9 +6,12 @@
 )
 package com.luminastreams.tv.presentation.search
 
+import android.content.Context
+import android.view.inputmethod.InputMethodManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -27,6 +31,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -40,6 +45,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -168,7 +174,7 @@ fun SearchScreen(
                 when {
                     state.isLoading -> ShimmerGrid()
                     state.source == SearchSource.FUZER && state.fuzerError != null ->
-                        FuzerError(state.fuzerError!!)
+                        FuzerError(state.fuzerError)
                     state.activeResults.isEmpty() -> EmptyState(state.query, state.source)
                     else -> ResultsGrid(
                         results       = state.activeResults,
@@ -243,10 +249,9 @@ private fun TopBar(
     onIntent:   (SearchIntent) -> Unit
 ) {
     val ctx  = LocalContext.current
-    val view = androidx.compose.ui.platform.LocalView.current
+    val view = LocalView.current
     val imm  = remember {
-        ctx.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-                as android.view.inputmethod.InputMethodManager
+        ctx.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
     }
 
     val firstSuggestFR = remember { FocusRequester() }
@@ -344,7 +349,7 @@ private fun TopBar(
                                 if (ev.type == KeyEventType.KeyDown) {
                                     when (ev.key) {
                                         Key.DirectionCenter -> {
-                                            imm.showSoftInput(view, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                                            imm.showSoftInput(view, InputMethodManager.SHOW_IMPLICIT)
                                             true
                                         }
                                         Key.DirectionDown -> {
@@ -454,7 +459,7 @@ private fun TopBar(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(Icons.Default.TrendingUp, null, Modifier.size(13.dp), tint = RED.copy(0.6f))
+                            Icon(Icons.AutoMirrored.Filled.TrendingUp, null, Modifier.size(13.dp), tint = RED.copy(0.6f))
                             Text(s, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
@@ -485,8 +490,8 @@ private fun TopBar(
                                 focusedContentColor   = WHITE
                             ),
                             border   = ClickableSurfaceDefaults.border(
-                                border        = Border(border = androidx.compose.foundation.BorderStroke(1.dp, DIM2),            shape = RoundedCornerShape(50)),
-                                focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.55f)), shape = RoundedCornerShape(50))
+                                border        = Border(border = BorderStroke(1.dp, DIM2), shape = RoundedCornerShape(50)),
+                                focusedBorder = Border(border = BorderStroke(1.dp, RED.copy(0.55f)), shape = RoundedCornerShape(50))
                             ),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                             modifier = Modifier.height(28.dp)
@@ -574,8 +579,8 @@ private fun TabRow(
                     focusedContentColor   = WHITE
                 ),
                 border   = ClickableSurfaceDefaults.border(
-                    border        = if (isSel) Border(border = androidx.compose.foundation.BorderStroke(1.dp, tab.accent.copy(0.55f)), shape = RoundedCornerShape(10.dp)) else Border.None,
-                    focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, tab.accent.copy(0.85f)), shape = RoundedCornerShape(10.dp))
+                    border        = if (isSel) Border(border = BorderStroke(1.dp, tab.accent.copy(0.55f)), shape = RoundedCornerShape(10.dp)) else Border.None,
+                    focusedBorder = Border(border = BorderStroke(1.5.dp, tab.accent.copy(0.85f)), shape = RoundedCornerShape(10.dp))
                 ),
                 scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                 modifier = Modifier.height(36.dp)
@@ -614,8 +619,8 @@ private fun TabRow(
                 focusedContentColor   = WHITE
             ),
             border   = ClickableSurfaceDefaults.border(
-                border        = if (filtersActive) Border(border = androidx.compose.foundation.BorderStroke(1.dp, RED.copy(0.6f)), shape = RoundedCornerShape(10.dp)) else Border.None,
-                focusedBorder = Border(border = androidx.compose.foundation.BorderStroke(1.5.dp, RED.copy(0.8f)), shape = RoundedCornerShape(10.dp))
+                border        = if (filtersActive) Border(border = BorderStroke(1.dp, RED.copy(0.6f)), shape = RoundedCornerShape(10.dp)) else Border.None,
+                focusedBorder = Border(border = BorderStroke(1.5.dp, RED.copy(0.8f)), shape = RoundedCornerShape(10.dp))
             ),
             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
             modifier = Modifier.height(36.dp)
@@ -667,13 +672,13 @@ private fun FilterSidebar(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 36.dp, vertical = 8.dp)) {
                     val sortOptions = listOf(SortBy.POPULARITY to "Popular", SortBy.RATING to "Top Rated", SortBy.NEWEST to "Newest")
                     items(sortOptions.size) { idx ->
-                        val (v, lbl) = sortOptions[idx]
+                        val option = sortOptions[idx]
                         FilterChipCard(
-                            label      = lbl,
-                            isSelected = filters.sortBy == v,
+                            label      = option.second,
+                            isSelected = filters.sortBy == option.first,
                             accentColor= RED,
                             modifier   = if (idx == 0) Modifier.focusRequester(firstFilterFR) else Modifier,
-                            onClick    = { onUpdate(filters.copy(sortBy = v)) }
+                            onClick    = { onUpdate(filters.copy(sortBy = option.first)) }
                         )
                     }
                 }
@@ -701,13 +706,12 @@ private fun FilterSidebar(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 36.dp, vertical = 8.dp)) {
                     val qOptions = listOf(QualityFilter.ANY to "Any", QualityFilter.HD to "HD", QualityFilter.FHD to "1080p", QualityFilter.UHD to "4K")
                     items(qOptions.size) { idx ->
-                        val (q, lbl) = qOptions[idx]
-                        val acnt = when (q) { QualityFilter.UHD -> Color(0xFFFF3D00); QualityFilter.FHD -> ACCENT_BLUE; QualityFilter.HD -> ACCENT_GREEN; else -> RED }
+                        val option = qOptions[idx]
                         FilterChipCard(
-                            label      = lbl,
-                            isSelected = filters.quality == q,
-                            accentColor= acnt,
-                            onClick    = { onUpdate(filters.copy(quality = q)) }
+                            label      = option.second,
+                            isSelected = filters.quality == option.first,
+                            accentColor= when (option.first) { QualityFilter.UHD -> Color(0xFFFF3D00); QualityFilter.FHD -> ACCENT_BLUE; QualityFilter.HD -> ACCENT_GREEN; else -> RED },
+                            onClick    = { onUpdate(filters.copy(quality = option.first)) }
                         )
                     }
                 }
@@ -719,12 +723,12 @@ private fun FilterSidebar(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 36.dp, vertical = 8.dp)) {
                     val rOptions = listOf(0f to "Any", 6f to "6+", 7f to "7+", 8f to "8+", 9f to "9+")
                     items(rOptions.size) { idx ->
-                        val (v, lbl) = rOptions[idx]
+                        val option = rOptions[idx]
                         FilterChipCard(
-                            label      = if (v == 0f) lbl else "★ $lbl",
-                            isSelected = filters.minRating == v,
+                            label      = if (option.first == 0f) option.second else "★ ${option.second}",
+                            isSelected = filters.minRating == option.first,
                             accentColor= GOLD,
-                            onClick    = { onUpdate(filters.copy(minRating = v)) }
+                            onClick    = { onUpdate(filters.copy(minRating = option.first)) }
                         )
                     }
                 }
@@ -737,12 +741,12 @@ private fun FilterSidebar(
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp), contentPadding = PaddingValues(horizontal = 36.dp, vertical = 8.dp)) {
                         val lOptions = listOf(false to "All", true to "Hebrew Dubbed")
                         items(lOptions.size) { idx ->
-                            val (v, lbl) = lOptions[idx]
+                            val option = lOptions[idx]
                             FilterChipCard(
-                                label      = lbl,
-                                isSelected = filters.dubbedOnly == v,
+                                label      = option.second,
+                                isSelected = filters.dubbedOnly == option.first,
                                 accentColor= ACCENT_PINK,
-                                onClick    = { onUpdate(filters.copy(dubbedOnly = v)) }
+                                onClick    = { onUpdate(filters.copy(dubbedOnly = option.first)) }
                             )
                         }
                     }
@@ -824,7 +828,7 @@ private fun FilterChipCard(
     label:       String,
     isSelected:  Boolean,
     accentColor: Color,
-    modifier:    Modifier = Modifier,
+    @Suppress("unused") modifier: Modifier = Modifier,
     onClick:     () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
@@ -843,7 +847,7 @@ private fun FilterChipCard(
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
         glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color.Black.copy(0.7f), 20.dp)),
-        modifier = modifier.height(64.dp).onFocusChanged { focused = it.isFocused }
+        modifier = modifier.height(64.dp).onFocusChanged { s -> focused = s.isFocused }
     ) {
         Box(
             Modifier.fillMaxHeight().background(containerBg, RoundedCornerShape(16.dp)).padding(horizontal = 24.dp),
@@ -917,6 +921,8 @@ private fun MediaCard(
         result.title.contains("720p",  ignoreCase = true) -> "HD"
         else -> null
     }
+
+    // Check if the title indicates Hebrew dubbing
     val isDubbed = isFuzer && result.title.contains("מדובב", ignoreCase = true)
 
     Box(
@@ -941,7 +947,7 @@ private fun MediaCard(
             border   = ClickableSurfaceDefaults.border(
                 border        = Border.None,
                 focusedBorder = Border(
-                    border = androidx.compose.foundation.BorderStroke(2.5.dp, accent.copy(0.8f)),
+                    border = BorderStroke(2.5.dp, accent.copy(0.8f)),
                     shape  = RoundedCornerShape(12.dp)
                 )
             ),
@@ -966,14 +972,13 @@ private fun MediaCard(
                         Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF2A2A2A), CARD_BG))),
                         Alignment.Center
                     ) {
-                        androidx.tv.material3.Text(result.title, color = WHITE.copy(0.55f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(8.dp))
+                        Text(result.title, color = WHITE.copy(0.55f), fontSize = 11.sp, textAlign = TextAlign.Center, modifier = Modifier.padding(8.dp))
                     }
                 }
 
-                val gradientOpacity = if (focused) 0.95f else 0.7f
                 Box(
                     Modifier.fillMaxWidth().fillMaxHeight(0.65f).align(Alignment.BottomCenter)
-                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = gradientOpacity))))
+                        .background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = if (focused) 0.95f else 0.7f))))
                 )
 
                 if (focused) {
@@ -990,33 +995,32 @@ private fun MediaCard(
                     if (isDubbed) {
                         Box(
                             Modifier.clip(RoundedCornerShape(4.dp)).background(ACCENT_PINK).padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) { androidx.tv.material3.Text("🎤 DUB", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
+                        ) { Text("🎤 DUB", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
                     } else if (result.releaseYear.isNotBlank()) {
                         Box(
                             Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) { androidx.tv.material3.Text(result.releaseYear, color = DIM, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
+                        ) { Text(result.releaseYear, color = DIM, fontSize = 9.sp, fontWeight = FontWeight.Bold) }
                     }
 
                     if (isFuzer && !isDubbed) {
                         Box(
                             Modifier.clip(RoundedCornerShape(4.dp)).background(Color(0xFF00B0FF)).padding(horizontal = 6.dp, vertical = 3.dp)
-                        ) { androidx.tv.material3.Text("💎 FUZER", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
+                        ) { Text("💎 FUZER", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
                     }
                 }
 
                 if (qBadge != null) {
-                    val qColor = when (qBadge) { "4K" -> Color(0xFFFF3D00); "FHD" -> ACCENT_BLUE; else -> ACCENT_GREEN }
                     Box(
                         Modifier.align(Alignment.TopEnd).padding(8.dp).clip(RoundedCornerShape(4.dp))
-                            .background(qColor).padding(horizontal = 6.dp, vertical = 3.dp)
-                    ) { androidx.tv.material3.Text(qBadge, color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
+                            .background(when (qBadge) { "4K" -> Color(0xFFFF3D00); "FHD" -> ACCENT_BLUE; else -> ACCENT_GREEN }).padding(horizontal = 6.dp, vertical = 3.dp)
+                    ) { Text(qBadge, color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black) }
                 }
 
                 Column(
                     Modifier.align(Alignment.BottomStart).padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    androidx.tv.material3.Text(
+                    Text(
                         result.title,
                         color      = WHITE,
                         fontSize   = 13.sp,
@@ -1030,15 +1034,20 @@ private fun MediaCard(
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         if (result.rating > 0f) {
-                            androidx.tv.material3.Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            androidx.tv.material3.Text("•", color = DIM3, fontSize = 11.sp)
+                            Text("★ %.1f".format(result.rating), color = GOLD, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("•", color = DIM3, fontSize = 11.sp)
                         }
-                        val typeStr = when {
-                            isFuzer -> "Fuzer"
-                            result.type == MediaType.TV_SHOW -> "TV Show"
-                            else -> "Movie"
-                        }
-                        androidx.tv.material3.Text(typeStr, color = DIM.copy(0.7f), fontSize = 11.sp, fontWeight = FontWeight.Medium)
+
+                        Text(
+                            when {
+                                isFuzer -> "Fuzer"
+                                result.type == MediaType.TV_SHOW -> "TV Show"
+                                else -> "Movie"
+                            },
+                            color = DIM.copy(0.7f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             }
@@ -1086,13 +1095,15 @@ private fun EmptyState(query: String, source: SearchSource) {
             verticalArrangement = Arrangement.spacedBy(12.dp),
             modifier = Modifier.padding(32.dp)
         ) {
-            val emoji = when (source) {
-                SearchSource.FUZER  -> "\uD83D\uDCBE"
-                SearchSource.MOVIES -> "\uD83C\uDFAC"
-                SearchSource.SERIES -> "\uD83D\uDCFA"
-                else                -> if (query.isNotBlank()) "\uD83D\uDD0D" else "\uD83C\uDF1F"
-            }
-            Text(emoji, fontSize = 56.sp)
+            Text(
+                text = when (source) {
+                    SearchSource.FUZER  -> "\uD83D\uDCBE"
+                    SearchSource.MOVIES -> "\uD83C\uDFAC"
+                    SearchSource.SERIES -> "\uD83D\uDCFA"
+                    else                -> if (query.isNotBlank()) "\uD83D\uDD0D" else "\uD83C\uDF1F"
+                },
+                fontSize = 56.sp
+            )
             Text(
                 when {
                     query.isNotBlank() -> "No results for \u201c$query\u201d"

@@ -2,9 +2,6 @@
 package com.luminastreams.tv.presentation.watchlist
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -12,13 +9,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -27,11 +22,11 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.Icon
 import androidx.tv.material3.IconButton
 import androidx.tv.material3.IconButtonDefaults
 import androidx.tv.material3.Text
-import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.presentation.home.PosterCard
 import kotlinx.coroutines.delay
 
@@ -41,7 +36,9 @@ fun WatchlistScreen(
     onNavigateBack: () -> Unit,
     onMovieClick: (String) -> Unit
 ) {
-    val movies by viewModel.movies.collectAsState()
+    // OPTIMIZATION: CPU Zeroing when navigating away from this screen
+    val movies by viewModel.movies.collectAsStateWithLifecycle()
+
     val backFR = remember { FocusRequester() }
     val firstItemFR = remember { FocusRequester() }
 

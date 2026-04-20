@@ -11,14 +11,15 @@ import coil.Coil
 import coil.ImageLoader
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
+import coil.decode.ImageDecoderDecoder
+import coil.decode.GifDecoder
 import com.luminastreams.tv.data.local.LuminaDatabase
 import com.luminastreams.tv.data.repository.IptvRepository
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
+import com.luminastreams.tv.data.repository.WatchlistRepository
 import com.luminastreams.tv.domain.repository.MediaRepository
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
-import coil.decode.ImageDecoderDecoder
-import coil.decode.GifDecoder
 
 class LuminaApp : Application() {
     lateinit var repository: MediaRepository
@@ -28,6 +29,9 @@ class LuminaApp : Application() {
         private set
 
     lateinit var iptvRepository: IptvRepository
+        private set
+
+    lateinit var watchlistRepository: WatchlistRepository
         private set
 
     override fun onCreate() {
@@ -54,9 +58,9 @@ class LuminaApp : Application() {
             .build()
 
         iptvRepository = IptvRepository(database.iptvDao())
+        watchlistRepository = WatchlistRepository(database.watchlistDao())
 
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
-            Runtime.getRuntime().gc()
             registerLowMemoryCallbacks()
         }
     }
@@ -103,7 +107,6 @@ class LuminaApp : Application() {
         }
 
         val imageLoader = ImageLoader.Builder(this)
-            // OPTIMIZATION: Hardware-Accelerated Image Decoding
             .components {
                 if (Build.VERSION.SDK_INT >= 28) {
                     add(ImageDecoderDecoder.Factory())
@@ -137,16 +140,15 @@ class LuminaApp : Application() {
             override fun onTrimMemory(level: Int) {
                 when (level) {
                     TRIM_MEMORY_UI_HIDDEN -> {
-                        Runtime.getRuntime().gc()
+                        // Do nothing, let Android OS natively manage memory.
                     }
                     TRIM_MEMORY_RUNNING_LOW,
                     TRIM_MEMORY_RUNNING_CRITICAL -> {
-                        Runtime.getRuntime().gc()
-                        Log.w("LuminaApp", "⚠️ Low memory — GC triggered (tier=${DeviceProfile.tier.name})")
+                        Coil.imageLoader(this@LuminaApp).memoryCache?.clear()
+                        Log.w("LuminaApp", "⚠️ Low memory — Coil cache cleared (tier=${DeviceProfile.tier.name})")
                     }
                     TRIM_MEMORY_COMPLETE -> {
                         Coil.imageLoader(this@LuminaApp).memoryCache?.clear()
-                        Runtime.getRuntime().gc()
                         Log.e("LuminaApp", "🔴 Critical memory — caches cleared (tier=${DeviceProfile.tier.name})")
                     }
                     else -> {}
@@ -158,7 +160,6 @@ class LuminaApp : Application() {
             @Suppress("OVERRIDE_DEPRECATION")
             override fun onLowMemory() {
                 Coil.imageLoader(this@LuminaApp).memoryCache?.clear()
-                Runtime.getRuntime().gc()
             }
         })
     }

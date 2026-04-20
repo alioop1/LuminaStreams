@@ -400,7 +400,6 @@ fun AppNavHostContainer(
                 SettingsScreen(
                     state          = state,
                     viewModel      = vm,
-                    isRtl          = state.appLanguage == "he",
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

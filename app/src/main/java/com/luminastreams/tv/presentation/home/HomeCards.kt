@@ -33,8 +33,6 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
 
 // OPTIMIZATION: Float-Precision Recomposition Blocking
-// Prevents Compose from triggering expensive layout recalculations for fractional
-// progress updates (e.g. 0.4501 to 0.4502) by snapping them to hard 1% intervals.
 private fun quantizeProgress(progress: Float): Float {
     if (progress >= 0.95f) return 1f
     return (progress * 100f).roundToInt().coerceIn(1, 99) / 100f
@@ -68,7 +66,9 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             .data(url)
             .diskCacheKey(url)
             .size(600)
-            .memoryCachePolicy(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) CachePolicy.DISABLED else CachePolicy.ENABLED)
+            // OPTIMIZATION: NEVER disable memory cache! Doing so forces the TV to decompress
+            // JPEGs on the Main Thread every single time you scroll! Always keep it enabled.
+            .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(true)
             .crossfade(false)
@@ -107,7 +107,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
                     Box(
                         Modifier
-                            .fillMaxWidth(quantizeProgress(prog)) // <--- Applied optimization
+                            .fillMaxWidth(quantizeProgress(prog))
                             .fillMaxHeight()
                             .background(RED)
                     )
@@ -128,6 +128,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             .data(url)
             .diskCacheKey(url)
             .size(400)
+            // OPTIMIZATION: NEVER disable memory cache for scrolling objects.
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
             .allowHardware(DeviceProfile.tier != DeviceProfile.Tier.LOW)
@@ -163,7 +164,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
                     Box(
                         Modifier
-                            .fillMaxWidth(quantizeProgress(prog)) // <--- Applied optimization
+                            .fillMaxWidth(quantizeProgress(prog))
                             .fillMaxHeight()
                             .background(RED)
                     )

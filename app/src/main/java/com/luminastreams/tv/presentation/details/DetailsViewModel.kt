@@ -4,7 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
-import com.luminastreams.tv.data.local.WatchlistManager
+import com.luminastreams.tv.core.LuminaApp
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.domain.usecase.RealDebridManager
@@ -47,7 +47,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
 
     private val rdManager = RealDebridManager()
-    private val watchlistManager = WatchlistManager(appContext)
+
+    // OPTIMIZATION: Switched to the fast SQLite Room Repository
+    private val watchlistRepository = (appContext as LuminaApp).watchlistRepository
     private val progressManager  = WatchProgressManager(appContext)
 
     private val isHebrew: Boolean get() = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
@@ -138,7 +140,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 } ?: emptyList()
                 val directorName   = dto.credits?.crew?.find { it.job == "Director" }?.name ?: ""
                 val trailerUrl     = fetchRealTrailer(scrapeId, "movie")
-                val isSaved        = watchlistManager.isInWatchlist("movie_$id")
+
+                // OPTIMIZATION: Uses suspend function to query SQLite DB
+                val isSaved        = watchlistRepository.isInWatchlist("movie_$id")
+
                 val collectionId   = dto.belongsToCollection?.id
                 val collectionName = dto.belongsToCollection?.name
                 val collectionItems = if (collectionId != null) fetchCollectionViaHttp(collectionId) else emptyList()
@@ -184,7 +189,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 } ?: emptyList()
                 val creatorName      = dto.credits?.crew?.find { it.job == "Creator" || it.department == "Writing" }?.name ?: ""
                 val trailerUrl       = fetchRealTrailer(scrapeId, "series")
-                val isSaved          = watchlistManager.isInWatchlist("tv_$id")
+
+                // OPTIMIZATION: Uses suspend function to query SQLite DB
+                val isSaved          = watchlistRepository.isInWatchlist("tv_$id")
+
                 val primaryActorId   = dto.credits?.cast?.firstOrNull()?.id
                 val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
                 val starringItems    = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
@@ -244,7 +252,6 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             }
             _state.update { it.copy(isEpisodesLoading = false, episodes = episodes) }
 
-            // Store episode count so PlayerScreen can determine next-episode correctly
             appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
                 putInt("total_episodes_in_season", episodes.size)
                 putInt("total_seasons", _state.value.mediaInfo.totalSeasons)
@@ -314,7 +321,6 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             val queryId      = (if (season != null && episode != null) "$actualScrapeId:$season:$episode" else actualScrapeId).trim()
             val cacheKey     = queryId
 
-            // Update total_seasons for PlayerScreen so it can handle season rollover
             if (season != null && episode != null) {
                 appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
                     putInt("total_seasons", _state.value.mediaInfo.totalSeasons)
@@ -432,8 +438,12 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         val movie = Movie(id = info.id, title = info.title, posterUrl = info.posterUrl, backdropUrl = info.backdropUrl,
             rating = info.tmdbRating.toFloat(), mediaType = if (info.isSeries) "tv" else "movie",
             overview = info.overview, year = info.releaseDate.toIntOrNull() ?: 0, genre = info.genres.firstOrNull() ?: "")
-        val isNowAdded = watchlistManager.toggleWatchlist(movie)
-        _state.update { it.copy(mediaInfo = info.copy(isFavorite = isNowAdded)) }
+
+        // OPTIMIZATION: Push database writing to background thread
+        viewModelScope.launch(Dispatchers.IO) {
+            val isNowAdded = watchlistRepository.toggleWatchlist(movie)
+            _state.update { it.copy(mediaInfo = info.copy(isFavorite = isNowAdded)) }
+        }
     }
 
     private suspend fun fetchCollectionViaHttp(collectionId: Int): List<Recommendation> = withContext(Dispatchers.IO) {

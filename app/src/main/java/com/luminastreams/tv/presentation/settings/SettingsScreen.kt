@@ -6,8 +6,6 @@
 
 package com.luminastreams.tv.presentation.settings
 
-import androidx.compose.animation.*
-import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
@@ -15,6 +13,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ManageSearch
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -60,8 +59,7 @@ fun tr(en: String, he: String): String {
 fun SettingsScreen(
     state: SettingsState,
     viewModel: SettingsViewModel,
-    isRtl: Boolean,
-    onNavigateBack: () -> Unit,
+    onNavigateBack: () -> Unit
 ) {
     val backFR = remember { FocusRequester() }
     val isLowTier = DeviceProfile.tier == DeviceProfile.Tier.LOW
@@ -281,7 +279,7 @@ fun SettingsScreen(
                     ActionTile(
                         title = tr("Clear Search History", "מחק היסטוריית חיפוש"),
                         desc  = if (state.searchHistoryStatus == "Clear") tr("Remove saved searches", "מנקה חיפושים קודמים") else state.searchHistoryStatus,
-                        icon  = Icons.Default.ManageSearch,
+                        icon  = Icons.AutoMirrored.Filled.ManageSearch,
                         isLowTier = isLowTier
                     ) { if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory() }
                 }
