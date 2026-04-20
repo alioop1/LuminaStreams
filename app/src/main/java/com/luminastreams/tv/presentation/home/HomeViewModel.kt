@@ -15,6 +15,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,25 +30,15 @@ class HomeViewModel : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
+    private val _uiRows = MutableStateFlow<List<RowDef>>(emptyList())
+    val uiRows: StateFlow<List<RowDef>> = _uiRows.asStateFlow()
+
     private val pageMap = mutableMapOf<String, Int>()
     private val loadingSet: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
-
-    // OPTIMIZATION: Track the active job to allow instant cancellation on rapid navigation
     private var activeJob: Job? = null
+    private var currentIsRtl = false
 
     private val imgBase = "https://image.tmdb.org/t/p"
-
-    private val backdropSize: String get() = when (DeviceProfile.tier) {
-        DeviceProfile.Tier.HIGH -> "original"
-        DeviceProfile.Tier.MID  -> "original"
-        DeviceProfile.Tier.LOW  -> "original"
-    }
-
-    private val posterSize: String get() = when (DeviceProfile.tier) {
-        DeviceProfile.Tier.HIGH -> "original"
-        DeviceProfile.Tier.MID  -> "w780"
-        DeviceProfile.Tier.LOW  -> "w500"
-    }
 
     private val maxConnections = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 8
@@ -62,16 +53,142 @@ class HomeViewModel : ViewModel() {
         .protocols(listOf(okhttp3.Protocol.HTTP_2, okhttp3.Protocol.HTTP_1_1))
         .build()
 
-    init { loadAll() }
+    init {
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.collectLatest { currentState ->
+                recalculateRows(currentState)
+            }
+        }
+        loadAll()
+    }
 
     fun selectTab(tab: String) = _state.update { it.copy(selectedTab = tab) }
 
-    fun setStudioFilter(studio: String?) =
-        _state.update { it.copy(selectedStudioFilter = studio) }
+    fun setStudioFilter(studio: String?) = _state.update { it.copy(selectedStudioFilter = studio) }
+
+    fun setLanguage(isRtl: Boolean) {
+        if (currentIsRtl != isRtl) {
+            currentIsRtl = isRtl
+            _state.update { it.copy() }
+        }
+    }
 
     fun retry() {
-        if (_state.value.selectedTab == "Fuzer") loadFuzerContent()
-        else loadAll()
+        if (_state.value.selectedTab == "Fuzer") loadFuzerContent() else loadAll()
+    }
+
+    private fun mergeStudioContent(movies: List<Movie>, series: List<Movie>): List<Movie> {
+        return (movies + series).sortedByDescending { it.rating }.distinctBy { it.id }
+    }
+
+    private fun generateStudioRows(baseId: String, brand: StudioBrand, movies: List<Movie>, _tr: (String, String) -> String): List<RowDef> {
+        val list = mutableListOf<RowDef>()
+        val uniqueMovies = movies.distinctBy { it.id }
+        if (uniqueMovies.isEmpty()) return list
+
+        list.add(RowDef.Studio("${baseId}::new", brand, uniqueMovies))
+
+        val ani = uniqueMovies.filter {
+            it.genre.contains("Animation", ignoreCase = true) ||
+                    it.genre.contains("Kids", ignoreCase = true) ||
+                    it.genre.contains("Family", ignoreCase = true) ||
+                    it.genre.contains("אנימציה")
+        }
+        if (ani.isNotEmpty()) {
+            list.add(RowDef.Regular("${baseId}::ani", _tr("Animation", "אנימציה"), ani))
+        }
+
+        val top = uniqueMovies.filter { it.rating > 0f }.sortedByDescending { it.rating }
+        if (top.isNotEmpty()) {
+            list.add(RowDef.Regular("${baseId}::top", _tr("Best of All Time", "הכי טוב בכל הזמנים"), top))
+        }
+        return list
+    }
+
+    private suspend fun recalculateRows(currentState: HomeState) = withContext(Dispatchers.Default) {
+        val trFunc = { en: String, he: String -> if (currentIsRtl) he else en }
+        val filter = currentState.selectedStudioFilter
+
+        val homeHbo       = mergeStudioContent(currentState.movieHBO, currentState.tvHBO)
+        val homeNetflix   = mergeStudioContent(currentState.movieNetflix, currentState.tvNetflix)
+        val homeAmazon    = mergeStudioContent(currentState.movieAmazon, currentState.tvAmazon)
+        val homeAppleTv   = mergeStudioContent(currentState.movieAppleTV, currentState.tvAppleTV)
+        val homeDisney    = mergeStudioContent(currentState.movieDisney, currentState.tvDisney)
+        val homeParamount = mergeStudioContent(currentState.movieParamount, currentState.tvParamount)
+        val homeHulu      = mergeStudioContent(currentState.movieHulu, currentState.tvHulu)
+
+        val amazonMovies  = currentState.movieAmazon.ifEmpty { currentState.tvAmazon }
+        val amazonSeries  = currentState.tvAmazon.ifEmpty { currentState.movieAmazon }
+
+        val newRows = buildList {
+            when (currentState.selectedTab) {
+                "ראשי" -> {
+                    if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Movies", "סרטים פופולריים"), currentState.movieTrending.distinctBy { it.id }))
+                    if (homeHbo.isNotEmpty()) add(RowDef.Studio("homeHBO", StudioBrand.HBO, homeHbo))
+                    if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
+                    if (homeNetflix.isNotEmpty()) add(RowDef.Studio("homeNetflix", StudioBrand.NETFLIX, homeNetflix))
+                    if (homeAmazon.isNotEmpty()) add(RowDef.Studio("homeAmazon", StudioBrand.AMAZON, homeAmazon))
+                    if (homeAppleTv.isNotEmpty()) add(RowDef.Studio("homeAppleTv", StudioBrand.APPLE_TV, homeAppleTv))
+                    if (homeDisney.isNotEmpty()) add(RowDef.Studio("homeDisney", StudioBrand.DISNEY, homeDisney))
+                    if (homeParamount.isNotEmpty()) add(RowDef.Studio("homeParamount", StudioBrand.PARAMOUNT, homeParamount))
+                    if (homeHulu.isNotEmpty()) add(RowDef.Studio("homeHulu", StudioBrand.HULU, homeHulu))
+                    if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",trFunc("New in Theaters", "בקולנוע"), currentState.moviePremieres.distinctBy { it.id }))
+                }
+                "סרטים" -> {
+                    add(RowDef.StudioRibbon)
+                    if (filter != null) {
+                        val amzId = if (currentState.movieAmazon.isNotEmpty()) "movieAmazon" else "tvAmazon"
+                        when (filter) {
+                            "HBO"       -> addAll(generateStudioRows("movieHBO", StudioBrand.HBO, currentState.movieHBO, trFunc))
+                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonMovies, trFunc))
+                            "PARAMOUNT" -> addAll(generateStudioRows("movieParamount", StudioBrand.PARAMOUNT, currentState.movieParamount, trFunc))
+                            "HULU"      -> addAll(generateStudioRows("movieHulu", StudioBrand.HULU, currentState.movieHulu, trFunc))
+                            "NETFLIX"   -> addAll(generateStudioRows("movieNetflix", StudioBrand.NETFLIX, currentState.movieNetflix, trFunc))
+                            "APPLE_TV"  -> addAll(generateStudioRows("movieAppleTV", StudioBrand.APPLE_TV, currentState.movieAppleTV, trFunc))
+                            "DISNEY"    -> addAll(generateStudioRows("movieDisney", StudioBrand.DISNEY, currentState.movieDisney, trFunc))
+                        }
+                    } else {
+                        if (currentState.movieAction.isNotEmpty()) add(RowDef.Regular("movieAction", trFunc("Action & Adventure", "פעולה והרפתקאות"), currentState.movieAction.distinctBy { it.id }))
+                        if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Now", "פופולרי עכשיו"), currentState.movieTrending.distinctBy { it.id }))
+                        if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", trFunc("In Theaters", "בקולנוע"), currentState.moviePremieres.distinctBy { it.id }))
+                        if (currentState.movieAnimation.isNotEmpty()) add(RowDef.Regular("movieAnimation", trFunc("Animations", "אנימציה"), currentState.movieAnimation.distinctBy { it.id }))
+                    }
+                }
+                "סדרות" -> {
+                    add(RowDef.StudioRibbon)
+                    if (filter != null) {
+                        val amzId = if (currentState.tvAmazon.isNotEmpty()) "tvAmazon" else "movieAmazon"
+                        when (filter) {
+                            "HBO"       -> addAll(generateStudioRows("tvHBO", StudioBrand.HBO, currentState.tvHBO, trFunc))
+                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonSeries, trFunc))
+                            "PARAMOUNT" -> addAll(generateStudioRows("tvParamount", StudioBrand.PARAMOUNT, currentState.tvParamount, trFunc))
+                            "HULU"      -> addAll(generateStudioRows("tvHulu", StudioBrand.HULU, currentState.tvHulu, trFunc))
+                            "NETFLIX"   -> addAll(generateStudioRows("tvNetflix", StudioBrand.NETFLIX, currentState.tvNetflix, trFunc))
+                            "APPLE_TV"  -> addAll(generateStudioRows("tvAppleTV", StudioBrand.APPLE_TV, currentState.tvAppleTV, trFunc))
+                            "DISNEY"    -> addAll(generateStudioRows("tvDisney", StudioBrand.DISNEY, currentState.tvDisney, trFunc))
+                        }
+                    } else {
+                        if (currentState.tvDrama.isNotEmpty()) add(RowDef.Regular("tvDrama", trFunc("Drama", "דרמה"), currentState.tvDrama.distinctBy { it.id }))
+                        if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Trending Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
+                        if (currentState.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", trFunc("New Episodes", "פרקים חדשים"), currentState.tvPremieres.distinctBy { it.id }))
+                        if (currentState.tvAnimation.isNotEmpty()) add(RowDef.Regular("tvAnimation", trFunc("Animations", "אנימציה"), currentState.tvAnimation.distinctBy { it.id }))
+                    }
+                }
+                "Fuzer" -> {
+                    val newContent = (currentState.fuzerMovies + currentState.fuzerSeries).sortedByDescending { it.id }.distinctBy { it.id }
+                    if (newContent.isNotEmpty()) add(RowDef.Regular("fuzer_new", trFunc("🆕 New Content", "🆕 תוכן חדש"), newContent))
+                    if (currentState.fuzerMovies.isNotEmpty()) add(RowDef.Regular("fuzer_m", trFunc("🎬 Movies", "🎬 סרטים"), currentState.fuzerMovies.distinctBy { it.id }))
+                    if (currentState.fuzerMoviesHD.isNotEmpty()) add(RowDef.Regular("fuzer_mhd", trFunc("🎬 Movies HD", "🎬 סרטים HD"), currentState.fuzerMoviesHD.distinctBy { it.id }))
+                    if (currentState.fuzerMovies4K.isNotEmpty()) add(RowDef.Regular("fuzer_m4k", trFunc("✨ Movies 4K", "✨ סרטים 4K"), currentState.fuzerMovies4K.distinctBy { it.id }))
+                    if (currentState.fuzerDubbedMovies.isNotEmpty()) add(RowDef.Regular("fuzer_dm", trFunc("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), currentState.fuzerDubbedMovies.distinctBy { it.id }))
+                    if (currentState.fuzerSeries.isNotEmpty()) add(RowDef.Regular("fuzer_tv", trFunc("📺 TV Shows", "📺 סדרות"), currentState.fuzerSeries.distinctBy { it.id }))
+                    if (currentState.fuzerSeriesHD.isNotEmpty()) add(RowDef.Regular("fuzer_shd", trFunc("📺 TV Shows HD", "📺 סדרות HD"), currentState.fuzerSeriesHD.distinctBy { it.id }))
+                    if (currentState.fuzerSeries4K.isNotEmpty()) add(RowDef.Regular("fuzer_s4k", trFunc("✨ TV Shows 4K", "✨ סדרות 4K"), currentState.fuzerSeries4K.distinctBy { it.id }))
+                    if (currentState.fuzerDubbedSeries.isNotEmpty()) add(RowDef.Regular("fuzer_ds", trFunc("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), currentState.fuzerDubbedSeries.distinctBy { it.id }))
+                }
+            }
+        }
+        _uiRows.value = newRows
     }
 
     fun loadMore(id: String) {
@@ -163,7 +280,6 @@ class HomeViewModel : ViewModel() {
     }
 
     fun loadFuzerContent() {
-        // OPTIMIZATION: Instantly cancel previous job before starting a new one
         activeJob?.cancel()
         activeJob = viewModelScope.launch(Dispatchers.IO) {
             if (_state.value.fuzerMovies.isEmpty() && _state.value.fuzerSeries.isEmpty()) {
@@ -171,7 +287,6 @@ class HomeViewModel : ViewModel() {
             }
 
             try {
-                // OPTIMIZATION: Batching the Fuzer state updates to prevent UI stutter
                 val moviesR = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
                 val seriesR = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
 
@@ -220,7 +335,6 @@ class HomeViewModel : ViewModel() {
     }
 
     private fun loadAll() {
-        // OPTIMIZATION: Instantly cancel previous job
         activeJob?.cancel()
         activeJob = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoading = true, error = null) }
@@ -246,7 +360,7 @@ class HomeViewModel : ViewModel() {
                 if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
                     loadWave2Batched(k, region, batchSize = 3, delayMs = 150)
                 } else {
-                    loadWave2Batched(k, region, batchSize = 6, delayMs = 50) // Use batched for all to prevent CPU spikes
+                    loadWave2Batched(k, region, batchSize = 6, delayMs = 50)
                 }
 
             } catch (e: Exception) {
@@ -255,8 +369,6 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    // OPTIMIZATION: State Emission Throttling
-    // Instead of updating the state 12 times individually, we await the chunk and apply ONE state update per batch.
     private suspend fun loadWave2Batched(k: String, region: String, batchSize: Int, delayMs: Long) {
         val requests: List<Pair<String, (HomeState, List<Movie>) -> HomeState>> = listOf(
             Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc") { s, v -> s.copy(movieAction = v) },
@@ -293,7 +405,6 @@ class HomeViewModel : ViewModel() {
                 }.awaitAll()
             }
 
-            // Single state emission per batch! UI thread stays smooth.
             _state.update { currentState ->
                 var nextState = currentState
                 results.forEach { (updater, data) ->
@@ -302,17 +413,16 @@ class HomeViewModel : ViewModel() {
                 nextState
             }
 
-            delay(delayMs) // Small yield to UI thread
+            delay(delayMs)
         }
     }
 
     private suspend fun fetch(url: String, mediaType: String): List<Movie> =
         withContext(Dispatchers.IO) {
             try {
-                val body = http.newCall(Request.Builder().url(url).build())
-                    .execute().use { it.body?.string() } ?: return@withContext emptyList()
-                val arr = JSONObject(body).optJSONArray("results")
-                    ?: return@withContext emptyList()
+                // FIX: OkHttp 5.x Response Body uses a clean, non-null syntax
+                val bodyStr = http.newCall(Request.Builder().url(url).build()).execute().use { it.body.string() }
+                val arr = JSONObject(bodyStr).optJSONArray("results") ?: return@withContext emptyList()
 
                 val out = mutableListOf<Movie>()
                 for (i in 0 until arr.length()) {
@@ -334,8 +444,8 @@ class HomeViewModel : ViewModel() {
                     out += Movie(
                         id              = "${mt}_${j.optInt("id")}",
                         title           = title,
-                        posterUrl       = "$imgBase/$posterSize$posterPath",
-                        backdropUrl     = "$imgBase/$backdropSize$backdropRaw",
+                        posterUrl       = "$imgBase/original$posterPath",
+                        backdropUrl     = "$imgBase/original$backdropRaw",
                         overview        = j.optString("overview"),
                         year            = date.take(4).toIntOrNull() ?: 0,
                         genre           = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),

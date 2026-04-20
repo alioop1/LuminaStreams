@@ -35,6 +35,7 @@ import coil.request.ImageRequest
 import com.luminastreams.tv.R
 import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
+import androidx.compose.foundation.BorderStroke
 
 // OPTIMIZATION: Float-Precision Recomposition Blocking
 private fun quantizeProgress(progress: Float): Float {
@@ -44,7 +45,15 @@ private fun quantizeProgress(progress: Float): Float {
 
 @Composable
 fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
-    Text(title, color = WHITE.copy(alpha = if (isActive) 1f else 0.38f), fontSize = 14.sp, fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal, letterSpacing = 0.3.sp, modifier = modifier)
+    Text(
+        text = title,
+        color = WHITE.copy(alpha = if (isActive) 1f else 0.38f),
+        fontSize = 14.sp,
+        // OPTIMIZATION: Static font weight skips layout measure pass
+        fontWeight = FontWeight.Bold,
+        letterSpacing = 0.3.sp,
+        modifier = modifier
+    )
 }
 
 @Composable
@@ -63,11 +72,8 @@ fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false)
 @Composable
 fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
-
-    // FIX: Using InteractionSource officially fixes the "Unused Variable" Android Studio warning
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
 
     val imageRequest = remember(url) {
@@ -88,24 +94,24 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
         label = "scale"
     )
 
-    Column(modifier = modifier
-        .width(LAND_W)
-        .graphicsLayer {
-            scaleX = animatedScale
-            scaleY = animatedScale
-        }
-    ) {
+    Column(modifier = modifier.width(LAND_W)) {
         Surface(
             onClick = onClick,
             interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxWidth().height(LAND_H).onFocusChanged {
-                if (it.isFocused) onFocused()
-            }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(LAND_H)
+                // FIX: GPU-Offloaded Scaling directly on the Surface
+                .graphicsLayer {
+                    scaleX = animatedScale
+                    scaleY = animatedScale
+                }
+                .onFocusChanged { if (it.isFocused) onFocused() }
         ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(8.dp)) }
@@ -121,6 +127,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                     text = movie.title,
                     color = WHITE,
                     fontSize = 13.sp,
+                    // OPTIMIZATION: Static font weight skips Measure Pass
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -149,11 +156,8 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
 @Composable
 fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, cardH: Dp = PORT_H, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
-
-    // FIX: Using InteractionSource officially fixes the "Unused Variable" Android Studio warning
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
-
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
 
     val imageRequest = remember(url) {
@@ -176,6 +180,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
 
     Column(modifier = modifier
         .width(cardW)
+        // FIX: GPU-Offloaded Scaling. Bypasses CPU measure pass.
         .graphicsLayer {
             scaleX = animatedScale
             scaleY = animatedScale
@@ -187,12 +192,10 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged {
-                if (it.isFocused) onFocused()
-            }
+            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { if (it.isFocused) onFocused() }
         ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp)) }
@@ -224,11 +227,50 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             text = movie.title,
             color = if (isFocused) WHITE else DIM2,
             fontSize = 11.sp,
+            // OPTIMIZATION: Static font weight skips Measure Pass
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.width(cardW)
         )
         Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM3, fontSize = 10.sp)
+    }
+}
+
+// FIX: Added onFocused callback to fix the Studio row navigation bug
+@Composable
+fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
+
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if (isSelected) WHITE.copy(0.15f) else CARD_BG,
+            focusedContainerColor = WHITE
+        ),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(12.dp)),
+            focusedBorder = Border(border = BorderStroke(2.5.dp, WHITE), shape = RoundedCornerShape(12.dp))
+        ),
+        modifier = modifier
+            .width(130.dp)
+            .height(65.dp)
+            .graphicsLayer {
+                scaleX = animatedScale
+                scaleY = animatedScale
+            }
+            .onFocusChanged { if (it.isFocused) onFocused() }
+    ) {
+        Box(Modifier.fillMaxSize(), Alignment.Center) { StudioBadge(brand = brand, isActive = true, isLarge = true) }
     }
 }

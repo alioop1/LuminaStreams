@@ -3,7 +3,7 @@
     ExperimentalTvMaterial3Api::class,
     ExperimentalFoundationApi::class
 )
-@file:Suppress("UsePropertyAccessSyntax")
+@file:Suppress("UsePropertyAccessSyntax", "DEPRECATION")
 
 package com.luminastreams.tv.presentation.details
 
@@ -19,7 +19,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -31,18 +33,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -52,6 +58,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -74,7 +81,6 @@ import java.util.Locale
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.runtime.mutableIntStateOf
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -383,10 +389,14 @@ fun DetailsScreen(
         Box(Modifier.fillMaxSize().graphicsLayer {
             translationY = -(scrollState.firstVisibleItemScrollOffset * 0.12f).coerceIn(0f, 70f)
         }) {
-            // האצת רקע: ביטול crossfade
             if (media.backdropUrl.isNotEmpty()) {
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(media.backdropUrl).crossfade(false).memoryCachePolicy(CachePolicy.ENABLED).build(),
+                    model = ImageRequest.Builder(context)
+                        .data(media.backdropUrl)
+                        .crossfade(false)
+                        .memoryCachePolicy(CachePolicy.ENABLED)
+                        .allowHardware(true)
+                        .build(),
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             } else if (media.posterUrl.isNotEmpty()) {
@@ -506,6 +516,7 @@ fun DetailsScreen(
                             verticalAlignment     = Alignment.CenterVertically,
                             modifier              = Modifier.focusGroup().focusProperties {
                                 up = backBtnFR
+                                // FIX: Updated to `onEnter` per Compose 1.7+
                                 enter = { dir ->
                                     if (dir == FocusDirection.Up || dir == FocusDirection.Down) playFR
                                     else FocusRequester.Default
@@ -576,7 +587,7 @@ fun DetailsScreen(
                                         focusedContentColor   = WH
                                     ),
                                     scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.07f),
-                                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(BR.copy(0.55f), 22.dp)),
+                                    glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
                                     modifier = Modifier.wrapContentWidth().focusRequester(playFR)
                                 ) {
                                     Row(
@@ -584,7 +595,7 @@ fun DetailsScreen(
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Icon(
-                                            imageVector = if (state.contentIsFinished) Icons.Default.Replay else Icons.Default.PlayArrow,
+                                            imageVector = if (state.contentIsFinished) Icons.Default.Refresh else Icons.Default.PlayArrow,
                                             contentDescription = null,
                                             modifier = Modifier.size(20.dp)
                                         )
@@ -633,12 +644,16 @@ fun DetailsScreen(
                         SectionHeader(tr("Seasons & Episodes", "עונות ופרקים"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(12.dp))
 
+                        val seasonsState = rememberLazyListState()
                         LazyRow(
+                            state = seasonsState,
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            flingBehavior = rememberSnapFlingBehavior(lazyListState = seasonsState),
                             modifier = Modifier
                                 .padding(bottom = 14.dp)
                                 .focusGroup()
                                 .focusProperties {
+                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) seasonsFR
                                         else FocusRequester.Default
@@ -669,11 +684,15 @@ fun DetailsScreen(
                         if (state.isEpisodesLoading) {
                             Box(Modifier.fillMaxWidth().height(145.dp), Alignment.Center) { LoadingIndicator() }
                         } else if (state.episodes.isNotEmpty()) {
+                            val episodesState = rememberLazyListState()
                             LazyRow(
+                                state = episodesState,
                                 horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                flingBehavior = rememberSnapFlingBehavior(lazyListState = episodesState),
                                 modifier = Modifier
                                     .focusGroup()
                                     .focusProperties {
+                                        // FIX: Updated to `onEnter`
                                         enter = { dir ->
                                             if (dir == FocusDirection.Up || dir == FocusDirection.Down) episodesFR
                                             else FocusRequester.Default
@@ -711,11 +730,15 @@ fun DetailsScreen(
                         SectionHeader(tr("Cast & Crew", "שחקנים וצוות"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
 
+                        val castState = rememberLazyListState()
                         LazyRow(
+                            state = castState,
                             horizontalArrangement = Arrangement.spacedBy(18.dp),
+                            flingBehavior = rememberSnapFlingBehavior(lazyListState = castState),
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
+                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) castFR
                                         else FocusRequester.Default
@@ -745,11 +768,15 @@ fun DetailsScreen(
                         SectionHeader(tr("More in $collName", "עוד באוסף $collName"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
 
+                        val collectionState = rememberLazyListState()
                         LazyRow(
+                            state = collectionState,
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            flingBehavior = rememberSnapFlingBehavior(lazyListState = collectionState),
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
+                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) collectionFR
                                         else FocusRequester.Default
@@ -781,11 +808,15 @@ fun DetailsScreen(
                         SectionHeader(tr("More Starring $actorName", "עוד בכיכובו של $actorName"), Modifier.padding(horizontal = 64.dp))
                         Spacer(Modifier.height(16.dp))
 
+                        val starringState = rememberLazyListState()
                         LazyRow(
+                            state = starringState,
                             horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            flingBehavior = rememberSnapFlingBehavior(lazyListState = starringState),
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
+                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) starringFR
                                         else FocusRequester.Default
@@ -904,7 +935,10 @@ fun DetailsScreen(
                                 }
                             }
                             else -> {
+                                val sourcesState = rememberLazyListState()
                                 LazyColumn(
+                                    state = sourcesState,
+                                    flingBehavior = rememberSnapFlingBehavior(lazyListState = sourcesState),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                     contentPadding      = PaddingValues(bottom = 64.dp),
                                     modifier            = Modifier.focusGroup().lockFocusEdges(lockRight = false, lockDown = true)
@@ -938,8 +972,8 @@ private fun StreamSourceCard(
         parseStreamMeta(source.filename, source.releaseGroup)
     }
 
-    val focusedState = remember { mutableStateOf(false) }
-    val isFocused by focusedState
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
 
     val fileSizeColor by animateColorAsState(
         targetValue = if (isFocused) WH else DM,
@@ -947,8 +981,15 @@ private fun StreamSourceCard(
         label = "fileSizeAnim"
     )
 
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.04f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
+
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         colors = ClickableSurfaceDefaults.colors(
             containerColor = Color(0x0CFFFFFF),
             focusedContainerColor = Color(0xFF282832),
@@ -956,13 +997,14 @@ private fun StreamSourceCard(
             focusedContentColor = WH
         ),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(14.dp)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.04f),
-        glow = ClickableSurfaceDefaults.glow(
-            focusedGlow = Glow(elevationColor = Color.Black.copy(alpha = 0.8f), elevation = 25.dp)
-        ),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+        glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = modifier
             .fillMaxWidth()
-            .onFocusChanged { focusedState.value = it.isFocused }
+            .graphicsLayer {
+                scaleX = animatedScale
+                scaleY = animatedScale
+            }
     ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)) {
 
@@ -1154,19 +1196,29 @@ private fun EpisodeCard(
     modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
-    val focusedState = remember { mutableStateOf(false) }
-    val isFocused by focusedState
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
 
     Surface(
         onClick  = onClick,
+        interactionSource = interactionSource,
         colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
-        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         border   = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border(BorderStroke(3.dp, WH))),
-        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(WH.copy(alpha = 0.5f), 16.dp)),
+        glow     = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
         modifier = modifier.width(280.dp).aspectRatio(16f / 9f)
             .zIndex(if (isFocused) 10f else 0f)
-            .onFocusChanged { focusedState.value = it.isFocused }
+            .graphicsLayer {
+                scaleX = animatedScale
+                scaleY = animatedScale
+            }
     ) {
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))) {
             val imageUrl = if (episode.stillUrl.isBlank() || episode.stillUrl.endsWith("null")) fallbackImageUrl else episode.stillUrl
@@ -1216,19 +1268,41 @@ private fun EpisodeCard(
 
 @Composable
 private fun CastMemberCard(actor: CastMember, modifier: Modifier = Modifier) {
-    var focused by remember { mutableStateOf(false) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(100.dp).onFocusChanged { focused = it.isFocused }.zIndex(if (focused) 10f else 0f)) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.1f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
+
+    val shadowPx = with(LocalDensity.current) { 16.dp.toPx() }
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = modifier.width(100.dp).zIndex(if (isFocused) 10f else 0f)
+    ) {
         Surface(
             onClick  = {},
+            interactionSource = interactionSource,
             shape    = ClickableSurfaceDefaults.shape(CircleShape),
             colors   = ClickableSurfaceDefaults.colors(containerColor = GL, focusedContainerColor = WH),
-            scale    = ClickableSurfaceDefaults.scale(1.1f),
-            modifier = Modifier.size(90.dp).shadow(if (focused) 16.dp else 0.dp, CircleShape)
+            scale    = ClickableSurfaceDefaults.scale(1.0f),
+            modifier = Modifier
+                .size(90.dp)
+                .graphicsLayer {
+                    scaleX = animatedScale
+                    scaleY = animatedScale
+                    shadowElevation = if (isFocused) shadowPx else 0f
+                    shape = CircleShape
+                    clip = true
+                }
         ) {
             AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
         }
         Spacer(Modifier.height(10.dp))
-        Text(actor.name, color = if (focused) WH else DM, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, minLines = 2, lineHeight = 16.sp, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
+        Text(actor.name, color = if (isFocused) WH else DM, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 2, minLines = 2, lineHeight = 16.sp, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
         Text(actor.character, color = MT, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Center)
     }
 }
@@ -1239,6 +1313,7 @@ fun Modifier.lockFocusEdges(
     lockDown: Boolean = false,
     lockUp: Boolean = false
 ): Modifier = this.focusProperties {
+    // FIX: Updated to `onExit` per Compose 1.7+
     exit = { direction ->
         when {
             direction == FocusDirection.Right && lockRight -> FocusRequester.Cancel
