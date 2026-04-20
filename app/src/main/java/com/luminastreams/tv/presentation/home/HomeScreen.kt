@@ -175,7 +175,6 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val firstContentIndex = remember(rows) { rows.indexOfFirst { it !is RowDef.StudioRibbon } }
     fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) { is RowDef.StudioRibbon -> 110.dp; else -> if (i == firstContentIndex) ROW_LANDSCAPE_H else ROW_PORTRAIT_H }
 
-    // FIX: Freeze the LazyColumn to the absolute maximum height. Zero layout recalculations!
     val maxPanelH = remember(rows) {
         var max = 0.dp
         for (i in rows.indices) {
@@ -185,7 +184,6 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         if (max == 0.dp) 300.dp else max
     }
 
-    // FIX: Separate padding animation strictly for the Hero overlay
     val targetHeroBottom = remember(rows, focusState.currentRowIndex) {
         val h = rowHeightFor(focusState.currentRowIndex.coerceIn(0, maxOf(0, rows.size - 1)))
         if (rows.getOrNull(focusState.currentRowIndex) is RowDef.StudioRibbon) 126.dp + 20.dp else h + 20.dp
@@ -195,7 +193,12 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     LaunchedEffect(rows, focusState.isNavFocused) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
-            delay(heroUpdateDelayMs)
+
+            // FIX: Dynamic Debounce based on device tier!
+            // Stops weak TVs from constantly downloading 1280x720 backdrops while rapidly scrolling.
+            val debounceDelay = if (isLow) 800L else heroUpdateDelayMs
+            delay(debounceDelay)
+
             val m = rows.getOrNull(ri)?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; is RowDef.StudioRibbon -> emptyList() } }?.firstOrNull()
             if (m != null && m.id != focusState.heroMovie?.id) focusState.heroMovie = m
         }

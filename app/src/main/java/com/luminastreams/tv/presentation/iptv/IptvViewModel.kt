@@ -55,7 +55,6 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
 
     private val _isLoading = MutableStateFlow(false)
 
-    // מניעת אזהרת Unused
     @Suppress("unused")
     val isLoading = _isLoading.asStateFlow()
 
@@ -75,6 +74,13 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
                         e.printStackTrace()
                     }
                 }
+            }
+        }
+
+        // FIX: Listen for playlists sent from the phone web server
+        viewModelScope.launch {
+            LocalWebServer.playlistFlow.collect { playlist ->
+                addManualPlaylist(playlist.name, playlist.url, playlist.epgUrl)
             }
         }
     }
@@ -114,10 +120,19 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
         val ip = getLocalIpAddress()
         _ipAddress.value = if (ip == "ERROR") "Network Error: Connect to Wi-Fi/LAN" else "http://$ip:8080"
         _showQrScreen.value = true
+
+        // FIX: Actually start the server so the phone can connect to it!
+        if (ip != "ERROR") {
+            viewModelScope.launch {
+                LocalWebServer.start(8080)
+            }
+        }
     }
 
     fun closeQrSetup() {
         _showQrScreen.value = false
+        // FIX: Stop the server when exiting the menu to free up the port
+        LocalWebServer.stop()
     }
 
     fun addManualPlaylist(name: String, url: String, epgUrl: String) {

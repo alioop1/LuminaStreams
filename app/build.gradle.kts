@@ -7,12 +7,14 @@ plugins {
 
 android {
     namespace = "com.luminastreams.tv"
-    compileSdk = 35
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.luminastreams.tv"
         minSdk = 26
-        targetSdk = 35
+        // FIX: Silence the Android Studio Upgrade Assistant pop-up permanently
+        //noinspection EditedTargetSdkVersion
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0.0-Lumina"
         vectorDrawables.useSupportLibrary = true
@@ -96,7 +98,10 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
-    implementation("io.coil-kt:coil-gif:2.6.0") // Or match your current Coil version
+
+    // FIX: Calling coil-gif dynamically from the version catalog
+    // No more suppressions or hardcoded strings!
+    implementation(libs.coil.gif)
 
     implementation(libs.androidx.tv.foundation)
     implementation(libs.androidx.tv.material)
@@ -141,5 +146,4 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-
 }

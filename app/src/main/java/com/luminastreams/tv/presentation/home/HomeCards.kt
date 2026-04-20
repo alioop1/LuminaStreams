@@ -1,10 +1,14 @@
 @file:OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class, ExperimentalFoundationApi::class)
 package com.luminastreams.tv.presentation.home
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
@@ -12,6 +16,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -28,7 +33,6 @@ import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
-
 import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
 
@@ -59,6 +63,11 @@ fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false)
 @Composable
 fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
+
+    // FIX: Using InteractionSource officially fixes the "Unused Variable" Android Studio warning
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
     val url = movie.backdropUrl.ifBlank { movie.posterUrl }
 
     val imageRequest = remember(url) {
@@ -68,20 +77,35 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             .size(600)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(true) // FIX: ALWAYS ENABLE HARDWARE BITMAPS
+            .allowHardware(true)
             .crossfade(false)
             .build()
     }
 
-    Column(modifier = modifier.width(LAND_W)) {
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
+
+    Column(modifier = modifier
+        .width(LAND_W)
+        .graphicsLayer {
+            scaleX = animatedScale
+            scaleY = animatedScale
+        }
+    ) {
         Surface(
             onClick = onClick,
+            interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxWidth().height(LAND_H).onFocusChanged { if (it.isFocused) onFocused() }
+            modifier = Modifier.fillMaxWidth().height(LAND_H).onFocusChanged {
+                if (it.isFocused) onFocused()
+            }
         ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(8.dp)) }
@@ -93,7 +117,14 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                 }
             }
             Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
-                Text(movie.title, color = WHITE, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    text = movie.title,
+                    color = WHITE,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
                 Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
             }
             if (movie.rating > 0f) {
@@ -118,7 +149,11 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
 @Composable
 fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, cardH: Dp = PORT_H, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val ctx = LocalContext.current
-    var isFocused by remember { mutableStateOf(false) }
+
+    // FIX: Using InteractionSource officially fixes the "Unused Variable" Android Studio warning
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
     val url = movie.posterUrl.ifBlank { movie.backdropUrl }
 
     val imageRequest = remember(url) {
@@ -128,20 +163,36 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             .size(400)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(true) // FIX: ALWAYS ENABLE HARDWARE BITMAPS
+            .allowHardware(true)
             .crossfade(false)
             .build()
     }
 
-    Column(modifier = modifier.width(cardW), horizontalAlignment = Alignment.Start) {
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1.0f,
+        animationSpec = tween(150),
+        label = "scale"
+    )
+
+    Column(modifier = modifier
+        .width(cardW)
+        .graphicsLayer {
+            scaleX = animatedScale
+            scaleY = animatedScale
+        },
+        horizontalAlignment = Alignment.Start
+    ) {
         Surface(
             onClick = onClick,
+            interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocused() }
+            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged {
+                if (it.isFocused) onFocused()
+            }
         ) {
             if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
             else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp)) }
@@ -169,7 +220,15 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             }
         }
         Spacer(Modifier.height(6.dp))
-        Text(movie.title, color = if (isFocused) WHITE else DIM2, fontSize = 11.sp, fontWeight = if (isFocused) FontWeight.SemiBold else FontWeight.Normal, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.width(cardW))
+        Text(
+            text = movie.title,
+            color = if (isFocused) WHITE else DIM2,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.width(cardW)
+        )
         Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM3, fontSize = 10.sp)
     }
 }

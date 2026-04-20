@@ -55,6 +55,8 @@ import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.foundation.Image
 
 @OptIn(ExperimentalTvMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
@@ -367,8 +369,18 @@ fun CrispTextField(value: String, label: String, onValueChange: (String) -> Unit
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun IptvSetupOverlay(ipAddress: String, onClose: () -> Unit, onManualSubmit: (String, String, String) -> Unit) {
-    var name by remember { mutableStateOf("") }; var url by remember { mutableStateOf("") }; var epg by remember { mutableStateOf("") }
+    var name by remember { mutableStateOf("") }
+    var url by remember { mutableStateOf("") }
+    var epg by remember { mutableStateOf("") }
     val isError = ipAddress.contains("ERROR", ignoreCase = true)
+
+    // FIX: Removed the redundant com.luminastreams qualifier name
+    val qrBitmap = remember(ipAddress) {
+        if (!isError) {
+            QrCodeGenerator.generate(ipAddress, 512).asImageBitmap()
+        } else null
+    }
+
     Box(modifier = Modifier.fillMaxSize().background(Color(0xD9000000)).onPreviewKeyEvent { event -> if (event.type == KeyEventType.KeyDown && (event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK || event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE)) { onClose(); true } else false }, contentAlignment = Alignment.Center) {
         Row(modifier = Modifier.width(880.dp).height(460.dp).background(Color(0xFF1C1C1E), RoundedCornerShape(32.dp)).border(1.dp, Color.White.copy(alpha = 0.1f), RoundedCornerShape(32.dp)).padding(32.dp)) {
             Column(modifier = Modifier.weight(1.2f).fillMaxHeight().padding(end = 32.dp), verticalArrangement = Arrangement.Center) {
@@ -378,13 +390,22 @@ fun IptvSetupOverlay(ipAddress: String, onClose: () -> Unit, onManualSubmit: (St
             }
             Box(modifier = Modifier.fillMaxHeight().width(1.dp).background(Color.White.copy(alpha = 0.1f)))
             Column(modifier = Modifier.weight(0.8f).fillMaxHeight().padding(start = 32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Quick Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text("Use your phone to upload links.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, textAlign = TextAlign.Center); Spacer(modifier = Modifier.height(32.dp))
-                Box(modifier = Modifier.size(180.dp).background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(24.dp)).border(2.dp, if (isError) Color(0xFFFF453A) else Color(0xFF32D74B), RoundedCornerShape(24.dp)), contentAlignment = Alignment.Center) {
-                    if (isError) { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Tv, contentDescription = "Error", tint = Color(0xFFFF453A), modifier = Modifier.size(48.dp)); Spacer(modifier = Modifier.height(8.dp)); Text("No Network", color = Color(0xFFFF453A), fontWeight = FontWeight.SemiBold, fontSize = 14.sp) } }
-                    else { Column(horizontalAlignment = Alignment.CenterHorizontally) { Icon(Icons.Default.Tv, contentDescription = "Ready", tint = Color(0xFF32D74B), modifier = Modifier.size(48.dp)); Spacer(modifier = Modifier.height(16.dp)); Text("Ready to Pair", color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 14.sp) } }
+                Text("Quick Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text("Scan the QR code with your phone.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, textAlign = TextAlign.Center); Spacer(modifier = Modifier.height(32.dp))
+
+                Box(modifier = Modifier.size(180.dp).background(Color.White, RoundedCornerShape(12.dp)).border(2.dp, if (isError) Color(0xFFFF453A) else Color(0xFF32D74B), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
+                    if (isError) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(Icons.Default.Tv, contentDescription = "Error", tint = Color(0xFFFF453A), modifier = Modifier.size(48.dp))
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text("No Network", color = Color(0xFFFF453A), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                        }
+                    } else if (qrBitmap != null) {
+                        Image(bitmap = qrBitmap, contentDescription = "QR Code", modifier = Modifier.padding(8.dp).fillMaxSize())
+                    }
                 }
+
                 Spacer(modifier = Modifier.height(24.dp))
-                if (!isError) { Text("Open this address on your phone:", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp); Spacer(modifier = Modifier.height(4.dp)); Text(text = ipAddress, color = Color(0xFF32D74B), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                if (!isError) { Text("Or open this address on your phone:", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp); Spacer(modifier = Modifier.height(4.dp)); Text(text = ipAddress, color = Color(0xFF32D74B), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
                 else { Text("Please connect TV to Wi-Fi", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp) }
             }
         }
