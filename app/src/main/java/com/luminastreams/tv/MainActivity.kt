@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle // OPTIMIZATION: Added for CPU Zeroing
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -69,6 +70,7 @@ import java.net.URLEncoder
 import com.luminastreams.tv.core.DeviceProfile
 import androidx.compose.animation.EnterTransition
 import com.luminastreams.tv.presentation.player.IptvPlayerScreen
+
 /**
  * Fixed density target for the entire app.
  *
@@ -291,7 +293,8 @@ fun AppNavHostContainer(
 
         composable("home") {
             HomeScreen(
-                state         = homeViewModel.state.collectAsState().value,
+                // OPTIMIZATION: CPU Zeroing when navigating away
+                state         = homeViewModel.state.collectAsStateWithLifecycle().value,
                 viewModel     = homeViewModel,
                 navController = navController,
                 onMovieClick  = { id ->
@@ -322,7 +325,8 @@ fun AppNavHostContainer(
             }
 
             DetailsScreen(
-                state           = detailsViewModel.state.collectAsState().value,
+                // OPTIMIZATION: CPU Zeroing when navigating away
+                state           = detailsViewModel.state.collectAsStateWithLifecycle().value,
                 onEvent         = detailsViewModel::onEvent,
                 onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
                     val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
@@ -375,7 +379,8 @@ fun AppNavHostContainer(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
             SearchScreen(
-                state          = vm.state.collectAsState().value,
+                // OPTIMIZATION: CPU Zeroing when navigating away
+                state          = vm.state.collectAsStateWithLifecycle().value,
                 onIntent       = vm::onIntent,
                 onNavigateBack = { navController.popBackStack() },
                 onResultClick  = { result ->
@@ -389,7 +394,8 @@ fun AppNavHostContainer(
             val vm: SettingsViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
-            val state = vm.state.collectAsState().value
+            // OPTIMIZATION: CPU Zeroing when navigating away
+            val state = vm.state.collectAsStateWithLifecycle().value
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 SettingsScreen(
                     state          = state,
@@ -433,8 +439,8 @@ fun AppNavHostContainer(
                 }
             )
 
-            // איתור הכתובת של הערוץ שנבחר
-            val channels by vm.channels.collectAsState()
+            // OPTIMIZATION: CPU Zeroing when navigating away
+            val channels by vm.channels.collectAsStateWithLifecycle()
 
             Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
                 IptvScreen(

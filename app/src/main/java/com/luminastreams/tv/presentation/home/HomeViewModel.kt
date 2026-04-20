@@ -7,7 +7,9 @@ import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,8 +29,11 @@ class HomeViewModel : ViewModel() {
     private val _state = MutableStateFlow(HomeState())
     val state: StateFlow<HomeState> = _state.asStateFlow()
 
-    private val pageMap    = mutableMapOf<String, Int>()
+    private val pageMap = mutableMapOf<String, Int>()
     private val loadingSet: MutableSet<String> = Collections.synchronizedSet(mutableSetOf())
+
+    // OPTIMIZATION: Track the active job to allow instant cancellation on rapid navigation
+    private var activeJob: Job? = null
 
     private val imgBase = "https://image.tmdb.org/t/p"
 
@@ -158,46 +163,56 @@ class HomeViewModel : ViewModel() {
     }
 
     fun loadFuzerContent() {
-        viewModelScope.launch(Dispatchers.IO) {
+        // OPTIMIZATION: Instantly cancel previous job before starting a new one
+        activeJob?.cancel()
+        activeJob = viewModelScope.launch(Dispatchers.IO) {
             if (_state.value.fuzerMovies.isEmpty() && _state.value.fuzerSeries.isEmpty()) {
                 _state.update { it.copy(fuzerIsLoading = true, fuzerError = null) }
             }
 
             try {
-                coroutineScope {
-                    val moviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
-                    val seriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
-                    val moviesR = moviesDef.await()
-                    val seriesR = seriesDef.await()
-                    _state.update { s -> s.copy(
-                        fuzerIsLoading = false,
-                        fuzerItems     = moviesR + seriesR,
-                        fuzerMovies    = moviesR,
-                        fuzerSeries    = seriesR
-                    )}
-                }
-                delay(400)
-                coroutineScope {
-                    val moviesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() } }
-                    val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
-                    val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
-                    val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
-                    _state.update { s -> s.copy(
-                        fuzerMoviesHD = moviesHdDef.await(),
-                        fuzerSeriesHD = seriesHdDef.await(),
-                        fuzerMovies4K = movies4kDef.await(),
-                        fuzerSeries4K = series4kDef.await()
-                    )}
-                }
-                delay(400)
-                coroutineScope {
-                    val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
-                    val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
-                    _state.update { s -> s.copy(
-                        fuzerDubbedMovies = dubbedMoviesDef.await(),
-                        fuzerDubbedSeries = dubbedSeriesDef.await()
-                    )}
-                }
+                // OPTIMIZATION: Batching the Fuzer state updates to prevent UI stutter
+                val moviesR = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
+                val seriesR = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
+
+                val mRes = moviesR.await()
+                val sRes = seriesR.await()
+
+                _state.update { s -> s.copy(
+                    fuzerIsLoading = false,
+                    fuzerItems     = mRes + sRes,
+                    fuzerMovies    = mRes,
+                    fuzerSeries    = sRes
+                )}
+
+                val moviesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() } }
+                val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
+                val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
+                val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
+
+                val mHd = moviesHdDef.await()
+                val sHd = seriesHdDef.await()
+                val m4k = movies4kDef.await()
+                val s4k = series4kDef.await()
+
+                _state.update { s -> s.copy(
+                    fuzerMoviesHD = mHd,
+                    fuzerSeriesHD = sHd,
+                    fuzerMovies4K = m4k,
+                    fuzerSeries4K = s4k
+                )}
+
+                val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
+                val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
+
+                val dmRes = dubbedMoviesDef.await()
+                val dsRes = dubbedSeriesDef.await()
+
+                _state.update { s -> s.copy(
+                    fuzerDubbedMovies = dmRes,
+                    fuzerDubbedSeries = dsRes
+                )}
+
             } catch (e: Exception) {
                 _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }
             }
@@ -205,7 +220,9 @@ class HomeViewModel : ViewModel() {
     }
 
     private fun loadAll() {
-        viewModelScope.launch(Dispatchers.IO) {
+        // OPTIMIZATION: Instantly cancel previous job
+        activeJob?.cancel()
+        activeJob = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isLoading = true, error = null) }
             try {
                 val k      = Constants.TMDB_API_KEY
@@ -227,9 +244,9 @@ class HomeViewModel : ViewModel() {
                 }
 
                 if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
-                    loadWave2Batched(k, region, batchSize = 3, delayMs = 250)
+                    loadWave2Batched(k, region, batchSize = 3, delayMs = 150)
                 } else {
-                    loadWave2Parallel(k, region)
+                    loadWave2Batched(k, region, batchSize = 6, delayMs = 50) // Use batched for all to prevent CPU spikes
                 }
 
             } catch (e: Exception) {
@@ -238,98 +255,54 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    private suspend fun loadWave2Parallel(k: String, region: String) {
-        coroutineScope {
-            val mAction    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc",   "movie") }
-            val mDrama     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",   "movie") }
-            val mScifi     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc",  "movie") }
-            val mAnim      = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc",   "movie") }
-            val mTop       = async { fetch("$BASE/movie/top_rated?api_key=$k&language=en-US",                                          "movie") }
-            val mHBO       = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc", "movie") }
-            val mAmazon    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc",  "movie") }
-            val mApple     = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc",  "movie") }
-            val mDisney    = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc",  "movie") }
-            val mParamount = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc",  "movie") }
-            val mHulu      = async { fetch("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc",   "movie") }
-
-            val tvAir      = async { fetch("$BASE/tv/on_the_air?api_key=$k&language=en-US",                                             "tv") }
-            val tvDrama    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc",        "tv") }
-            val tvCrime    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc",        "tv") }
-            val tvScifi    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc",     "tv") }
-            val tvAnim     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc",        "tv") }
-            val tvTop      = async { fetch("$BASE/tv/top_rated?api_key=$k&language=en-US",                                              "tv") }
-            val tvNflx     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc",    "tv") }
-            val tvApple    = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc",  "tv") }
-            val tvDisney   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc",  "tv") }
-            val tvHBO      = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc", "tv") }
-            val tvAmazon   = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc",  "tv") }
-            val tvParamount= async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc",  "tv") }
-            val tvHulu     = async { fetch("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc",   "tv") }
-
-            _state.update { s -> s.copy(
-                movieAction    = mAction.await(),
-                movieDrama     = mDrama.await(),
-                movieScifi     = mScifi.await(),
-                movieAnimation = mAnim.await(),
-                movieTopRated  = mTop.await()
-            ) }; delay(80)
-
-            _state.update { s -> s.copy(
-                movieHBO       = mHBO.await(),
-                movieAmazon    = mAmazon.await(),
-                movieAppleTV   = mApple.await(),
-                movieDisney    = mDisney.await(),
-                movieParamount = mParamount.await(),
-                movieHulu      = mHulu.await()
-            ) }; delay(80)
-
-            _state.update { s -> s.copy(
-                tvPremieres = tvAir.await(),
-                tvDrama     = tvDrama.await(),
-                tvCrime     = tvCrime.await(),
-                tvScifi     = tvScifi.await(),
-                tvAnimation = tvAnim.await(),
-                tvTopRated  = tvTop.await()
-            ) }; delay(80)
-
-            _state.update { s -> s.copy(
-                tvNetflix   = tvNflx.await(),
-                tvAppleTV   = tvApple.await(),
-                tvDisney    = tvDisney.await(),
-                tvHBO       = tvHBO.await(),
-                tvAmazon    = tvAmazon.await(),
-                tvParamount = tvParamount.await(),
-                tvHulu      = tvHulu.await()
-            ) }
-        }
-    }
-
+    // OPTIMIZATION: State Emission Throttling
+    // Instead of updating the state 12 times individually, we await the chunk and apply ONE state update per batch.
     private suspend fun loadWave2Batched(k: String, region: String, batchSize: Int, delayMs: Long) {
-        val requests: List<Pair<String, suspend (List<Movie>) -> Unit>> = listOf(
-            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAction = v) } },
-            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAnimation = v) } },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc") { v -> _state.update { it.copy(tvAnimation = v) } },
-            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { v -> _state.update { it.copy(movieDrama = v) } },
-            Pair("$BASE/movie/top_rated?api_key=$k&language=en-US") { v -> _state.update { it.copy(movieTopRated = v) } },
-            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc") { v -> _state.update { it.copy(movieHBO = v) } },
-            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc") { v -> _state.update { it.copy(movieAmazon = v) } },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { v -> _state.update { it.copy(tvDrama = v) } },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc") { v -> _state.update { it.copy(tvCrime = v) } },
-            Pair("$BASE/tv/top_rated?api_key=$k&language=en-US") { v -> _state.update { it.copy(tvTopRated = v) } },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc") { v -> _state.update { it.copy(tvNetflix = v) } },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc") { v -> _state.update { it.copy(tvHBO = v) } },
+        val requests: List<Pair<String, (HomeState, List<Movie>) -> HomeState>> = listOf(
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc") { s, v -> s.copy(movieAction = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc") { s, v -> s.copy(movieAnimation = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc") { s, v -> s.copy(tvAnimation = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { s, v -> s.copy(movieDrama = v) },
+            Pair("$BASE/movie/top_rated?api_key=$k&language=en-US") { s, v -> s.copy(movieTopRated = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc") { s, v -> s.copy(movieHBO = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc") { s, v -> s.copy(movieAmazon = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc") { s, v -> s.copy(tvDrama = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc") { s, v -> s.copy(tvCrime = v) },
+            Pair("$BASE/tv/top_rated?api_key=$k&language=en-US") { s, v -> s.copy(tvTopRated = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc") { s, v -> s.copy(tvNetflix = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc") { s, v -> s.copy(tvHBO = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc") { s, v -> s.copy(movieAppleTV = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc") { s, v -> s.copy(movieDisney = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc") { s, v -> s.copy(movieParamount = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc") { s, v -> s.copy(movieHulu = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc") { s, v -> s.copy(tvScifi = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc") { s, v -> s.copy(tvAppleTV = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc") { s, v -> s.copy(tvDisney = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc") { s, v -> s.copy(tvAmazon = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc") { s, v -> s.copy(tvParamount = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc") { s, v -> s.copy(tvHulu = v) }
         )
 
         requests.chunked(batchSize).forEach { batch ->
-            coroutineScope {
-                batch.forEach { (url, updater) ->
-                    launch {
+            val results = coroutineScope {
+                batch.map { (url, updater) ->
+                    async {
                         val mt = if (url.contains("/movie")) "movie" else "tv"
-                        updater(fetch(url, mt))
+                        updater to fetch(url, mt)
                     }
-                }
+                }.awaitAll()
             }
-            delay(delayMs)
+
+            // Single state emission per batch! UI thread stays smooth.
+            _state.update { currentState ->
+                var nextState = currentState
+                results.forEach { (updater, data) ->
+                    nextState = updater(nextState, data)
+                }
+                nextState
+            }
+
+            delay(delayMs) // Small yield to UI thread
         }
     }
 

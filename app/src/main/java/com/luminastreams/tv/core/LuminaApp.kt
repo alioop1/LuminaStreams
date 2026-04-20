@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ComponentCallbacks2
 import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.os.Build
 import android.util.Log
 import androidx.room.Room
 import coil.Coil
@@ -16,6 +17,8 @@ import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
+import coil.decode.ImageDecoderDecoder
+import coil.decode.GifDecoder
 
 class LuminaApp : Application() {
     lateinit var repository: MediaRepository
@@ -100,6 +103,14 @@ class LuminaApp : Application() {
         }
 
         val imageLoader = ImageLoader.Builder(this)
+            // OPTIMIZATION: Hardware-Accelerated Image Decoding
+            .components {
+                if (Build.VERSION.SDK_INT >= 28) {
+                    add(ImageDecoderDecoder.Factory())
+                } else {
+                    add(GifDecoder.Factory())
+                }
+            }
             .memoryCache {
                 MemoryCache.Builder(this)
                     .maxSizeBytes(memoryCacheBytes.toInt())

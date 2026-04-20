@@ -96,6 +96,7 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
+    implementation("io.coil-kt:coil-gif:2.6.0") // Or match your current Coil version
 
     implementation(libs.androidx.tv.foundation)
     implementation(libs.androidx.tv.material)
@@ -140,4 +141,5 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+
 }

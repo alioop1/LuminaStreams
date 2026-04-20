@@ -30,6 +30,15 @@ import coil.request.ImageRequest
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
+import kotlin.math.roundToInt
+
+// OPTIMIZATION: Float-Precision Recomposition Blocking
+// Prevents Compose from triggering expensive layout recalculations for fractional
+// progress updates (e.g. 0.4501 to 0.4502) by snapping them to hard 1% intervals.
+private fun quantizeProgress(progress: Float): Float {
+    if (progress >= 0.95f) return 1f
+    return (progress * 100f).roundToInt().coerceIn(1, 99) / 100f
+}
 
 @Composable
 fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
@@ -96,7 +105,12 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             }
             movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
-                    Box(Modifier.fillMaxWidth((if (prog >= 0.95f) 1f else prog).coerceIn(0f, 1f)).fillMaxHeight().background(RED))
+                    Box(
+                        Modifier
+                            .fillMaxWidth(quantizeProgress(prog)) // <--- Applied optimization
+                            .fillMaxHeight()
+                            .background(RED)
+                    )
                 }
             }
         }
@@ -147,7 +161,12 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             }
             movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
-                    Box(Modifier.fillMaxWidth((if (prog >= 0.95f) 1f else prog).coerceIn(0f, 1f)).fillMaxHeight().background(RED))
+                    Box(
+                        Modifier
+                            .fillMaxWidth(quantizeProgress(prog)) // <--- Applied optimization
+                            .fillMaxHeight()
+                            .background(RED)
+                    )
                 }
             }
         }
