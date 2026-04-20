@@ -22,6 +22,8 @@ okhttp          = "5.3.2"
 jsoup           = "1.22.1"
 coroutines      = "1.10.2"
 composeUi       = "1.10.6"
+# FIX: Separated the icons version from the main Compose UI version!
+materialIcons   = "1.7.8"
 gson            = "2.13.2"
 datastore       = "1.2.1"
 zxing           = "3.5.4"
@@ -46,7 +48,8 @@ androidx-compose-ui                      = { group = "androidx.compose.ui",     
 androidx-compose-ui-graphics             = { group = "androidx.compose.ui",        name = "ui-graphics",             version.ref = "composeUi" }
 androidx-compose-ui-tooling-preview      = { group = "androidx.compose.ui",        name = "ui-tooling-preview",      version.ref = "composeUi" }
 androidx-compose-material3               = { group = "androidx.compose.material3", name = "material3",               version.ref = "material3" }
-androidx-compose-material-icons-extended = { group = "androidx.compose.material",  name = "material-icons-extended", version.ref = "composeUi" }
+# FIX: Pointing the icons to its correct dedicated version reference
+androidx-compose-material-icons-extended = { group = "androidx.compose.material",  name = "material-icons-extended", version.ref = "materialIcons" }
 
 # ── TV ─────────────────────────────────────────────────────────────────────
 androidx-tv-foundation  = { group = "androidx.tv", name = "tv-foundation", version.ref = "tvFoundation" }

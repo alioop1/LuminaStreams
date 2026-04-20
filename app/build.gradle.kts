@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.compose.compiler)
     alias(libs.plugins.ksp)
 }
@@ -12,7 +11,6 @@ android {
     defaultConfig {
         applicationId = "com.luminastreams.tv"
         minSdk = 26
-        // FIX: Silence the Android Studio Upgrade Assistant pop-up permanently
         //noinspection EditedTargetSdkVersion
         targetSdk = 37
         versionCode = 1
@@ -57,19 +55,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_21
     }
 
-    kotlin {
-        jvmToolchain(21)
-        compilerOptions {
-            freeCompilerArgs.add("-opt-in=androidx.media3.common.util.UnstableApi")
-        }
-    }
-
-    composeCompiler {
-        stabilityConfigurationFiles.add(
-            rootProject.layout.projectDirectory.file("stability_config.conf")
-        )
-    }
-
     packaging {
         resources {
             excludes += setOf(
@@ -94,13 +79,25 @@ android {
     }
 }
 
+// FIX: These blocks now safely live OUTSIDE of the android {} block!
+kotlin {
+    jvmToolchain(21)
+    compilerOptions {
+        freeCompilerArgs.add("-opt-in=androidx.media3.common.util.UnstableApi")
+    }
+}
+
+composeCompiler {
+    stabilityConfigurationFiles.add(
+        rootProject.layout.projectDirectory.file("stability_config.conf")
+    )
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
 
-    // FIX: Calling coil-gif dynamically from the version catalog
-    // No more suppressions or hardcoded strings!
     implementation(libs.coil.gif)
 
     implementation(libs.androidx.tv.foundation)
