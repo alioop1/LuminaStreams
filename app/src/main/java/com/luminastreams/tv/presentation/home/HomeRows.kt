@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.zIndex
 import androidx.tv.material3.Border
 import androidx.tv.material3.ClickableSurfaceDefaults
@@ -43,7 +44,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun ContentLayer(
     rows: List<RowDef>, contentAlpha: Float, focusState: HomeFocusState, activeTab: String, activeFilter: String?,
-    panelH: Dp, rowHeightFor: (Int) -> Dp, firstContentIndex: Int,
+    maxPanelH: Dp, rowHeightFor: (Int) -> Dp, firstContentIndex: Int,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie) -> Unit,
     onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
     onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
@@ -126,22 +127,26 @@ fun ContentLayer(
         }
     }) {
         TwoRowNavBar(activeTab, firstNavFR, onSearch, onHomeTab, onMoviesTab, onSeriesTab, onFuzer, onWatchlist, onSettings, onIptv, { focusState.isNavFocused = true; focusState.currentRowIndex = 0 }, Modifier.fillMaxWidth().height(NAV_H).align(Alignment.TopStart).zIndex(10f))
-        Box(Modifier.fillMaxWidth().height(panelH).align(Alignment.BottomStart).graphicsLayer { alpha = animatedContentAlpha }) {
-            RowsPanel(rows, focusState, firstCardFRs, panelH, rowHeightFor, firstContentIndex, activeFilter, onStudioFilterClick, onLoadMore, onHeroUpdate, onMovieClick)
+
+        // FIX: ModulateAlpha completely removes GPU overdraw lag here
+        Box(Modifier.fillMaxWidth().height(maxPanelH).align(Alignment.BottomStart).graphicsLayer {
+            alpha = animatedContentAlpha
+            compositingStrategy = CompositingStrategy.ModulateAlpha
+        }) {
+            RowsPanel(rows, focusState, firstCardFRs, maxPanelH, rowHeightFor, firstContentIndex, activeFilter, onStudioFilterClick, onLoadMore, onHeroUpdate, onMovieClick)
         }
     }
 }
 
 @Composable
 fun RowsPanel(
-    rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, panelH: Dp,
+    rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, maxPanelH: Dp,
     rowHeightFor: (Int) -> Dp, firstContentIndex: Int, activeFilter: String?,
     onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
     onItemFocus: (Movie) -> Unit, onItemClick: (String) -> Unit
 ) {
     if (rows.isEmpty()) return
 
-    // FIX: Using LazyColumn here instead of a Box to virtualize the rows!
     val verticalScrollState = rememberLazyListState()
 
     LaunchedEffect(focusState.currentRowIndex, rows.size) {
@@ -151,8 +156,9 @@ fun RowsPanel(
 
     LazyColumn(
         state = verticalScrollState,
-        modifier = Modifier.fillMaxWidth().height(panelH),
-        contentPadding = PaddingValues(bottom = 60.dp)
+        modifier = Modifier.fillMaxWidth().height(maxPanelH),
+        userScrollEnabled = false, // Stop touch intercepts, let D-PAD control
+        contentPadding = PaddingValues(0.dp)
     ) {
         itemsIndexed(rows, key = { _, item -> item.id }) { index, rowDef ->
             val rh = rowHeightFor(index)
@@ -162,6 +168,7 @@ fun RowsPanel(
                 index = index,
                 rowDef = rowDef,
                 rh = rh,
+                maxPanelH = maxPanelH,
                 isLand = isLand,
                 focusState = focusState,
                 cardFR = rowFRs.getOrNull(index),
@@ -181,7 +188,7 @@ fun RowsPanel(
 
 @Composable
 private fun IsolatedRowWrapper(
-    index: Int, rowDef: RowDef, rh: Dp, isLand: Boolean,
+    index: Int, rowDef: RowDef, rh: Dp, maxPanelH: Dp, isLand: Boolean,
     focusState: HomeFocusState, cardFR: FocusRequester?, activeFilter: String?,
     onFocus: (Movie) -> Unit, onItemClick: (String) -> Unit,
     onLoadMore: (String) -> Unit, onStudioFilterClick: (String?) -> Unit
@@ -195,20 +202,30 @@ private fun IsolatedRowWrapper(
         label = "rowAlpha"
     )
 
-    Box(Modifier.fillMaxWidth().height(rh).graphicsLayer { alpha = animatedAlpha }) {
-        if (rowDef is RowDef.StudioRibbon) {
-            StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
-        } else if (isLand) {
-            when (rowDef) {
-                is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                is RowDef.Studio -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                else -> {}
-            }
-        } else {
-            when (rowDef) {
-                is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                is RowDef.Studio -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
-                else -> {}
+    // FIX: Container is exactly maxPanelH. Content is aligned BottomStart.
+    // This perfectly forces inactive rows fully off-screen inside the LazyColumn viewport!
+    Box(
+        modifier = Modifier.fillMaxWidth().height(maxPanelH).graphicsLayer {
+            alpha = animatedAlpha
+            compositingStrategy = CompositingStrategy.ModulateAlpha
+        },
+        contentAlignment = Alignment.BottomStart
+    ) {
+        Box(Modifier.fillMaxWidth().height(rh)) {
+            if (rowDef is RowDef.StudioRibbon) {
+                StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick)
+            } else if (isLand) {
+                when (rowDef) {
+                    is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                    is RowDef.Studio -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                    else -> {}
+                }
+            } else {
+                when (rowDef) {
+                    is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                    is RowDef.Studio -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, onFocus, onItemClick) { onLoadMore(rowDef.id) }
+                    else -> {}
+                }
             }
         }
     }

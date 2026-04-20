@@ -1,4 +1,8 @@
-@file:OptIn(androidx.tv.material3.ExperimentalTvMaterial3Api::class, androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
+@file:OptIn(
+    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
+    androidx.compose.ui.ExperimentalComposeUiApi::class,
+    androidx.compose.foundation.ExperimentalFoundationApi::class
+)
 package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.core.*
@@ -26,87 +30,55 @@ import androidx.tv.material3.Text
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.Movie
+import com.luminastreams.tv.core.DeviceProfile
 
 @Composable
 fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
     val heroUrl = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl
-
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
 
-    // הצללה עליונה וצידית (Vignette) - פועל ישירות ב-Draw Pass של ה-GPU, אפס עומס על ה-CPU/RAM
-    val topFade = remember {
-        Brush.verticalGradient(0.0f to BG, 0.35f to Color.Transparent)
-    }
-
-    val edgeShadow = remember(isRtl) {
-        Brush.horizontalGradient(
-            *if (isRtl) arrayOf(0.0f to Color(0x1A000000), 0.20f to Color.Transparent)
-            else arrayOf(0.80f to Color.Transparent, 1.0f to Color(0x1A000000))
-        )
-    }
-
-    val bottomFade = remember {
-        Brush.verticalGradient(0.55f to Color.Transparent, 1.0f to BG)
-    }
-
-    // OPTIMIZATION: GPU-Offloaded Crossfade לביצועי 60FPS
-    var currentUrl by remember { mutableStateOf(heroUrl) }
-    var previousUrl by remember { mutableStateOf(heroUrl) }
-    val fadeAlpha = remember { Animatable(1f) }
-
-    LaunchedEffect(heroUrl) {
-        if (heroUrl != currentUrl) {
-            previousUrl = currentUrl
-            currentUrl = heroUrl
-            fadeAlpha.snapTo(0f)
-            fadeAlpha.animateTo(1f, animationSpec = tween(700, easing = LinearEasing))
-        }
-    }
-
     Box(Modifier.fillMaxSize().background(BG)) {
-        // שכבה קודמת (למעבר חלק)
-        if (!previousUrl.isNullOrBlank()) {
+        if (!heroUrl.isNullOrBlank()) {
             AsyncImage(
-                model = ImageRequest.Builder(ctx).data(previousUrl).size(coil.size.Size(1280, 720)).crossfade(false).build(),
+                model = ImageRequest.Builder(ctx)
+                    .data(heroUrl)
+                    .size(coil.size.Size(1280, 720))
+                    .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
+                    .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                alignment = Alignment.Center, // תוקן: מרכוז התוכן כדי שלא ייחתך למעלה
+                alignment = Alignment.Center,
                 modifier = Modifier.fillMaxWidth().fillMaxHeight(0.85f)
             )
         }
 
-        // שכבה נוכחית
-        if (!currentUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = ImageRequest.Builder(ctx).data(currentUrl).size(coil.size.Size(1280, 720)).crossfade(false).build(),
-                contentDescription = null,
-                contentScale = ContentScale.Crop,
-                alignment = Alignment.Center, // תוקן: מרכוז התוכן
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .fillMaxHeight(0.85f)
-                    .graphicsLayer { alpha = fadeAlpha.value } // רינדור ישיר בזיכרון הווידאו
+        Box(Modifier
+            .fillMaxWidth()
+            .fillMaxHeight(0.85f)
+            .background(Brush.verticalGradient(0.0f to BG, 0.35f to Color.Transparent))
+            .background(
+                Brush.horizontalGradient(
+                    *if (isRtl) arrayOf(0.0f to Color(0x1A000000), 0.20f to Color.Transparent)
+                    else arrayOf(0.80f to Color.Transparent, 1.0f to Color(0x1A000000))
+                )
             )
-        }
-
-        // שכבות הצללה (Vignette) - מצוירות ב-GPU ללא Recomposition
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.85f).background(topFade))
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.85f).background(edgeShadow))
-        Box(Modifier.fillMaxWidth().fillMaxHeight(0.85f).background(bottomFade))
+            .background(Brush.verticalGradient(0.55f to Color.Transparent, 1.0f to BG))
+        )
     }
 }
 
 @Composable
 fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)
 
+// FIX: Accepts bottomPadding directly to slide the text up and down without layout trashing
 @Composable
-fun HeroOverlay(hero: Movie?, panelH: Dp) {
+fun HeroOverlay(hero: Movie?, bottomPadding: Dp) {
     Box(Modifier.fillMaxSize().zIndex(3f)) {
         hero?.let { m ->
             key(m.id) {
                 Column(
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 60.dp, end = 440.dp, bottom = panelH + 20.dp),
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 60.dp, end = 440.dp, bottom = bottomPadding),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     val tsz = when { m.title.length > 26 -> 28.sp; m.title.length > 16 -> 36.sp; else -> 48.sp }
