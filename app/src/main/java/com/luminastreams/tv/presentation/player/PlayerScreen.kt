@@ -7,6 +7,7 @@
 package com.luminastreams.tv.presentation.player
 
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -20,7 +21,7 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.animateColorAsState
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
@@ -50,7 +51,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.layout.ContentScale
+
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -155,10 +156,10 @@ private val POPUP_BG     = Color(0xE6141414)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
+// ⚡ FIX: Removed posterUrl entirely. ONLY uses TMDB Logo and Cinematic Backdrop!
 @Composable
 fun PremiumLoadingOverlay(
     backdropUrl: String,
-    posterUrl: String?,
     logoUrl: String?,
     title: String,
     statusText: String,
@@ -167,35 +168,54 @@ fun PremiumLoadingOverlay(
     val fadeGradient = remember(baseColor) { Brush.verticalGradient(listOf(Color.Transparent, baseColor.copy(alpha = 0.95f))) }
 
     Box(Modifier.fillMaxSize().background(baseColor)) {
-        if (backdropUrl.isNotBlank()) {
+        // Safe check for backdrop
+        if (backdropUrl.isNotBlank() && backdropUrl != "null" && backdropUrl != "none") {
             coil.compose.AsyncImage(
                 model = backdropUrl, contentDescription = null,
                 modifier = Modifier.fillMaxSize().alpha(0.35f),
-                contentScale = ContentScale.Crop
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
             )
         }
 
         Box(Modifier.fillMaxSize().background(fadeGradient))
 
         Column(modifier = Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (!posterUrl.isNullOrBlank()) {
-                coil.compose.AsyncImage(
-                    model = posterUrl, contentDescription = title,
-                    modifier = Modifier.height(280.dp).clip(RoundedCornerShape(12.dp)).shadow(8.dp, RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Fit
-                )
-            } else if (!logoUrl.isNullOrBlank()) {
-                coil.compose.AsyncImage(
-                    model = logoUrl, contentDescription = title,
+
+            // ⚡ FIX: Filter out literal "null" and "none" strings
+            val validLogo = logoUrl?.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
+            val validTitle = title.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
+
+            if (validLogo != null) {
+                // ⚡ FIX: SubcomposeAsyncImage forces the Title Text to show if the Logo fails or takes too long!
+                coil.compose.SubcomposeAsyncImage(
+                    model = validLogo,
+                    contentDescription = validTitle,
                     modifier = Modifier.widthIn(max = 340.dp).heightIn(max = 140.dp),
-                    contentScale = ContentScale.Fit
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    loading = {
+                        if (validTitle != null) {
+                            Text(
+                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    },
+                    error = {
+                        if (validTitle != null) {
+                            Text(
+                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 )
-            } else if (title.isNotBlank()) {
+            } else if (validTitle != null) {
                 Text(
-                    text = title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                    text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
             }
+
             Spacer(Modifier.height(32.dp))
             com.luminastreams.tv.ui.components.LoadingIndicator()
             Spacer(Modifier.height(24.dp))
@@ -309,8 +329,13 @@ fun VideoPlayerSurface(
             sub?.setCues(currentCues)
 
             val ratio = selectedAspectRatio.forcedRatio ?: videoAspectRatio.takeIf { it > 0f } ?: (16f / 9f)
-            arLayout.setAspectRatio(ratio)
-            arLayout.resizeMode = selectedAspectRatio.resizeMode
+            val cacheTag = "${ratio}_${selectedAspectRatio.resizeMode}"
+
+            if (arLayout.tag != cacheTag) {
+                arLayout.setAspectRatio(ratio)
+                arLayout.resizeMode = selectedAspectRatio.resizeMode
+                arLayout.tag = cacheTag
+            }
         }
     )
 }
@@ -423,7 +448,7 @@ fun PlayerScreen(
     imdbId:         String,
     title:          String = "",
     backdropUrl:    String = "",
-    posterUrl:      String = "",
+    posterUrl:      String = "", // Left in signature to prevent Navigation crash, but unused visually
     logoUrl:        String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
@@ -450,7 +475,6 @@ fun PlayerScreen(
     var prepared          by remember { mutableStateOf(false) }
     var showControls      by remember { mutableStateOf(true) }
     var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
-    var activityTick      by remember { mutableIntStateOf(0) }
     var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
@@ -502,6 +526,23 @@ fun PlayerScreen(
     val playPauseFR = remember { FocusRequester() }
     val seekBarFR   = remember { FocusRequester() }
     val sideMenuFR  = remember { FocusRequester() }
+
+    val controlsBg = remember { Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))) }
+
+    // ⚡ FIX: Using a background Coroutine Job instead of activityTick state means
+    // button presses will NEVER force the entire screen to recompose and lag!
+    val scope = rememberCoroutineScope()
+    val hideControlsJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+
+    val resetHideControlsTimeout = {
+        hideControlsJob.value?.cancel()
+        if (showControls && isPlaying && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
+            hideControlsJob.value = scope.launch {
+                delay(5000)
+                showControls = false
+            }
+        }
+    }
 
     LaunchedEffect(Unit) { context.findActivity()?.let { enableHdrWindow(it) } }
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId, season, episode) }
@@ -627,10 +668,8 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(showControls, isPlaying, activityTick, activeMenu) {
-        if (showControls && isPlaying && activeMenu == ActiveMenu.NONE && !showResumeDialog) {
-            delay(5000); showControls = false
-        }
+    LaunchedEffect(showControls, isPlaying, activeMenu, showResumeDialog) {
+        resetHideControlsTimeout()
     }
 
     BackHandler {
@@ -648,13 +687,19 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Transparent)
             .focusTarget()
+            // ⚡ FIX: Any key press now resets the timer invisibly WITHOUT lagging the UI
+            .onPreviewKeyEvent { event ->
+                if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
+                    resetHideControlsTimeout()
+                }
+                false
+            }
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                         if (activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
-                            activityTick++
                             if (showControls) { if (isPlaying) exo.pause() else exo.play() }
                             else showControls = true
                             true
@@ -662,16 +707,16 @@ fun PlayerScreen(
                     }
                     KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
                         if (activeMenu == ActiveMenu.NONE && !showResumeDialog) {
-                            activityTick++; showControls = true; true
+                            showControls = true; true
                         } else false
                     }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
                         if (isPlaying) exo.pause() else exo.play()
-                        showControls = true; activityTick++; true
+                        showControls = true; true
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> {
                         if (!showControls && activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
-                            showControls = true; activityTick++; true
+                            showControls = true; true
                         } else false
                     }
                     else -> false
@@ -692,8 +737,7 @@ fun PlayerScreen(
         ) {
             PremiumLoadingOverlay(
                 backdropUrl = backdropUrl,
-                posterUrl = posterUrl,
-                logoUrl = logoUrl,
+                logoUrl = logoUrl,  // Only Logo! No Poster!
                 title = title,
                 statusText = tr("Loading and connecting...", "טוען ומתחבר לזרם..."),
                 baseColor = Color.Black
@@ -840,7 +884,7 @@ fun PlayerScreen(
             modifier = Modifier.fillMaxSize()
         ) {
             Box(Modifier.fillMaxSize()) {
-                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000)))))
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(260.dp).background(controlsBg))
 
                 AnimatedVisibility(
                     visible  = !isPlaying,
@@ -894,25 +938,24 @@ fun PlayerScreen(
                             PlayerIconButton(
                                 icon = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 focusRequester = playPauseFR,
-                                onClick = { if (isPlaying) exo.pause() else exo.play(); activityTick++ }
+                                onClick = { if (isPlaying) exo.pause() else exo.play() }
                             )
                             PlayerIconButton(icon = Icons.Default.Close, onClick = { exo.pause(); onNavigateBack() })
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                             PlayerIconButton(CustomAudioIcon, isActive = activeMenu == ActiveMenu.AUDIO) {
-                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO; activityTick++
+                                activeMenu = if (activeMenu == ActiveMenu.AUDIO) ActiveMenu.NONE else ActiveMenu.AUDIO
                             }
                             PlayerIconButton(CustomSubtitlesIcon, isActive = activeMenu == ActiveMenu.EMBEDDED_SUBS) {
-                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS; activityTick++
+                                activeMenu = if (activeMenu == ActiveMenu.EMBEDDED_SUBS) ActiveMenu.NONE else ActiveMenu.EMBEDDED_SUBS
                             }
                             PlayerIconButton(CustomWebSubsIcon, isActive = activeMenu == ActiveMenu.WEB_SUBS) {
                                 if (!state.isSubtitlesLoading) {
                                     activeMenu = if (activeMenu == ActiveMenu.WEB_SUBS) ActiveMenu.NONE else ActiveMenu.WEB_SUBS
                                 }
-                                activityTick++
                             }
                             PlayerIconButton(Icons.Default.AspectRatio, isActive = activeMenu == ActiveMenu.ASPECT_RATIO) {
-                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO; activityTick++
+                                activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
                             }
                         }
                     }
@@ -934,20 +977,22 @@ fun PlayerIconButton(
     icon: ImageVector, isActive: Boolean = false,
     focusRequester: FocusRequester? = null, onClick: () -> Unit
 ) {
-    var focused by remember { mutableStateOf(false) }
-    val bg   = if (isActive) Color(0xFFE50914) else if (focused) Color.White else Color.Transparent
-    val tint = if (isActive) Color.White else if (focused) Color.Black else Color.White
-
+    val activeColor = Color(0xFFE50914)
     Surface(
         onClick = onClick,
         shape   = ClickableSurfaceDefaults.shape(CircleShape),
-        colors  = ClickableSurfaceDefaults.colors(containerColor = bg, focusedContainerColor = bg),
+        colors  = ClickableSurfaceDefaults.colors(
+            containerColor = if (isActive) activeColor else Color.Transparent,
+            focusedContainerColor = if (isActive) activeColor else Color.White,
+            contentColor = Color.White,
+            focusedContentColor = if (isActive) Color.White else Color.Black
+        ),
         scale   = ClickableSurfaceDefaults.scale(focusedScale = 1.15f),
         border  = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
-        modifier = Modifier.size(44.dp).onFocusChanged { focused = it.isFocused }
+        modifier = Modifier.size(44.dp)
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
     ) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, null, tint = tint, modifier = Modifier.size(24.dp)) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) { Icon(icon, null, modifier = Modifier.size(24.dp)) }
     }
 }
 
@@ -1086,25 +1131,26 @@ fun TrackListUi(
 
 @Composable
 fun TrackItemCard(title: String, subtitle: String, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    var focused by remember { mutableStateOf(false) }
-    val containerBg by animateColorAsState(targetValue = if (focused) Color(0xFFE50914) else Color.Transparent, animationSpec = tween(150), label = "bgAnim")
     Surface(
         onClick  = onClick,
-        colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        colors   = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color(0xFFE50914),
+            contentColor = Color.White,
+            focusedContentColor = Color.White
+        ),
         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-        modifier = modifier.fillMaxWidth().height(48.dp).onFocusChanged { focused = it.isFocused }
+        modifier = modifier.fillMaxWidth().height(48.dp)
     ) {
-        Box(Modifier.fillMaxSize().background(containerBg, RoundedCornerShape(8.dp)).padding(horizontal = 12.dp)) {
-            Row(modifier = Modifier.fillMaxSize(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Column(Modifier.weight(1f)) {
-                    Text(text = title, color = Color.White, fontSize = 15.sp, fontWeight = if (focused || isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
-                    if (subtitle.isNotEmpty()) Text(text = subtitle, color = if (focused) Color.White.copy(0.7f) else Color.Gray, fontSize = 11.sp, fontWeight = FontWeight.Normal, textAlign = TextAlign.Start)
-                }
-                if (isSelected) {
-                    Spacer(Modifier.width(8.dp))
-                    Icon(Icons.Default.Check, null, tint = if (focused) Color.White else Color(0xFFE50914), modifier = Modifier.size(20.dp))
-                }
+        Row(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(Modifier.weight(1f)) {
+                Text(text = title, fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.Start)
+                if (subtitle.isNotEmpty()) Text(text = subtitle, color = Color.White.copy(0.7f), fontSize = 11.sp, textAlign = TextAlign.Start)
+            }
+            if (isSelected) {
+                Spacer(Modifier.width(8.dp))
+                Icon(Icons.Default.Check, null, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -1121,6 +1167,8 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
+// ⚡ FIX: Reverted to standard Box rendering! This guarantees that LTR fills Left-to-Right
+// and RTL automatically flips to fill Right-to-Left visually and mechanically.
 @Composable
 fun PlayerProgressControls(
     exoWrapper: ExoPlayerWrapper, isPlaying: Boolean, isRtl: Boolean,
@@ -1171,8 +1219,11 @@ fun PlayerProgressControls(
                 },
             contentAlignment = Alignment.CenterStart
         ) {
+            // Track Background
             Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(Color.White.copy(if (seekFocused) 0.35f else 0.25f)))
+            // Fill
             Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) Color(0xFFE50914) else Color(0xFFE50914).copy(0.8f)))
+            // Thumb
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
                     Box(Modifier.size(thumbSize).clip(CircleShape).background(Color.White).shadow(4.dp, CircleShape))

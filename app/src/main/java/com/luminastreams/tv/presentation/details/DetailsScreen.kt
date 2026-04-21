@@ -92,36 +92,61 @@ fun PremiumLoadingOverlay(
     logoUrl: String?,
     title: String,
     statusText: String,
-    baseColor: Color = Color(0xFF0F0F13)
+    baseColor: Color = Color.Black
 ) {
     val fadeGradient = remember(baseColor) { Brush.verticalGradient(listOf(Color.Transparent, baseColor.copy(alpha = 0.95f))) }
 
-    Box(Modifier.fillMaxSize().background(baseColor).clip(RoundedCornerShape(16.dp))) {
-        if (backdropUrl.isNotBlank()) {
-            AsyncImage(
+    Box(Modifier.fillMaxSize().background(baseColor)) {
+        // Safe check for backdrop
+        if (backdropUrl.isNotBlank() && backdropUrl != "null" && backdropUrl != "none") {
+            coil.compose.AsyncImage(
                 model = backdropUrl, contentDescription = null,
                 modifier = Modifier.fillMaxSize().alpha(0.35f),
-                contentScale = ContentScale.Crop
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop
             )
         }
 
         Box(Modifier.fillMaxSize().background(fadeGradient))
 
         Column(modifier = Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            if (!logoUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = logoUrl, contentDescription = title,
+
+            // ⚡ FIX: Filter out literal "null" and "none" strings
+            val validLogo = logoUrl?.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
+            val validTitle = title.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
+
+            if (validLogo != null) {
+                // ⚡ FIX: SubcomposeAsyncImage forces the Title Text to show if the Logo fails or takes too long!
+                coil.compose.SubcomposeAsyncImage(
+                    model = validLogo,
+                    contentDescription = validTitle,
                     modifier = Modifier.widthIn(max = 340.dp).heightIn(max = 140.dp),
-                    contentScale = ContentScale.Fit
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    loading = {
+                        if (validTitle != null) {
+                            Text(
+                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    },
+                    error = {
+                        if (validTitle != null) {
+                            Text(
+                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 )
-            } else if (title.isNotBlank()) {
+            } else if (validTitle != null) {
                 Text(
-                    text = title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                    text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
                     textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
                 )
             }
+
             Spacer(Modifier.height(32.dp))
-            LoadingIndicator()
+            com.luminastreams.tv.ui.components.LoadingIndicator()
             Spacer(Modifier.height(24.dp))
             Text(text = statusText, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         }
