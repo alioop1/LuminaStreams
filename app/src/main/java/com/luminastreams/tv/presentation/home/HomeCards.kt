@@ -37,7 +37,6 @@ import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
 import androidx.compose.foundation.BorderStroke
 
-// OPTIMIZATION: Float-Precision Recomposition Blocking
 private fun quantizeProgress(progress: Float): Float {
     if (progress >= 0.95f) return 1f
     return (progress * 100f).roundToInt().coerceIn(1, 99) / 100f
@@ -49,7 +48,6 @@ fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
         text = title,
         color = WHITE.copy(alpha = if (isActive) 1f else 0.38f),
         fontSize = 14.sp,
-        // OPTIMIZATION: Static font weight skips layout measure pass
         fontWeight = FontWeight.Bold,
         letterSpacing = 0.3.sp,
         modifier = modifier
@@ -100,13 +98,12 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(LAND_H)
-                // FIX: GPU-Offloaded Scaling directly on the Surface
                 .graphicsLayer {
                     scaleX = animatedScale
                     scaleY = animatedScale
@@ -127,7 +124,6 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                     text = movie.title,
                     color = WHITE,
                     fontSize = 13.sp,
-                    // OPTIMIZATION: Static font weight skips Measure Pass
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -141,12 +137,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             }
             movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(quantizeProgress(prog))
-                            .fillMaxHeight()
-                            .background(RED)
-                    )
+                    Box(Modifier.fillMaxWidth(quantizeProgress(prog)).fillMaxHeight().background(RED))
                 }
             }
         }
@@ -180,7 +171,6 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
 
     Column(modifier = modifier
         .width(cardW)
-        // FIX: GPU-Offloaded Scaling. Bypasses CPU measure pass.
         .graphicsLayer {
             scaleX = animatedScale
             scaleY = animatedScale
@@ -192,7 +182,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             interactionSource = interactionSource,
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
-            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
             border = ClickableSurfaceDefaults.border(Border.None, Border.None),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { if (it.isFocused) onFocused() }
@@ -213,31 +203,31 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             }
             movie.progress?.takeIf { it >= 0.02f }?.let { prog ->
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color(0x55000000))) {
-                    Box(
-                        Modifier
-                            .fillMaxWidth(quantizeProgress(prog))
-                            .fillMaxHeight()
-                            .background(RED)
-                    )
+                    Box(Modifier.fillMaxWidth(quantizeProgress(prog)).fillMaxHeight().background(RED))
                 }
             }
         }
         Spacer(Modifier.height(6.dp))
+
+        // ⚡ FIX: Used graphicsLayer alpha instead of recomposing Text Color!
         Text(
             text = movie.title,
-            color = if (isFocused) WHITE else DIM2,
+            color = WHITE,
             fontSize = 11.sp,
-            // OPTIMIZATION: Static font weight skips Measure Pass
             fontWeight = FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.width(cardW)
+            modifier = Modifier.width(cardW).graphicsLayer { alpha = if (isFocused) 1f else 0.7f }
         )
-        Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM3, fontSize = 10.sp)
+        Text(
+            text = if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"),
+            color = WHITE,
+            fontSize = 10.sp,
+            modifier = Modifier.graphicsLayer { alpha = if (isFocused) 0.6f else 0.4f }
+        )
     }
 }
 
-// FIX: Added onFocused callback to fix the Studio row navigation bug
 @Composable
 fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -252,7 +242,7 @@ fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f), // Disable native scale
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         colors = ClickableSurfaceDefaults.colors(
             containerColor = if (isSelected) WHITE.copy(0.15f) else CARD_BG,
             focusedContainerColor = WHITE
