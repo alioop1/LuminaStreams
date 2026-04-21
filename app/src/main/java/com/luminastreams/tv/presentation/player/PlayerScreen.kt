@@ -23,6 +23,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -49,6 +50,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -153,6 +155,55 @@ private val POPUP_BG     = Color(0xE6141414)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
+@Composable
+fun PremiumLoadingOverlay(
+    backdropUrl: String,
+    posterUrl: String?,
+    logoUrl: String?,
+    title: String,
+    statusText: String,
+    baseColor: Color = Color.Black
+) {
+    val fadeGradient = remember(baseColor) { Brush.verticalGradient(listOf(Color.Transparent, baseColor.copy(alpha = 0.95f))) }
+
+    Box(Modifier.fillMaxSize().background(baseColor)) {
+        if (backdropUrl.isNotBlank()) {
+            coil.compose.AsyncImage(
+                model = backdropUrl, contentDescription = null,
+                modifier = Modifier.fillMaxSize().alpha(0.35f),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        Box(Modifier.fillMaxSize().background(fadeGradient))
+
+        Column(modifier = Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!posterUrl.isNullOrBlank()) {
+                coil.compose.AsyncImage(
+                    model = posterUrl, contentDescription = title,
+                    modifier = Modifier.height(280.dp).clip(RoundedCornerShape(12.dp)).shadow(8.dp, RoundedCornerShape(12.dp)),
+                    contentScale = ContentScale.Fit
+                )
+            } else if (!logoUrl.isNullOrBlank()) {
+                coil.compose.AsyncImage(
+                    model = logoUrl, contentDescription = title,
+                    modifier = Modifier.widthIn(max = 340.dp).heightIn(max = 140.dp),
+                    contentScale = ContentScale.Fit
+                )
+            } else if (title.isNotBlank()) {
+                Text(
+                    text = title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(32.dp))
+            com.luminastreams.tv.ui.components.LoadingIndicator()
+            Spacer(Modifier.height(24.dp))
+            Text(text = statusText, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+    }
+}
+
 private fun applyAfrForContent(activity: Activity, contentFps: Float) {
     val win     = activity.window ?: return
     val display = win.decorView.display ?: return
@@ -206,12 +257,173 @@ private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
     }
 }
 
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+@Composable
+fun VideoPlayerSurface(
+    exo: ExoPlayerWrapper,
+    selectedAspectRatio: AspectRatioMode,
+    onSurfaceReady: (Boolean) -> Unit
+) {
+    val currentCues by exo.currentCues.collectAsState()
+    val videoAspectRatio by exo.videoAspectRatio.collectAsState()
+
+    AndroidView(
+        modifier = Modifier.fillMaxSize().background(Color.Transparent),
+        factory = { ctx ->
+            val arLayout = AspectRatioFrameLayout(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                setAspectRatio(16f / 9f)
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+            }
+            val surfaceView = SurfaceView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                keepScreenOn = true
+                setZOrderMediaOverlay(true)
+                applySurfaceDolbyVision(this)
+                addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+                    override fun onViewAttachedToWindow(v: android.view.View) {
+                        exo.player.setVideoSurfaceView(this@apply)
+                        onSurfaceReady(true)
+                    }
+                    override fun onViewDetachedFromWindow(v: android.view.View) {
+                        onSurfaceReady(false)
+                        exo.player.clearVideoSurface()
+                    }
+                })
+            }
+            val subtitleView = SubtitleView(ctx).apply {
+                layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
+                setStyle(CaptionStyleCompat(textColor, AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, AndroidColor.BLACK, null))
+                setApplyEmbeddedStyles(false)
+                setApplyEmbeddedFontSizes(false)
+                setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
+                setBottomPaddingFraction(0.08f)
+            }
+            arLayout.addView(surfaceView)
+            arLayout.addView(subtitleView)
+            arLayout
+        },
+        update = { arLayout ->
+            val sub = arLayout.getChildAt(1) as? SubtitleView
+            sub?.setCues(currentCues)
+
+            val ratio = selectedAspectRatio.forcedRatio ?: videoAspectRatio.takeIf { it > 0f } ?: (16f / 9f)
+            arLayout.setAspectRatio(ratio)
+            arLayout.resizeMode = selectedAspectRatio.resizeMode
+        }
+    )
+}
+
+@Composable
+fun IsolatedUpNextCard(
+    showNextEpisodeCard: Boolean,
+    nextEpSeason: Int,
+    nextEpEpisode: Int,
+    isSameSeasonNext: Boolean,
+    isRtl: Boolean,
+    onPlayNext: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    var countdown by remember { mutableIntStateOf(10) }
+
+    LaunchedEffect(showNextEpisodeCard) {
+        if (!showNextEpisodeCard) return@LaunchedEffect
+        countdown = 10
+        for (i in 10 downTo 1) {
+            countdown = i
+            delay(1000)
+        }
+        onPlayNext()
+    }
+
+    AnimatedVisibility(
+        visible  = showNextEpisodeCard,
+        enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
+        exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(280)) + fadeOut(tween(200)),
+        modifier = Modifier
+            .padding(start = if (isRtl) 48.dp else 0.dp, end = if (isRtl) 0.dp else 48.dp, bottom = 135.dp)
+            .zIndex(150f)
+    ) {
+        val nextFR = remember { FocusRequester() }
+        val dismissFR = remember { FocusRequester() }
+
+        LaunchedEffect(showNextEpisodeCard) {
+            if (showNextEpisodeCard) { delay(150); runCatching { nextFR.requestFocus() } }
+        }
+
+        Column(
+            modifier = Modifier
+                .width(360.dp)
+                .clip(RoundedCornerShape(18.dp))
+                .background(Color(0xF0101018))
+                .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
+                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .focusGroup()
+                .onPreviewKeyEvent { ev ->
+                    if (ev.type == KeyEventType.KeyDown) {
+                        when (ev.key) {
+                            Key.DirectionUp, Key.DirectionDown -> true
+                            Key.DirectionLeft -> { runCatching { if (isRtl) dismissFR.requestFocus() else nextFR.requestFocus() }; true }
+                            Key.DirectionRight -> { runCatching { if (isRtl) nextFR.requestFocus() else dismissFR.requestFocus() }; true }
+                            else -> false
+                        }
+                    } else false
+                }
+        ) {
+            Text(tr("UP NEXT", "הבא בתור"), color = DIM.copy(0.6f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                if (isSameSeasonNext) tr("Episode $nextEpEpisode", "פרק $nextEpEpisode") else tr("Season $nextEpSeason • Episode $nextEpEpisode", "עונה $nextEpSeason • פרק $nextEpEpisode"),
+                color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black
+            )
+            Spacer(Modifier.height(14.dp))
+
+            Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(WHITE.copy(0.15f))) {
+                Box(Modifier.fillMaxWidth((10f - countdown) / 10f).fillMaxHeight().background(RED))
+            }
+            Spacer(Modifier.height(14.dp))
+
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Surface(
+                    onClick = onPlayNext,
+                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
+                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
+                    modifier = Modifier.weight(1f).height(46.dp).focusRequester(nextFR)
+                ) {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
+                            Text(tr("Play ($countdown)", "נגן ($countdown)"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        }
+                    }
+                }
+                Surface(
+                    onClick = onDismiss,
+                    shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
+                    border = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, WHITE.copy(0.2f))), focusedBorder = Border.None),
+                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                    modifier = Modifier.height(46.dp).focusRequester(dismissFR)
+                ) {
+                    Box(Modifier.padding(horizontal = 18.dp).fillMaxHeight(), Alignment.Center) {
+                        Text(tr("Dismiss", "דחה"), fontSize = 13.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun PlayerScreen(
     videoUrl:       String,
     imdbId:         String,
     title:          String = "",
     backdropUrl:    String = "",
+    posterUrl:      String = "",
     logoUrl:        String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
@@ -223,10 +435,8 @@ fun PlayerScreen(
     val isPlaying        by exo.isPlaying.collectAsState()
     val error            by exo.playerError.collectAsState()
     val currentTracks    by exo.currentTracks.collectAsState()
-    val currentCues      by exo.currentCues.collectAsState()
     val isDolbyVision    by exo.isDolbyVision.collectAsState()
     val isDolbyAtmos     by exo.isDolbyAtmos.collectAsState()
-    val videoAspectRatio by exo.videoAspectRatio.collectAsState()
     val contentFps       by exo.contentFrameRate.collectAsState()
 
     val afrEnabled = remember {
@@ -234,15 +444,7 @@ fun PlayerScreen(
             .getBoolean("afr", false)
     }
 
-    val aspectLayoutRef = remember { mutableStateOf<AspectRatioFrameLayout?>(null) }
     var selectedAspectRatio by remember { mutableStateOf(AspectRatioMode.NORMAL) }
-
-    LaunchedEffect(videoAspectRatio, selectedAspectRatio) {
-        val layout = aspectLayoutRef.value ?: return@LaunchedEffect
-        val ratio  = selectedAspectRatio.forcedRatio ?: videoAspectRatio.takeIf { it > 0f } ?: (16f / 9f)
-        layout.setAspectRatio(ratio)
-        layout.resizeMode = selectedAspectRatio.resizeMode
-    }
 
     var surfaceReady      by remember { mutableStateOf(false) }
     var prepared          by remember { mutableStateOf(false) }
@@ -279,7 +481,6 @@ fun PlayerScreen(
 
     var showNextEpisodeCard  by remember { mutableStateOf(false) }
     var nextEpCardDismissed  by remember { mutableStateOf(false) }
-    var nextEpisodeCountdown by remember { mutableIntStateOf(10) }
 
     val progressManager = remember { WatchProgressManager(context) }
     val progressKey = remember(imdbId, season, episode) {
@@ -309,6 +510,13 @@ fun PlayerScreen(
         if (surfaceReady && !prepared) {
             prepared = true
             exo.prepareStream(videoUrl)
+
+            if (savedPosition <= 30_000L) {
+                exo.play()
+            } else {
+                exo.pause()
+            }
+
             delay(3000)
             if (isPlaying) showControls = false
         }
@@ -327,7 +535,6 @@ fun PlayerScreen(
         }
     }
 
-    // התיקון: איחוד כל פעולות ה-Polling שקשורות להתקדמות הווידאו למקום אחד יעיל שעובד רק כשהווידאו מתנגן!
     LaunchedEffect(prepared, isPlaying) {
         if (!prepared || !isPlaying) return@LaunchedEffect
         var tickCount = 0
@@ -336,14 +543,12 @@ fun PlayerScreen(
             val pos = exo.player.currentPosition
             val dur = exo.player.duration.coerceAtLeast(1L)
 
-            // Next episode logic
             val remaining = dur - pos
             if (nextEpSeason != null && !nextEpCardDismissed && !showNextEpisodeCard &&
                 dur > 60_000 && remaining in 1L..45_000L) {
                 showNextEpisodeCard = true
             }
 
-            // Save Progress logic (every 5 seconds)
             if (tickCount % 5 == 0) {
                 if (pos > 10_000L && progressKey.isNotEmpty()) {
                     if (pos.toFloat() / dur.toFloat() < 0.95f) {
@@ -365,25 +570,6 @@ fun PlayerScreen(
 
     LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
 
-    // Countdown auto-play
-    LaunchedEffect(showNextEpisodeCard) {
-        if (!showNextEpisodeCard) return@LaunchedEffect
-        nextEpisodeCountdown = 10
-        for (i in 10 downTo 1) {
-            nextEpisodeCountdown = i
-            delay(1000)
-            if (!showNextEpisodeCard) return@LaunchedEffect
-        }
-        if (showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null) {
-            playerPrefs.edit {
-                putInt("auto_play_season", nextEpSeason)
-                putInt("auto_play_episode", nextEpEpisode)
-            }
-            exo.pause()
-            onNavigateBack()
-        }
-    }
-
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
         val defLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -402,21 +588,31 @@ fun PlayerScreen(
         if (!prepared || subtitleApplied) return@LaunchedEffect
         val subs = state.availableSubtitles
         if (idx >= subs.size) return@LaunchedEffect
-        var attempts = 0
-        while (exo.player.currentMediaItem == null && attempts < 60) { delay(300); attempts++ }
+
+        repeat(60) {
+            if (exo.player.currentMediaItem != null) return@repeat
+            delay(300)
+        }
+
         if (exo.player.currentMediaItem == null) return@LaunchedEffect
         val langCode = if (
             context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
                 .getString("def_subs", "Hebrew") == "Hebrew"
         ) "heb" else "eng"
+
         val candidates = subs.mapIndexedNotNull { i, sub ->
             if (sub.lang.contains(langCode, ignoreCase = true)) i else null
         }
+
         for (ci in candidates) {
             val sub = subs[ci]
             exo.applySubtitle(sub.url)
-            var waitMs = 0
-            while (!exo.subtitleApplied.value && waitMs < 2500) { delay(200); waitMs += 200 }
+
+            repeat(12) {
+                if (exo.subtitleApplied.value) return@repeat
+                delay(200)
+            }
+
             if (exo.subtitleApplied.value) {
                 subtitleApplied   = true
                 selectedWebSubUrl = sub.url
@@ -482,48 +678,10 @@ fun PlayerScreen(
                 }
             }
     ) {
-        AndroidView(
-            modifier = Modifier.fillMaxSize().background(Color.Transparent),
-            factory = { ctx ->
-                val arLayout = AspectRatioFrameLayout(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    setAspectRatio(16f / 9f)
-                    resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
-                }
-                val surfaceView = SurfaceView(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    keepScreenOn = true
-                    setZOrderMediaOverlay(true)
-                    applySurfaceDolbyVision(this)
-                    addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-                        override fun onViewAttachedToWindow(v: android.view.View) {
-                            exo.player.setVideoSurfaceView(this@apply)
-                            surfaceReady = true
-                        }
-                        override fun onViewDetachedFromWindow(v: android.view.View) {
-                            surfaceReady = false
-                            exo.player.clearVideoSurface()
-                        }
-                    })
-                }
-                val subtitleView = SubtitleView(ctx).apply {
-                    layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
-                    val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
-                    setStyle(CaptionStyleCompat(textColor, AndroidColor.TRANSPARENT, AndroidColor.TRANSPARENT, CaptionStyleCompat.EDGE_TYPE_DROP_SHADOW, AndroidColor.BLACK, null))
-                    setApplyEmbeddedStyles(false)
-                    setApplyEmbeddedFontSizes(false)
-                    setFractionalTextSize(SubtitleView.DEFAULT_TEXT_SIZE_FRACTION * exo.subtitleFontScale)
-                    setBottomPaddingFraction(0.08f)
-                }
-                arLayout.addView(surfaceView)
-                arLayout.addView(subtitleView)
-                aspectLayoutRef.value = arLayout
-                arLayout
-            },
-            update = { arLayout ->
-                val sub = arLayout.getChildAt(1) as? SubtitleView
-                sub?.setCues(currentCues)
-            }
+        VideoPlayerSurface(
+            exo = exo,
+            selectedAspectRatio = selectedAspectRatio,
+            onSurfaceReady = { surfaceReady = it }
         )
 
         AnimatedVisibility(
@@ -532,32 +690,14 @@ fun PlayerScreen(
             exit = fadeOut(tween(800)),
             modifier = Modifier.fillMaxSize().zIndex(200f)
         ) {
-            Box(Modifier.fillMaxSize().background(Color.Black)) {
-                if (backdropUrl.isNotBlank()) {
-                    coil.compose.AsyncImage(
-                        model = backdropUrl, contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize().alpha(0.5f)
-                    )
-                }
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))))
-                Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                    com.luminastreams.tv.ui.components.LoadingIndicator()
-                    Spacer(modifier = Modifier.height(24.dp))
-                    if (logoUrl.isNotBlank()) {
-                        coil.compose.AsyncImage(
-                            model = logoUrl, contentDescription = title,
-                            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-                            modifier = Modifier.widthIn(max = 400.dp).heightIn(max = 140.dp)
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                    } else if (title.isNotBlank()) {
-                        Text(title, color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    Text(tr("Loading and connecting...", "טוען ומתחבר לזרם..."), color = DIM, fontSize = 16.sp)
-                }
-            }
+            PremiumLoadingOverlay(
+                backdropUrl = backdropUrl,
+                posterUrl = posterUrl,
+                logoUrl = logoUrl,
+                title = title,
+                statusText = tr("Loading and connecting...", "טוען ומתחבר לזרם..."),
+                baseColor = Color.Black
+            )
         }
 
         var activeVideoFormat by remember { mutableStateOf<Format?>(null) }
@@ -603,94 +743,21 @@ fun PlayerScreen(
             }
         }
 
-        AnimatedVisibility(
-            visible  = showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null,
-            enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
-            exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(280)) + fadeOut(tween(200)),
-            modifier = Modifier
-                .align(if (isRtl) Alignment.BottomStart else Alignment.BottomEnd)
-                .padding(start = if (isRtl) 48.dp else 0.dp, end = if (isRtl) 0.dp else 48.dp, bottom = 135.dp)
-                .zIndex(150f)
-        ) {
-            val nextFR = remember { FocusRequester() }
-            val dismissFR = remember { FocusRequester() }
-
-            LaunchedEffect(showNextEpisodeCard) {
-                if (showNextEpisodeCard) { delay(150); runCatching { nextFR.requestFocus() } }
-            }
-
-            Column(
-                modifier = Modifier
-                    .width(360.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .background(Color(0xF0101018))
-                    .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
-                    .padding(horizontal = 20.dp, vertical = 18.dp)
-                    .focusGroup()
-                    .onPreviewKeyEvent { ev ->
-                        if (ev.type == KeyEventType.KeyDown) {
-                            when (ev.key) {
-                                Key.DirectionUp, Key.DirectionDown -> true
-                                Key.DirectionLeft -> { runCatching { if (isRtl) dismissFR.requestFocus() else nextFR.requestFocus() }; true }
-                                Key.DirectionRight -> { runCatching { if (isRtl) nextFR.requestFocus() else dismissFR.requestFocus() }; true }
-                                else -> false
-                            }
-                        } else false
+        Box(Modifier.align(if (isRtl) Alignment.BottomStart else Alignment.BottomEnd)) {
+            IsolatedUpNextCard(
+                showNextEpisodeCard = showNextEpisodeCard && nextEpSeason != null && nextEpEpisode != null,
+                nextEpSeason = nextEpSeason ?: 0,
+                nextEpEpisode = nextEpEpisode ?: 0,
+                isSameSeasonNext = nextEpSeason == season,
+                isRtl = isRtl,
+                onPlayNext = {
+                    if (nextEpSeason != null && nextEpEpisode != null) {
+                        playerPrefs.edit { putInt("auto_play_season", nextEpSeason); putInt("auto_play_episode", nextEpEpisode) }
+                        exo.pause(); onNavigateBack()
                     }
-            ) {
-                Text(
-                    tr("UP NEXT", "הבא בתור"),
-                    color = DIM.copy(0.6f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp
-                )
-                Spacer(Modifier.height(6.dp))
-                val isSameSeasonNext = nextEpSeason == season
-                Text(
-                    if (isSameSeasonNext) tr("Episode $nextEpEpisode", "פרק $nextEpEpisode")
-                    else tr("Season $nextEpSeason • Episode $nextEpEpisode", "עונה $nextEpSeason • פרק $nextEpEpisode"),
-                    color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black
-                )
-                Spacer(Modifier.height(14.dp))
-
-                Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(WHITE.copy(0.15f))) {
-                    Box(Modifier.fillMaxWidth((10f - nextEpisodeCountdown) / 10f).fillMaxHeight().background(RED))
-                }
-                Spacer(Modifier.height(14.dp))
-
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Surface(
-                        onClick = {
-                            if (nextEpSeason != null && nextEpEpisode != null) {
-                                playerPrefs.edit { putInt("auto_play_season", nextEpSeason); putInt("auto_play_episode", nextEpEpisode) }
-                                exo.pause(); onNavigateBack()
-                            }
-                        },
-                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                        scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
-                        modifier = Modifier.weight(1f).height(46.dp).focusRequester(nextFR)
-                    ) {
-                        Box(Modifier.fillMaxSize(), Alignment.Center) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
-                                Text(tr("Play ($nextEpisodeCountdown)", "נגן ($nextEpisodeCountdown)"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                            }
-                        }
-                    }
-                    Surface(
-                        onClick = { showNextEpisodeCard = false; nextEpCardDismissed = true },
-                        shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                        colors = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                        border = ClickableSurfaceDefaults.border(border = Border(androidx.compose.foundation.BorderStroke(1.dp, WHITE.copy(0.2f))), focusedBorder = Border.None),
-                        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(46.dp).focusRequester(dismissFR)
-                    ) {
-                        Box(Modifier.padding(horizontal = 18.dp).fillMaxHeight(), Alignment.Center) {
-                            Text(tr("Dismiss", "דחה"), fontSize = 13.sp)
-                        }
-                    }
-                }
-            }
+                },
+                onDismiss = { showNextEpisodeCard = false; nextEpCardDismissed = true }
+            )
         }
 
         if (showResumeDialog) {
@@ -719,14 +786,14 @@ fun PlayerScreen(
                         }
                     ) {
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition) },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition); exo.play() },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey) },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.play() },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -1064,7 +1131,6 @@ fun PlayerProgressControls(
     var videoDuration   by remember { mutableLongStateOf(1L) }
     var seekFocused     by remember { mutableStateOf(false) }
 
-    // התיקון: עדכון שורת הזמן מתבצע אך ורק כאשר הווידאו באמת מתנגן
     LaunchedEffect(isPlaying) {
         while (isActive && isPlaying) {
             currentPosition = exoWrapper.player.currentPosition

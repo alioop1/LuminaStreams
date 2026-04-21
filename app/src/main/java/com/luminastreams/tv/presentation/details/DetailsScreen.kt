@@ -7,6 +7,11 @@
 
 package com.luminastreams.tv.presentation.details
 
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+
+import androidx.compose.ui.draw.alpha
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -14,7 +19,6 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -33,34 +37,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.FocusDirection
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusProperties
-import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -70,6 +59,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.core.content.edit
 import androidx.core.net.toUri
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
@@ -78,9 +70,6 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
 
 private val BK  = Color(0xFF000000)
 private val GL  = Color(0x22FFFFFF)
@@ -93,8 +82,50 @@ private val GLD = Color(0xFFFFC107)
 private val TMR = Color(0xFFF44336)
 
 @Composable
-fun tr(en: String, he: String): String {
-    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+fun tr(en: String, he: String): String = if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+
+// ⚡ ZERO-LAG CINEMATIC OVERLAY
+// Isolates Backdrop & Logo so they never redraw when the text changes!
+@Composable
+fun PremiumLoadingOverlay(
+    backdropUrl: String,
+    logoUrl: String?,
+    title: String,
+    statusText: String,
+    baseColor: Color = Color(0xFF0F0F13)
+) {
+    val fadeGradient = remember(baseColor) { Brush.verticalGradient(listOf(Color.Transparent, baseColor.copy(alpha = 0.95f))) }
+
+    Box(Modifier.fillMaxSize().background(baseColor).clip(RoundedCornerShape(16.dp))) {
+        if (backdropUrl.isNotBlank()) {
+            AsyncImage(
+                model = backdropUrl, contentDescription = null,
+                modifier = Modifier.fillMaxSize().alpha(0.35f),
+                contentScale = ContentScale.Crop
+            )
+        }
+
+        Box(Modifier.fillMaxSize().background(fadeGradient))
+
+        Column(modifier = Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            if (!logoUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = logoUrl, contentDescription = title,
+                    modifier = Modifier.widthIn(max = 340.dp).heightIn(max = 140.dp),
+                    contentScale = ContentScale.Fit
+                )
+            } else if (title.isNotBlank()) {
+                Text(
+                    text = title, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(32.dp))
+            LoadingIndicator()
+            Spacer(Modifier.height(24.dp))
+            Text(text = statusText, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+        }
+    }
 }
 
 private fun launchTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle: String) {
@@ -236,7 +267,7 @@ private fun seederColor(seeders: Int) = when {
 fun DetailsScreen(
     state: DetailsScreenState,
     onEvent: (DetailsEvent) -> Unit,
-    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String, logoUrl: String) -> Unit,
+    onPlayDirectUrl: (videoUrl: String, imdbId: String, title: String, backdropUrl: String, posterUrl: String, logoUrl: String) -> Unit,
     onNavigateBack: () -> Unit = {},
     onRecommendationClick: (String) -> Unit
 ){
@@ -305,7 +336,7 @@ fun DetailsScreen(
                 putInt("current_season", currentScrapeSeason ?: -1)
                 putInt("current_episode", currentScrapeEpisode ?: -1)
             }
-            onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl, media.logoUrl ?: "")
+            onPlayDirectUrl(url, media.imdbId, media.title, media.backdropUrl, media.posterUrl, media.logoUrl ?: "")
             onEvent(DetailsEvent.ClearPlayUrl)
         }
     }
@@ -400,13 +431,19 @@ fun DetailsScreen(
                     contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()
                 )
             } else if (media.posterUrl.isNotEmpty()) {
-                AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize(), alpha = 0.5f)
+                AsyncImage(model = media.posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().alpha(0.5f))
             }
         }
 
-        val sideGradientColors = if (isRtl) listOf(Color.Transparent, BK.copy(0.85f), BK.copy(1f)) else listOf(BK.copy(1f), BK.copy(0.85f), Color.Transparent)
-        Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(sideGradientColors)))
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.6f), BK.copy(1f)), startY = 300f)))
+        val sideGradient = remember(isRtl) {
+            val colors = if (isRtl) listOf(Color.Transparent, BK.copy(0.85f), BK.copy(1f)) else listOf(BK.copy(1f), BK.copy(0.85f), Color.Transparent)
+            Brush.horizontalGradient(colors)
+        }
+        val bottomGradient = remember {
+            Brush.verticalGradient(listOf(Color.Transparent, BK.copy(0.6f), BK.copy(1f)), startY = 300f)
+        }
+        Box(Modifier.fillMaxSize().background(sideGradient))
+        Box(Modifier.fillMaxSize().background(bottomGradient))
 
         LazyColumn(
             state = scrollState,
@@ -516,7 +553,6 @@ fun DetailsScreen(
                             verticalAlignment     = Alignment.CenterVertically,
                             modifier              = Modifier.focusGroup().focusProperties {
                                 up = backBtnFR
-                                // FIX: Updated to `onEnter` per Compose 1.7+
                                 enter = { dir ->
                                     if (dir == FocusDirection.Up || dir == FocusDirection.Down) playFR
                                     else FocusRequester.Default
@@ -653,7 +689,6 @@ fun DetailsScreen(
                                 .padding(bottom = 14.dp)
                                 .focusGroup()
                                 .focusProperties {
-                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) seasonsFR
                                         else FocusRequester.Default
@@ -692,7 +727,6 @@ fun DetailsScreen(
                                 modifier = Modifier
                                     .focusGroup()
                                     .focusProperties {
-                                        // FIX: Updated to `onEnter`
                                         enter = { dir ->
                                             if (dir == FocusDirection.Up || dir == FocusDirection.Down) episodesFR
                                             else FocusRequester.Default
@@ -738,7 +772,6 @@ fun DetailsScreen(
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
-                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) castFR
                                         else FocusRequester.Default
@@ -776,7 +809,6 @@ fun DetailsScreen(
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
-                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) collectionFR
                                         else FocusRequester.Default
@@ -816,7 +848,6 @@ fun DetailsScreen(
                             modifier = Modifier
                                 .focusGroup()
                                 .focusProperties {
-                                    // FIX: Updated to `onEnter`
                                     enter = { dir ->
                                         if (dir == FocusDirection.Up || dir == FocusDirection.Down) starringFR
                                         else FocusRequester.Default
@@ -875,36 +906,26 @@ fun DetailsScreen(
                             .width(660.dp)
                             .clip(RoundedCornerShape(28.dp))
                             .background(Color(0xFF0F0F13).copy(alpha = 0.98f))
-                            .padding(horizontal = 36.dp, vertical = 44.dp)
                             .clickable(remember { MutableInteractionSource() }, null) {}
                     ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.width(4.dp).height(36.dp).background(BR, RoundedCornerShape(2.dp)))
-                            Spacer(Modifier.width(14.dp))
-                            Column {
-                                Text(tr("Available Sources", "מקורות זמינים"), color = WH, fontSize = 26.sp, fontWeight = FontWeight.Black)
-                                if (state.availableStreams.isNotEmpty()) {
-                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                        Text(tr("${state.availableStreams.size} sources found", "נמצאו ${state.availableStreams.size} מקורות"), color = DM, fontSize = 13.sp)
-                                        val rdCount = state.availableStreams.count { it.isCachedRd }
-                                        if (rdCount > 0) {
-                                            Box(
-                                                Modifier.clip(RoundedCornerShape(4.dp))
-                                                    .background(Color(0xFF1B5E20).copy(0.8f))
-                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(tr("$rdCount RD+ cached", "$rdCount מקורות ב-RD+"), color = WH, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(BR.copy(0.6f), Color(0x08FFFFFF)))))
-                        Spacer(Modifier.height(20.dp))
 
+                        // ⚡ FIX: Render Premium Loading Overlay inside the side panel
                         when (val st = state.scrapingStatus) {
+                            is ScrapingStatus.Searching -> {
+                                PremiumLoadingOverlay(
+                                    backdropUrl = media.backdropUrl, logoUrl = media.logoUrl,
+                                    title = media.title, statusText = tr("Scanning Torrentio servers...", "סורק שרתי Torrentio...")
+                                )
+                            }
+                            is ScrapingStatus.ResolvingDebrid -> {
+                                val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") ||
+                                    st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
+                                    st.streamId else tr("Resolving via Real-Debrid...", "מפענח דרך Real-Debrid...")
+                                PremiumLoadingOverlay(
+                                    backdropUrl = media.backdropUrl, logoUrl = media.logoUrl,
+                                    title = media.title, statusText = msg
+                                )
+                            }
                             is ScrapingStatus.Error -> {
                                 Box(Modifier.fillMaxSize(), Alignment.Center) {
                                     Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -915,41 +936,50 @@ fun DetailsScreen(
                                     }
                                 }
                             }
-                            is ScrapingStatus.Searching -> {
-                                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        LoadingIndicator()
-                                        Text(tr("Scanning Torrentio servers...", "סורק שרתי Torrentio..."), color = DM, fontSize = 17.sp)
-                                    }
-                                }
-                            }
-                            is ScrapingStatus.ResolvingDebrid -> {
-                                Box(Modifier.fillMaxSize(), Alignment.Center) {
-                                    Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                                        LoadingIndicator()
-                                        val msg = if (st.streamId.contains("%") || st.streamId.contains("מוריד") ||
-                                            st.streamId.contains("מתחיל") || st.streamId.contains("מוסיף"))
-                                            st.streamId else tr("Resolving via Real-Debrid...", "מפענח דרך Real-Debrid...")
-                                        Text(msg, color = WH, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-                                    }
-                                }
-                            }
                             else -> {
-                                val sourcesState = rememberLazyListState()
-                                LazyColumn(
-                                    state = sourcesState,
-                                    flingBehavior = rememberSnapFlingBehavior(lazyListState = sourcesState),
-                                    verticalArrangement = Arrangement.spacedBy(8.dp),
-                                    contentPadding      = PaddingValues(bottom = 64.dp),
-                                    modifier            = Modifier.focusGroup().lockFocusEdges(lockRight = false, lockDown = true)
-                                ) {
-                                    itemsIndexed(state.availableStreams, contentType = { _, _ -> "StreamItem" }) { index, stream ->
-                                        StreamSourceCard(
-                                            source   = stream,
-                                            rank     = index + 1,
-                                            modifier = if (index == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
-                                            onClick  = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
-                                        )
+                                Column(Modifier.padding(horizontal = 36.dp, vertical = 44.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Box(Modifier.width(4.dp).height(36.dp).background(BR, RoundedCornerShape(2.dp)))
+                                        Spacer(Modifier.width(14.dp))
+                                        Column {
+                                            Text(tr("Available Sources", "מקורות זמינים"), color = WH, fontSize = 26.sp, fontWeight = FontWeight.Black)
+                                            if (state.availableStreams.isNotEmpty()) {
+                                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                    Text(tr("${state.availableStreams.size} sources found", "נמצאו ${state.availableStreams.size} מקורות"), color = DM, fontSize = 13.sp)
+                                                    val rdCount = state.availableStreams.count { it.isCachedRd }
+                                                    if (rdCount > 0) {
+                                                        Box(
+                                                            Modifier.clip(RoundedCornerShape(4.dp))
+                                                                .background(Color(0xFF1B5E20).copy(0.8f))
+                                                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                                                        ) {
+                                                            Text(tr("$rdCount RD+ cached", "$rdCount מקורות ב-RD+"), color = WH, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Box(Modifier.fillMaxWidth().height(1.dp).background(Brush.horizontalGradient(listOf(BR.copy(0.6f), Color(0x08FFFFFF)))))
+                                    Spacer(Modifier.height(20.dp))
+
+                                    val sourcesState = rememberLazyListState()
+                                    LazyColumn(
+                                        state = sourcesState,
+                                        flingBehavior = rememberSnapFlingBehavior(lazyListState = sourcesState),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                                        contentPadding      = PaddingValues(bottom = 64.dp),
+                                        modifier            = Modifier.focusGroup().lockFocusEdges(lockRight = false, lockDown = true)
+                                    ) {
+                                        itemsIndexed(state.availableStreams, contentType = { _, _ -> "StreamItem" }) { index, stream ->
+                                            StreamSourceCard(
+                                                source   = stream,
+                                                rank     = index + 1,
+                                                modifier = if (index == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
+                                                onClick  = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -1313,7 +1343,6 @@ fun Modifier.lockFocusEdges(
     lockDown: Boolean = false,
     lockUp: Boolean = false
 ): Modifier = this.focusProperties {
-    // FIX: Updated to `onExit` per Compose 1.7+
     exit = { direction ->
         when {
             direction == FocusDirection.Right && lockRight -> FocusRequester.Cancel

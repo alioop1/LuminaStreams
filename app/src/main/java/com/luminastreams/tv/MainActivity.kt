@@ -5,47 +5,50 @@
 )
 package com.luminastreams.tv
 
-import android.content.res.Configuration
-import android.os.Build
 import android.app.Application
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.pm.ActivityInfo
+import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.animation.core.*
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.LayoutDirection
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import androidx.lifecycle.compose.collectAsStateWithLifecycle // OPTIMIZATION: Added for CPU Zeroing
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.core.SoundManager
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
@@ -56,6 +59,7 @@ import com.luminastreams.tv.presentation.home.HomeScreen
 import com.luminastreams.tv.presentation.home.HomeViewModel
 import com.luminastreams.tv.presentation.iptv.IptvScreen
 import com.luminastreams.tv.presentation.iptv.IptvViewModel
+import com.luminastreams.tv.presentation.player.IptvPlayerScreen
 import com.luminastreams.tv.presentation.player.PlayerScreen
 import com.luminastreams.tv.presentation.search.SearchScreen
 import com.luminastreams.tv.presentation.search.SearchViewModel
@@ -64,12 +68,8 @@ import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
 import com.luminastreams.tv.ui.theme.LuminaTheme
-import kotlinx.coroutines.delay
 import java.net.URLDecoder
 import java.net.URLEncoder
-import com.luminastreams.tv.core.DeviceProfile
-import androidx.compose.animation.EnterTransition
-import com.luminastreams.tv.presentation.player.IptvPlayerScreen
 
 /**
  * Fixed density target for the entire app.
@@ -179,91 +179,6 @@ fun LuminaAppShell() {
     }
 }
 
-// ── Lumina Light Waves loading indicator ──
-@Composable
-fun LuminaLoadingIndicator(modifier: Modifier = Modifier) {
-    val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
-    val waveCount = 5
-
-    val waveHeights: List<Float> = if (isLow) {
-        listOf(0.4f, 0.7f, 1.0f, 0.7f, 0.4f)
-    } else {
-        val infiniteTransition = rememberInfiniteTransition(label = "light_waves")
-        (0 until waveCount).map { index ->
-            infiniteTransition.animateFloat(
-                initialValue = 0.2f,
-                targetValue  = 1.0f,
-                animationSpec = infiniteRepeatable(
-                    animation  = tween(durationMillis = 500, easing = FastOutSlowInEasing),
-                    repeatMode = RepeatMode.Reverse,
-                    initialStartOffset = StartOffset(offsetMillis = index * 120)
-                ),
-                label = "wave_$index"
-            ).value
-        }
-    }
-
-    Row(
-        modifier = modifier.height(40.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        waveHeights.forEach { h ->
-            Box(
-                modifier = Modifier
-                    .width(6.dp)
-                    .fillMaxHeight(h)
-                    .clip(RoundedCornerShape(50))
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color(0xFF00E5FF), Color(0xFFB400FF))
-                        )
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-fun SplashScreen(onTimeout: () -> Unit) {
-    val alpha = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) {
-        1.0f
-    } else {
-        val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-        infiniteTransition.animateFloat(
-            initialValue  = 0.6f,
-            targetValue   = 1.0f,
-            animationSpec = infiniteRepeatable(
-                animation  = tween(1600, easing = LinearEasing),
-                repeatMode = RepeatMode.Reverse
-            ),
-            label = "alpha"
-        ).value
-    }
-
-    val context = LocalContext.current
-
-    LaunchedEffect(Unit) {
-        (context as? MainActivity)?.soundManager?.playSplash()
-        delay(3500)
-        onTimeout()
-    }
-
-    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        Image(
-            painter            = painterResource(id = R.drawable.logo_lumina_glow),
-            contentDescription = "Lumina Logo Background",
-            contentScale       = ContentScale.Crop,
-            modifier           = Modifier.fillMaxSize().alpha(alpha)
-        )
-        LuminaLoadingIndicator(
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 80.dp)
-        )
-    }
-}
-
 @Composable
 fun AppNavHostContainer(
     navController : NavHostController,
@@ -325,16 +240,17 @@ fun AppNavHostContainer(
             }
 
             DetailsScreen(
-                // OPTIMIZATION: CPU Zeroing when navigating away
                 state           = detailsViewModel.state.collectAsStateWithLifecycle().value,
                 onEvent         = detailsViewModel::onEvent,
-                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, logo ->
-                    val safeUrl     = URLEncoder.encode(videoUrl, "UTF-8")
-                    val safeImdb    = if (imdbId.isBlank()) "_" else imdbId
-                    val safeTitle   = URLEncoder.encode(title, "UTF-8")
+                // ⚡ FIX: Added posterUrl to the navigation route
+                onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, poster, logo ->
+                    val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
+                    val safeImdb     = if (imdbId.isBlank()) "_" else imdbId
+                    val safeTitle    = URLEncoder.encode(title, "UTF-8")
                     val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
-                    val safeLogo    = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&logoUrl=$safeLogo")
+                    val safePoster   = URLEncoder.encode(poster.ifBlank { "none" }, "UTF-8")
+                    val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&posterUrl=$safePoster&logoUrl=$safeLogo")
                 },
                 onNavigateBack        = { navController.popBackStack() },
                 onRecommendationClick = { id ->
@@ -345,22 +261,23 @@ fun AppNavHostContainer(
         }
 
         composable(
-            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&logoUrl={logoUrl}",
+            // ⚡ FIX: Added posterUrl here as well
+            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&posterUrl={posterUrl}&logoUrl={logoUrl}",
             arguments = listOf(
                 navArgument("videoUrl")    { type = NavType.StringType; defaultValue = "" },
                 navArgument("imdbId")      { type = NavType.StringType; defaultValue = "_" },
                 navArgument("title")       { type = NavType.StringType; defaultValue = "" },
                 navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" },
+                navArgument("posterUrl")   { type = NavType.StringType; defaultValue = "" },
                 navArgument("logoUrl")     { type = NavType.StringType; defaultValue = "" }
             )
         ) { back ->
             val videoUrl    = URLDecoder.decode(back.arguments?.getString("videoUrl") ?: "", "UTF-8")
             val imdbId      = back.arguments?.getString("imdbId") ?: "_"
             val title       = URLDecoder.decode(back.arguments?.getString("title") ?: "", "UTF-8")
-            val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8")
-                .let { if (it == "none") "" else it }
-            val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8")
-                .let { if (it == "none") "" else it }
+            val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
+            val posterUrl   = URLDecoder.decode(back.arguments?.getString("posterUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
+            val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
@@ -368,6 +285,7 @@ fun AppNavHostContainer(
                     imdbId         = if (imdbId == "_") "" else imdbId,
                     title          = title,
                     backdropUrl    = backdropUrl,
+                    posterUrl      = posterUrl,
                     logoUrl        = logoUrl,
                     onNavigateBack = { navController.popBackStack() }
                 )

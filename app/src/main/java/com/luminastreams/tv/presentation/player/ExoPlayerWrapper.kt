@@ -26,9 +26,7 @@ import com.luminastreams.tv.core.DeviceProfile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+
 
 class ExoPlayerWrapper(context: Context) {
 
@@ -295,7 +293,10 @@ class ExoPlayerWrapper(context: Context) {
     fun applySubtitle(subtitleUrl: String, isVtt: Boolean = false, maxRetries: Int = 2) {
         val currentMediaItem = player.currentMediaItem ?: return
         val currentPosition = player.currentPosition
-        val wasPlaying = player.isPlaying
+
+        // ⚡ FIX: Capture 'playWhenReady' instead of 'isPlaying'!
+        // This remembers that we INTEND to play the video even if it is currently buffering.
+        val wasPlayWhenReady = player.playWhenReady
 
         val mimeType = if (isVtt || subtitleUrl.contains(".vtt", ignoreCase = true))
             MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
@@ -318,7 +319,9 @@ class ExoPlayerWrapper(context: Context) {
 
         player.setMediaItem(newMediaItem, currentPosition)
         player.prepare()
-        player.playWhenReady = wasPlaying
+
+        // ⚡ FIX: Restore the correct intent to play
+        player.playWhenReady = wasPlayWhenReady
 
         _subtitleApplied.value = true
     }
