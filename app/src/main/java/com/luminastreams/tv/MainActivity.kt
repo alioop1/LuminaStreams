@@ -284,7 +284,7 @@ fun AppNavHostContainer(
     ) {
 
         composable("splash") {
-            SplashScreen(onTimeout = {
+            com.luminastreams.tv.presentation.initial.SplashScreen(onTimeout = {
                 navController.navigate("home") {
                     popUpTo("splash") { inclusive = true }
                 }
@@ -427,7 +427,6 @@ fun AppNavHostContainer(
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
             val activity = context as ComponentActivity
 
-            // הזרקת ה-ViewModel ברמת ה-Activity כדי לשמר סטטוס למעבר לנגן
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
                 factory = object : ViewModelProvider.Factory {
@@ -456,7 +455,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Player (נגן ייעודי ללייב) ───────────────────────────────────────
         composable("iptv_player/{streamUrl}") { backStackEntry ->
             val streamUrl = URLDecoder.decode(backStackEntry.arguments?.getString("streamUrl") ?: "", "UTF-8")
 
@@ -464,7 +462,6 @@ fun AppNavHostContainer(
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
             val activity = context as ComponentActivity
 
-            // שולפים את אותו ה-ViewModel בדיוק (עם הקטגוריה שנשמרה!)
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
                 factory = object : ViewModelProvider.Factory {
