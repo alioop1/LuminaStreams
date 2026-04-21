@@ -57,19 +57,18 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             if (!isLow) delay(250)
             currentTab = state.selectedTab
             currentFilter = state.selectedStudioFilter
-            val targetIndex = if (state.selectedTab == "סרטים" || state.selectedTab == "סדרות") 1 else 0
-            focusState.currentRowIndex = targetIndex
-            focusState.focusTrigger++
+            // FIX: Stop stealing focus! Let the user stay on the Top Bar.
+            focusState.currentRowIndex = 0
             if (!isLow) { delay(30); contentAlpha = 1f }
         } else if (filterChanged) {
-            // FIX: Don't fade out or force focus when just changing a studio filter.
-            // This prevents the lag and keeps your focus locked on the Studio Button!
             currentFilter = state.selectedStudioFilter
         }
     }
 
     val firstContentIndex = remember(rows) { rows.indexOfFirst { it !is RowDef.StudioRibbon } }
-    fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) { is RowDef.StudioRibbon -> 110.dp; else -> if (i == firstContentIndex) ROW_LANDSCAPE_H else ROW_PORTRAIT_H }
+
+    // FIX: Increased the height allocated to the Studio Ribbon to prevent overlapping clipping
+    fun rowHeightFor(i: Int) = when (rows.getOrNull(i)) { is RowDef.StudioRibbon -> 130.dp; else -> if (i == firstContentIndex) ROW_LANDSCAPE_H else ROW_PORTRAIT_H }
 
     val maxPanelH = remember(rows) {
         var max = 0.dp
@@ -82,7 +81,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
     val targetHeroBottom = remember(rows, focusState.currentRowIndex) {
         val h = rowHeightFor(focusState.currentRowIndex.coerceIn(0, maxOf(0, rows.size - 1)))
-        if (rows.getOrNull(focusState.currentRowIndex) is RowDef.StudioRibbon) 126.dp + 20.dp else h + 20.dp
+        // FIX: Increased the offsets (from 210 to 270, and 20 to 50) to give the hero text more breathing room
+        if (rows.getOrNull(focusState.currentRowIndex) is RowDef.StudioRibbon) 270.dp else h + 50.dp
     }
     val animatedHeroBottomPadding by animateDpAsState(targetValue = targetHeroBottom, animationSpec = tween(300, easing = FastOutSlowInEasing))
 
@@ -126,10 +126,17 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             rowHeightFor = { i -> rowHeightFor(i) },
             firstContentIndex = firstContentIndex,
             onMovieClick = onMovieClick,
-            // FIX: Don't allow null to overwrite the heroMovie (prevents black background on Studio Row focus)
             onHeroUpdate = { if (it != null) focusState.heroMovie = it },
             onStudioFilterClick = { filter ->
-                if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null) else viewModel.setStudioFilter(filter)
+                if (state.selectedStudioFilter == filter) {
+                    viewModel.setStudioFilter(null)
+                } else {
+                    viewModel.setStudioFilter(filter)
+                    // FIX: Push focus down to the newly generated row (Row 1)
+                    // and fire the retry loop to enforce the UI scrolling down
+                    focusState.currentRowIndex = 1
+                    focusState.focusTrigger++
+                }
             },
             onLoadMore = { id ->
                 val realId = id.substringBefore("::")
