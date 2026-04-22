@@ -65,6 +65,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.Movie
