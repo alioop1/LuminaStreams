@@ -64,6 +64,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.Movie
@@ -99,10 +100,10 @@ fun PremiumLoadingOverlay(
     Box(Modifier.fillMaxSize().background(baseColor)) {
         // Safe check for backdrop
         if (backdropUrl.isNotBlank() && backdropUrl != "null" && backdropUrl != "none") {
-            coil.compose.AsyncImage(
+            AsyncImage(
                 model = backdropUrl, contentDescription = null,
                 modifier = Modifier.fillMaxSize().alpha(0.35f),
-                contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                contentScale = ContentScale.Crop
             )
         }
 
@@ -116,11 +117,11 @@ fun PremiumLoadingOverlay(
 
             if (validLogo != null) {
                 // ⚡ FIX: SubcomposeAsyncImage forces the Title Text to show if the Logo fails or takes too long!
-                coil.compose.SubcomposeAsyncImage(
+                SubcomposeAsyncImage(
                     model = validLogo,
                     contentDescription = validTitle,
                     modifier = Modifier.widthIn(max = 340.dp).heightIn(max = 140.dp),
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    contentScale = ContentScale.Fit,
                     loading = {
                         if (validTitle != null) {
                             Text(
@@ -146,7 +147,7 @@ fun PremiumLoadingOverlay(
             }
 
             Spacer(Modifier.height(32.dp))
-            com.luminastreams.tv.ui.components.LoadingIndicator()
+            LoadingIndicator()
             Spacer(Modifier.height(24.dp))
             Text(text = statusText, color = Color.White.copy(alpha = 0.8f), fontSize = 17.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
         }
@@ -1030,12 +1031,6 @@ private fun StreamSourceCard(
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
-    val fileSizeColor by animateColorAsState(
-        targetValue = if (isFocused) WH else DM,
-        animationSpec = tween(150),
-        label = "fileSizeAnim"
-    )
-
     val animatedScale by animateFloatAsState(
         targetValue = if (isFocused) 1.04f else 1.0f,
         animationSpec = tween(150),
@@ -1069,9 +1064,10 @@ private fun StreamSourceCard(
             ) {
                 Text(
                     text = "#$rank",
-                    color = WH.copy(alpha = 0.5f),
+                    color = WH,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    modifier = Modifier.graphicsLayer { alpha = 0.5f }
                 )
                 Spacer(Modifier.width(10.dp))
 
@@ -1109,11 +1105,13 @@ private fun StreamSourceCard(
                     else "%.0f MB".format(source.sizeBytes / 1_048_576.0)
                 }
 
+                // ⚡ FIX: Use graphicsLayer alpha instead of animateColorAsState to prevent recomposition
                 Text(
                     text = formattedSize,
-                    color = fileSizeColor,
+                    color = WH,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 13.sp
+                    fontSize = 13.sp,
+                    modifier = Modifier.graphicsLayer { alpha = if (isFocused) 1f else 0.6f }
                 )
             }
 
@@ -1164,12 +1162,14 @@ private fun StreamSourceCard(
 
             Spacer(Modifier.height(6.dp))
 
+            // ⚡ FIX: Use graphicsLayer alpha to prevent layout thrashing
             Text(
                 text = source.filename.replace(".", " "),
-                color = WH.copy(alpha = if (isFocused) 0.5f else 0.25f),
+                color = WH,
                 fontSize = 10.sp,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.graphicsLayer { alpha = if (isFocused) 0.5f else 0.25f }
             )
         }
     }

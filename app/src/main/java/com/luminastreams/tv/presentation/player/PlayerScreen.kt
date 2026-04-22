@@ -8,6 +8,7 @@ package com.luminastreams.tv.presentation.player
 
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -156,7 +157,6 @@ private val POPUP_BG     = Color(0xE6141414)
 
 enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
 
-// ⚡ FIX: Removed posterUrl entirely. ONLY uses TMDB Logo and Cinematic Backdrop!
 @Composable
 fun PremiumLoadingOverlay(
     backdropUrl: String,
@@ -168,7 +168,6 @@ fun PremiumLoadingOverlay(
     val fadeGradient = remember(baseColor) { Brush.verticalGradient(listOf(Color.Transparent, baseColor.copy(alpha = 0.95f))) }
 
     Box(Modifier.fillMaxSize().background(baseColor)) {
-        // Safe check for backdrop
         if (backdropUrl.isNotBlank() && backdropUrl != "null" && backdropUrl != "none") {
             coil.compose.AsyncImage(
                 model = backdropUrl, contentDescription = null,
@@ -180,13 +179,10 @@ fun PremiumLoadingOverlay(
         Box(Modifier.fillMaxSize().background(fadeGradient))
 
         Column(modifier = Modifier.align(Alignment.Center).padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-
-            // ⚡ FIX: Filter out literal "null" and "none" strings
             val validLogo = logoUrl?.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
             val validTitle = title.takeIf { it.isNotBlank() && it.trim() != "null" && it.trim() != "none" }
 
             if (validLogo != null) {
-                // ⚡ FIX: SubcomposeAsyncImage forces the Title Text to show if the Logo fails or takes too long!
                 coil.compose.SubcomposeAsyncImage(
                     model = validLogo,
                     contentDescription = validTitle,
@@ -194,26 +190,17 @@ fun PremiumLoadingOverlay(
                     contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                     loading = {
                         if (validTitle != null) {
-                            Text(
-                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
-                            )
+                            Text(text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     },
                     error = {
                         if (validTitle != null) {
-                            Text(
-                                text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
-                                textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
-                            )
+                            Text(text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 )
             } else if (validTitle != null) {
-                Text(
-                    text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold,
-                    textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis
-                )
+                Text(text = validTitle, color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
 
             Spacer(Modifier.height(32.dp))
@@ -237,12 +224,8 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         contentFps in 59.9f..60.1f -> 60f
         else -> contentFps
     }
-    val sameRes = display.supportedModes.filter {
-        it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight
-    }
-    val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) }
-        ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) }
-        ?: return
+    val sameRes = display.supportedModes.filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
+    val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) } ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) } ?: return
     if (best.modeId == current.modeId) return
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
 }
@@ -255,9 +238,7 @@ private fun restoreDisplayMode(activity: Activity) {
 private fun enableHdrWindow(activity: Activity) {
     runCatching {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            activity.window.attributes = activity.window.attributes.also { lp ->
-                lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-            }
+            activity.window.attributes = activity.window.attributes.also { lp -> lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
             val cls = ActivityInfo::class.java
             val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
             val hdrMode = colorModeField?.getInt(null) ?: 2
@@ -448,7 +429,6 @@ fun PlayerScreen(
     imdbId:         String,
     title:          String = "",
     backdropUrl:    String = "",
-    posterUrl:      String = "", // Left in signature to prevent Navigation crash, but unused visually
     logoUrl:        String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
@@ -465,8 +445,7 @@ fun PlayerScreen(
     val contentFps       by exo.contentFrameRate.collectAsState()
 
     val afrEnabled = remember {
-        context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-            .getBoolean("afr", false)
+        context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getBoolean("afr", false)
     }
 
     var selectedAspectRatio by remember { mutableStateOf(AspectRatioMode.NORMAL) }
@@ -493,12 +472,9 @@ fun PlayerScreen(
     val (nextEpSeason, nextEpEpisode) = remember(season, episode, totalEpisodesInSeason, totalSeasonsInShow) {
         when {
             season == null || episode == null -> Pair(null, null)
-            totalEpisodesInSeason > 0 && episode < totalEpisodesInSeason ->
-                Pair(season, episode + 1)
-            totalSeasonsInShow > 0 && season < totalSeasonsInShow ->
-                Pair(season + 1, 1)
-            totalEpisodesInSeason == -1 ->
-                Pair(season, episode + 1)
+            totalEpisodesInSeason > 0 && episode < totalEpisodesInSeason -> Pair(season, episode + 1)
+            totalSeasonsInShow > 0 && season < totalSeasonsInShow -> Pair(season + 1, 1)
+            totalEpisodesInSeason == -1 -> Pair(season, episode + 1)
             else -> Pair(null, null)
         }
     }
@@ -509,16 +485,16 @@ fun PlayerScreen(
     val progressManager = remember { WatchProgressManager(context) }
     val progressKey = remember(imdbId, season, episode) {
         when {
-            imdbId.isBlank()                  -> ""
+            imdbId.isBlank() -> ""
             season != null && episode != null -> progressManager.episodeKey(imdbId, season, episode)
-            else                              -> progressManager.movieKey(imdbId)
+            else -> progressManager.movieKey(imdbId)
         }
     }
+
     val savedPosition = remember(progressKey) {
         if (progressKey.isEmpty()) -1L
         else progressManager.get(progressKey)?.positionMs?.takeIf { it > 30_000L }
-            ?: context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE)
-                .getLong("progress_$imdbId", -1L)
+            ?: context.getSharedPreferences("watch_progress", Context.MODE_PRIVATE).getLong("progress_$imdbId", -1L)
     }
     var showResumeDialog by remember { mutableStateOf(false) }
     var resumeHandled    by remember { mutableStateOf(false) }
@@ -528,9 +504,6 @@ fun PlayerScreen(
     val sideMenuFR  = remember { FocusRequester() }
 
     val controlsBg = remember { Brush.verticalGradient(listOf(Color.Transparent, Color(0xE6000000))) }
-
-    // ⚡ FIX: Using a background Coroutine Job instead of activityTick state means
-    // button presses will NEVER force the entire screen to recompose and lag!
     val scope = rememberCoroutineScope()
     val hideControlsJob = remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
@@ -576,6 +549,7 @@ fun PlayerScreen(
         }
     }
 
+    // ⚡ FIX: Database Save Offloaded to Background Thread (IO) to prevent 5-second UI freeezes!
     LaunchedEffect(prepared, isPlaying) {
         if (!prepared || !isPlaying) return@LaunchedEffect
         var tickCount = 0
@@ -592,10 +566,12 @@ fun PlayerScreen(
 
             if (tickCount % 5 == 0) {
                 if (pos > 10_000L && progressKey.isNotEmpty()) {
-                    if (pos.toFloat() / dur.toFloat() < 0.95f) {
-                        progressManager.save(progressKey, pos, dur)
-                    } else {
-                        progressManager.save(progressKey, dur, dur)
+                    launch(Dispatchers.IO) {
+                        if (pos.toFloat() / dur.toFloat() < 0.95f) {
+                            progressManager.save(progressKey, pos, dur)
+                        } else {
+                            progressManager.save(progressKey, dur, dur)
+                        }
                     }
                 }
             }
@@ -613,8 +589,7 @@ fun PlayerScreen(
 
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
-        val defLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-            .getString("def_subs", "Hebrew") ?: "Hebrew"
+        val defLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("def_subs", "Hebrew") ?: "Hebrew"
         if (defLang == "None") return@LaunchedEffect
         val langCode = if (defLang == "Hebrew") "heb" else "eng"
         val idx = state.availableSubtitles.indexOfFirst { it.lang.contains(langCode, ignoreCase = true) }
@@ -624,6 +599,7 @@ fun PlayerScreen(
         }
     }
 
+    // ⚡ FIX: Subtitle logic completely rebuilt to prevent "Error 3001" streaming crashes
     LaunchedEffect(prepared, pendingSubIndex) {
         val idx = pendingSubIndex ?: return@LaunchedEffect
         if (!prepared || subtitleApplied) return@LaunchedEffect
@@ -636,18 +612,15 @@ fun PlayerScreen(
         }
 
         if (exo.player.currentMediaItem == null) return@LaunchedEffect
-        val langCode = if (
-            context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-                .getString("def_subs", "Hebrew") == "Hebrew"
-        ) "heb" else "eng"
+        val langCode = if (context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("def_subs", "Hebrew") == "Hebrew") "heb" else "eng"
 
-        val candidates = subs.mapIndexedNotNull { i, sub ->
-            if (sub.lang.contains(langCode, ignoreCase = true)) i else null
-        }
+        // Find the absolute best candidate instead of blindly looping and breaking ExoPlayer
+        val bestSub = subs.firstOrNull { it.lang.contains(langCode, ignoreCase = true) }
 
-        for (ci in candidates) {
-            val sub = subs[ci]
-            exo.applySubtitle(sub.url)
+        if (bestSub != null) {
+            // Buffer delay ensures the massive 4K Real-Debrid chunk is downloaded safely first
+            delay(1500)
+            exo.applySubtitle(bestSub.url)
 
             repeat(12) {
                 if (exo.subtitleApplied.value) return@repeat
@@ -656,8 +629,7 @@ fun PlayerScreen(
 
             if (exo.subtitleApplied.value) {
                 subtitleApplied   = true
-                selectedWebSubUrl = sub.url
-                break
+                selectedWebSubUrl = bestSub.url
             }
         }
     }
@@ -687,7 +659,6 @@ fun PlayerScreen(
             .fillMaxSize()
             .background(Color.Transparent)
             .focusTarget()
-            // ⚡ FIX: Any key press now resets the timer invisibly WITHOUT lagging the UI
             .onPreviewKeyEvent { event ->
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
                     resetHideControlsTimeout()
@@ -696,9 +667,14 @@ fun PlayerScreen(
             }
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
+
+                // ⚡ FIX: Strict block for key spamming / held keys!
+                val isRepeat = event.nativeKeyEvent.repeatCount > 0
+
                 when (event.nativeKeyEvent.keyCode) {
                     KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        if (isRepeat) return@onKeyEvent true
                         if (activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
                             if (showControls) { if (isPlaying) exo.pause() else exo.play() }
                             else showControls = true
@@ -706,15 +682,18 @@ fun PlayerScreen(
                         } else false
                     }
                     KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> {
+                        if (isRepeat) return@onKeyEvent true
                         if (activeMenu == ActiveMenu.NONE && !showResumeDialog) {
                             showControls = true; true
                         } else false
                     }
                     KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                        if (isRepeat) return@onKeyEvent true
                         if (isPlaying) exo.pause() else exo.play()
                         showControls = true; true
                     }
                     KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        if (isRepeat) return@onKeyEvent true
                         if (!showControls && activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
                             showControls = true; true
                         } else false
@@ -737,7 +716,7 @@ fun PlayerScreen(
         ) {
             PremiumLoadingOverlay(
                 backdropUrl = backdropUrl,
-                logoUrl = logoUrl,  // Only Logo! No Poster!
+                logoUrl = logoUrl,
                 title = title,
                 statusText = tr("Loading and connecting...", "טוען ומתחבר לזרם..."),
                 baseColor = Color.Black
@@ -821,6 +800,8 @@ fun PlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { ev ->
                             if (ev.type == KeyEventType.KeyDown) {
+                                val isRepeat = ev.nativeKeyEvent.repeatCount > 0
+                                if (isRepeat) return@onPreviewKeyEvent true
                                 when {
                                     ev.key == Key.DirectionRight -> { runCatching { if (isRtl) resumeFR.requestFocus() else fromStartFR.requestFocus() }; true }
                                     ev.key == Key.DirectionLeft  -> { runCatching { if (isRtl) fromStartFR.requestFocus() else resumeFR.requestFocus() }; true }
@@ -1167,8 +1148,7 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
-// ⚡ FIX: Reverted to standard Box rendering! This guarantees that LTR fills Left-to-Right
-// and RTL automatically flips to fill Right-to-Left visually and mechanically.
+// ⚡ FIX: "Seek Debouncer" totally halts playback crashes from remote rapid-firing
 @Composable
 fun PlayerProgressControls(
     exoWrapper: ExoPlayerWrapper, isPlaying: Boolean, isRtl: Boolean,
@@ -1179,58 +1159,79 @@ fun PlayerProgressControls(
     var videoDuration   by remember { mutableLongStateOf(1L) }
     var seekFocused     by remember { mutableStateOf(false) }
 
+    // ⚡ NEW: Safely handles intense remote clicking
+    var pendingSeekPosition by remember { mutableStateOf<Long?>(null) }
+
     LaunchedEffect(isPlaying) {
         while (isActive && isPlaying) {
-            currentPosition = exoWrapper.player.currentPosition
+            if (pendingSeekPosition == null) {
+                currentPosition = exoWrapper.player.currentPosition
+            }
             videoDuration   = exoWrapper.player.duration.coerceAtLeast(1L)
             delay(500)
         }
     }
+
+    // ⚡ FIX: Only commit the scrub to ExoPlayer after 400ms of remote inactivity!
+    LaunchedEffect(pendingSeekPosition) {
+        pendingSeekPosition?.let { pos ->
+            delay(400)
+            exoWrapper.seekTo(pos)
+            pendingSeekPosition = null
+        }
+    }
+
     LaunchedEffect(Unit) { runCatching { seekFR.requestFocus() } }
 
-    val progress  = (currentPosition.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
+    val displayPos = pendingSeekPosition ?: currentPosition
+    val progress  = (displayPos.toFloat() / videoDuration.toFloat()).coerceIn(0f, 1f)
     val barHeight by animateDpAsState(if (seekFocused) 10.dp else 5.dp, label = "bh")
     val thumbSize by animateDpAsState(if (seekFocused) 20.dp else 0.dp, label = "ts")
 
     Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(formatTime(currentPosition), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.Start)
+        Text(formatTime(displayPos), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.Start)
         Box(
             modifier = Modifier.weight(1f).padding(horizontal = 12.dp).height(32.dp)
                 .focusRequester(seekFR).focusable()
                 .onFocusChanged { seekFocused = it.isFocused }
                 .onKeyEvent { ev ->
                     if (ev.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
+
+                    val isRepeat = ev.nativeKeyEvent.repeatCount > 0
+
                     when (ev.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
                             val d = if (isRtl) 10_000L else -10_000L
-                            val p = (exoWrapper.player.currentPosition + d).coerceIn(0L, videoDuration)
-                            exoWrapper.seekTo(p); currentPosition = p; true
+                            val target = ((pendingSeekPosition ?: currentPosition) + d).coerceIn(0L, videoDuration)
+                            pendingSeekPosition = target
+                            true
                         }
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
                             val d = if (isRtl) -10_000L else 10_000L
-                            val p = (exoWrapper.player.currentPosition + d).coerceIn(0L, videoDuration)
-                            exoWrapper.seekTo(p); currentPosition = p; true
+                            val target = ((pendingSeekPosition ?: currentPosition) + d).coerceIn(0L, videoDuration)
+                            pendingSeekPosition = target
+                            true
                         }
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true }
-                        KeyEvent.KEYCODE_DPAD_UP   -> { onUpPressed();   true }
-                        KeyEvent.KEYCODE_DPAD_DOWN -> { onDownPressed(); true }
+                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                            if (isRepeat) return@onKeyEvent true
+                            if (isPlaying) exoWrapper.pause() else exoWrapper.play(); true
+                        }
+                        KeyEvent.KEYCODE_DPAD_UP   -> { if (isRepeat) return@onKeyEvent true; onUpPressed(); true }
+                        KeyEvent.KEYCODE_DPAD_DOWN -> { if (isRepeat) return@onKeyEvent true; onDownPressed(); true }
                         else -> false
                     }
                 },
             contentAlignment = Alignment.CenterStart
         ) {
-            // Track Background
             Box(Modifier.fillMaxWidth().height(barHeight).clip(RoundedCornerShape(50)).background(Color.White.copy(if (seekFocused) 0.35f else 0.25f)))
-            // Fill
             Box(Modifier.fillMaxWidth(progress).height(barHeight).clip(RoundedCornerShape(50)).background(if (seekFocused) Color(0xFFE50914) else Color(0xFFE50914).copy(0.8f)))
-            // Thumb
             if (thumbSize > 0.dp) {
                 Box(Modifier.fillMaxWidth(progress).wrapContentWidth(Alignment.End)) {
                     Box(Modifier.size(thumbSize).clip(CircleShape).background(Color.White).shadow(4.dp, CircleShape))
                 }
             }
         }
-        Text(formatTime(videoDuration - currentPosition), color = DIM, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.End)
+        Text(formatTime(videoDuration - displayPos), color = DIM, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.width(70.dp), textAlign = TextAlign.End)
     }
 }
 
