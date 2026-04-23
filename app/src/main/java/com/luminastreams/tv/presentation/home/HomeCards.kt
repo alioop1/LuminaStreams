@@ -3,9 +3,9 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.ui.ExperimentalComposeUiApi
-import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -13,8 +13,11 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -25,33 +28,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.tv.material3.*
-import androidx.compose.foundation.Image
-import androidx.compose.ui.draw.alpha
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
 import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
-import androidx.compose.foundation.BorderStroke
 
 private fun quantizeProgress(progress: Float): Float {
     if (progress >= 0.95f) return 1f
     return (progress * 100f).roundToInt().coerceIn(1, 99) / 100f
-}
-
-@Composable
-fun RowLabel(title: String, isActive: Boolean, modifier: Modifier = Modifier) {
-    Text(
-        text = title,
-        color = WHITE.copy(alpha = if (isActive) 1f else 0.38f),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Bold,
-        letterSpacing = 0.3.sp,
-        modifier = modifier
-    )
 }
 
 @Composable
@@ -62,8 +49,19 @@ fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false)
         StudioBrand.AMAZON -> R.drawable.logo_amazon; StudioBrand.PARAMOUNT -> R.drawable.logo_paramount
         StudioBrand.HULU -> R.drawable.logo_hulu
     }
-    Box(modifier = Modifier.height(if (isLarge) 32.dp else 22.dp).width(if (isLarge) 80.dp else 50.dp).alpha(if (isActive) 1f else 0.4f), contentAlignment = Alignment.Center) {
-        Image(painterResource(imageRes), brand.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+    Box(
+        modifier = Modifier
+            .height(if (isLarge) 32.dp else 22.dp)
+            .width(if (isLarge) 80.dp else 50.dp)
+            .alpha(if (isActive) 1f else 0.4f),
+        contentAlignment = Alignment.Center
+    ) {
+        Image(
+            painter = painterResource(imageRes),
+            contentDescription = brand.name,
+            contentScale = ContentScale.Fit,
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
@@ -99,7 +97,10 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-            border = ClickableSurfaceDefaults.border(Border.None, Border.None),
+            border = ClickableSurfaceDefaults.border(
+                border = Border(border = BorderStroke(0.dp, Color.Transparent), shape = RoundedCornerShape(10.dp)),
+                focusedBorder = Border(border = BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp))
+            ),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
             modifier = Modifier
                 .fillMaxWidth()
@@ -110,12 +111,24 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                 }
                 .onFocusChanged { if (it.isFocused) onFocused() }
         ) {
-            if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(8.dp)) }
+            if (url.isNotBlank()) {
+                AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) {
+                    Text(movie.title, color = WHITE.copy(0.5f), fontSize = 11.sp, maxLines = 2, modifier = Modifier.padding(8.dp))
+                }
+            }
 
             if (movie.id.startsWith("http")) {
                 val isDubbed = movie.title.contains("מדובב")
-                Box(Modifier.align(Alignment.TopStart).padding(6.dp).clip(RoundedCornerShape(4.dp)).background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF)).padding(horizontal = 6.dp, vertical = 3.dp)) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
+                        .padding(horizontal = 6.dp, vertical = 3.dp)
+                ) {
                     Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE, fontSize = 9.sp, fontWeight = FontWeight.Black)
                 }
             }
@@ -131,7 +144,14 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                 Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
             }
             if (movie.rating > 0f) {
-                Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xBB000000))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
                     Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
             }
@@ -169,12 +189,13 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
         label = "scale"
     )
 
-    Column(modifier = modifier
-        .width(cardW)
-        .graphicsLayer {
-            scaleX = animatedScale
-            scaleY = animatedScale
-        },
+    Column(
+        modifier = modifier
+            .width(cardW)
+            .graphicsLayer {
+                scaleX = animatedScale
+                scaleY = animatedScale
+            },
         horizontalAlignment = Alignment.Start
     ) {
         Surface(
@@ -183,21 +204,46 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             colors = ClickableSurfaceDefaults.colors(containerColor = CARD_BG, focusedContainerColor = CARD_BG),
             shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-            border = ClickableSurfaceDefaults.border(Border.None, Border.None),
+            border = ClickableSurfaceDefaults.border(
+                border = Border(border = BorderStroke(0.dp, Color.Transparent), shape = RoundedCornerShape(10.dp)),
+                focusedBorder = Border(border = BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp))
+            ),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier.fillMaxWidth().height(cardH).onFocusChanged { if (it.isFocused) onFocused() }
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(cardH)
+                .onFocusChanged { if (it.isFocused) onFocused() }
         ) {
-            if (url.isNotBlank()) AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            else Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) { Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp)) }
+            if (url.isNotBlank()) {
+                AsyncImage(model = imageRequest, contentDescription = movie.title, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            } else {
+                Box(Modifier.fillMaxSize().background(placeholderBrush), Alignment.Center) {
+                    Text(movie.title, color = WHITE.copy(0.55f), fontSize = 10.sp, maxLines = 3, modifier = Modifier.padding(8.dp))
+                }
+            }
 
             if (movie.id.startsWith("http")) {
                 val isDubbed = movie.title.contains("מדובב")
-                Box(Modifier.align(Alignment.TopStart).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (isDubbed) Color(0xFFE91E63) else Color(0xFF00B0FF))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
                     Text(if (isDubbed) tr("🎤 Dubbed", "🎤 מדובב") else "💎 FUZER", color = WHITE, fontSize = 8.sp, fontWeight = FontWeight.Black)
                 }
             }
             if (movie.rating > 0f) {
-                Box(Modifier.align(Alignment.TopEnd).padding(5.dp).clip(RoundedCornerShape(4.dp)).background(Color(0xBB000000)).padding(horizontal = 5.dp, vertical = 2.dp)) {
+                Box(
+                    Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(5.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xBB000000))
+                        .padding(horizontal = 5.dp, vertical = 2.dp)
+                ) {
                     Text("★ %.1f".format(movie.rating), color = GOLD, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
             }
@@ -209,7 +255,6 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
         }
         Spacer(Modifier.height(6.dp))
 
-        // ⚡ FIX: Used graphicsLayer alpha instead of recomposing Text Color!
         Text(
             text = movie.title,
             color = WHITE,
@@ -250,7 +295,7 @@ fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
         border = ClickableSurfaceDefaults.border(
             border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(12.dp)),
-            focusedBorder = Border(border = BorderStroke(2.5.dp, WHITE), shape = RoundedCornerShape(12.dp))
+            focusedBorder = Border(border = BorderStroke(3.dp, WHITE), shape = RoundedCornerShape(12.dp))
         ),
         modifier = modifier
             .width(130.dp)
@@ -261,6 +306,8 @@ fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier
             }
             .onFocusChanged { if (it.isFocused) onFocused() }
     ) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) { StudioBadge(brand = brand, isActive = true, isLarge = true) }
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            StudioBadge(brand = brand, isActive = true, isLarge = true)
+        }
     }
 }

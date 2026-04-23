@@ -8,6 +8,7 @@
 package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
 import androidx.compose.foundation.layout.*
@@ -19,335 +20,301 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.focusRestorer
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.tv.material3.ClickableSurfaceDefaults
+import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
-import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
-import androidx.compose.foundation.rememberScrollState
+import kotlin.math.abs
 
 @Composable
-fun ContentLayer(
-    rows: List<RowDef>, @Suppress("UNUSED_PARAMETER") contentAlpha: Float, focusState: HomeFocusState, activeTab: String, activeFilter: String?,
-    maxPanelH: Dp, rowHeightFor: (Int) -> Dp, firstContentIndex: Int,
+fun ConsoleRowCycler(
+    rows: List<RowDef>, focusState: HomeFocusState, activeFilter: String?,
     onMovieClick: (String) -> Unit, onHeroUpdate: (Movie?) -> Unit,
     onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
-    onSearch: () -> Unit, onHomeTab: () -> Unit, onMoviesTab: () -> Unit,
-    onSeriesTab: () -> Unit, onFuzer: () -> Unit, onWatchlist: () -> Unit, onSettings: () -> Unit, onIptv: () -> Unit
-) {
-    val firstNavFR = remember { FocusRequester() }
-    val rowFRs = remember { List(30) { FocusRequester() } }
-    var initialFocusDone by remember { mutableStateOf(false) }
-    val isHighTier = DeviceProfile.tier == DeviceProfile.Tier.HIGH
-    val animatedContentAlpha by animateFloatAsState(targetValue = contentAlpha, animationSpec = if (isHighTier) tween(250, easing = LinearEasing) else snap(), label = "contentAlpha")
-
-    LaunchedEffect(Unit) {
-        delay(150)
-        if (focusState.isNavFocused) {
-            runCatching { firstNavFR.requestFocus() }
-        } else if (rows.isNotEmpty()) {
-            runCatching { rowFRs.getOrNull(focusState.currentRowIndex.coerceIn(0, rows.size - 1))?.requestFocus() }
-        }
-    }
-
-    LaunchedEffect(rows.size) {
-        if (!initialFocusDone && rows.isNotEmpty()) {
-            delay(380)
-            initialFocusDone = true
-            if (!focusState.isNavFocused) runCatching { rowFRs.getOrNull(focusState.currentRowIndex.coerceIn(0, rows.size - 1))?.requestFocus() }
-        }
-    }
-
-    LaunchedEffect(focusState.focusTrigger) {
-        if (focusState.focusTrigger > 0) {
-            focusState.isNavFocused = false
-            repeat(5) {
-                delay(80)
-                if (runCatching { rowFRs.getOrNull(focusState.currentRowIndex)?.requestFocus(); true }.getOrDefault(false)) return@repeat
-            }
-        }
-    }
-
-    Box(Modifier.fillMaxSize().focusGroup().onPreviewKeyEvent { ev ->
-        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-        when (ev.key) {
-            Key.DirectionUp -> {
-                if (!focusState.isNavFocused && focusState.currentRowIndex == 0) {
-                    focusState.isNavFocused = true
-                    runCatching { firstNavFR.requestFocus() }
-                    true
-                } else if (!focusState.isNavFocused && focusState.currentRowIndex > 0) {
-                    focusState.currentRowIndex--
-                    focusState.focusTrigger++
-                    true
-                } else false
-            }
-            Key.DirectionDown -> {
-                if (focusState.isNavFocused) {
-                    focusState.isNavFocused = false
-                    focusState.focusTrigger++
-                    true
-                } else if (rows.isNotEmpty() && focusState.currentRowIndex < rows.size - 1) {
-                    focusState.currentRowIndex++
-                    focusState.focusTrigger++
-                    true
-                } else false
-            }
-            Key.Back, Key.Escape -> {
-                if (focusState.isNavFocused) {
-                    focusState.isNavFocused = false
-                    focusState.focusTrigger++
-                    true
-                } else false
-            }
-            else -> false
-        }
-    }) {
-        TwoRowNavBar(activeTab, firstNavFR, onSearch, onHomeTab, onMoviesTab, onSeriesTab, onFuzer, onWatchlist, onSettings, onIptv, { focusState.isNavFocused = true; focusState.currentRowIndex = 0 }, Modifier.fillMaxWidth().height(NAV_H).align(Alignment.TopStart).zIndex(10f))
-
-        Box(Modifier.fillMaxWidth().height(maxPanelH).align(Alignment.BottomStart).graphicsLayer {
-            alpha = animatedContentAlpha
-            compositingStrategy = CompositingStrategy.ModulateAlpha
-        }) {
-            RowsPanel(rows, focusState, rowFRs, maxPanelH, rowHeightFor, firstContentIndex, activeFilter, onStudioFilterClick, onLoadMore, onHeroUpdate, onMovieClick)
-        }
-    }
-}
-
-@Composable
-fun RowsPanel(
-    rows: List<RowDef>, focusState: HomeFocusState, rowFRs: List<FocusRequester>, maxPanelH: Dp,
-    rowHeightFor: (Int) -> Dp, firstContentIndex: Int, activeFilter: String?,
-    onStudioFilterClick: (String?) -> Unit, onLoadMore: (String) -> Unit,
-    onItemFocus: (Movie?) -> Unit, onItemClick: (String) -> Unit
+    modifier: Modifier = Modifier
 ) {
     if (rows.isEmpty()) return
 
-    val verticalScrollState = rememberLazyListState()
+    // Master focus requesters to guarantee exact D-Pad routing
+    val firstCardFR = remember { FocusRequester() }
+    val sidebarFR = remember { FocusRequester() }
 
-    LaunchedEffect(focusState.currentRowIndex, rows.size) {
-        val curRow = focusState.currentRowIndex.coerceIn(0, rows.size - 1)
-        verticalScrollState.animateScrollToItem(curRow)
-    }
+    val safeIndex = focusState.currentRowIndex.coerceIn(0, maxOf(0, rows.size - 1))
 
-    LazyColumn(
-        state = verticalScrollState,
-        modifier = Modifier.fillMaxWidth().height(maxPanelH),
-        userScrollEnabled = false,
-        contentPadding = PaddingValues(0.dp)
-    ) {
-        itemsIndexed(rows, key = { _, item -> item.id }) { index, rowDef ->
-            val rh = rowHeightFor(index)
-            val isLand = (index == firstContentIndex)
+    // Layout direction aware navigation logic (Hebrew LTR vs English LTR)
+    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val forwardKey = if (isRtl) Key.DirectionLeft else Key.DirectionRight
 
-            IsolatedRowWrapper(
-                index = index,
-                rowDef = rowDef,
-                rh = rh,
-                maxPanelH = maxPanelH,
-                isLand = isLand,
-                focusState = focusState,
-                cardFR = rowFRs.getOrNull(index),
-                activeFilter = activeFilter,
-                onFocus = { m ->
-                    focusState.currentRowIndex = index
-                    focusState.isNavFocused = false
-                    onItemFocus(m)
-                },
-                onItemClick = onItemClick,
-                onLoadMore = onLoadMore,
-                onStudioFilterClick = onStudioFilterClick
-            )
+    // Trigger focus to posters only when navigating from Sidebar/TopBar
+    LaunchedEffect(focusState.focusTrigger) {
+        if (focusState.focusTrigger > 0 && !focusState.isNavFocused) {
+            delay(150) // Wait for crossfade to clear the layout tree
+            runCatching { firstCardFR.requestFocus() }
         }
     }
-}
 
-@Composable
-private fun IsolatedRowWrapper(
-    index: Int, rowDef: RowDef, rh: Dp, maxPanelH: Dp, isLand: Boolean,
-    focusState: HomeFocusState, cardFR: FocusRequester?, activeFilter: String?,
-    onFocus: (Movie?) -> Unit, onItemClick: (String) -> Unit,
-    onLoadMore: (String) -> Unit, onStudioFilterClick: (String?) -> Unit
-) {
-    val isActive by remember(focusState, index) {
-        derivedStateOf { !focusState.isNavFocused && focusState.currentRowIndex == index }
+    // Initial Focus
+    LaunchedEffect(Unit) {
+        if (!focusState.isNavFocused) {
+            delay(300)
+            runCatching { firstCardFR.requestFocus() }
+        }
     }
 
-    val animatedAlpha by animateFloatAsState(
-        targetValue = if (isActive) 1f else 0.22f,
-        animationSpec = tween(300),
-        label = "rowAlpha"
-    )
-
+    // Notice we use the injected modifier here!
     Box(
-        modifier = Modifier.fillMaxWidth().height(maxPanelH).graphicsLayer {
-            alpha = animatedAlpha
-            compositingStrategy = CompositingStrategy.ModulateAlpha
-        },
+        modifier = modifier,
         contentAlignment = Alignment.BottomStart
     ) {
-        Box(Modifier.fillMaxWidth().height(rh)) {
-            if (rowDef is RowDef.StudioRibbon) {
-                StudioRibbonRow(isActive, cardFR, activeFilter, onStudioFilterClick, onFocus = { onFocus(null) })
-            } else if (isLand) {
-                when (rowDef) {
-                    is RowDef.Regular -> LandscapeRow(rowDef.title, rowDef.movies, isActive, cardFR, { onFocus(it) }, onItemClick) { onLoadMore(rowDef.id) }
-                    is RowDef.Studio -> LandscapeStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, { onFocus(it) }, onItemClick) { onLoadMore(rowDef.id) }
-                }
-            } else {
-                when (rowDef) {
-                    is RowDef.Regular -> PortraitRow(rowDef.title, rowDef.movies, isActive, cardFR, { onFocus(it) }, onItemClick) { onLoadMore(rowDef.id) }
-                    is RowDef.Studio -> PortraitStudioRow(rowDef.brand, rowDef.movies, isActive, cardFR, { onFocus(it) }, onItemClick) { onLoadMore(rowDef.id) }
-                }
-            }
-        }
-    }
-}
-
-// ⚡ FIX: All Manual Focus memory stripped out. FocusRequests tied directly to the LazyRow!
-@Composable
-fun LandscapeRow(title: String, movies: List<Movie>, isActive: Boolean, cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
-    if (movies.isEmpty()) return
-    val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
-    PagedRowLoadTrigger(rowState, onLoadMore)
-
-    Column {
-        RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
-        LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-            flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-            modifier = Modifier.fillMaxWidth().then(if (cardFR != null) Modifier.focusRequester(cardFR) else Modifier).focusGroup().focusRestorer()
-        ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                LandscapeCard(movie, Modifier, { onFocus(movie) }) { onClick(movie.id) }
-            }
-        }
-    }
-}
-
-@Composable
-fun LandscapeStudioRow(brand: StudioBrand, movies: List<Movie>, isActive: Boolean, cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
-    if (movies.isEmpty()) return
-    val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
-    PagedRowLoadTrigger(rowState, onLoadMore)
-
-    Column {
-        Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StudioBadge(brand, isActive)
-            Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal)
-        }
-        LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(20.dp),
-            flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-            modifier = Modifier.fillMaxWidth().then(if (cardFR != null) Modifier.focusRequester(cardFR) else Modifier).focusGroup().focusRestorer()
-        ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                LandscapeCard(movie, Modifier, { onFocus(movie) }) { onClick(movie.id) }
-            }
-        }
-    }
-}
-
-@Composable
-fun PortraitRow(title: String, movies: List<Movie>, isActive: Boolean, cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
-    if (movies.isEmpty()) return
-    val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
-    PagedRowLoadTrigger(rowState, onLoadMore)
-
-    Column {
-        RowLabel(title, isActive, Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp))
-        LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-            modifier = Modifier.fillMaxWidth().then(if (cardFR != null) Modifier.focusRequester(cardFR) else Modifier).focusGroup().focusRestorer()
-        ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                PosterCard(movie, Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
-            }
-        }
-    }
-}
-
-@Composable
-fun PortraitStudioRow(brand: StudioBrand, movies: List<Movie>, isActive: Boolean, cardFR: FocusRequester?, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
-    if (movies.isEmpty()) return
-    val rowState = rememberLazyListState()
-    LaunchedEffect(isActive) { if (!isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0) }
-    PagedRowLoadTrigger(rowState, onLoadMore)
-
-    Column {
-        Row(Modifier.padding(start = 52.dp, top = 8.dp, bottom = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            StudioBadge(brand, isActive)
-            Text(studioLabel(brand), color = WHITE.copy(if (isActive) 0.9f else 0.35f), fontSize = 14.sp, fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.SemiBold else androidx.compose.ui.text.font.FontWeight.Normal)
-        }
-        LazyRow(
-            state = rowState,
-            contentPadding = PaddingValues(horizontal = 52.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
-            flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-            modifier = Modifier.fillMaxWidth().then(if (cardFR != null) Modifier.focusRequester(cardFR) else Modifier).focusGroup().focusRestorer()
-        ) {
-            itemsIndexed(movies, key = { _, m -> m.id }) { _, movie ->
-                PosterCard(movie, Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
-            }
-        }
-    }
-}
-
-@Composable
-fun StudioRibbonRow(isActive: Boolean, cardFR: FocusRequester?, activeFilter: String?, onStudioFilterClick: (String?) -> Unit, onFocus: () -> Unit) {
-    val brands = listOf(StudioBrand.HBO, StudioBrand.NETFLIX, StudioBrand.AMAZON, StudioBrand.DISNEY, StudioBrand.APPLE_TV, StudioBrand.PARAMOUNT, StudioBrand.HULU)
-    val scrollState = rememberScrollState()
-
-    Column(Modifier.padding(vertical = 10.dp)) {
-        Text(
-            text = tr("Browse by Studio", "סנן לפי אולפן"),
-            color = WHITE.copy(if (isActive) 1f else 0.4f),
-            fontSize = 14.sp,
-            fontWeight = if (isActive) androidx.compose.ui.text.font.FontWeight.Bold else androidx.compose.ui.text.font.FontWeight.Normal,
-            modifier = Modifier.padding(start = 52.dp, bottom = 12.dp)
-        )
-
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .horizontalScroll(scrollState)
-                .padding(horizontal = 52.dp)
-                .then(if (cardFR != null) Modifier.focusRequester(cardFR) else Modifier)
-                .focusGroup()
-                .focusRestorer(),
-            horizontalArrangement = Arrangement.spacedBy(16.dp)
+            modifier = Modifier.fillMaxSize(),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            brands.forEach { brand ->
-                val isActiveFilter = activeFilter == brand.name
-                StudioLogoButton(
-                    brand = brand,
-                    isSelected = isActiveFilter,
-                    modifier = Modifier,
-                    onFocused = { onFocus() },
-                    onClick = { onStudioFilterClick(brand.name) }
-                )
+
+            // ----------------------------------------------------
+            // SIDEBAR: Focusable, native list of Categories
+            // ----------------------------------------------------
+            val listState = rememberLazyListState()
+
+            // Auto-scroll the sidebar so active category is always centered
+            LaunchedEffect(safeIndex) {
+                listState.animateScrollToItem(maxOf(0, safeIndex - 1))
             }
+
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .width(260.dp)
+                    .fillMaxHeight()
+                    .focusRequester(sidebarFR) // Allows the 'BACK' key to snap here!
+                    .focusGroup()
+                    .focusRestorer()
+                    .onPreviewKeyEvent { ev ->
+                        // Safely move from Sidebar -> Posters
+                        if (ev.type == KeyEventType.KeyDown && ev.key == forwardKey) {
+                            runCatching { firstCardFR.requestFocus() }
+                            return@onPreviewKeyEvent true
+                        }
+                        false
+                    },
+                verticalArrangement = Arrangement.Center,
+                contentPadding = PaddingValues(vertical = 40.dp)
+            ) {
+                itemsIndexed(rows) { i, rowDef ->
+                    val isActive = i == safeIndex
+                    val title = when (rowDef) {
+                        is RowDef.Regular -> rowDef.title
+                        is RowDef.Studio -> studioLabel(rowDef.brand)
+                        is RowDef.StudioRibbon -> tr("Studios", "אולפנים")
+                    }
+
+                    Surface(
+                        onClick = {
+                            // If they explicitly CLICK a category, snap focus right into the posters
+                            focusState.focusTrigger++
+                        },
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Color.Transparent,
+                            focusedContainerColor = WHITE.copy(alpha = 0.15f),
+                            contentColor = if (isActive) WHITE else WHITE.copy(alpha = 0.4f),
+                            focusedContentColor = WHITE
+                        ),
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
+                        modifier = Modifier
+                            .padding(start = 32.dp, end = 16.dp, top = 2.dp, bottom = 2.dp)
+                            .fillMaxWidth()
+                            .onFocusChanged { state ->
+                                // Quietly update the background rows without stealing focus
+                                if (state.isFocused) {
+                                    focusState.currentRowIndex = i
+                                }
+                            }
+                    ) {
+                        Text(
+                            text = title,
+                            fontSize = if (isActive) 17.sp else 15.sp,
+                            fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp)
+                        )
+                    }
+                }
+            }
+
+            // Minimalist Divider Line
+            Box(modifier = Modifier.width(2.dp).fillMaxHeight(0.5f).background(Color(0x22FFFFFF)))
+
+            // ----------------------------------------------------
+            // CONTENT: Stacked Preloading Architecture
+            // ----------------------------------------------------
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .onPreviewKeyEvent { ev ->
+                        if (ev.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+
+                        when (ev.key) {
+                            Key.DirectionUp -> {
+                                if (safeIndex > 0) {
+                                    focusState.currentRowIndex--
+                                    focusState.focusTrigger++ // triggers focus lock to new category
+                                    true
+                                } else {
+                                    focusState.isNavFocused = true
+                                    false // Let native focus handle moving to Top Nav
+                                }
+                            }
+                            Key.DirectionDown -> {
+                                if (safeIndex < rows.size - 1) {
+                                    focusState.currentRowIndex++
+                                    focusState.focusTrigger++ // triggers focus lock to new category
+                                    true
+                                } else false
+                            }
+                            Key.Back, Key.Escape -> {
+                                // PS5 MAGIC: Pressing Back instantly drops you out of the posters and into the Sidebar
+                                runCatching { sidebarFR.requestFocus() }
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+            ) {
+                // Render multiple rows simultaneously to force image preloading
+                rows.forEachIndexed { index, rowDef ->
+                    val isActive = index == safeIndex
+                    val isNear = abs(index - safeIndex) <= 2
+
+                    val animatedAlpha by animateFloatAsState(
+                        targetValue = if (isActive) 1f else 0f,
+                        animationSpec = tween(300),
+                        label = "rowAlpha"
+                    )
+
+                    // Keep it in composition if near or fading
+                    if (isNear || animatedAlpha > 0.01f) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .graphicsLayer {
+                                    alpha = animatedAlpha
+                                    val scale = 0.98f + (0.02f * animatedAlpha)
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
+                                .focusProperties { canFocus = isActive },
+                            contentAlignment = Alignment.CenterStart
+                        ) {
+                            val isLand = rows.indexOf(rowDef) == rows.indexOfFirst { it !is RowDef.StudioRibbon }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(if (isLand) ROW_LANDSCAPE_H else ROW_PORTRAIT_H),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                when (rowDef) {
+                                    is RowDef.Regular -> {
+                                        if (isLand) LandscapeRowData(rowDef.movies, isActive, firstCardFR, { onHeroUpdate(it) }, onMovieClick) { onLoadMore(rowDef.id) }
+                                        else PortraitRowData(rowDef.movies, isActive, firstCardFR, { onHeroUpdate(it) }, onMovieClick) { onLoadMore(rowDef.id) }
+                                    }
+                                    is RowDef.Studio -> {
+                                        if (isLand) LandscapeRowData(rowDef.movies, isActive, firstCardFR, { onHeroUpdate(it) }, onMovieClick) { onLoadMore(rowDef.id) }
+                                        else PortraitRowData(rowDef.movies, isActive, firstCardFR, { onHeroUpdate(it) }, onMovieClick) { onLoadMore(rowDef.id) }
+                                    }
+                                    is RowDef.StudioRibbon -> {
+                                        StudioRibbonRowData(isActive, firstCardFR, activeFilter, onStudioFilterClick) { onHeroUpdate(null) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------------
+// Internal Data Renderers
+// ----------------------------------------------------------------------------------
+
+@Composable
+private fun LandscapeRowData(movies: List<Movie>, isActive: Boolean, firstCardFR: FocusRequester, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
+    if (movies.isEmpty()) return
+    val rowState = rememberLazyListState()
+    RememberPagedRowLoad(rowState, onLoadMore)
+
+    LaunchedEffect(isActive) {
+        if (isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0)
+    }
+
+    LazyRow(
+        state = rowState,
+        contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
+        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer()
+    ) {
+        itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
+            val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
+            LandscapeCard(movie, mod, { onFocus(movie) }) { onClick(movie.id) }
+        }
+    }
+}
+
+@Composable
+private fun PortraitRowData(movies: List<Movie>, isActive: Boolean, firstCardFR: FocusRequester, onFocus: (Movie) -> Unit, onClick: (String) -> Unit, onLoadMore: () -> Unit) {
+    if (movies.isEmpty()) return
+    val rowState = rememberLazyListState()
+    RememberPagedRowLoad(rowState, onLoadMore)
+
+    LaunchedEffect(isActive) {
+        if (isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0)
+    }
+
+    LazyRow(
+        state = rowState,
+        contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
+        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer()
+    ) {
+        itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
+            val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
+            PosterCard(movie, mod, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
+        }
+    }
+}
+
+@Composable
+private fun StudioRibbonRowData(isActive: Boolean, firstCardFR: FocusRequester, activeFilter: String?, onStudioFilterClick: (String?) -> Unit, onFocus: () -> Unit) {
+    val brands = listOf(StudioBrand.HBO, StudioBrand.NETFLIX, StudioBrand.AMAZON, StudioBrand.DISNEY, StudioBrand.APPLE_TV, StudioBrand.PARAMOUNT, StudioBrand.HULU)
+    val targetIndex = maxOf(0, brands.indexOfFirst { it.name == activeFilter })
+    val rowState = rememberLazyListState(initialFirstVisibleItemIndex = targetIndex)
+
+    LazyRow(
+        state = rowState,
+        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer(),
+        contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState)
+    ) {
+        itemsIndexed(brands) { index, brand ->
+            val mod = if (isActive && index == targetIndex) Modifier.focusRequester(firstCardFR) else Modifier
+            StudioLogoButton(brand = brand, isSelected = activeFilter == brand.name, modifier = mod, onFocused = { onFocus() }, onClick = { onStudioFilterClick(brand.name) })
         }
     }
 }
@@ -365,10 +332,4 @@ fun studioLabel(b: StudioBrand): String {
         StudioBrand.PARAMOUNT -> translateText("Paramount+ Exclusives", "בלעדי לפרמאונט")
         StudioBrand.HULU -> translateText("Hulu Originals", "מקור של הולו")
     }
-}
-
-@Composable
-private fun PagedRowLoadTrigger(rowState: androidx.compose.foundation.lazy.LazyListState, onLoadMore: () -> Unit) {
-    val loadMoreState = remember { derivedStateOf { rowState.layoutInfo.visibleItemsInfo.lastOrNull()?.index == rowState.layoutInfo.totalItemsCount - 1 } }
-    LaunchedEffect(loadMoreState.value) { if (loadMoreState.value) onLoadMore() }
 }

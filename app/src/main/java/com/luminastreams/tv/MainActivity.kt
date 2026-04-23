@@ -71,20 +71,6 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-/**
- * Fixed density target for the entire app.
- *
- * Android TV large screens (50"+ 4K OLEDs) typically report densityDpi=213
- * which makes every dp physically very large on the panel.  We force 320 dpi
- * so the UI always renders at the same logical scale as a 1080p PC monitor,
- * regardless of what the TV OS advertises.
- *
- * Tuning guide (rebuild & check after each change):
- * 320  → matches a standard 1080p PC/monitor (target baseline)
- * 240  → slightly larger UI (good for very large living-room TVs)
- * 320  → compact, correct for 50"+
- * 400  → even smaller (more content visible, smaller text)
- */
 private const val FORCED_DENSITY_DPI = 240
 
 class MainActivity : ComponentActivity() {
@@ -208,7 +194,6 @@ fun AppNavHostContainer(
 
         composable("home") {
             HomeScreen(
-                // OPTIMIZATION: CPU Zeroing when navigating away
                 state         = homeViewModel.state.collectAsStateWithLifecycle().value,
                 viewModel     = homeViewModel,
                 navController = navController,
@@ -242,7 +227,6 @@ fun AppNavHostContainer(
             DetailsScreen(
                 state           = detailsViewModel.state.collectAsStateWithLifecycle().value,
                 onEvent         = detailsViewModel::onEvent,
-                // ⚡ FIX: Added posterUrl to the navigation route
                 onPlayDirectUrl = { videoUrl, imdbId, title, backdrop, poster, logo ->
                     val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
                     val safeImdb     = if (imdbId.isBlank()) "_" else imdbId
@@ -261,7 +245,6 @@ fun AppNavHostContainer(
         }
 
         composable(
-            // ⚡ FIX: Added posterUrl here as well
             route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&posterUrl={posterUrl}&logoUrl={logoUrl}",
             arguments = listOf(
                 navArgument("videoUrl")    { type = NavType.StringType; defaultValue = "" },
@@ -276,7 +259,6 @@ fun AppNavHostContainer(
             val imdbId      = back.arguments?.getString("imdbId") ?: "_"
             val title       = URLDecoder.decode(back.arguments?.getString("title") ?: "", "UTF-8")
             val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
-            val posterUrl   = URLDecoder.decode(back.arguments?.getString("posterUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
             val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
 
             if (videoUrl.isNotBlank()) {
@@ -285,7 +267,6 @@ fun AppNavHostContainer(
                     imdbId         = if (imdbId == "_") "" else imdbId,
                     title          = title,
                     backdropUrl    = backdropUrl,
-                    posterUrl      = posterUrl,
                     logoUrl        = logoUrl,
                     onNavigateBack = { navController.popBackStack() }
                 )
@@ -297,7 +278,6 @@ fun AppNavHostContainer(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
             SearchScreen(
-                // OPTIMIZATION: CPU Zeroing when navigating away
                 state          = vm.state.collectAsStateWithLifecycle().value,
                 onIntent       = vm::onIntent,
                 onNavigateBack = { navController.popBackStack() },
@@ -312,7 +292,6 @@ fun AppNavHostContainer(
             val vm: SettingsViewModel = viewModel(
                 factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
             )
-            // OPTIMIZATION: CPU Zeroing when navigating away
             val state = vm.state.collectAsStateWithLifecycle().value
             Box(Modifier.fillMaxSize().background(Color(0xFF040405))) {
                 SettingsScreen(
@@ -339,7 +318,6 @@ fun AppNavHostContainer(
             }
         }
 
-        // ── IPTV Live TV ───────────────────────────────────────────────────────
         composable("iptv") {
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
@@ -355,7 +333,6 @@ fun AppNavHostContainer(
                 }
             )
 
-            // OPTIMIZATION: CPU Zeroing when navigating away
             val channels by vm.channels.collectAsStateWithLifecycle()
 
             Box(Modifier.fillMaxSize().background(Color(0xFF000000))) {
