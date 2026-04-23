@@ -57,7 +57,12 @@ fun Ps5TopNav(
     val navFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isFocused) {
-        if (isFocused) runCatching { navFocusRequester.requestFocus() }
+        if (isFocused) {
+            // FIXED: Added a small delay to ensure the screen has fully transitioned
+            // back from the DetailsScreen before hijacking the focus engine!
+            delay(100)
+            runCatching { navFocusRequester.requestFocus() }
+        }
     }
 
     Row(
@@ -79,15 +84,17 @@ fun Ps5TopNav(
                 modifier = Modifier.height(48.dp).padding(end = 24.dp)
             )
 
-            // Minimalist Icon Buttons
-            NavIconButton(Icons.Default.Search, false, navFocusRequester, onSearch)
-            NavIconButton(Icons.Default.Home, activeTab == "ראשי", null, onHomeTab)
-            NavIconButton(Icons.Default.Movie, activeTab == "סרטים", null, onMoviesTab)
-            NavIconButton(Icons.Default.Tv, activeTab == "סדרות", null, onSeriesTab)
-            NavIconButton(Icons.Default.LocalMovies, activeTab == "Fuzer", null, onFuzer)
-            NavIconButton(Icons.Default.Cast, activeTab == "iptv", null, onIptv)
-            NavIconButton(Icons.Default.Bookmark, activeTab == "Watchlist", null, onWatchlist)
-            NavIconButton(Icons.Default.Settings, activeTab == "Settings", null, onSettings)
+            // UX IMPROVEMENT: Focus Requester dynamically targets the currently active tab instead of just Search!
+            val searchFR = if (activeTab !in listOf("ראשי", "סרטים", "סדרות", "Fuzer", "iptv", "Watchlist", "Settings")) navFocusRequester else null
+
+            NavIconButton(Icons.Default.Search, false, searchFR, onSearch)
+            NavIconButton(Icons.Default.Home, activeTab == "ראשי", if (activeTab == "ראשי") navFocusRequester else null, onHomeTab)
+            NavIconButton(Icons.Default.Movie, activeTab == "סרטים", if (activeTab == "סרטים") navFocusRequester else null, onMoviesTab)
+            NavIconButton(Icons.Default.Tv, activeTab == "סדרות", if (activeTab == "סדרות") navFocusRequester else null, onSeriesTab)
+            NavIconButton(Icons.Default.LocalMovies, activeTab == "Fuzer", if (activeTab == "Fuzer") navFocusRequester else null, onFuzer)
+            NavIconButton(Icons.Default.Cast, activeTab == "iptv", if (activeTab == "iptv") navFocusRequester else null, onIptv)
+            NavIconButton(Icons.Default.Bookmark, activeTab == "Watchlist", if (activeTab == "Watchlist") navFocusRequester else null, onWatchlist)
+            NavIconButton(Icons.Default.Settings, activeTab == "Settings", if (activeTab == "Settings") navFocusRequester else null, onSettings)
         }
 
         ClockText()
