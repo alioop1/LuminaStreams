@@ -11,11 +11,13 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -100,6 +102,10 @@ fun ConsoleRowCycler(
                     .width(260.dp)
                     .fillMaxHeight()
                     .focusRequester(sidebarFR) // Allows the 'BACK' key to snap here!
+                    .focusProperties {
+                        // FIXED: When returning from posters, force spatial focus to land EXACTLY on the active category to prevent geometric jumping bugs
+                        enter = { sidebarFR }
+                    }
                     .focusGroup()
                     .focusRestorer()
                     .onPreviewKeyEvent { ev ->
@@ -109,7 +115,7 @@ fun ConsoleRowCycler(
                                 runCatching { firstCardFR.requestFocus() }
                                 return@onPreviewKeyEvent true
                             }
-                            // FIXED: Explicitly force focus to the NavBar if pressing UP on the top category
+                            // Explicitly force focus to the NavBar if pressing UP on the top category
                             if (ev.key == Key.DirectionUp && safeIndex == 0) {
                                 focusState.isNavFocused = true
                                 return@onPreviewKeyEvent true // Consume the event so native focus doesn't guess randomly!
@@ -128,6 +134,8 @@ fun ConsoleRowCycler(
                         is RowDef.StudioRibbon -> tr("Studios", "אולפנים")
                     }
 
+                    val surfaceMod = if (isActive) Modifier.focusRequester(sidebarFR) else Modifier
+
                     Surface(
                         onClick = {
                             // If they explicitly CLICK a category, snap focus right into the posters
@@ -140,7 +148,7 @@ fun ConsoleRowCycler(
                             focusedContentColor = WHITE
                         ),
                         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(8.dp)),
-                        modifier = Modifier
+                        modifier = surfaceMod
                             .padding(start = 32.dp, end = 16.dp, top = 2.dp, bottom = 2.dp)
                             .fillMaxWidth()
                             .onFocusChanged { state ->
@@ -179,7 +187,7 @@ fun ConsoleRowCycler(
                                     focusState.focusTrigger++ // triggers focus lock to new category
                                     true
                                 } else {
-                                    // FIXED: Explicitly force focus to the NavBar if pressing UP on the top row's posters
+                                    // Explicitly force focus to the NavBar if pressing UP on the top row's posters
                                     focusState.isNavFocused = true
                                     true // Consume the event so native focus doesn't guess randomly!
                                 }
@@ -273,7 +281,10 @@ private fun LandscapeRowData(movies: List<Movie>, isActive: Boolean, firstCardFR
         contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer()
+        // FIXED: Only attach FocusGroup and Restorer to the active row to prevent spatial focus from leaking into invisible rows
+        modifier = Modifier.fillMaxWidth()
+            .focusProperties { canFocus = isActive }
+            .let { if (isActive) it.focusGroup().focusRestorer() else it }
     ) {
         itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
             val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
@@ -297,7 +308,9 @@ private fun PortraitRowData(movies: List<Movie>, isActive: Boolean, firstCardFR:
         contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer()
+        modifier = Modifier.fillMaxWidth()
+            .focusProperties { canFocus = isActive }
+            .let { if (isActive) it.focusGroup().focusRestorer() else it }
     ) {
         itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
             val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
@@ -314,10 +327,12 @@ private fun StudioRibbonRowData(isActive: Boolean, firstCardFR: FocusRequester, 
 
     LazyRow(
         state = rowState,
-        modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer(),
         contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp),
-        flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState)
+        flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
+        modifier = Modifier.fillMaxWidth()
+            .focusProperties { canFocus = isActive }
+            .let { if (isActive) it.focusGroup().focusRestorer() else it }
     ) {
         itemsIndexed(brands) { index, brand ->
             val mod = if (isActive && index == targetIndex) Modifier.focusRequester(firstCardFR) else Modifier

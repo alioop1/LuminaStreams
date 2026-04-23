@@ -9,7 +9,11 @@ sealed interface SettingsAuthStatus {
 }
 
 enum class SettingsCategory {
-    ACCOUNT
+    ACCOUNT,
+    PLAYBACK,
+    SUBTITLES,
+    PERFORMANCE,
+    SYSTEM_INFO
 }
 
 data class SettingsState(
@@ -22,9 +26,14 @@ data class SettingsState(
     val rdToken: String = "",
     val authStatus: SettingsAuthStatus = SettingsAuthStatus.Idle,
 
-    // ── Speed Test ────────────────────────────────────────────────────────────
+    // ── Speed Test & Account Status ───────────────────────────────────────────
     val rdSpeedTesting: Boolean = false,
     val rdSpeedTestResult: String? = null,
+
+    // ── Server Health Status ──────────────────────────────────────────────────
+    val rdServerStatus: String = "Checking...",
+    val torrentioServerStatus: String = "Checking...",
+    val isCheckingServers: Boolean = false,
 
     // ── Playback & Home Theater ───────────────────────────────────────────────
     val audioPassthrough: Boolean = false,

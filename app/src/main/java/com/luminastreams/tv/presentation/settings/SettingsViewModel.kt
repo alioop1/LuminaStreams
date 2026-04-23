@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -30,6 +31,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         loadAllSettings()
         calculateRealCacheSize()
         loadDeviceInfo()
+        checkServerStatuses() // Run health check on launch!
+    }
+
+    fun setCategory(category: SettingsCategory) {
+        _state.update { it.copy(selectedCategory = category) }
     }
 
     private fun loadAllSettings() {
@@ -96,42 +102,70 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ── RD Speed Test ─────────────────────────────────────────────────────────
-    fun runSpeedTest() {
+    // ── TRUE SERVER VERIFICATION ──────────────────────────────────────────────
+    fun checkRealDebridAccount() {
         viewModelScope.launch(Dispatchers.IO) {
-            _state.update { it.copy(rdSpeedTesting = true, rdSpeedTestResult = "Testing connection...") }
+            _state.update { it.copy(rdSpeedTesting = true, rdSpeedTestResult = "Contacting Server...") }
             val token = _state.value.rdToken
-            val startTime = System.currentTimeMillis()
+            if (token.isEmpty()) return@launch
+
             try {
-                val url = URL("https://api.real-debrid.com/rest/1.0/time")
+                val url = URL("https://api.real-debrid.com/rest/1.0/user")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
-                conn.connectTimeout = 5_000
-                conn.readTimeout    = 5_000
-                if (token.isNotEmpty()) conn.setRequestProperty("Authorization", "Bearer $token")
-                val code    = conn.responseCode
-                val elapsed = System.currentTimeMillis() - startTime
-                val result = if (code == 200 || code == 401) {
-                    val grade = when {
-                        elapsed < 150 -> "🟢 Excellent"
-                        elapsed < 350 -> "🟡 Good"
-                        elapsed < 700 -> "🟠 Fair"
-                        else          -> "🔴 Poor"
-                    }
-                    "$grade — ${elapsed}ms to Real-Debrid servers"
+                conn.connectTimeout = 6_000
+                conn.readTimeout = 6_000
+                conn.setRequestProperty("Authorization", "Bearer $token")
+
+                if (conn.responseCode == 200) {
+                    val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(jsonStr)
+
+                    val type = json.optString("type", "unknown")
+                    val username = json.optString("username", "User")
+                    val expiration = json.optString("expiration", "Unknown").take(10) // Gets YYYY-MM-DD
+
+                    val statusStr = if (type == "premium") "🟢 Premium ($username) | Exp: $expiration"
+                    else "🔴 Free Account ($username)"
+
+                    _state.update { it.copy(rdSpeedTestResult = statusStr, rdSpeedTesting = false) }
                 } else {
-                    "⚠ Server returned HTTP $code"
+                    _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${conn.responseCode})", rdSpeedTesting = false) }
                 }
-                _state.update { it.copy(rdSpeedTestResult = result, rdSpeedTesting = false) }
             } catch (e: Exception) {
-                val elapsed = System.currentTimeMillis() - startTime
-                _state.update {
-                    it.copy(
-                        rdSpeedTestResult = "✗ Failed after ${elapsed}ms — ${e.javaClass.simpleName}",
-                        rdSpeedTesting = false
-                    )
-                }
+                _state.update { it.copy(rdSpeedTestResult = "✗ Network Error: Could not reach Real-Debrid", rdSpeedTesting = false) }
             }
+        }
+    }
+
+    // ── SERVER HEALTH CHECK ───────────────────────────────────────────────────
+    fun checkServerStatuses() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _state.update { it.copy(isCheckingServers = true, rdServerStatus = "Checking...", torrentioServerStatus = "Checking...") }
+
+            val rdUp = checkUrlStatus("https://api.real-debrid.com/rest/1.0/time")
+            val torrentioUp = checkUrlStatus("https://torrentio.strem.fun/manifest.json")
+
+            _state.update {
+                it.copy(
+                    isCheckingServers = false,
+                    rdServerStatus = if (rdUp) "🟢 Online" else "🔴 Offline",
+                    torrentioServerStatus = if (torrentioUp) "🟢 Online" else "🔴 Offline"
+                )
+            }
+        }
+    }
+
+    private fun checkUrlStatus(urlString: String): Boolean {
+        return try {
+            val url = URL(urlString)
+            val conn = url.openConnection() as HttpURLConnection
+            conn.requestMethod = "GET"
+            conn.connectTimeout = 4000
+            conn.readTimeout = 4000
+            conn.responseCode in 200..299
+        } catch (e: Exception) {
+            false
         }
     }
 
@@ -175,7 +209,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ── Device Info ───────────────────────────────────────────────────────────
     private fun loadDeviceInfo() {
         viewModelScope.launch(Dispatchers.Default) {
             try {
@@ -189,7 +222,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         }
     }
 
-    // ── Search history ────────────────────────────────────────────────────────
     fun clearSearchHistory() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(searchHistoryStatus = "Clearing...") }
@@ -217,6 +249,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     is AuthResult.Success -> {
                         loadAllSettings()
                         _state.update { it.copy(authStatus = SettingsAuthStatus.Success) }
+                        checkRealDebridAccount()
                     }
                     is AuthResult.Error -> _state.update {
                         it.copy(authStatus = SettingsAuthStatus.Error(result.message))
