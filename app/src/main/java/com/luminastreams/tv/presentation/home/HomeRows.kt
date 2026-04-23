@@ -75,7 +75,6 @@ fun ConsoleRowCycler(
         }
     }
 
-    // Notice we use the injected modifier here!
     Box(
         modifier = modifier,
         contentAlignment = Alignment.BottomStart
@@ -104,10 +103,17 @@ fun ConsoleRowCycler(
                     .focusGroup()
                     .focusRestorer()
                     .onPreviewKeyEvent { ev ->
-                        // Safely move from Sidebar -> Posters
-                        if (ev.type == KeyEventType.KeyDown && ev.key == forwardKey) {
-                            runCatching { firstCardFR.requestFocus() }
-                            return@onPreviewKeyEvent true
+                        if (ev.type == KeyEventType.KeyDown) {
+                            // Safely move from Sidebar -> Posters
+                            if (ev.key == forwardKey) {
+                                runCatching { firstCardFR.requestFocus() }
+                                return@onPreviewKeyEvent true
+                            }
+                            // FIXED: Explicitly force focus to the NavBar if pressing UP on the top category
+                            if (ev.key == Key.DirectionUp && safeIndex == 0) {
+                                focusState.isNavFocused = true
+                                return@onPreviewKeyEvent true // Consume the event so native focus doesn't guess randomly!
+                            }
                         }
                         false
                     },
@@ -173,8 +179,9 @@ fun ConsoleRowCycler(
                                     focusState.focusTrigger++ // triggers focus lock to new category
                                     true
                                 } else {
+                                    // FIXED: Explicitly force focus to the NavBar if pressing UP on the top row's posters
                                     focusState.isNavFocused = true
-                                    false // Let native focus handle moving to Top Nav
+                                    true // Consume the event so native focus doesn't guess randomly!
                                 }
                             }
                             Key.DirectionDown -> {
