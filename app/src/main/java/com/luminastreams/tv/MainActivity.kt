@@ -71,7 +71,7 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-private const val FORCED_DENSITY_DPI = 240
+private const val FORCED_DENSITY_DPI = 160
 
 class MainActivity : ComponentActivity() {
 
@@ -236,11 +236,7 @@ fun AppNavHostContainer(
                     val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
                     navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&posterUrl=$safePoster&logoUrl=$safeLogo")
                 },
-                onNavigateBack        = { navController.popBackStack() },
-                onRecommendationClick = { id ->
-                    val safeId = URLEncoder.encode(id, "UTF-8")
-                    navController.navigate("details?fullId=$safeId")
-                }
+                onNavigateBack        = { navController.popBackStack() }
             )
         }
 
