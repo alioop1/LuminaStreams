@@ -2,6 +2,7 @@ package com.luminastreams.tv.presentation.settings
 
 import android.app.Application
 import android.content.Context
+import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.DeviceProfile
@@ -29,10 +30,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         loadAllSettings()
         calculateRealCacheSize()
         loadDeviceInfo()
-    }
-
-    fun setCategory(category: SettingsCategory) {
-        _state.update { it.copy(selectedCategory = category) }
     }
 
     private fun loadAllSettings() {
@@ -80,7 +77,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            prefs.edit().putBoolean(key, value).apply()
+            prefs.edit { putBoolean(key, value) }
         }
     }
 
@@ -95,7 +92,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             }
         }
         viewModelScope.launch(Dispatchers.IO) {
-            prefs.edit().putString(key, value).apply()
+            prefs.edit { putString(key, value) }
         }
     }
 
@@ -199,7 +196,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             try {
                 getApplication<Application>()
                     .getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
-                    .edit().remove("history_items").apply()
+                    .edit { remove("history_items") }
             } catch (_: Exception) {}
             delay(400)
             _state.update { it.copy(searchHistoryStatus = "Cleared ✓") }
@@ -230,7 +227,7 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun logoutRealDebrid() {
-        prefs.edit().remove("rd_api_token").apply()
+        prefs.edit { remove("rd_api_token") }
         loadAllSettings()
         _state.update { it.copy(rdSpeedTestResult = null) }
     }

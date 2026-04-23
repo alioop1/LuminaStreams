@@ -146,8 +146,7 @@ object DeviceProfile {
         return when {
             totalRamMb >= 6000 -> Tier.HIGH
             totalRamMb >= 3000 -> Tier.HIGH
-            totalRamMb >= 2000 -> Tier.MID
-            else               -> Tier.LOW
+            else               -> Tier.MID
         }
     }
 
@@ -202,25 +201,6 @@ object DeviceProfile {
                 maxRowItems       = 15
             )
         }
-    }
-
-    // ── ExoPlayer buffer sizes per tier ──────────────────────────────────────
-    // Tightened maxBufferMs on HIGH/MID: 60s was causing OOM on 2 GB heaps
-    // when the player pre-allocated large media buffers alongside Coil.
-    // LOW gets a slightly smaller window but still plays stutter-free on
-    // a reliable connection; the extra head-room mainly matters for live TV.
-    data class BufferConfig(
-        val minBufferMs       : Int,
-        val maxBufferMs       : Int,
-        val bufferForPlayMs   : Int,
-        val bufferForReplayMs : Int,
-        val targetBufferBytes : Int
-    )
-
-    val bufferConfig: BufferConfig get() = when (effectiveTier()) {
-        Tier.HIGH -> BufferConfig( 8_000, 20_000, 1_500, 3_000, 10 * 1024 * 1024)
-        Tier.MID  -> BufferConfig( 6_000, 15_000, 1_500, 3_000,  6 * 1024 * 1024)
-        Tier.LOW  -> BufferConfig(10_000, 25_000, 2_000, 4_000,  5 * 1024 * 1024)
     }
 
     fun debugInfo(): String =

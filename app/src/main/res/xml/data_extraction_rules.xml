@@ -1,24 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <data-extraction-rules>
-
     <cloud-backup>
-        <!-- גיבוי העדפות משתמש (שפה, ערכת נושא, הגדרות וכו') -->
-        <include domain="sharedpref" path="."/>
+        <include domain="database" path="."/>
+        <include domain="file" path="."/>
 
-        <!-- אל תגבה את ה-DB של IPTV -->
         <exclude domain="database" path="lumina_iptv.db"/>
-
-        <!-- אל תגבה קבצי cache -->
         <exclude domain="file" path="image_cache"/>
-        <exclude domain="external" path="image_cache"/>
     </cloud-backup>
-
     <device-transfer>
-        <include domain="sharedpref" path="."/>
+        <include domain="database" path="."/>
+        <include domain="file" path="."/>
 
         <exclude domain="database" path="lumina_iptv.db"/>
         <exclude domain="file" path="image_cache"/>
-        <exclude domain="external" path="image_cache"/>
     </device-transfer>
-
 </data-extraction-rules>

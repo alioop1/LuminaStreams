@@ -21,10 +21,9 @@ data class Movie(
 )
 
 // ── SearchResult ──────────────────────────────────────────────────────────
-enum class MediaType(val label: String, val hebrewPlural: String) {
-    MOVIE("סרט", "סרטים"),
-    TV_SHOW("סדרה", "סדרות"),
-    PERSON("שחקן", "שחקנים")
+enum class MediaType(val label: String) {
+    MOVIE("סרט"),
+    TV_SHOW("סדרה")
 }
 
 @Immutable

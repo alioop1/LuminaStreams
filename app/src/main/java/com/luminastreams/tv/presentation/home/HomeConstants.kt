@@ -21,14 +21,6 @@ val DIM2      = Color(0x99FFFFFF)
 val DIM3      = Color(0x33FFFFFF)
 val GOLD      = Color(0xFFFFD700)
 val CARD_BG   = Color(0xFF1C1C1C)
-val NAV_GLASS = Color(0x18FFFFFF)
-val NAV_FOCUS = Color(0x30FFFFFF)
-
-val NAV_SEARCH_H = 28.dp
-val NAV_PILLS_H  = 34.dp
-val NAV_PILL_H   = 28.dp
-val NAV_GAP      = 12.dp
-val NAV_H        = NAV_SEARCH_H + NAV_PILLS_H + NAV_GAP
 
 val LAND_W = 280.dp
 val LAND_H = 158.dp
@@ -41,9 +33,6 @@ val placeholderBrush = Brush.verticalGradient(listOf(Color(0xFF2A2A2A), CARD_BG)
 
 @Composable
 fun tr(en: String, he: String): String = if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
-
-fun mergeStudioContent(vararg groups: List<Movie>): List<Movie> =
-    groups.asSequence().flatMap { it.asSequence() }.filter { it.id.isNotBlank() }.distinctBy { it.id }.toList()
 
 @Composable
 fun RememberPagedRowLoad(rowState: androidx.compose.foundation.lazy.LazyListState, onLoadMore: () -> Unit) {

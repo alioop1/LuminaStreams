@@ -9,11 +9,7 @@ sealed interface SettingsAuthStatus {
 }
 
 enum class SettingsCategory {
-    LANGUAGE,
-    ACCOUNT,
-    PLAYBACK,
-    PRIVACY,
-    SYSTEM
+    ACCOUNT
 }
 
 data class SettingsState(

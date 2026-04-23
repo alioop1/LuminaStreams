@@ -175,7 +175,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (_: Exception) {  }
         subtitles
     }
 
@@ -188,6 +188,6 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                 val file   = File(app.cacheDir, "subtitle_${imdbId}_${suffix}_heb.srt")
                 file.writeBytes(bytes)
                 listOf(StremioSubtitle("file://${file.absolutePath}", "heb", "OS-Scraper"))
-            } catch (e: Exception) { emptyList() }
+            } catch (_: Exception) { emptyList() }
         }
 }

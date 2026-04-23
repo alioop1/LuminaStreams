@@ -41,7 +41,6 @@ object FuzerEngine {
 
     private val hashedPassword: String by lazy { md5(PASSWORD) }
 
-    // ── Public API ─────────────────────────────────────────────────────────────
     suspend fun search(query: String): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             if (!ensureLogin()) return@withContext Result.failure(Exception("Login failed"))
@@ -84,8 +83,8 @@ object FuzerEngine {
             }
             val bytes = client.newCall(
                 Request.Builder().url(finalUrl).headers(defaultHeaders("$BASE/browse.php")).build()
-            ).execute().body?.bytes()
-            if (bytes != null && bytes.isNotEmpty() &&
+            ).execute().body.bytes()
+            if (bytes.isNotEmpty() &&
                 !String(bytes.take(50).toByteArray()).contains("html", ignoreCase = true))
                 Result.success(bytes)
             else Result.failure(Exception("Invalid torrent data"))
@@ -94,12 +93,12 @@ object FuzerEngine {
         }
     }
 
-    // ── Helpers ────────────────────────────────────────────────────────────────
     private fun getHtml(url: String): String? {
         val resp  = client.newCall(
             Request.Builder().url(url).headers(defaultHeaders("$BASE/browse.php")).build()
         ).execute()
-        val bytes = resp.body?.bytes() ?: return null
+        val bytes = resp.body.bytes()
+        if (bytes.isEmpty()) return null
         return decodeBody(bytes)
     }
 
@@ -125,7 +124,7 @@ object FuzerEngine {
         try {
             val checkHtml = client.newCall(
                 Request.Builder().url("$BASE/index.php").headers(defaultHeaders(BASE)).build()
-            ).execute().body?.string() ?: ""
+            ).execute().body.string()
             if (checkHtml.contains("logout", ignoreCase = true) ||
                 checkHtml.contains("loggout", ignoreCase = true)) {
                 isLoggedIn = true; return true
@@ -133,7 +132,7 @@ object FuzerEngine {
 
             val loginPageHtml = client.newCall(
                 Request.Builder().url("$BASE/login.php").headers(defaultHeaders(BASE)).build()
-            ).execute().body?.string() ?: ""
+            ).execute().body.string()
             val secToken = Jsoup.parse(loginPageHtml)
                 .select("input[name=securitytoken]").firstOrNull()?.attr("value") ?: "guest"
 
@@ -153,7 +152,7 @@ object FuzerEngine {
                     .build()
             ).execute()
 
-            val loginBody = loginResp.body?.string() ?: ""
+            val loginBody = loginResp.body.string()
             if (loginBody.contains("logout", ignoreCase = true) ||
                 loginBody.contains("loggout", ignoreCase = true) ||
                 cookieJar.loadForRequest(
@@ -165,7 +164,6 @@ object FuzerEngine {
         return false
     }
 
-    // ── Parser ─────────────────────────────────────────────────────────────────
     private fun parseHtmlToMovies(html: String): List<Movie> {
         val movies = mutableListOf<Movie>()
         val doc    = Jsoup.parse(html)

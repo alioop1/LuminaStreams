@@ -1,6 +1,7 @@
 package com.luminastreams.tv.data.remote
 
 import android.content.Context
+import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -8,14 +9,6 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
-/**
- * Client ישיר ל-ktuvit.me — מבוסס על ktuvitManager.js (maormagori/Ktuvit-api)
- * Flow:
- *   1. login()            → מקבל Login cookie
- *   2. getKtuvitId()      → מחפש לפי שם + סוג → מחזיר KtuvitID
- *   3. getSubsList*()     → מחזיר רשימת כתוביות לפי KtuvitID
- *   4. downloadSubtitle() → two-step download (RequestIdentifier → DownloadFile)
- */
 class KtuvitDirectClient(private val context: Context) {
 
     companion object {
@@ -30,7 +23,6 @@ class KtuvitDirectClient(private val context: Context) {
         private const val PREF        = "ktuvit_auth"
     }
 
-    // ── cookie — readable externally (null-check), writable only here ─
     var cookie: String? = null
         private set
         get() = field ?: context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
@@ -39,10 +31,9 @@ class KtuvitDirectClient(private val context: Context) {
     private fun saveCookie(c: String) {
         cookie = c
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit().putString("cookie", c).apply()
+            .edit { putString("cookie", c) }
     }
 
-    // ── 1. Login ──────────────────────────────────────────────────────
     suspend fun login(email: String, password: String): Boolean = withContext(Dispatchers.IO) {
         try {
             val body = """{"request":{"Email":"$email","Password":"${md5Base64(password)}"}}"""
@@ -59,7 +50,6 @@ class KtuvitDirectClient(private val context: Context) {
         }
     }
 
-    // ── 2. Search → KtuvitID ──────────────────────────────────────────
     suspend fun getKtuvitId(
         name: String,
         isSeries: Boolean,
@@ -89,7 +79,6 @@ class KtuvitDirectClient(private val context: Context) {
         }
     }
 
-    // ── 3. Sub List ───────────────────────────────────────────────────
     data class KtuvitSub(val id: String, val name: String, val downloads: Int, val fileType: String)
 
     suspend fun getSubsListMovie(ktuvitId: String): List<KtuvitSub> = withContext(Dispatchers.IO) {
@@ -128,7 +117,6 @@ class KtuvitDirectClient(private val context: Context) {
         return results.sortedByDescending { it.downloads }
     }
 
-    // ── 4. Download Subtitle ──────────────────────────────────────────
     suspend fun downloadSubtitle(
         ktuvitTitleId: String,
         subId: String,
@@ -151,7 +139,6 @@ class KtuvitDirectClient(private val context: Context) {
         }
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────
     private fun openPost(url: String, body: String, cookie: String?): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.requestMethod = "POST"
