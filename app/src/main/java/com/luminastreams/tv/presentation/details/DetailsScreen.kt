@@ -47,6 +47,7 @@ import coil.request.ImageRequest
 import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
+import kotlinx.coroutines.launch
 
 // 🎨 PALETTE
 private val ColorBgDark = Color(0xFF050507)
@@ -62,15 +63,16 @@ fun DetailsScreen(
     onEvent: (DetailsEvent) -> Unit,
     onPlayDirectUrl: (String, String, String, String, String, String) -> Unit,
     onNavigateBack: () -> Unit = {}
-    // ⚡ FIX: Removed unused onRecommendationClick here
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var showSources by remember { mutableStateOf(false) }
 
     // FOCUS REQUESTERS
     val playFR = remember { FocusRequester() }
     val backFR = remember { FocusRequester() }
+    val selectedSeasonFR = remember { FocusRequester() }
     val firstEpisodeFR = remember { FocusRequester() }
     val firstCastFR = remember { FocusRequester() }
     val firstSourceFR = remember { FocusRequester() }
@@ -107,149 +109,171 @@ fun DetailsScreen(
 
     val media = state.mediaInfo
 
-    Box(modifier = Modifier.fillMaxSize().background(ColorBgDark)) {
+    // ⚡ CUSTOM DPI SCALING FOR 77" OLED (Shrinks UI by 20%)
+    val currentDensity = LocalDensity.current
+    val customDensity = androidx.compose.ui.unit.Density(
+        density = currentDensity.density * 0.8f,
+        fontScale = currentDensity.fontScale * 0.8f
+    )
 
-        Crossfade(targetState = currentBackdrop, animationSpec = tween(400), label = "backdrop") { bgUrl ->
-            AsyncImage(
-                model = ImageRequest.Builder(context).data(bgUrl).crossfade(true).build(),
-                contentDescription = null, contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().alpha(0.5f)
-            )
-        }
+    CompositionLocalProvider(LocalDensity provides customDensity) {
+        Box(modifier = Modifier.fillMaxSize().background(ColorBgDark)) {
 
-        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
-            colors = listOf(Color.Transparent, ColorBgDark.copy(0.8f), ColorBgDark),
-            startY = 300f
-        )))
+            Crossfade(targetState = currentBackdrop, animationSpec = tween(400), label = "backdrop") { bgUrl ->
+                AsyncImage(
+                    model = ImageRequest.Builder(context).data(bgUrl).crossfade(true).build(),
+                    contentDescription = null, contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize().alpha(0.5f)
+                )
+            }
 
-        LazyColumn(
-            contentPadding = PaddingValues(top = 80.dp, bottom = 120.dp),
-            verticalArrangement = Arrangement.spacedBy(64.dp),
-            modifier = Modifier.fillMaxSize().focusGroup()
-        ) {
-            item {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+                colors = listOf(Color.Transparent, ColorBgDark.copy(0.8f), ColorBgDark),
+                startY = 300f
+            )))
 
-                    Box(Modifier.fillMaxWidth()) {
-                        PremiumIconButton(
-                            icon = if (isRtl) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
-                            modifier = Modifier.align(Alignment.TopStart).focusRequester(backFR),
-                            onClick = onNavigateBack
+            LazyColumn(
+                contentPadding = PaddingValues(top = 80.dp, bottom = 120.dp),
+                verticalArrangement = Arrangement.spacedBy(64.dp),
+                modifier = Modifier.fillMaxSize().focusGroup()
+            ) {
+                item {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+
+                        Box(Modifier.fillMaxWidth()) {
+                            PremiumIconButton(
+                                icon = if (isRtl) Icons.AutoMirrored.Filled.ArrowForward else Icons.AutoMirrored.Filled.ArrowBack,
+                                modifier = Modifier.align(Alignment.TopStart).focusRequester(backFR),
+                                onClick = onNavigateBack
+                            )
+
+                            if (!media.logoUrl.isNullOrEmpty()) {
+                                AsyncImage(model = media.logoUrl, contentDescription = media.title, modifier = Modifier.heightIn(max = 140.dp).fillMaxWidth(0.5f).align(Alignment.Center), contentScale = ContentScale.Fit)
+                            } else {
+                                Text(media.title, color = ColorTextMain, fontSize = 72.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = 76.sp, modifier = Modifier.fillMaxWidth(0.7f).align(Alignment.Center))
+                            }
+                        }
+
+                        Spacer(Modifier.height(48.dp))
+
+                        Row(horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.height(110.dp)) {
+                            BentoCard(title = tr("RATING", "דירוג"), value = "★ ${String.format(Locale.US, "%.1f", media.tmdbRating)}")
+                            BentoCard(title = media.releaseDate.take(4).ifEmpty { "YEAR" }, value = media.ageRating.ifEmpty { "NR" })
+                            BentoCard(title = tr("GENRE", "ז'אנר"), value = media.displayGenres.split("•").firstOrNull()?.trim() ?: "Movie", isWide = true)
+                            BentoCard(title = tr("QUALITY", "איכות"), value = state.bestSourceHint?.substringBefore("•")?.trim() ?: "1080p")
+                        }
+
+                        Spacer(Modifier.height(48.dp))
+                        Text(media.overview, color = ColorTextMain.copy(0.8f), fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(0.65f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+                        Spacer(Modifier.height(48.dp))
+
+                        val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
+                        ActionIsland(
+                            playText = if(isPartiallyWatched) tr("Continue S${state.lastWatchedSeason?:1}:E${state.lastWatchedEpisode?:1}", "המשך צפייה") else tr("Play Now", "נגן עכשיו"),
+                            // ⚡ THE FIX: Hard-wire the D-PAD DOWN directly to the Season tabs!
+                            modifier = Modifier
+                                .focusRequester(playFR)
+                                .focusProperties {
+                                    if (media.isSeries && media.totalSeasons > 0) {
+                                        down = selectedSeasonFR
+                                    }
+                                },
+                            onPlayClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
+                            onSourcesClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
+                            onTrailerClick = { launchNativeTrailer(context, media.trailerUrl, media.title) },
+                            isFavorite = media.isFavorite,
+                            onFavClick = { onEvent(DetailsEvent.ToggleFavorite) }
                         )
+                    }
+                }
 
-                        if (!media.logoUrl.isNullOrEmpty()) {
-                            AsyncImage(model = media.logoUrl, contentDescription = media.title, modifier = Modifier.heightIn(max = 140.dp).fillMaxWidth(0.5f).align(Alignment.Center), contentScale = ContentScale.Fit)
-                        } else {
-                            Text(media.title, color = ColorTextMain, fontSize = 72.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center, lineHeight = 76.sp, modifier = Modifier.fillMaxWidth(0.7f).align(Alignment.Center))
+                // --- SEASONS & EPISODES ---
+                if (media.isSeries) {
+
+                    // 1. Season Picker Row
+                    if (media.totalSeasons > 0) {
+                        item {
+                            Column {
+                                Row(verticalAlignment = Alignment.Bottom, modifier = Modifier.padding(horizontal = 64.dp)) {
+                                    Text(tr("Seasons", "עונות"), color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.width(16.dp))
+                                    Text("${media.totalSeasons} ${tr("Available", "זמינות")}", color = ColorTextMain.copy(0.5f), fontSize = 16.sp, modifier = Modifier.padding(bottom = 4.dp))
+                                }
+                                Spacer(Modifier.height(24.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    contentPadding = PaddingValues(horizontal = 64.dp),
+                                    modifier = Modifier.focusGroup().focusRestorer { selectedSeasonFR }
+                                ) {
+                                    items(media.totalSeasons) { idx ->
+                                        val seasonNum = idx + 1
+                                        val isTargetFocus = (state.selectedSeason == seasonNum) || (state.selectedSeason <= 0 && idx == 0)
+
+                                        SeasonPill(
+                                            seasonNumber = seasonNum,
+                                            isSelected = state.selectedSeason == seasonNum,
+                                            modifier = Modifier
+                                                .then(if (isTargetFocus) Modifier.focusRequester(selectedSeasonFR) else Modifier)
+                                                // ⚡ THE "DOWN" FIX: Hard-wire D-Pad DOWN to Episode 1
+                                                .focusProperties { down = firstEpisodeFR },
+                                            onClick = {
+                                                // 1. Tell the ViewModel to change the season
+                                                onEvent(DetailsEvent.SelectSeason(seasonNum))
+
+                                                // ⚡ THE "OK" FIX: Wait for the episodes to load, then jump focus to Episode 1
+                                                scope.launch {
+                                                    delay(150)
+                                                    runCatching { firstEpisodeFR.requestFocus() }
+                                                }
+                                            }
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
 
-                    Spacer(Modifier.height(48.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(24.dp), modifier = Modifier.height(110.dp)) {
-                        BentoCard(title = tr("RATING", "דירוג"), value = "★ ${String.format(Locale.US, "%.1f", media.tmdbRating)}")
-                        BentoCard(title = media.releaseDate.take(4).ifEmpty { "YEAR" }, value = media.ageRating.ifEmpty { "NR" })
-                        BentoCard(title = tr("GENRE", "ז'אנר"), value = media.displayGenres.split("•").firstOrNull()?.trim() ?: "Movie", isWide = true)
-                        BentoCard(title = tr("QUALITY", "איכות"), value = state.bestSourceHint?.substringBefore("•")?.trim() ?: "1080p")
-                    }
-
-                    Spacer(Modifier.height(48.dp))
-                    Text(media.overview, color = ColorTextMain.copy(0.8f), fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(0.65f), maxLines = 3, overflow = TextOverflow.Ellipsis)
-                    Spacer(Modifier.height(48.dp))
-
-                    val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
-                    ActionIsland(
-                        playText = if(isPartiallyWatched) tr("Continue S${state.lastWatchedSeason?:1}:E${state.lastWatchedEpisode?:1}", "המשך צפייה") else tr("Play Now", "נגן עכשיו"),
-                        modifier = Modifier.focusRequester(playFR),
-                        onPlayClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
-                        onSourcesClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
-                        onTrailerClick = { launchNativeTrailer(context, media.trailerUrl, media.title) },
-                        isFavorite = media.isFavorite,
-                        onFavClick = { onEvent(DetailsEvent.ToggleFavorite) }
-                    )
-                }
-            }
-
-            if (media.isSeries && state.episodes.isNotEmpty()) {
-                item {
-                    Column(Modifier.focusGroup()) {
-                        Text(tr("Episodes", "פרקים"), color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp))
-                        Spacer(Modifier.height(24.dp))
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(24.dp),
-                            contentPadding = PaddingValues(horizontal = 64.dp),
-                            modifier = Modifier.focusRestorer { firstEpisodeFR }
-                        ) {
-                            itemsIndexed(state.episodes) { idx, ep ->
-                                EpisodeCardOptimized(
-                                    episode = ep,
-                                    fallback = media.backdropUrl,
-                                    modifier = if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier,
-                                    onFocused = { if(ep.stillUrl.isNotBlank()) currentBackdrop = ep.stillUrl },
-                                    onClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber)) }
-                                )
+                    // 2. Episodes Row
+                    if (state.episodes.isNotEmpty()) {
+                        item {
+                            Column {
+                                Text(tr("Episodes", "פרקים"), color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp))
+                                Spacer(Modifier.height(24.dp))
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                    contentPadding = PaddingValues(horizontal = 64.dp),
+                                    modifier = Modifier.focusGroup().focusRestorer { firstEpisodeFR }
+                                ) {
+                                    itemsIndexed(state.episodes) { idx, ep ->
+                                        EpisodeCardOptimized(
+                                            episode = ep,
+                                            fallback = media.backdropUrl,
+                                            modifier = if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier,
+                                            onFocused = { if(ep.stillUrl.isNotBlank()) currentBackdrop = ep.stillUrl },
+                                            onClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber)) }
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
 
-            if (media.cast.isNotEmpty()) {
-                item {
-                    Column(Modifier.focusGroup()) {
-                        Text(tr("Cast & Crew", "שחקנים"), color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp))
-                        Spacer(Modifier.height(24.dp))
-                        LazyRow(
-                            horizontalArrangement = Arrangement.spacedBy(24.dp),
-                            contentPadding = PaddingValues(horizontal = 64.dp),
-                            modifier = Modifier.focusRestorer { firstCastFR }
-                        ) {
-                            itemsIndexed(media.cast) { idx, a ->
-                                CastCardOptimized(
-                                    actor = a,
-                                    modifier = if (idx == 0) Modifier.focusRequester(firstCastFR) else Modifier
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // --- SOURCES MODAL (6-COLUMN POSTER GRID) ---
-        AnimatedVisibility(
-            visible = showSources,
-            enter = fadeIn(tween(250)),
-            exit = fadeOut(tween(200)),
-            modifier = Modifier.zIndex(100f)
-        ) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(0.9f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.Center) {
-
-                Column(
-                    modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.9f).clip(RoundedCornerShape(24.dp)).background(Color(0xFF12121A)).padding(40.dp)
-                ) {
-                    Text(tr("Available Sources", "מקורות זמינים"), color = ColorTextMain, fontSize = 36.sp, fontWeight = FontWeight.Black)
-                    Spacer(Modifier.height(8.dp))
-                    Text(tr("Select a stream to begin playback", "בחר מקור כדי להתחיל"), color = ColorTextMain.copy(0.6f), fontSize = 16.sp)
-                    Spacer(Modifier.height(32.dp))
-
-                    when (val st = state.scrapingStatus) {
-                        is ScrapingStatus.Searching, is ScrapingStatus.ResolvingDebrid -> { Box(Modifier.fillMaxSize(), Alignment.Center) { LoadingIndicator() } }
-                        is ScrapingStatus.Error -> { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(st.message, color = ColorAccentIsland, fontSize = 24.sp) } }
-                        else -> {
-                            LazyVerticalGrid(
-                                columns = GridCells.Fixed(6), // Sexy, smaller 6-poster layout
-                                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(bottom = 64.dp),
-                                modifier = Modifier.fillMaxSize().focusGroup().focusRestorer { firstSourceFR }
+                // --- CAST ROW ---
+                if (media.cast.isNotEmpty()) {
+                    item {
+                        Column {
+                            Text(tr("Cast & Crew", "שחקנים"), color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp))
+                            Spacer(Modifier.height(24.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(24.dp),
+                                contentPadding = PaddingValues(horizontal = 64.dp),
+                                modifier = Modifier.focusGroup().focusRestorer { firstCastFR }
                             ) {
-                                itemsIndexed(state.availableStreams) { idx, stream ->
-                                    DetailedSourceCard(
-                                        stream = stream,
-                                        posterUrl = media.posterUrl,
-                                        modifier = if (idx == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
-                                        onClick = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
+                                itemsIndexed(media.cast) { idx, a ->
+                                    CastCardOptimized(
+                                        actor = a,
+                                        modifier = if (idx == 0) Modifier.focusRequester(firstCastFR) else Modifier
                                     )
                                 }
                             }
@@ -257,6 +281,49 @@ fun DetailsScreen(
                     }
                 }
             }
+
+            // --- SOURCES MODAL (6-COLUMN POSTER GRID) ---
+            AnimatedVisibility(
+                visible = showSources,
+                enter = fadeIn(tween(250)),
+                exit = fadeOut(tween(200)),
+                modifier = Modifier.zIndex(100f)
+            ) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.9f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.Center) {
+
+                    Column(
+                        modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.9f).clip(RoundedCornerShape(24.dp)).background(Color(0xFF12121A)).padding(40.dp)
+                    ) {
+                        Text(tr("Available Sources", "מקורות זמינים"), color = ColorTextMain, fontSize = 36.sp, fontWeight = FontWeight.Black)
+                        Spacer(Modifier.height(8.dp))
+                        Text(tr("Select a stream to begin playback", "בחר מקור כדי להתחיל"), color = ColorTextMain.copy(0.6f), fontSize = 16.sp)
+                        Spacer(Modifier.height(32.dp))
+
+                        when (val st = state.scrapingStatus) {
+                            is ScrapingStatus.Searching, is ScrapingStatus.ResolvingDebrid -> { Box(Modifier.fillMaxSize(), Alignment.Center) { LoadingIndicator() } }
+                            is ScrapingStatus.Error -> { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(st.message, color = ColorAccentIsland, fontSize = 24.sp) } }
+                            else -> {
+                                LazyVerticalGrid(
+                                    columns = GridCells.Fixed(6),
+                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                                    contentPadding = PaddingValues(bottom = 64.dp),
+                                    modifier = Modifier.fillMaxSize().focusGroup().focusRestorer { firstSourceFR }
+                                ) {
+                                    itemsIndexed(state.availableStreams) { idx, stream ->
+                                        DetailedSourceCard(
+                                            stream = stream,
+                                            posterUrl = media.posterUrl,
+                                            modifier = if (idx == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
+                                            onClick = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
-    }
+    } // <-- Properly closing the CompositionLocalProvider here!
 }

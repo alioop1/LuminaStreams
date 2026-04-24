@@ -237,3 +237,24 @@ fun CastCardOptimized(actor: CastMember, modifier: Modifier = Modifier) {
         Text(actor.character, color = ColorTextMain.copy(0.5f), fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 1)
     }
 }
+@Composable
+fun SeasonPill(seasonNumber: Int, isSelected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = if(isSelected) ColorTextMain else Color.White.copy(0.1f),
+            contentColor = if(isSelected) Color.Black else ColorTextMain,
+            focusedContainerColor = ColorAccentIsland,
+            focusedContentColor = ColorTextMain
+        ),
+        scale = ClickableSurfaceDefaults.scale(1.05f),
+        modifier = modifier
+    ) {
+        Text(
+            text = "Season $seasonNumber",
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+        )
+    }
+}
