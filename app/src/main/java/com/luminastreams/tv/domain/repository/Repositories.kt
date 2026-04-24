@@ -1,6 +1,7 @@
 package com.luminastreams.tv.domain.repository
 
 import com.luminastreams.tv.domain.model.Movie
+import com.luminastreams.tv.domain.model.SearchResult
 import com.luminastreams.tv.data.api.TmdbMovieDetailsDto
 import com.luminastreams.tv.data.api.TmdbTvDetailsDto
 
@@ -9,6 +10,8 @@ interface MediaRepository {
     suspend fun getTrendingMovies(): Result<List<Movie>>
     suspend fun getTrendingTv(): Result<List<Movie>>
     suspend fun searchMovies(query: String): Result<List<Movie>>
+    suspend fun searchMulti(query: String, page: Int, isHebrew: Boolean): Result<List<SearchResult>>
+    suspend fun getDiscoverySearch(page: Int): Result<List<SearchResult>>
     suspend fun getMovieDetails(id: String): Result<Movie>
     suspend fun getMovieFullDetails(id: String): Result<TmdbMovieDetailsDto>
     suspend fun getTvFullDetails(id: String): Result<TmdbTvDetailsDto>

@@ -7,14 +7,11 @@ import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.data.remote.FuzerEngine
+import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.model.SearchResult
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
 
 enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
 
@@ -124,6 +121,8 @@ sealed interface SearchIntent {
 @OptIn(FlowPreview::class)
 class SearchViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val repository = MediaRepositoryImpl(application)
+
     private val _state      = MutableStateFlow(SearchState())
     val state: StateFlow<SearchState> = _state.asStateFlow()
 
@@ -133,7 +132,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val popularTerms = listOf(
         "Avatar", "Avengers", "Batman", "Spider-Man", "Superman",
         "Matrix", "Inception", "Interstellar", "Joker", "Star Wars",
-        "Harry Potter", "Lord of the Rings", "Deadpool", "Breaking Bad"
+        "Harry Potter", "Lord of the Rings", "Deadpool", "Breaking Bad",
+        "פאודה", "קופה ראשית", "הבורר", "שנות ה-80"
     )
 
     init {
@@ -207,56 +207,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(isTmdbLoading = true) }
         try {
             val isHe = query.any { it in '\u0590'..'\u05FF' }
-            val lang = if (isHe) "he-IL" else "en-US"
 
-            val enc = withContext(Dispatchers.Default) { URLEncoder.encode(query, "UTF-8") }
-
-            val p1 = fetchTmdbPage(enc, lang, 1)
-            val p2 = fetchTmdbPage(enc, lang, 2)
+            val p1 = repository.searchMulti(query, 1, isHe).getOrDefault(emptyList())
+            val p2 = repository.searchMulti(query, 2, isHe).getOrDefault(emptyList())
 
             _state.update { it.copy(tmdbResults = (p1 + p2).distinctBy { r -> r.id }, isTmdbLoading = false) }
         } catch (_: Exception) {
             _state.update { it.copy(tmdbResults = emptyList(), isTmdbLoading = false) }
-        }
-    }
-
-    private suspend fun fetchTmdbPage(enc: String, lang: String, page: Int): List<SearchResult> {
-        return withContext(Dispatchers.IO) {
-            val out = mutableListOf<SearchResult>()
-            val key = "9ab4a284f0c028007b78925852196b79"
-            val base = "https://image.tmdb.org/t/p"
-            try {
-                val con = URL("https://api.themoviedb.org/3/search/multi?api_key=$key&language=$lang&query=$enc&page=$page&include_adult=false")
-                    .openConnection() as HttpURLConnection
-                con.connectTimeout = 6000
-                con.readTimeout = 9000
-
-                if (con.responseCode == 200) {
-                    val textResponse = con.inputStream.bufferedReader().use { it.readText() }
-                    val arr = JSONObject(textResponse).optJSONArray("results")
-
-                    if (arr != null) {
-                        for (i in 0 until arr.length()) {
-                            val j  = arr.getJSONObject(i)
-                            val mt = j.optString("media_type")
-                            if (mt != "movie" && mt != "tv") continue
-                            val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                            else             j.optString("title").ifBlank { j.optString("original_title") }
-                            out += SearchResult(
-                                id          = "${mt}_${j.optInt("id")}",
-                                title       = title,
-                                posterUrl   = j.optString("poster_path").let   { p -> if (p.isNotBlank() && p!="null") "$base/w342$p" else "" },
-                                backdropUrl = j.optString("backdrop_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w780$p" else "" },
-                                type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
-                                rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                                releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4),
-                                genre       = j.optJSONArray("genre_ids")?.optInt(0)?.let { tmdbGenreName(it) } ?: ""
-                            )
-                        }
-                    }
-                }
-            } catch (_: Exception) {}
-            out
         }
     }
 
@@ -301,8 +258,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             _state.update { it.copy(isDiscoveryLoading = true) }
             try {
-                val p1 = fetchDiscoveryPage(1)
-                val p2 = fetchDiscoveryPage(2)
+                val p1 = repository.getDiscoverySearch(1).getOrDefault(emptyList())
+                val p2 = repository.getDiscoverySearch(2).getOrDefault(emptyList())
+
                 _state.update { it.copy(
                     discoveryResults   = (p1 + p2).distinctBy { r -> r.id },
                     isDiscoveryLoading = false
@@ -310,49 +268,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             } catch (_: Exception) {
                 _state.update { it.copy(isDiscoveryLoading = false) }
             }
-        }
-    }
-
-    private suspend fun fetchDiscoveryPage(page: Int): List<SearchResult> {
-        return withContext(Dispatchers.IO) {
-            val out = mutableListOf<SearchResult>()
-            val key = "9ab4a284f0c028007b78925852196b79"
-            val base = "https://image.tmdb.org/t/p"
-
-            for (mt in listOf("movie", "tv")) {
-                try {
-                    val con = URL("https://api.themoviedb.org/3/discover/$mt?api_key=$key&language=en-US&page=$page&sort_by=popularity.desc")
-                        .openConnection() as HttpURLConnection
-                    con.connectTimeout = 6000
-                    con.readTimeout = 9000
-
-                    if (con.responseCode == 200) {
-                        val textResponse = con.inputStream.bufferedReader().use { it.readText() }
-                        val arr = JSONObject(textResponse).optJSONArray("results")
-
-                        if (arr != null) {
-                            for (i in 0 until arr.length()) {
-                                val j = arr.getJSONObject(i)
-                                val title = if (mt == "tv") j.optString("name").ifBlank { j.optString("original_name") }
-                                else             j.optString("title").ifBlank { j.optString("original_title") }
-                                val poster = j.optString("poster_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w342$p" else "" }
-                                if (poster.isBlank()) continue
-                                out += SearchResult(
-                                    id          = "${mt}_${j.optInt("id")}",
-                                    title       = title,
-                                    posterUrl   = poster,
-                                    backdropUrl = j.optString("backdrop_path").let { p -> if (p.isNotBlank() && p!="null") "$base/w780$p" else "" },
-                                    type        = if (mt == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
-                                    rating      = j.optDouble("vote_average", 0.0).toFloat(),
-                                    releaseYear = (if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")).take(4),
-                                    genre       = j.optJSONArray("genre_ids")?.optInt(0)?.let { tmdbGenreName(it) } ?: ""
-                                )
-                            }
-                        }
-                    }
-                } catch (_: Exception) {}
-            }
-            out
         }
     }
 
@@ -376,17 +291,5 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val h = _state.value.searchHistory.filter { it != item }
         historyPrefs.edit { putString("history_items", h.joinToString("||")) }
         _state.update { it.copy(searchHistory = h) }
-    }
-
-    private fun tmdbGenreName(id: Int): String = when (id) {
-        28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
-        80 -> "Crime"; 99 -> "Documentary"; 18 -> "Drama"; 10751 -> "Family"
-        14 -> "Fantasy"; 36 -> "History"; 27 -> "Horror"; 10402 -> "Music"
-        9648 -> "Mystery"; 10749 -> "Romance"; 878 -> "Sci-Fi"; 10770 -> "TV Movie"
-        53 -> "Thriller"; 10752 -> "War"; 37 -> "Western"
-        10759 -> "Action & Adventure"; 10762 -> "Kids"; 10763 -> "News"
-        10764 -> "Reality"; 10765 -> "Sci-Fi & Fantasy"; 10766 -> "Soap"
-        10767 -> "Talk"; 10768 -> "War & Politics"
-        else -> ""
     }
 }

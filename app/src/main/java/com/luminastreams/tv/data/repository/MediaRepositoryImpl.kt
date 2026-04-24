@@ -8,6 +8,8 @@ import com.luminastreams.tv.data.api.TmdbMediaDto
 import com.luminastreams.tv.data.api.TmdbMovieDetailsDto
 import com.luminastreams.tv.data.api.TmdbTvDetailsDto
 import com.luminastreams.tv.domain.model.Movie
+import com.luminastreams.tv.domain.model.SearchResult
+import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.repository.MediaRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -59,6 +61,33 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         resolutionBadge = tierBadge
     )
 
+    private fun TmdbMediaDto.toSearchResult(fallbackType: String): SearchResult {
+        val actualType = mediaType ?: fallbackType
+        val base = "https://image.tmdb.org/t/p"
+        return SearchResult(
+            id          = "${actualType}_${id}",
+            title       = title ?: name ?: "Unknown",
+            posterUrl   = posterPath?.let { if (it.isNotBlank() && it != "null") "$base/w342$it" else "" } ?: "",
+            backdropUrl = backdropPath?.let { if (it.isNotBlank() && it != "null") "$base/w780$it" else "" } ?: "",
+            type        = if (actualType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
+            rating      = voteAverage,
+            releaseYear = (if (actualType == "tv") firstAirDate else releaseDate)?.take(4) ?: "",
+            genre       = genreIds?.firstOrNull()?.let { tmdbGenreName(it) } ?: ""
+        )
+    }
+
+    private fun tmdbGenreName(id: Int): String = when (id) {
+        28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
+        80 -> "Crime"; 99 -> "Documentary"; 18 -> "Drama"; 10751 -> "Family"
+        14 -> "Fantasy"; 36 -> "History"; 27 -> "Horror"; 10402 -> "Music"
+        9648 -> "Mystery"; 10749 -> "Romance"; 878 -> "Sci-Fi"; 10770 -> "TV Movie"
+        53 -> "Thriller"; 10752 -> "War"; 37 -> "Western"
+        10759 -> "Action & Adventure"; 10762 -> "Kids"; 10763 -> "News"
+        10764 -> "Reality"; 10765 -> "Sci-Fi & Fantasy"; 10766 -> "Soap"
+        10767 -> "Talk"; 10768 -> "War & Politics"
+        else -> ""
+    }
+
     override suspend fun getTrendingMovies(): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             val movies = coroutineScope {
@@ -82,7 +111,6 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         }
     }
 
-    // ── getTrendingTv ──────────────────────────────────────────────────────
     override suspend fun getTrendingTv(): Result<List<Movie>> = withContext(Dispatchers.IO) {
         try {
             val results = coroutineScope {
@@ -106,12 +134,43 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         }
     }
 
-    // ── getSimilarMedia ────────────────────────────────────────────────────
-    // משתמש ב-discoverMedia הקיים — מסנן לפי ז'אנרים של הפריט הנוכחי
+    override suspend fun searchMulti(query: String, page: Int, isHebrew: Boolean): Result<List<SearchResult>> = withContext(Dispatchers.IO) {
+        try {
+            val lang = if (isHebrew) "he-IL" else "en-US"
+            val response = api.searchMulti(query = query, language = lang, page = page)
+            val results = response.results
+                .filter { it.mediaType == "movie" || it.mediaType == "tv" }
+                .filter { it.posterPath != null }
+                .map { it.toSearchResult(it.mediaType ?: "movie") }
+            Result.success(results)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun getDiscoverySearch(page: Int): Result<List<SearchResult>> = withContext(Dispatchers.IO) {
+        try {
+            val movies = async { api.discoverMedia(type = "movie", language = "en-US", page = page, sortBy = "popularity.desc") }
+            val tvs    = async { api.discoverMedia(type = "tv", language = "en-US", page = page, sortBy = "popularity.desc") }
+
+            val combined = mutableListOf<TmdbMediaDto>()
+            combined.addAll(movies.await().results.map { it.copy(mediaType = "movie") })
+            combined.addAll(tvs.await().results.map { it.copy(mediaType = "tv") })
+
+            val results = combined
+                .filter { it.posterPath != null }
+                .map { it.toSearchResult(it.mediaType ?: "movie") }
+                .sortedByDescending { it.rating }
+
+            Result.success(results)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     override suspend fun getSimilarMedia(id: String, type: String): Result<List<Movie>> =
         withContext(Dispatchers.IO) {
             try {
-                // שולף את ז'אנרי הפריט ואז מחפש דומים
                 val genreIds: List<Int> = if (type == "tv") {
                     val details = api.getTvDetails(id, Constants.TMDB_API_KEY, language = tmdbLang)
                     details.genres?.map { it.id } ?: emptyList()
@@ -120,7 +179,7 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                     details.genres?.map { it.id } ?: emptyList()
                 }
 
-                val genreParam = genreIds.take(2).joinToString(",") // מקסימום 2 ז'אנרים
+                val genreParam = genreIds.take(2).joinToString(",")
 
                 val results = api.discoverMedia(
                     type     = type,
@@ -143,11 +202,9 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
             }
         }
 
-    override suspend fun searchMovies(query: String): Result<List<Movie>> =
-        Result.success(emptyList())
+    override suspend fun searchMovies(query: String): Result<List<Movie>> = Result.success(emptyList())
 
-    override suspend fun getMovieDetails(id: String): Result<Movie> =
-        Result.failure(Exception("Use getMovieFullDetails"))
+    override suspend fun getMovieDetails(id: String): Result<Movie> = Result.failure(Exception("Use getMovieFullDetails"))
 
     override suspend fun getMovieFullDetails(id: String): Result<TmdbMovieDetailsDto> =
         withContext(Dispatchers.IO) {

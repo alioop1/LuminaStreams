@@ -33,7 +33,9 @@ data class TmdbMediaDto(
     val overview: String?,
     @SerializedName("vote_average") val voteAverage: Float,
     @SerializedName("media_type") val mediaType: String?,
-    @SerializedName("genre_ids") val genreIds: List<Int>?
+    @SerializedName("genre_ids") val genreIds: List<Int>?,
+    @SerializedName("release_date") val releaseDate: String?,
+    @SerializedName("first_air_date") val firstAirDate: String?
 )
 
 data class ExternalIdsDto(@SerializedName("imdb_id") val imdbId: String?)
@@ -85,6 +87,14 @@ interface TmdbApi {
     @GET("movie/{movie_id}") suspend fun getMovieDetails(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbMovieDetailsDto
     @GET("tv/{tv_id}") suspend fun getTvDetails(@Path("tv_id") seriesId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbTvDetailsDto
     @GET("discover/{type}") suspend fun discoverMedia(@Path("type") type: String, @Query("with_genres") genreId: String? = null, @Query("primary_release_year") year: String? = null, @Query("sort_by") sortBy: String = "popularity.desc", @Query("language") language: String = "en-US", @Query("page") page: Int = 1, @Query("api_key") apiKey: String = Constants.TMDB_API_KEY): TmdbResponse
+
+    @GET("search/multi") suspend fun searchMulti(
+        @Query("query") query: String,
+        @Query("language") language: String = "en-US",
+        @Query("page") page: Int = 1,
+        @Query("include_adult") includeAdult: Boolean = false,
+        @Query("api_key") apiKey: String = Constants.TMDB_API_KEY
+    ): TmdbResponse
 }
 
 interface RealDebridApi {
