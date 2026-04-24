@@ -173,7 +173,9 @@ class RealDebridManager {
                 .build()
 
             val response = client.newCall(request).execute()
-            val responseBodyString = response.body?.string() ?: "{}"
+
+            // ⚡ FIX: Removed redundant safe call and added clean fallback
+            val responseBodyString = response.body.string().ifBlank { "{}" }
 
             // תפיסה חכמה של ניתוק ממשתמש
             if (response.code == 401 || response.code == 403 || responseBodyString.contains("bad_token", true)) {
