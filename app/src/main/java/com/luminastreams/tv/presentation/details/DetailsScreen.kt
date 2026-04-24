@@ -15,11 +15,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
@@ -28,7 +24,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -112,8 +107,8 @@ fun DetailsScreen(
     // ⚡ CUSTOM DPI SCALING FOR 77" OLED (Shrinks UI by 20%)
     val currentDensity = LocalDensity.current
     val customDensity = androidx.compose.ui.unit.Density(
-        density = currentDensity.density * 0.8f,
-        fontScale = currentDensity.fontScale * 0.8f
+        density = currentDensity.density * 1.0f,
+        fontScale = currentDensity.fontScale * 1.0f
     )
 
     CompositionLocalProvider(LocalDensity provides customDensity) {
@@ -282,38 +277,49 @@ fun DetailsScreen(
                 }
             }
 
-            // --- SOURCES MODAL (6-COLUMN POSTER GRID) ---
+// --- PREMIUM SOURCES BOTTOM SHEET ---
             AnimatedVisibility(
                 visible = showSources,
-                enter = fadeIn(tween(250)),
-                exit = fadeOut(tween(200)),
+                enter = fadeIn(tween(300)) + slideInVertically(initialOffsetY = { it }, animationSpec = tween(400, easing = LinearOutSlowInEasing)),
+                exit = fadeOut(tween(300)) + slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400, easing = FastOutLinearInEasing)),
                 modifier = Modifier.zIndex(100f)
             ) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.9f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.Center) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.BottomCenter) {
 
+                    // ⚡ FIX: Removed fillMaxHeight so it hugs the bottom elegantly
                     Column(
-                        modifier = Modifier.fillMaxWidth(0.9f).fillMaxHeight(0.9f).clip(RoundedCornerShape(24.dp)).background(Color(0xFF12121A)).padding(40.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFF0A0A0C), Color(0xFF0A0A0C), Color(0xFF0A0A0C))))
+                            .padding(top = 40.dp)
                     ) {
-                        Text(tr("Available Sources", "מקורות זמינים"), color = ColorTextMain, fontSize = 36.sp, fontWeight = FontWeight.Black)
-                        Spacer(Modifier.height(8.dp))
-                        Text(tr("Select a stream to begin playback", "בחר מקור כדי להתחיל"), color = ColorTextMain.copy(0.6f), fontSize = 16.sp)
-                        Spacer(Modifier.height(32.dp))
+                        // Header
+                        Row(Modifier.padding(horizontal = 64.dp), verticalAlignment = Alignment.Bottom) {
+                            Text(tr("Available Sources", "מקורות זמינים"), color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black, letterSpacing = (-1).sp)
+                            Spacer(Modifier.width(16.dp))
+                            Text(tr("Select a stream to begin playback", "בחר מקור כדי להתחיל"), color = Color.White.copy(0.5f), fontSize = 16.sp, modifier = Modifier.padding(bottom = 6.dp))
+                        }
+
+                        Spacer(Modifier.height(40.dp))
 
                         when (val st = state.scrapingStatus) {
-                            is ScrapingStatus.Searching, is ScrapingStatus.ResolvingDebrid -> { Box(Modifier.fillMaxSize(), Alignment.Center) { LoadingIndicator() } }
-                            is ScrapingStatus.Error -> { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(st.message, color = ColorAccentIsland, fontSize = 24.sp) } }
+                            is ScrapingStatus.Searching, is ScrapingStatus.ResolvingDebrid -> {
+                                Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { LoadingIndicator() }
+                            }
+                            is ScrapingStatus.Error -> {
+                                Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { Text(st.message, color = ColorAccentIsland, fontSize = 24.sp) }
+                            }
                             else -> {
-                                LazyVerticalGrid(
-                                    columns = GridCells.Fixed(6),
-                                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                                    contentPadding = PaddingValues(bottom = 64.dp),
-                                    modifier = Modifier.fillMaxSize().focusGroup().focusRestorer { firstSourceFR }
+                                // ⚡ FIX: Switched back to LazyRow for a single, clean horizontal ribbon!
+                                LazyRow(
+                                    horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                    contentPadding = PaddingValues(start = 64.dp, end = 64.dp, bottom = 64.dp),
+                                    modifier = Modifier.fillMaxWidth().focusGroup().focusRestorer { firstSourceFR }
                                 ) {
                                     itemsIndexed(state.availableStreams) { idx, stream ->
-                                        DetailedSourceCard(
+                                        DetailedSourceCube(
                                             stream = stream,
-                                            posterUrl = media.posterUrl,
+                                            logoUrl = media.logoUrl.takeIf { !it.isNullOrBlank() } ?: media.backdropUrl.takeIf { !it.isBlank() } ?: media.posterUrl,
                                             modifier = if (idx == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
                                             onClick = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
                                         )
@@ -324,6 +330,6 @@ fun DetailsScreen(
                     }
                 }
             }
-        }
-    } // <-- Properly closing the CompositionLocalProvider here!
+    }
+    }
 }

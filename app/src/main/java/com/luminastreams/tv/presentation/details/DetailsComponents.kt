@@ -8,14 +8,12 @@ import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
+
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -58,103 +56,83 @@ fun launchNativeTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle
 }
 
 // ─── 🎬 DYNAMIC SOURCE POSTER CARD (DELICATE ZOOM & ZERO LAG) ───
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun DetailedSourceCard(stream: AdvancedStreamSource, posterUrl: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    val searchString = (stream.filename + " " + stream.releaseGroup).uppercase()
+fun DetailedSourceCube(stream: AdvancedStreamSource, logoUrl: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    val searchString = (stream.filename + " " + stream.releaseGroup).uppercase().replace(".", " ")
     val is4k = stream.quality.name.contains("4K") || searchString.contains("2160P")
-
-    // TAG PARSING
-    val videoTags = mutableListOf<String>()
-    if (searchString.contains("DV") || searchString.contains("DOLBY VISION") || searchString.contains("DOVI")) videoTags.add("Dolby Vision")
-    if (searchString.contains("HDR10+") || searchString.contains("HDR10PLUS")) videoTags.add("HDR10+")
-    else if (searchString.contains("HDR")) videoTags.add("HDR")
-    if (searchString.contains("REMUX")) videoTags.add("REMUX")
-    if (searchString.contains("HEVC") || searchString.contains("X265") || searchString.contains("H265")) videoTags.add("HEVC")
-
-    val audioTags = mutableListOf<String>()
-    if (searchString.contains("ATMOS") || searchString.contains("DOLBY ATMOS")) audioTags.add("Dolby Atmos")
-    if (searchString.contains("TRUEHD") || searchString.contains("TRUE-HD")) audioTags.add("TrueHD")
-    if (searchString.contains("DTS-HD") || searchString.contains("DTSHD")) audioTags.add("DTS-HD")
-    if (searchString.contains("DTS-X") || searchString.contains("DTSX")) audioTags.add("DTS:X")
-    if (searchString.contains("FLAC")) audioTags.add("FLAC")
-    if (searchString.contains("EAC3") || searchString.contains("E-AC3")) audioTags.add("E-AC3")
-    if (searchString.contains("DDP") || searchString.contains("DDP5.1")) audioTags.add("DDP 5.1")
-    else if (searchString.contains("DD5.1") || searchString.contains("AC3")) audioTags.add("DD 5.1")
-    if (searchString.contains("7.1")) audioTags.add("7.1")
-
-    val langTags = mutableListOf<String>()
-    if (searchString.contains("HEB") || searchString.contains("HEBREW") || searchString.contains("מדובב") || searchString.contains("IL")) langTags.add("HEB")
-    if (searchString.contains("MULTI") || searchString.contains("DUAL")) langTags.add("MULTI")
-    if (searchString.contains("ENG") || searchString.contains("EN ")) langTags.add("ENG")
-
-    val seederMatch = Regex("(?:👤|S:|seeders:)\\s*(\\d+)", RegexOption.IGNORE_CASE).find(stream.releaseGroup)
-    val seeders = seederMatch?.groupValues?.getOrNull(1) ?: "-"
-
+    val isHdr = searchString.contains(" HDR") || searchString.contains("HDR10")
+    val isDv = searchString.contains(" DV ") || searchString.contains(" DOVI ") || searchString.contains("DOLBY VISION")
+    val isAtmos = searchString.contains("ATMOS")
+    val isCached = stream.isCachedRd
     Surface(
         onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp), focusedShape = RoundedCornerShape(12.dp), pressedShape = RoundedCornerShape(12.dp)),
-        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
-        border = ClickableSurfaceDefaults.border(border = Border(BorderStroke(0.dp, Color.Transparent)), focusedBorder = Border(BorderStroke(0.dp, Color.Transparent)), pressedBorder = Border(BorderStroke(0.dp, Color.Transparent))),
-        modifier = modifier.fillMaxWidth().aspectRatio(2f/3f)
+        modifier = modifier.width(260.dp).height(150.dp),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color(0xFF141417),
+            focusedContainerColor = Color(0xFF141417)
+        ),
+        // ⚡ The PS5 Thick Glowing Border
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(BorderStroke(3.dp, Color.White)),
+            border = Border.None
+        ),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(elevationColor = Color.White.copy(0.3f), elevation = 24.dp))
     ) {
         Box(Modifier.fillMaxSize()) {
-            AsyncImage(model = posterUrl, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
-            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.8f), Color.Black.copy(0.95f)), startY = 100f)))
 
-            Column(Modifier.align(Alignment.BottomStart).padding(12.dp).fillMaxWidth()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (is4k) CardTag("4K", Color(0xFF00E5FF)) else CardTag("1080p", Color.White)
-                    if (stream.isCachedRd) CardTag("RD+", Color(0xFF00E676))
+            // 1. Subtle radial glow in the background
+            Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.White.copy(0.05f), Color.Transparent), radius = 300f)))
+
+            // 2. 🎬 LOGO (Moved to Center so it sits beautifully under the top tags)
+            Box(
+                Modifier.align(Alignment.Center).padding(bottom = 24.dp).height(48.dp).fillMaxWidth(0.8f),
+                contentAlignment = Alignment.Center
+            ) {
+                if (logoUrl.isNotBlank()) {
+                    AsyncImage(model = logoUrl, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                 }
+            }
+
+            // 3. 🏷️ PREMIUM TAGS (Top Right - Drawn AFTER the logo so they float on top)
+            Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (is4k) PremiumTag("4K", Color(0xFF00E5FF)) else PremiumTag("HD", Color.White)
+                if (isHdr) PremiumTag("HDR", Color(0xFFFF9500))
+                if (isDv) PremiumTag("DV", Color(0xFFE50914))
+                if (isAtmos) PremiumTag("ATMOS", Color(0xFF0A84FF))
+                if (isCached) PremiumTag("RD+", Color(0xFF32D74B))
+            }
+
+            // 4. 📝 BOTTOM METADATA TEXT
+            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))).padding(16.dp)) {
+                Text(
+                    text = stream.releaseGroup.ifEmpty { "UNKNOWN GROUP" }.uppercase(),
+                    color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
+                    letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = stream.filename.substringBefore("\n").trim(),
+                    color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis
+                )
                 Spacer(Modifier.height(6.dp))
-                Text(stream.releaseGroup.ifEmpty { "UNKNOWN" }.substringBefore("\n").trim(), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.height(6.dp))
-
-                SourceFlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    videoTags.forEach { tag -> CardPill(tag, Icons.Default.Tv, Color(0xFFB388FF)) }
-                    audioTags.forEach { tag -> CardPill(tag, Icons.AutoMirrored.Filled.VolumeUp, Color(0xFF29B6F6)) }
-                    langTags.forEach { tag -> CardPill(tag, Icons.Default.Language, Color(0xFFFFD54F)) }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (stream.sizeGb >= 1.0) "%.1f GB".format(stream.sizeGb) else "%.0f MB".format(stream.sizeBytes / 1048576.0), color = Color.White.copy(0.7f), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                    if (seeders != "-") {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(seeders, color = Color(0xFF00E676), fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            Spacer(Modifier.width(2.dp))
-                            Icon(Icons.Default.Person, null, tint = Color(0xFF00E676), modifier = Modifier.size(10.dp))
-                        }
-                    }
-                }
+                Text(
+                    text = if (stream.sizeGb >= 1.0) "%.1f GB".format(stream.sizeGb) else "%.0f MB".format(stream.sizeBytes / 1048576.0),
+                    color = Color.White.copy(0.4f), fontSize = 10.sp, fontWeight = FontWeight.Bold
+                )
             }
         }
     }
 }
 
-// ─── COMPONENT HELPERS ───
-
+// Ultra-sharp, minimal tag design
 @Composable
-fun CardTag(text: String, color: Color) {
-    Box(Modifier.background(color.copy(0.15f), RoundedCornerShape(4.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
-        Text(text, color = color, fontSize = 11.sp, fontWeight = FontWeight.Black)
-    }
-}
-
-@Composable
-fun CardPill(text: String, icon: ImageVector, color: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.background(color.copy(0.1f), RoundedCornerShape(50)).border(1.dp, color.copy(0.3f), RoundedCornerShape(50)).padding(horizontal = 8.dp, vertical = 3.dp)) {
-        Icon(icon, null, tint = color, modifier = Modifier.size(10.dp))
-        Spacer(Modifier.width(4.dp))
-        Text(text, color = color, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun SourceFlowRow(modifier: Modifier = Modifier, horizontalArrangement: Arrangement.Horizontal = Arrangement.Start, content: @Composable () -> Unit) {
-    Row(modifier = modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = horizontalArrangement, verticalAlignment = Alignment.CenterVertically) {
-        content()
+fun PremiumTag(text: String, color: Color) {
+    Box(modifier = Modifier.background(color.copy(0.15f), RoundedCornerShape(4.dp)).border(1.dp, color.copy(0.5f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
+        Text(text = text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
     }
 }
 

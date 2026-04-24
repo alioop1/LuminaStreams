@@ -27,7 +27,14 @@ import kotlinx.coroutines.delay
 @Composable
 fun SmartProgressBar(modifier: Modifier = Modifier) {
     val barGradient = remember {
-        Brush.horizontalGradient(colors = listOf(Color(0xFF00E5FF), Color(0xFFB400FF)))
+
+        Brush.horizontalGradient(
+            colors = listOf(
+                Color(0xFF000000),
+                Color(0xFF666666),
+                Color(0xFFFF3300)
+            )
+        )
     }
 
     val progressAnim = remember { Animatable(0f) }
@@ -40,8 +47,6 @@ fun SmartProgressBar(modifier: Modifier = Modifier) {
     }
 
     // ⚡ FIX 1: Derived State
-    // Instead of recomposing the Text on every micro-frame, this tells Compose
-    // to ONLY update the text when the whole integer changes (exactly 100 times).
     val percent by remember { derivedStateOf { (progressAnim.value * 100).toInt() } }
 
     Column(
@@ -59,14 +64,12 @@ fun SmartProgressBar(modifier: Modifier = Modifier) {
         Spacer(modifier = Modifier.height(10.dp))
 
         // ⚡ FIX 2: Draw-Phase Rendering
-        // Using drawWithContent to paint the progress bar directly to the GPU Canvas.
-        // This bypasses the CPU's Measure & Layout phases entirely! Zero layout lag.
         Spacer(
             modifier = Modifier
                 .width(280.dp)
                 .height(6.dp)
                 .clip(RoundedCornerShape(50))
-                .background(Color.White.copy(alpha = 0.15f))
+                .background(Color(0xFF1A1A1A))
                 .drawWithContent {
                     drawContent() // Draw the background track
                     drawRect(

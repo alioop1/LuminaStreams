@@ -35,7 +35,11 @@ fun BackdropLayer(hero: Movie?) {
     Box(Modifier.fillMaxSize().background(BG)) {
         if (!heroUrl.isNullOrBlank()) {
             AsyncImage(
-                model = ImageRequest.Builder(ctx).data(heroUrl).size(coil.size.Size(1280, 720)).crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500).build(),
+                // הוסרה הגבלת הגודל size(coil.size.Size(1280, 720)) שהורידה את האיכות
+                model = ImageRequest.Builder(ctx)
+                    .data(heroUrl)
+                    .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
+                    .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,

@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
@@ -26,6 +27,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
@@ -75,7 +77,6 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
 
     var currentUrl by remember { mutableStateOf(initialChannelUrl) }
     var showSettings by remember { mutableStateOf(false) }
-    var showEpg by remember { mutableStateOf(false) }
     var currentResizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
     var playerError by remember { mutableStateOf<String?>(null) }
     var actionMessage by remember { mutableStateOf<String?>(null) }
@@ -85,8 +86,33 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
     val currentChannel = remember(currentUrl) { channels.find { currentUrl.startsWith(it.streamUrl) } }
     var currentEpg by remember { mutableStateOf<EpgProgramEntity?>(null) }
 
+    val playerFocusRequester = remember { FocusRequester() }
+    val settingsFocusRequester = remember { FocusRequester() }
+    val view = LocalView.current // Used to force Android OS to respect Compose Focus
+
+    // ⚡ THE BULLETPROOF FOCUS RECLAIMER
+    LaunchedEffect(showSettings, showOsd, currentUrl) {
+        if (!showSettings) {
+            // Force the underlying Android Window to route keys to Compose
+            view.requestFocus()
+            runCatching { playerFocusRequester.requestFocus() }
+
+            // Wait out the OSD 300ms fade animation and lock focus again
+            delay(400)
+            view.requestFocus()
+            runCatching { playerFocusRequester.requestFocus() }
+        } else {
+            delay(100)
+            runCatching { settingsFocusRequester.requestFocus() }
+        }
+    }
+
     LaunchedEffect(actionMessage) { if (actionMessage != null) { delay(3500); actionMessage = null } }
-    LaunchedEffect(showOsd, osdTimerKey, currentUrl) { if (showOsd && !showSettings && !showEpg) { delay(5000); showOsd = false } }
+
+    // Auto-hide OSD after 5 seconds
+    LaunchedEffect(showOsd, osdTimerKey, currentUrl) {
+        if (showOsd && !showSettings) { delay(5000); showOsd = false }
+    }
 
     LaunchedEffect(currentChannel) {
         if (currentChannel != null) {
@@ -96,9 +122,8 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
     }
 
     BackHandler(enabled = showSettings) { showSettings = false }
-    BackHandler(enabled = showEpg) { showEpg = false }
     BackHandler(enabled = showOsd) { showOsd = false }
-    BackHandler(enabled = !showSettings && !showEpg && !showOsd) { onBackPressed() }
+    BackHandler(enabled = !showSettings && !showOsd) { onBackPressed() }
 
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
@@ -109,7 +134,6 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
     LaunchedEffect(currentUrl) {
         playerError = null
         showSettings = false
-        showEpg = false
         showOsd = true
         osdTimerKey++
 
@@ -139,26 +163,58 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         onDispose { exoPlayer.removeListener(playerListener); lifecycleOwner.lifecycle.removeObserver(lifecycleObserver); exoPlayer.release() }
     }
 
-    val playerFocusRequester = remember { FocusRequester() }
-    val settingsFocusRequester = remember { FocusRequester() }
-
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        AndroidView(
-            factory = { ctx -> PlayerView(ctx).apply { player = exoPlayer; useController = false; layoutParams = FrameLayout.LayoutParams(-1, -1); resizeMode = currentResizeMode } },
-            update = { view -> view.resizeMode = currentResizeMode },
-            modifier = Modifier.fillMaxSize().focusRequester(playerFocusRequester).focusable(enabled = !showSettings && !showEpg)
+
+        // ⚡ THE INVISIBLE FOCUS ANCHOR ⚡
+        // This is physically separated from all UI logic. It traps the D-Pad
+        // permanently while watching TV so disappearing menus cannot kill the controls.
+        Box(
+            modifier = Modifier
+                .size(1.dp)
+                .alpha(0f)
+                .focusRequester(playerFocusRequester)
+                .focusable(enabled = !showSettings)
                 .onPreviewKeyEvent { event ->
                     if (event.type == KeyEventType.KeyDown) {
                         when (event.nativeKeyEvent.keyCode) {
-                            KeyEvent.KEYCODE_DPAD_UP -> { if (!showSettings && !showEpg) viewModel.getNextChannelUrl(currentUrl)?.let { currentUrl = it }; true }
-                            KeyEvent.KEYCODE_DPAD_DOWN -> { if (!showSettings && !showEpg) viewModel.getPrevChannelUrl(currentUrl)?.let { currentUrl = it }; true }
-                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { if (playerError == null && !showSettings && !showEpg) { if (showOsd) { showOsd = false; showEpg = true } else { showOsd = true; osdTimerKey++ } }; true }
-                            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MENU -> { if (!showSettings && !showEpg) { showSettings = true; showOsd = false }; true }
+                            KeyEvent.KEYCODE_DPAD_UP -> { if (!showSettings) viewModel.getNextChannelUrl(currentUrl)?.let { currentUrl = it }; true }
+                            KeyEvent.KEYCODE_DPAD_DOWN -> { if (!showSettings) viewModel.getPrevChannelUrl(currentUrl)?.let { currentUrl = it }; true }
+                            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                                if (playerError == null && !showSettings) {
+                                    if (showOsd) { showOsd = false } else { showOsd = true; osdTimerKey++ }
+                                }
+                                true
+                            }
+                            KeyEvent.KEYCODE_DPAD_RIGHT, KeyEvent.KEYCODE_MENU -> { if (!showSettings) { showSettings = true; showOsd = false }; true }
                             else -> false
                         }
                     } else false
                 }
         )
+
+        // RAW VIDEO PLAYER
+        AndroidView(
+            factory = { ctx ->
+                PlayerView(ctx).apply {
+                    player = exoPlayer
+                    useController = false
+                    layoutParams = FrameLayout.LayoutParams(-1, -1)
+                    resizeMode = currentResizeMode
+
+                    // Nuke all ExoPlayer focus capabilities
+                    isFocusable = false
+                    isFocusableInTouchMode = false
+                    isClickable = false
+                    importantForAccessibility = android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                    descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
+                    clearFocus()
+                }
+            },
+            update = { view -> view.resizeMode = currentResizeMode },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // --- OVERLAYS ---
 
         AnimatedVisibility(
             visible = actionMessage != null,
@@ -182,7 +238,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         }
 
         AnimatedVisibility(
-            visible = showOsd && playerError == null && !showSettings && !showEpg,
+            visible = showOsd && playerError == null && !showSettings,
             enter = fadeIn(tween(500)) + slideInVertically(animationSpec = tween(500, easing = LinearOutSlowInEasing), initialOffsetY = { 80 }),
             exit = fadeOut(tween(300)) + slideOutVertically(animationSpec = tween(300, easing = FastOutLinearInEasing), targetOffsetY = { 80 }),
             modifier = Modifier.align(Alignment.BottomCenter)
@@ -217,11 +273,6 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
             }
         }
 
-        LaunchedEffect(showSettings, showEpg) {
-            if (showSettings) settingsFocusRequester.requestFocus()
-            else playerFocusRequester.requestFocus()
-        }
-
         AnimatedVisibility(
             visible = showSettings,
             enter = fadeIn(tween(500)) + slideInHorizontally(animationSpec = tween(500, easing = LinearOutSlowInEasing), initialOffsetX = { 100 }),
@@ -230,8 +281,6 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         ) {
             PlayerSettingsOverlay(player = exoPlayer, currentResizeMode = currentResizeMode, modifier = Modifier.focusRequester(settingsFocusRequester), onResizeModeChange = { currentResizeMode = it }, onClose = { showSettings = false; showOsd = true; osdTimerKey++ })
         }
-
-        // (הסרתי את חלון ה-EPG מכאן כפי שביקשת קודם כדי למנוע כפילויות, הוא נשאר במסך הראשי)
     }
 }
 
