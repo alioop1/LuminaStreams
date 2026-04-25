@@ -208,7 +208,8 @@ fun ConsoleRowCycler(
                         }
                     }
             ) {
-                // Render multiple rows simultaneously to force image preloading
+            // Precompute once — was previously O(n²): indexOf called inside forEachIndexed
+                val firstContentRowIndex = rows.indexOfFirst { it !is RowDef.StudioRibbon }
                 rows.forEachIndexed { index, rowDef ->
                     val isActive = index == safeIndex
                     val isNear = abs(index - safeIndex) <= 2
@@ -233,7 +234,7 @@ fun ConsoleRowCycler(
                                 .focusProperties { canFocus = isActive },
                             contentAlignment = Alignment.CenterStart
                         ) {
-                            val isLand = rows.indexOf(rowDef) == rows.indexOfFirst { it !is RowDef.StudioRibbon }
+                            val isLand = index == firstContentRowIndex
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()

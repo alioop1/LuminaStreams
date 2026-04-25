@@ -110,14 +110,16 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params.build())
     }
 
-    // Increased to 100MB buffer + 70 Seconds duration to handle heavy 4K REMUX files
+    // Fast-start buffer config: starts playback after 1.5s of content (not 5s)
+    // while continuing to buffer up to 70s in the background.
+    // Critical for 4K REMUX (60-80Mbps) where 5s = 37-50MB initial wait.
     private val loadControl: DefaultLoadControl = DefaultLoadControl.Builder()
         .setTargetBufferBytes(100 * 1024 * 1024)
         .setBufferDurationsMs(
-            DefaultLoadControl.DEFAULT_MIN_BUFFER_MS,
-            70_000,
-            5_000,
-            5_000
+            5_000,   // min buffer: reduced from 15s default to 5s for faster start
+            70_000,  // max buffer: 70 seconds (enough headroom for 4K)
+            1_500,   // buffer for playback: 1.5s — start playing almost immediately
+            3_000    // buffer for rebuffer: 3s — quick recovery after seek
         )
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
@@ -333,7 +335,21 @@ class ExoPlayerWrapper(context: Context) {
         catch (_: Exception) {}
     }
     fun clearError() { _playerError.value = null }
+
+    /** Stop playback and release the HTTP connection to the source URL */
+    fun stopPlayback() {
+        try {
+            player.stop()
+            player.clearMediaItems()
+        } catch (_: Exception) {}
+        _isPlaying.value = false
+    }
+
     fun release() {
-        try { player.release() } catch (_: Exception) {}
+        try {
+            player.stop()
+            player.clearMediaItems()
+            player.release()
+        } catch (_: Exception) {}
     }
 }

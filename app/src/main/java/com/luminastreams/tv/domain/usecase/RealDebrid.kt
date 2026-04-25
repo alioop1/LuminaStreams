@@ -117,13 +117,36 @@ class RealDebridManager {
 
     // 1. טיפול במגנטים (Torrentio וכדומה)
     suspend fun resolveMagnetToStream(magnetUri: String, apiToken: String): Result<String> =
+        resolveMagnetToStreamTracked(magnetUri, apiToken) { /* no tracking */ }
+
+    /**
+     * Same as resolveMagnetToStream but reports the torrent ID via [onTorrentAdded]
+     * so the caller can track it for later cleanup (deletion).
+     */
+    suspend fun resolveMagnetToStreamTracked(
+        magnetUri: String,
+        apiToken: String,
+        onTorrentAdded: (String) -> Unit = {}
+    ): Result<String> =
         withContext(Dispatchers.IO) {
             try {
                 if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר בהגדרות!")
                 val authHeader = "Bearer $apiToken"
 
-                val addResponse = api.addMagnet(authHeader, magnetUri)
+                val addResponse = try {
+                    api.addMagnet(authHeader, magnetUri)
+                } catch (e: retrofit2.HttpException) {
+                    val code = e.code()
+                    val errorBody = e.response()?.errorBody()?.string() ?: ""
+                    // RD returns 2000/2004 codes inside the JSON body
+                    if (errorBody.contains("2004") || errorBody.contains("2000") || code == 503) {
+                        throw Exception("RD error $code: $errorBody")
+                    }
+                    throw e
+                }
+
                 val torrentId = addResponse.id
+                onTorrentAdded(torrentId)
 
                 val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
                 val videoFiles = torrentInfo.files.filter {
@@ -132,7 +155,10 @@ class RealDebridManager {
                 if (videoFiles.isEmpty()) throw Exception("לא נמצאו קבצי וידאו בטורנט")
                 val mainVideoFile = videoFiles.maxByOrNull { it.bytes }!!
 
-                api.selectFiles(authHeader, torrentId, mainVideoFile.id.toString())
+                // Only select files if status requires it (avoid re-selecting on already active torrents)
+                if (torrentInfo.status != "downloaded") {
+                    api.selectFiles(authHeader, torrentId, mainVideoFile.id.toString())
+                }
 
                 var readyInfo = api.getTorrentInfo(authHeader, torrentId)
                 var attempts = 0
@@ -140,6 +166,10 @@ class RealDebridManager {
                     delay(1500)
                     readyInfo = api.getTorrentInfo(authHeader, torrentId)
                     attempts++
+                    // Bail early if torrent entered error state
+                    if (readyInfo.status == "error" || readyInfo.status == "dead") {
+                        throw Exception("Torrent failed on RD servers")
+                    }
                 }
                 if (readyInfo.links.isEmpty()) throw Exception("זמן ההמתנה ל-Real-Debrid פג")
 

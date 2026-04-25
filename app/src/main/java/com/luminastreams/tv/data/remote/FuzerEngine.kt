@@ -83,7 +83,7 @@ object FuzerEngine {
             }
             val bytes = client.newCall(
                 Request.Builder().url(finalUrl).headers(defaultHeaders("$BASE/browse.php")).build()
-            ).execute().body.bytes()
+            ).execute().use { it.body.bytes() }
             if (bytes.isNotEmpty() &&
                 !String(bytes.take(50).toByteArray()).contains("html", ignoreCase = true))
                 Result.success(bytes)
@@ -94,12 +94,13 @@ object FuzerEngine {
     }
 
     private fun getHtml(url: String): String? {
-        val resp  = client.newCall(
+        val resp = client.newCall(
             Request.Builder().url(url).headers(defaultHeaders("$BASE/browse.php")).build()
         ).execute()
-        val bytes = resp.body.bytes()
-        if (bytes.isEmpty()) return null
-        return decodeBody(bytes)
+        return resp.use { response ->
+            val bytes = response.body.bytes()
+            if (bytes.isEmpty()) null else decodeBody(bytes)
+        }
     }
 
     private fun decodeBody(bytes: ByteArray): String =

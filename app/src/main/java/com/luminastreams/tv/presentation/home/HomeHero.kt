@@ -35,9 +35,9 @@ fun BackdropLayer(hero: Movie?) {
     Box(Modifier.fillMaxSize().background(BG)) {
         if (!heroUrl.isNullOrBlank()) {
             AsyncImage(
-                // הוסרה הגבלת הגודל size(coil.size.Size(1280, 720)) שהורידה את האיכות
                 model = ImageRequest.Builder(ctx)
                     .data(heroUrl)
+                    .size(1920, 1080) // Cap at 1080p — identical visually behind vignette, halves GPU/RAM cost
                     .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
                     .build(),
                 contentDescription = null,

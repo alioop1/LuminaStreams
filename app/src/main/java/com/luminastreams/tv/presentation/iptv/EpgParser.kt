@@ -17,7 +17,9 @@ import kotlinx.coroutines.CancellationException
 
 object EpgParser {
     private const val TAG = "EpgParser"
-    private val dateFormat = SimpleDateFormat("yyyyMMddHHmmss Z", Locale.ENGLISH)
+    // SimpleDateFormat is NOT thread-safe — use ThreadLocal for coroutine IO dispatcher
+    private val dateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyyMMddHHmmss Z", Locale.ENGLISH) }
+    private val fallbackDateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyyMMddHHmmss", Locale.ENGLISH) }
     private const val EPG_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000L // 7 Days
 
     suspend fun parseStreaming(
@@ -185,11 +187,10 @@ object EpgParser {
     private fun parseTime(timeStr: String?): Long {
         if (timeStr.isNullOrBlank()) return 0L
         return try {
-            dateFormat.parse(timeStr.trim())?.time ?: 0L
+            dateFormat.get()!!.parse(timeStr.trim())?.time ?: 0L
         } catch (e: Exception) {
             try {
-                val fallbackFormat = SimpleDateFormat("yyyyMMddHHmmss", Locale.ENGLISH)
-                fallbackFormat.parse(timeStr.trim().take(14))?.time ?: 0L
+                fallbackDateFormat.get()!!.parse(timeStr.trim().take(14))?.time ?: 0L
             } catch (e2: Exception) {
                 0L
             }

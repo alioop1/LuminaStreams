@@ -14,24 +14,34 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
 
 enum class SearchSource { ALL, MOVIES, SERIES, FUZER }
-
 enum class QualityFilter { ANY, HD, FHD, UHD }
-
-enum class SortBy { POPULARITY, RATING, NEWEST }
+enum class SortBy { POPULARITY, RATING, NEWEST, TITLE }
+enum class MediaTypeFilter { ANY, MOVIE, TV_SHOW, ANIME }
+enum class RuntimeFilter { ANY, SHORT, MEDIUM, LONG, EPIC }
+enum class RatingTier { ANY, MASTERPIECE, GREAT, GOOD }
+enum class LanguageFilter { ANY, ENGLISH, HEBREW, KOREAN, JAPANESE, SPANISH, FRENCH }
 
 @Immutable
 data class SearchFilters(
+    val typeFilter:  MediaTypeFilter = MediaTypeFilter.ANY,
     val genre:       String?       = null,
-    val minYear:     Int           = 1970,
+    val minYear:     Int           = 1920,
     val maxYear:     Int           = 2026,
     val minRating:   Float         = 0f,
     val quality:     QualityFilter = QualityFilter.ANY,
     val dubbedOnly:  Boolean       = false,
-    val sortBy:      SortBy        = SortBy.POPULARITY
+    val sortBy:      SortBy        = SortBy.POPULARITY,
+    val runtime:     RuntimeFilter = RuntimeFilter.ANY,
+    val ratingTier:  RatingTier    = RatingTier.ANY,
+    val language:    LanguageFilter = LanguageFilter.ANY,
+    val network:     String?       = null,
+    val mood:        String?       = null
 ) {
     val isActive: Boolean get() =
-        genre != null || minYear > 1970 || maxYear < 2026 || minRating > 0f ||
-                quality != QualityFilter.ANY || dubbedOnly || sortBy != SortBy.POPULARITY
+        typeFilter != MediaTypeFilter.ANY || genre != null || minYear > 1920 || maxYear < 2026 || minRating > 0f ||
+                quality != QualityFilter.ANY || dubbedOnly || sortBy != SortBy.POPULARITY ||
+                runtime != RuntimeFilter.ANY || ratingTier != RatingTier.ANY ||
+                language != LanguageFilter.ANY || network != null || mood != null
 }
 
 @Immutable
@@ -57,13 +67,22 @@ data class SearchState(
     private fun applyFilters(list: List<SearchResult>): List<SearchResult> {
         var r = list
 
+        if (filters.typeFilter != MediaTypeFilter.ANY) {
+            r = when (filters.typeFilter) {
+                MediaTypeFilter.MOVIE -> r.filter { it.type == MediaType.MOVIE }
+                MediaTypeFilter.TV_SHOW -> r.filter { it.type == MediaType.TV_SHOW }
+                MediaTypeFilter.ANIME -> r.filter { it.genre.contains("Animation", true) }
+                else -> r
+            }
+        }
+
         if (filters.genre != null)
             r = r.filter { it.genre.equals(filters.genre, ignoreCase = true) }
 
         if (filters.minRating > 0f)
             r = r.filter { it.rating >= filters.minRating }
 
-        if (filters.minYear > 1970 || filters.maxYear < 2026)
+        if (filters.minYear > 1920 || filters.maxYear < 2026)
             r = r.filter { yr ->
                 val y = yr.releaseYear.toIntOrNull() ?: return@filter true
                 y in filters.minYear..filters.maxYear
@@ -85,6 +104,7 @@ data class SearchState(
         r = when (filters.sortBy) {
             SortBy.RATING -> r.sortedByDescending { it.rating }
             SortBy.NEWEST -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
+            SortBy.TITLE -> r.sortedBy { it.title }
             SortBy.POPULARITY -> r
         }
 
@@ -207,7 +227,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(isTmdbLoading = true) }
         try {
             val isHe = query.any { it in '\u0590'..'\u05FF' }
-
             val p1 = repository.searchMulti(query, 1, isHe).getOrDefault(emptyList())
             val p2 = repository.searchMulti(query, 2, isHe).getOrDefault(emptyList())
 

@@ -31,6 +31,7 @@ import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import com.luminastreams.tv.data.local.WatchProgressManager
 import androidx.core.content.edit
+import java.util.concurrent.CopyOnWriteArrayList
 
 data class TorrentioResponse(val streams: List<TorrentioStream>? = null)
 data class TorrentioStream(val name: String? = null, val title: String? = null, val url: String? = null, val infoHash: String? = null)
@@ -59,10 +60,38 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
     private var scrapingJob: Job? = null
+    private var resolveJob: Job? = null
+    /** Track all torrent IDs we've added to RD so we can delete them on cleanup */
+    private val activeTorrentIds = CopyOnWriteArrayList<String>()
 
     private fun getRdToken(): String = appContext.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE).getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
     private fun backdropUrl(path: String?): String = Constants.backdropUrl(path)
     private fun posterUrl(path: String?): String = Constants.posterUrl(path)
+
+    override fun onCleared() {
+        super.onCleared()
+        scrapingJob?.cancel()
+        resolveJob?.cancel()
+        // Best-effort cleanup of any active torrents on RD
+        val token = getRdToken()
+        if (token.isNotBlank() && activeTorrentIds.isNotEmpty()) {
+            val ids = activeTorrentIds.toList()
+            activeTorrentIds.clear()
+            // Fire-and-forget cleanup using a non-viewModelScope dispatcher
+            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
+                ids.forEach { id ->
+                    try {
+                        val request = okhttp3.Request.Builder()
+                            .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$id")
+                            .header("Authorization", "Bearer $token")
+                            .delete()
+                            .build()
+                        okHttpClient.newCall(request).execute().close()
+                    } catch (_: Exception) {}
+                }
+            }
+        }
+    }
 
     fun onEvent(event: DetailsEvent) {
         when (event) {
@@ -380,21 +409,78 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private fun cancelActiveScraping() {
         scrapingJob?.cancel()
+        resolveJob?.cancel()
         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) }
     }
 
+    /** Delete a torrent from RD account to prevent 2000/2004 conflicts */
+    private suspend fun deleteRdTorrent(torrentId: String, token: String) {
+        withContext(Dispatchers.IO) {
+            try {
+                val request = okhttp3.Request.Builder()
+                    .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$torrentId")
+                    .header("Authorization", "Bearer $token")
+                    .delete()
+                    .build()
+                okHttpClient.newCall(request).execute().close()
+            } catch (_: Exception) { /* best-effort cleanup */ }
+        }
+    }
+
+    /** Cleanup all tracked RD torrents — called before resolving a new source */
+    private suspend fun cleanupActiveTorrents(token: String) {
+        val ids = activeTorrentIds.toList()
+        activeTorrentIds.clear()
+        ids.forEach { id -> deleteRdTorrent(id, token) }
+    }
+
     private fun processRealDebridLink(stream: AdvancedStreamSource) {
-        if (stream.directUrl?.startsWith("http") == true) { _state.update { it.copy(readyToPlayUrl = stream.directUrl) }; return }
+        if (stream.directUrl?.startsWith("http") == true) {
+            _state.update { it.copy(readyToPlayUrl = stream.directUrl) }
+            return
+        }
         if (stream.infoHash.isNullOrBlank()) return
-        viewModelScope.launch(Dispatchers.IO) {
+
+        // Cancel any previous resolve job to prevent races
+        resolveJob?.cancel()
+
+        resolveJob = viewModelScope.launch(Dispatchers.IO) {
             val token = getRdToken()
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
+
+            // Clean up previous torrents before adding a new one
+            cleanupActiveTorrents(token)
+
             try {
-                rdManager.resolveMagnetToStream("magnet:?xt=urn:btih:${stream.infoHash}", token).fold(
-                    onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
-                    onFailure = { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) } }
+                val magnetUri = "magnet:?xt=urn:btih:${stream.infoHash}"
+                val result = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
+                    activeTorrentIds.add(torrentId)
+                }
+                result.fold(
+                    onSuccess = { url ->
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) }
+                    },
+                    onFailure = { e ->
+                        val msg = e.message ?: ""
+                        // If error 2000/2004 (duplicate/conflict), cleanup and retry once
+                        if (msg.contains("2000") || msg.contains("2004") || msg.contains("already", true)) {
+                            cleanupActiveTorrents(token)
+                            // Small delay before retry
+                            kotlinx.coroutines.delay(800)
+                            val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
+                                activeTorrentIds.add(torrentId)
+                            }
+                            retry.fold(
+                                onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
+                                onFailure = { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) } }
+                            )
+                        } else {
+                            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) }
+                        }
+                    }
                 )
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת רשת: " else "Network error: ") + e.message)) }
             }
         }

@@ -71,7 +71,7 @@ import com.luminastreams.tv.ui.theme.LuminaTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-private const val FORCED_DENSITY_DPI = 160
+private const val FORCED_DENSITY_DPI = 190
 
 class MainActivity : ComponentActivity() {
 

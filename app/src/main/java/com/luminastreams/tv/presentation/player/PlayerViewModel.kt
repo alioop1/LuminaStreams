@@ -153,8 +153,9 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         sourceName: String
     ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
         val subtitles = mutableListOf<StremioSubtitle>()
+        var conn: HttpURLConnection? = null
         try {
-            val conn = URL(urlString).openConnection() as HttpURLConnection
+            conn = URL(urlString).openConnection() as HttpURLConnection
             conn.requestMethod = "GET"
             conn.setRequestProperty("User-Agent", "Stremio/4.4.168")
             conn.setRequestProperty("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
@@ -175,7 +176,10 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                     }
                 }
             }
-        } catch (_: Exception) {  }
+        } catch (_: Exception) {
+        } finally {
+            conn?.disconnect()
+        }
         subtitles
     }
 

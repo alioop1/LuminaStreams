@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.data.local.iptv.ChannelEntity
 import com.luminastreams.tv.data.local.iptv.EpgProgramEntity
 import com.luminastreams.tv.data.repository.IptvRepository
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -117,15 +118,11 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
     }
 
     fun openQrSetup() {
-        val ip = getLocalIpAddress()
-        _ipAddress.value = if (ip == "ERROR") "Network Error: Connect to Wi-Fi/LAN" else "http://$ip:8080"
-        _showQrScreen.value = true
-
-        // FIX: Actually start the server so the phone can connect to it!
-        if (ip != "ERROR") {
-            viewModelScope.launch {
-                LocalWebServer.start(8080)
-            }
+        _showQrScreen.value = true // Show screen immediately
+        viewModelScope.launch(Dispatchers.IO) {
+            val ip = getLocalIpAddress() // Off main thread — can block 100–500ms on some TV boxes
+            _ipAddress.value = if (ip == "ERROR") "Network Error: Connect to Wi-Fi/LAN" else "http://$ip:8080"
+            if (ip != "ERROR") LocalWebServer.start(8080)
         }
     }
 

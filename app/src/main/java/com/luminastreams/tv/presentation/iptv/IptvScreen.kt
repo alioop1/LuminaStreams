@@ -70,6 +70,7 @@ private val ColorGlass = Color.White.copy(alpha = 0.08f)
 private val ColorTextMain = Color.White
 private val ColorLiveBlue = Color(0xFF00E5FF)
 private val ColorCatchup = Color(0xFFFF9500) // DVR Time Travel Orange
+private val epgBlockTimeFormat = SimpleDateFormat("HH:mm", Locale.US)
 
 // ⚡ FEATURE 2: Dynamic Ambient Color Generator
 private fun getAmbientGlow(channelName: String?): Color {
@@ -103,12 +104,8 @@ fun IptvScreen(
     var isScreensaverActive by remember { mutableStateOf(false) }
 
     LaunchedEffect(lastInteractionTime) {
-        while (true) {
-            delay(1000)
-            if (System.currentTimeMillis() - lastInteractionTime > 120_000) { // 2 Minutes Idle
-                isScreensaverActive = true
-            }
-        }
+        delay(120_000L)
+        isScreensaverActive = true
     }
 
     if (showQr) {
@@ -131,7 +128,8 @@ fun IptvScreen(
             }
     ) {
         // ⚡ FEATURE 2: Dynamic Ambient Glow Crossfade
-        Crossfade(targetState = getAmbientGlow(focusedChannel?.name), animationSpec = tween(1000), label = "ambient_glow") { glowColor ->
+        val ambientGlow by remember { derivedStateOf { getAmbientGlow(focusedChannel?.name) } }
+        Crossfade(targetState = ambientGlow, animationSpec = tween(1000), label = "ambient_glow") { glowColor ->
             Box(modifier = Modifier.fillMaxWidth().height(500.dp).background(Brush.verticalGradient(listOf(glowColor, Color.Transparent))))
         }
 
@@ -334,7 +332,10 @@ fun EpgGuideScreen(channels: List<ChannelEntity>, viewModel: IptvViewModel, onPl
     LazyColumn(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 64.dp)) {
         itemsIndexed(channels.take(50), key = { _, it -> it.id }) { index, channel ->
             var programs by remember { mutableStateOf<List<EpgProgramEntity>>(emptyList()) }
-            LaunchedEffect(channel) { programs = viewModel.getProgramsForChannel(channel, currentTime) }
+            LaunchedEffect(channel) {
+                delay(index * 30L)
+                programs = viewModel.getProgramsForChannel(channel, currentTime)
+            }
 
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Box(modifier = Modifier.width(220.dp).height(80.dp).background(ColorGlass, RoundedCornerShape(12.dp)).padding(16.dp), contentAlignment = Alignment.CenterStart) {
@@ -368,8 +369,7 @@ fun EpgProgramBlock(title: String, startTime: Long, endTime: Long, isLive: Boole
     // ⚡ UNUSED VARIABLE REMOVED FROM HERE
     val durationMinutes = if (startTime == 0L) 60 else ((endTime - startTime) / 60000)
     val widthDp = (durationMinutes * 6).toInt().coerceIn(240, 600).dp
-    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.US) }
-    val timeString = if (startTime == 0L) "--:--" else "${timeFormat.format(Date(startTime))} - ${timeFormat.format(Date(endTime))}"
+    val timeString = if (startTime == 0L) "--:--" else "${epgBlockTimeFormat.format(Date(startTime))} - ${epgBlockTimeFormat.format(Date(endTime))}"
 
     var modifier = Modifier.width(widthDp).height(80.dp) // ⚡ MODIFIER CLEANED UP
     if (itemFocus != null) modifier = modifier.focusRequester(itemFocus)

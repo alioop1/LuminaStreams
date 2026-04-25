@@ -47,10 +47,7 @@ fun RememberPagedRowLoad(rowState: androidx.compose.foundation.lazy.LazyListStat
             .distinctUntilChanged()
             .collectLatest { triggerTotal ->
                 if (triggerTotal != -1) {
-                    while (true) {
-                        currentOnLoadMore()
-                        kotlinx.coroutines.delay(2500)
-                    }
+                    currentOnLoadMore()
                 }
             }
     }

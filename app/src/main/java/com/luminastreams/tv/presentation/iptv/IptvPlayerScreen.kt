@@ -37,6 +37,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MediaItem
@@ -73,7 +74,7 @@ data class StreamTrackInfo(val group: Tracks.Group, val trackIndex: Int, val for
 fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBackPressed: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val channels by viewModel.channels.collectAsState()
+    val channels by viewModel.channels.collectAsStateWithLifecycle()
 
     var currentUrl by remember { mutableStateOf(initialChannelUrl) }
     var showSettings by remember { mutableStateOf(false) }
@@ -85,6 +86,16 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
 
     val currentChannel = remember(currentUrl) { channels.find { currentUrl.startsWith(it.streamUrl) } }
     var currentEpg by remember { mutableStateOf<EpgProgramEntity?>(null) }
+
+    // Ticking OSD clock — updates every minute, not on every recompose
+    var osdClock by remember { mutableStateOf("") }
+    LaunchedEffect(Unit) {
+        val fmt = SimpleDateFormat("HH:mm", Locale.getDefault())
+        while (true) {
+            osdClock = fmt.format(Date())
+            delay(60_000L - (System.currentTimeMillis() % 60_000L))
+        }
+    }
 
     val playerFocusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
@@ -264,8 +275,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
                         }
                     }
                     Column(horizontalAlignment = Alignment.End) {
-                        val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-                        Text(text = dateFormat.format(Date()), color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Light)
+                        Text(text = osdClock, color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Light)
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(text = "OK for Guide • ► for Options", color = Color.White.copy(alpha = 0.4f), fontSize = 13.sp)
                     }

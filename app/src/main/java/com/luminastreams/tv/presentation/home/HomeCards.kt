@@ -190,12 +190,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
     )
 
     Column(
-        modifier = modifier
-            .width(cardW)
-            .graphicsLayer {
-                scaleX = animatedScale
-                scaleY = animatedScale
-            },
+        modifier = modifier.width(cardW),
         horizontalAlignment = Alignment.Start
     ) {
         Surface(
@@ -212,6 +207,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             modifier = Modifier
                 .fillMaxWidth()
                 .height(cardH)
+                .graphicsLayer { scaleX = animatedScale; scaleY = animatedScale }
                 .onFocusChanged { if (it.isFocused) onFocused() }
         ) {
             if (url.isNotBlank()) {

@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -40,6 +41,13 @@ class HomeViewModel : ViewModel() {
 
     private val imgBase = "https://image.tmdb.org/t/p"
 
+    override fun onCleared() {
+        super.onCleared()
+        activeJob?.cancel()
+        http.dispatcher.executorService.shutdown()
+        http.connectionPool.evictAll()
+    }
+
     private val maxConnections = when (DeviceProfile.tier) {
         DeviceProfile.Tier.HIGH -> 8
         DeviceProfile.Tier.MID  -> 5
@@ -55,9 +63,11 @@ class HomeViewModel : ViewModel() {
 
     init {
         viewModelScope.launch(Dispatchers.Default) {
-            _state.collectLatest { currentState ->
-                recalculateRows(currentState)
-            }
+            _state
+                .debounce(100L)
+                .collectLatest { currentState ->
+                    recalculateRows(currentState)
+                }
         }
         loadAll()
     }
@@ -69,7 +79,9 @@ class HomeViewModel : ViewModel() {
     fun setLanguage(isRtl: Boolean) {
         if (currentIsRtl != isRtl) {
             currentIsRtl = isRtl
-            _state.update { it.copy() }
+            viewModelScope.launch(Dispatchers.Default) {
+                recalculateRows(_state.value)
+            }
         }
     }
 
@@ -417,46 +429,45 @@ class HomeViewModel : ViewModel() {
         }
     }
 
-    private suspend fun fetch(url: String, mediaType: String): List<Movie> =
-        withContext(Dispatchers.IO) {
-            try {
-                // FIX: OkHttp 5.x Response Body uses a clean, non-null syntax
-                val bodyStr = http.newCall(Request.Builder().url(url).build()).execute().use { it.body.string() }
-                val arr = JSONObject(bodyStr).optJSONArray("results") ?: return@withContext emptyList()
+    // fetch() is always called from an IO-dispatched coroutine — no need for inner withContext
+    private suspend fun fetch(url: String, mediaType: String): List<Movie> {
+        return try {
+            val bodyStr = http.newCall(Request.Builder().url(url).build()).execute().use { it.body.string() }
+            val arr = JSONObject(bodyStr).optJSONArray("results") ?: return emptyList()
 
-                val out = mutableListOf<Movie>()
-                for (i in 0 until arr.length()) {
-                    val j  = arr.getJSONObject(i)
-                    val mt = j.optString("media_type").ifBlank { mediaType }
+            val out = mutableListOf<Movie>()
+            for (i in 0 until arr.length()) {
+                val j  = arr.getJSONObject(i)
+                val mt = j.optString("media_type").ifBlank { mediaType }
 
-                    val backdropRaw = j.optString("backdrop_path")
-                    if (backdropRaw.isBlank() || backdropRaw == "null") continue
+                val backdropRaw = j.optString("backdrop_path")
+                if (backdropRaw.isBlank() || backdropRaw == "null") continue
 
-                    val title = if (mt == "tv")
-                        j.optString("name").ifBlank { j.optString("original_name") }
-                    else
-                        j.optString("title").ifBlank { j.optString("original_title") }
+                val title = if (mt == "tv")
+                    j.optString("name").ifBlank { j.optString("original_name") }
+                else
+                    j.optString("title").ifBlank { j.optString("original_title") }
 
-                    val date       = if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")
-                    val posterPath = j.optString("poster_path")
-                    if (posterPath.isBlank() || posterPath == "null") continue
+                val date       = if (mt == "tv") j.optString("first_air_date") else j.optString("release_date")
+                val posterPath = j.optString("poster_path")
+                if (posterPath.isBlank() || posterPath == "null") continue
 
-                    out += Movie(
-                        id              = "${mt}_${j.optInt("id")}",
-                        title           = title,
-                        posterUrl       = "$imgBase/original$posterPath",
-                        backdropUrl     = "$imgBase/original$backdropRaw",
-                        overview        = j.optString("overview"),
-                        year            = date.take(4).toIntOrNull() ?: 0,
-                        genre           = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
-                        rating          = j.optDouble("vote_average", 0.0).toFloat(),
-                        mediaType       = mt,
-                        resolutionBadge = ""
-                    )
-                }
-                out
-            } catch (_: Exception) { emptyList() }
-        }
+                out += Movie(
+                    id              = "${mt}_${j.optInt("id")}",
+                    title           = title,
+                    posterUrl       = "$imgBase/original$posterPath",
+                    backdropUrl     = "$imgBase/original$backdropRaw",
+                    overview        = j.optString("overview"),
+                    year            = date.take(4).toIntOrNull() ?: 0,
+                    genre           = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
+                    rating          = j.optDouble("vote_average", 0.0).toFloat(),
+                    mediaType       = mt,
+                    resolutionBadge = ""
+                )
+            }
+            out
+        } catch (_: Exception) { emptyList() }
+    }
 
     private fun genreLabel(id: Int, mt: String): String = when (id) {
         28 -> "Action"; 12 -> "Adventure"; 16 -> "Animation"; 35 -> "Comedy"
