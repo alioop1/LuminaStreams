@@ -104,10 +104,10 @@ fun DetailsScreen(
 
     val media = state.mediaInfo
 
-    // ⚡ CUSTOM DPI SCALING FOR 77" OLED (Shrinks UI by 20%)
+    // ⚡ CUSTOM DPI SCALING FOR 4K TVs (50"-77") — shrinks UI ~26% for crisp, premium look
     val currentDensity = LocalDensity.current
     val customDensity = androidx.compose.ui.unit.Density(
-        density = currentDensity.density * 1.0f,
+        density = currentDensity.density * 1.35f,
         fontScale = currentDensity.fontScale * 1.0f
     )
 
@@ -116,7 +116,12 @@ fun DetailsScreen(
 
             Crossfade(targetState = currentBackdrop, animationSpec = tween(400), label = "backdrop") { bgUrl ->
                 AsyncImage(
-                    model = ImageRequest.Builder(context).data(bgUrl).crossfade(true).build(),
+                    model = ImageRequest.Builder(context)
+                        .data(bgUrl)
+                        .size(1920, 1080)
+                        .allowHardware(true)
+                        .crossfade(true)
+                        .build(),
                     contentDescription = null, contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxSize().alpha(0.5f)
                 )
