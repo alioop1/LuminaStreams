@@ -18,6 +18,11 @@ class SoundManager(context: Context) {
             .build()
 
         soundPool = SoundPool.Builder().setMaxStreams(3).setAudioAttributes(audioAttributes).build()
+        
+        var loadedCount = 0
+        soundPool.setOnLoadCompleteListener { _, _, _ ->
+            loadedCount++
+        }
 
         clickSoundId = soundPool.load(context, R.raw.snd_click, 1)
         navSoundId = soundPool.load(context, R.raw.snd_nav, 1)
@@ -25,7 +30,7 @@ class SoundManager(context: Context) {
     }
 
     fun playClick() = soundPool.play(clickSoundId, 1f, 1f, 1, 0, 1f)
-    fun playNav() = soundPool.play(navSoundId, 0.4f, 0.4f, 1, 0, 1f) // ווליום קצת יותר חלש לניווט
+    fun playNav() = soundPool.play(navSoundId, 0.4f, 0.4f, 1, 0, 1f)
     fun playSplash() = soundPool.play(splashSoundId, 1f, 1f, 1, 0, 1f)
 
     fun release() = soundPool.release()

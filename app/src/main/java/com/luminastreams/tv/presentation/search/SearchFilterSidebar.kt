@@ -1,4 +1,4 @@
-@file:OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@file:OptIn(ExperimentalComposeUiApi::class)
 package com.luminastreams.tv.presentation.search
 
 import androidx.compose.animation.core.animateFloatAsState
@@ -7,6 +7,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,7 +25,10 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
@@ -108,6 +113,92 @@ val CUBE_CATEGORIES = listOf(
     CubeCategory("3+ Hours","Epic Length","https://image.tmdb.org/t/p/w780/5kMT3Z60vHla6eZ35Lp3aB4xZ5m.jpg",Color(0xFFD50000),"⏱ Runtime",{if(it.runtime==RuntimeFilter.EPIC)it.copy(runtime=RuntimeFilter.ANY)else it.copy(runtime=RuntimeFilter.EPIC)},{it.runtime==RuntimeFilter.EPIC}),
 )
 
+data class PersonaCategory(
+    val title: String, val subtitle: String, val bgUrl: String,
+    val apply: (SearchFilters) -> SearchFilters
+)
+
+val PERSONAS = listOf(
+    PersonaCategory("Late Night Thrills", "Dark, gritty & suspenseful", "https://image.tmdb.org/t/p/w780/5a4JdoFwll5DRtKMe7JLuZzNI6i.jpg", { it.copy(genre = "Thriller", mood = "Dark", ratingTier = RatingTier.GOOD) }),
+    PersonaCategory("Sunday Family Couch", "Feel-good for everyone", "https://image.tmdb.org/t/p/w780/s51ChDMMXq0kGgeT6xN3pW17J5U.jpg", { it.copy(genre = "Family", mood = "Feel Good", typeFilter = MediaTypeFilter.MOVIE) }),
+    PersonaCategory("Brain-Melting Sci-Fi", "Think twice", "https://image.tmdb.org/t/p/w780/xJHokMbljvjEVAeUCNWeIHN0Vb.jpg", { it.copy(genre = "Sci-Fi", mood = "Mind-Bending", ratingTier = RatingTier.GREAT) }),
+    PersonaCategory("Award-Winning Tearjerkers", "Deep emotions", "https://image.tmdb.org/t/p/w780/bOGkgRGdhrBYJSLpXaxhXVstddV.jpg", { it.copy(genre = "Drama", ratingTier = RatingTier.MASTERPIECE, sortBy = SortBy.RATING) }),
+    PersonaCategory("Adrenaline Rush", "Non-stop action", "https://image.tmdb.org/t/p/w780/7RyHsO4yDXtBv1zUU3mTpHeQ0d5.jpg", { it.copy(genre = "Action", sortBy = SortBy.POPULARITY, quality = QualityFilter.UHD) })
+)
+
+@Composable
+fun SmartSentence(filters: SearchFilters) {
+    val parts = mutableListOf<Pair<String, Boolean>>()
+    parts.add("I want to watch " to false)
+
+    val hasMood = filters.mood != null
+    val hasGenre = filters.genre != null
+    val typeStr = when (filters.typeFilter) {
+        MediaTypeFilter.MOVIE -> "Movie"
+        MediaTypeFilter.TV_SHOW -> "Series"
+        MediaTypeFilter.ANIME -> "Anime"
+        else -> "Something"
+    }
+
+    if (hasMood) {
+        parts.add("a " to false)
+        parts.add("${filters.mood} " to true)
+    } else if (hasGenre) {
+        val startsWithVowel = listOf("A", "E", "I", "O", "U").any { filters.genre!!.startsWith(it, true) }
+        parts.add((if (startsWithVowel) "an " else "a ") to false)
+    } else {
+        parts.add((if (typeStr == "Something") "" else "a ") to false)
+    }
+
+    if (hasGenre) {
+        parts.add("${filters.genre} " to true)
+    }
+
+    parts.add("$typeStr " to (filters.typeFilter != MediaTypeFilter.ANY))
+
+    if (filters.minYear != 1920 || filters.maxYear != 2026) {
+        val era = if (filters.minYear == 1920 && filters.maxYear == 1989) "Classics"
+                  else if (filters.minYear == 1990) "90s"
+                  else "${filters.minYear}s"
+        parts.add("from the " to false)
+        parts.add("$era " to true)
+    }
+
+    if (filters.ratingTier != RatingTier.ANY) {
+        val stars = when (filters.ratingTier) {
+            RatingTier.MASTERPIECE -> "9+ Stars"
+            RatingTier.GREAT -> "7+ Stars"
+            RatingTier.GOOD -> "5+ Stars"
+            else -> ""
+        }
+        parts.add("with " to false)
+        parts.add("$stars " to true)
+    }
+
+    if (filters.quality != QualityFilter.ANY) {
+        val qStr = when (filters.quality) {
+            QualityFilter.UHD -> "4K UHD"
+            QualityFilter.FHD -> "1080p"
+            QualityFilter.HD -> "720p"
+            else -> ""
+        }
+        parts.add("in " to false)
+        parts.add("$qStr " to true)
+    }
+
+    val annotated = buildAnnotatedString {
+        parts.forEach { (text, isHighlight) ->
+            if (isHighlight) {
+                withStyle(SpanStyle(color = Color(0xFFE50914), fontWeight = FontWeight.Black)) { append(text) }
+            } else {
+                withStyle(SpanStyle(color = Color.White)) { append(text) }
+            }
+        }
+    }
+
+    Text(annotated, fontSize = 38.sp, fontWeight = FontWeight.Medium, lineHeight = 44.sp)
+}
+
 @Composable
 fun FilterSidebar(
     filters: SearchFilters, isFuzer: Boolean, firstFilterFR: FocusRequester,
@@ -120,9 +211,9 @@ fun FilterSidebar(
     Column(Modifier.fillMaxSize()) {
         // ── Header ──
         Row(Modifier.fillMaxWidth().padding(horizontal = 56.dp, vertical = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Column {
-                Text("Discovery Grid", color = Color.White, fontSize = 38.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                Text(if (activeCount > 0) "$activeCount filters active · Tap to toggle" else "Select categories to find the perfect match", color = Color(0x99FFFFFF), fontSize = 15.sp)
+            Column(Modifier.fillMaxWidth(0.75f)) {
+                SmartSentence(filters)
+                Text(if (activeCount > 0) "$activeCount filters active · Tap to toggle" else "Select categories or moods to find the perfect match", color = Color(0x99FFFFFF), fontSize = 15.sp, modifier = Modifier.padding(top = 8.dp))
             }
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (filters.isActive) {
@@ -147,6 +238,23 @@ fun FilterSidebar(
             verticalArrangement = Arrangement.spacedBy(16.dp),
             modifier = Modifier.fillMaxSize()
         ) {
+            item(span = { GridItemSpan(maxLineSpan) }) {
+                Column {
+                    Row(Modifier.fillMaxWidth().padding(bottom = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text("✨ Curated Personas", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                        Box(Modifier.weight(1f).height(1.dp).background(Color(0x22FFFFFF)))
+                    }
+                    LazyRow(
+                        horizontalArrangement = Arrangement.spacedBy(16.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)
+                    ) {
+                        itemsIndexed(PERSONAS) { idx, p ->
+                            PersonaCard(p, if (idx == 0) firstFilterFR else null) { onUpdate(p.apply(filters)) }
+                        }
+                    }
+                }
+            }
+
             var isFirst = true
             sections.forEach { section ->
                 item(span = { GridItemSpan(maxLineSpan) }) {
@@ -159,7 +267,7 @@ fun FilterSidebar(
                 val items = grouped[section] ?: emptyList()
                 itemsIndexed(items) { idx, cat ->
                     val sel = cat.checkIsSelected(filters)
-                    CubeCard(cat, sel, if (isFirst && idx == 0) firstFilterFR else if (section == sections.first() && idx == 0) firstFilterFR else null) { onUpdate(cat.apply(filters)) }
+                    CubeCard(cat, sel, null) { onUpdate(cat.apply(filters)) }
                 }
             }
 
@@ -208,6 +316,37 @@ private fun CubeCard(category: CubeCategory, isSelected: Boolean, focusRequester
             Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
                 Text(category.title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black)
                 Text(category.subtitle, color = Color(0xBBFFFFFF), fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+    }
+}
+
+@Suppress("ASSIGNED_BUT_NEVER_READ")
+@Composable
+fun PersonaCard(persona: PersonaCategory, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(18.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        border = ClickableSurfaceDefaults.border(
+            border = Border(border = BorderStroke(1.dp, Color.Transparent), shape = RoundedCornerShape(18.dp)),
+            focusedBorder = Border(border = BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(18.dp))
+        ),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(Color(0xFFE50914).copy(alpha = 0.5f), 28.dp)),
+        modifier = Modifier.width(260.dp).height(140.dp)
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { isFocused = it.isFocused }
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(model = ImageRequest.Builder(LocalContext.current).data(persona.bgUrl).crossfade(true).build(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            val alpha by animateFloatAsState(if (isFocused) 0.35f else 0.7f, tween(300))
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(0f to Color.Transparent, 0.2f to Color.Transparent, 1f to Color.Black.copy(alpha))))
+            
+            Column(Modifier.align(Alignment.BottomStart).padding(14.dp)) {
+                Text(persona.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
+                Text(persona.subtitle, color = Color(0xBBFFFFFF), fontSize = 13.sp, fontWeight = FontWeight.Medium)
             }
         }
     }

@@ -9,6 +9,7 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.domain.usecase.RealDebridManager
 import com.luminastreams.tv.data.remote.FuzerEngine
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,8 +62,11 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
     private var scrapingJob: Job? = null
     private var resolveJob: Job? = null
-    /** Track all torrent IDs we've added to RD so we can delete them on cleanup */
-    private val activeTorrentIds = CopyOnWriteArrayList<String>()
+    
+    companion object {
+        /** Track all torrent IDs we've added to RD so we can delete them on cleanup across the app session */
+        private val activeTorrentIds = CopyOnWriteArrayList<String>()
+    }
 
     private fun getRdToken(): String = appContext.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE).getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
     private fun backdropUrl(path: String?): String = Constants.backdropUrl(path)
@@ -148,11 +152,26 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 return@launch
             }
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(if (isHebrew) "מעלה ל-Real-Debrid..." else "Uploading to Real-Debrid...")) }
-            rdManager.resolveTorrentFileToStream(torrentBytes, token) { progress ->
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid((if (isHebrew) "ממיר ב-RD: " else "Resolving in RD: ") + "${progress.toInt()}%")) }
-            }.fold(
+            rdManager.resolveTorrentFileToStream(
+                torrentBytes = torrentBytes,
+                apiToken = token,
+                onTorrentAdded = { activeTorrentIds.add(it) },
+                onProgress = { progress ->
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid((if (isHebrew) "ממיר ב-RD: " else "Resolving in RD: ") + "${progress.toInt()}%")) }
+                }
+            ).fold(
                 onSuccess = { url -> _state.update { it.copy(readyToPlayUrl = url, scrapingStatus = ScrapingStatus.Idle) } },
-                onFailure = { e -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת RD: " else "RD Error: ") + e.message)) } }
+                onFailure = { e ->
+                    if (e.message == "RD_CONFLICT") {
+                        viewModelScope.launch(Dispatchers.IO) {
+                            cleanupActiveTorrents(token)
+                            delay(1000)
+                            playFuzerDirect(torrentUrl) // Recursive retry after cleanup
+                        }
+                    } else {
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת RD: " else "RD Error: ") + e.message)) }
+                    }
+                }
             )
         }
     }
@@ -436,7 +455,32 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private fun processRealDebridLink(stream: AdvancedStreamSource) {
         if (stream.directUrl?.startsWith("http") == true) {
-            _state.update { it.copy(readyToPlayUrl = stream.directUrl) }
+            resolveJob?.cancel()
+            resolveJob = viewModelScope.launch(Dispatchers.IO) {
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
+                try {
+                    // Fast pre-flight check to prevent ExoPlayer ParserException on dead links
+                    val fastClient = okHttpClient.newBuilder()
+                        .connectTimeout(2, TimeUnit.SECONDS)
+                        .readTimeout(2, TimeUnit.SECONDS)
+                        .build()
+                        
+                    val request = okhttp3.Request.Builder().url(stream.directUrl).head().build()
+                    val response = fastClient.newCall(request).execute()
+                    val contentType = response.header("Content-Type") ?: ""
+                    val isHtml = contentType.contains("text/html", ignoreCase = true)
+                    response.close()
+                    
+                    if (isHtml) {
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "הקישור פג תוקף או נמחק משרתי RD. נסה מקור אחר." else "Link expired or deleted from RD. Try another source.")) }
+                    } else {
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
+                    }
+                } catch (e: Exception) {
+                    // Fallback to trying to play it anyway if the fast network check fails or times out
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
+                }
+            }
             return
         }
         if (stream.infoHash.isNullOrBlank()) return
@@ -462,17 +506,19 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     },
                     onFailure = { e ->
                         val msg = e.message ?: ""
-                        // If error 2000/2004 (duplicate/conflict), cleanup and retry once
-                        if (msg.contains("2000") || msg.contains("2004") || msg.contains("already", true)) {
+                        // If error 2000/2004 (RD_CONFLICT), cleanup and retry once
+                        if (msg == "RD_CONFLICT" || msg.contains("2000") || msg.contains("2004")) {
                             cleanupActiveTorrents(token)
-                            // Small delay before retry
-                            kotlinx.coroutines.delay(800)
+                            // Small delay before retry to let RD process the deletion
+                            kotlinx.coroutines.delay(1200)
                             val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
                                 activeTorrentIds.add(torrentId)
                             }
                             retry.fold(
                                 onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
-                                onFailure = { _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) } }
+                                onFailure = { e2 -> 
+                                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "שגיאת כפל ב-RD: ${e2.message}" else "RD Conflict: ${e2.message}")) }
+                                }
                             )
                         } else {
                             _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) }

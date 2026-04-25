@@ -19,6 +19,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 
 // ── Auth API interface ─────────────────────────────────────────────────────
 interface RealDebridAuthApi {
@@ -109,8 +110,14 @@ class RealDebridAuthManager(private val context: Context) {
 // ── RealDebridManager ──────────────────────────────────────────────────────
 class RealDebridManager {
 
+    private val okHttpClient = OkHttpClient.Builder()
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(30, TimeUnit.SECONDS)
+        .build()
+
     private val api = Retrofit.Builder()
         .baseUrl("https://api.real-debrid.com/rest/1.0/")
+        .client(okHttpClient)
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(RealDebridApi::class.java)
@@ -136,11 +143,9 @@ class RealDebridManager {
                 val addResponse = try {
                     api.addMagnet(authHeader, magnetUri)
                 } catch (e: retrofit2.HttpException) {
-                    val code = e.code()
                     val errorBody = e.response()?.errorBody()?.string() ?: ""
-                    // RD returns 2000/2004 codes inside the JSON body
-                    if (errorBody.contains("2004") || errorBody.contains("2000") || code == 503) {
-                        throw Exception("RD error $code: $errorBody")
+                    if (errorBody.contains("2004") || errorBody.contains("2000")) {
+                        throw Exception("RD_CONFLICT")
                     }
                     throw e
                 }
@@ -180,12 +185,12 @@ class RealDebridManager {
             }
         }
 
-    // 2. הפונקציה החסרה לפיוזר: טיפול בהעלאת קובץ .torrent ישירות ל-RD
     suspend fun resolveTorrentFileToStream(
         torrentBytes: ByteArray,
         apiToken: String,
         season: Int? = null,
         episode: Int? = null,
+        onTorrentAdded: (String) -> Unit = {},
         onProgress: (Float) -> Unit = {}
     ): Result<String> = withContext(Dispatchers.IO) {
         try {
@@ -219,8 +224,13 @@ class RealDebridManager {
             val json = JSONObject(responseBodyString)
             val torrentId = json.optString("id")
             if (torrentId.isEmpty()) {
+                // Check if it's a conflict
+                if (responseBodyString.contains("2000") || responseBodyString.contains("2004")) {
+                    throw Exception("RD_CONFLICT")
+                }
                 throw Exception("שגיאה: הקובץ הועלה אך RD לא החזיר מזהה.")
             }
+            onTorrentAdded(torrentId)
 
             val authHeader = "Bearer $apiToken"
             val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
@@ -247,17 +257,23 @@ class RealDebridManager {
 
             var readyInfo = api.getTorrentInfo(authHeader, torrentId)
             var attempts = 0
-
-            while (readyInfo.links.isEmpty() && attempts < 60) {
+            // Increased timeout to 5 minutes (150 * 2s) for non-cached torrents
+            while (readyInfo.links.isEmpty() && attempts < 150) {
                 delay(2000)
                 readyInfo = api.getTorrentInfo(authHeader, torrentId)
                 attempts++
 
-                if (readyInfo.status == "downloading") {
-                    onProgress(readyInfo.progress.toFloat())
-                } else if (readyInfo.status == "error" || readyInfo.status == "dead") {
-                    throw Exception("שגיאה בהורדת הטורנט בשרתי Real Debrid.")
+                when (readyInfo.status) {
+                    "downloading" -> {
+                        onProgress(readyInfo.progress.toFloat())
+                    }
+                    "error", "dead" -> throw Exception("שגיאה בהורדת הטורנט בשרתי Real Debrid.")
+                    "waiting_files_selection" -> {
+                        // If it's stuck here, re-try selection once
+                        if (attempts % 5 == 0) api.selectFiles(authHeader, torrentId, fileIds)
+                    }
                 }
+                // If it becomes downloaded, the next getTorrentInfo will show links
             }
 
             if (readyInfo.links.isEmpty()) throw Exception("זמן ההמתנה ל-Real-Debrid פג. ההורדה איטית מדי.")

@@ -107,8 +107,8 @@ fun DetailsScreen(
     // ⚡ CUSTOM DPI SCALING FOR 4K TVs (50"-77") — shrinks UI ~26% for crisp, premium look
     val currentDensity = LocalDensity.current
     val customDensity = androidx.compose.ui.unit.Density(
-        density = currentDensity.density * 1.35f,
-        fontScale = currentDensity.fontScale * 1.0f
+        density = currentDensity.density * 0.75f,
+        fontScale = currentDensity.fontScale * 0.85f
     )
 
     CompositionLocalProvider(LocalDensity provides customDensity) {

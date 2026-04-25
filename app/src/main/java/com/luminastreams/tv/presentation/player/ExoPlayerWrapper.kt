@@ -232,6 +232,9 @@ class ExoPlayerWrapper(context: Context) {
                     PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED  -> "Network connection failed."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+                    PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream corrupted or invalid. Try another link."
                     PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW -> {
                         player.seekToDefaultPosition(); player.prepare(); return
                     }

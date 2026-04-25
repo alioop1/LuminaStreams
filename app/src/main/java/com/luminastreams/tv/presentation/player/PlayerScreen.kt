@@ -14,7 +14,6 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.pm.ActivityInfo
 import android.view.KeyEvent
-import android.view.SurfaceView
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.widget.FrameLayout
@@ -235,29 +234,6 @@ private fun restoreDisplayMode(activity: Activity) {
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = 0 }
 }
 
-private fun enableHdrWindow(activity: Activity) {
-    runCatching {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-            activity.window.attributes = activity.window.attributes.also { lp -> lp.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES }
-            val cls = ActivityInfo::class.java
-            val colorModeField = runCatching { cls.getField("COLOR_MODE_HDR") }.getOrNull()
-            val hdrMode = colorModeField?.getInt(null) ?: 2
-            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
-            val setColorMode = Activity::class.java.getMethod("setRequestedColorMode", Int::class.java)
-            setColorMode.invoke(activity, hdrMode)
-        }
-    }
-}
-
-private fun applySurfaceDolbyVision(surfaceView: SurfaceView) {
-    runCatching {
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            val method = SurfaceView::class.java.getMethod("setHdrOutputMode", Int::class.java)
-            method.invoke(surfaceView, 3)
-        }
-    }
-}
-
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun VideoPlayerSurface(
@@ -276,11 +252,10 @@ fun VideoPlayerSurface(
                 setAspectRatio(16f / 9f)
                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
             }
-            val surfaceView = SurfaceView(ctx).apply {
+
+            val surfaceView = android.view.SurfaceView(ctx).apply {
                 layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 keepScreenOn = true
-                setZOrderMediaOverlay(true)
-                applySurfaceDolbyVision(this)
                 addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
                     override fun onViewAttachedToWindow(v: android.view.View) {
                         exo.player.setVideoSurfaceView(this@apply)
@@ -288,10 +263,11 @@ fun VideoPlayerSurface(
                     }
                     override fun onViewDetachedFromWindow(v: android.view.View) {
                         onSurfaceReady(false)
-                        exo.player.clearVideoSurface()
+                        exo.player.clearVideoSurfaceView(this@apply)
                     }
                 })
             }
+
             val subtitleView = SubtitleView(ctx).apply {
                 layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 val textColor = if (exo.useYellowSubtitles) AndroidColor.YELLOW else AndroidColor.WHITE
@@ -517,7 +493,6 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) { context.findActivity()?.let { enableHdrWindow(it) } }
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId, season, episode) }
 
     LaunchedEffect(surfaceReady) {
@@ -599,7 +574,6 @@ fun PlayerScreen(
         }
     }
 
-    // ⚡ FIX: Subtitle logic completely rebuilt to prevent "Error 3001" streaming crashes
     LaunchedEffect(prepared, pendingSubIndex) {
         val idx = pendingSubIndex ?: return@LaunchedEffect
         if (!prepared || subtitleApplied) return@LaunchedEffect
@@ -614,11 +588,9 @@ fun PlayerScreen(
         if (exo.player.currentMediaItem == null) return@LaunchedEffect
         val langCode = if (context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("def_subs", "Hebrew") == "Hebrew") "heb" else "eng"
 
-        // Find the absolute best candidate instead of blindly looping and breaking ExoPlayer
         val bestSub = subs.firstOrNull { it.lang.contains(langCode, ignoreCase = true) }
 
         if (bestSub != null) {
-            // Buffer delay ensures the massive 4K Real-Debrid chunk is downloaded safely first
             delay(1500)
             exo.applySubtitle(bestSub.url)
 
@@ -668,7 +640,6 @@ fun PlayerScreen(
             .onKeyEvent { event ->
                 if (event.nativeKeyEvent.action != KeyEvent.ACTION_DOWN) return@onKeyEvent false
 
-                // ⚡ FIX: Strict block for key spamming / held keys!
                 val isRepeat = event.nativeKeyEvent.repeatCount > 0
 
                 when (event.nativeKeyEvent.keyCode) {
@@ -1148,7 +1119,6 @@ private fun getFlagEmoji(lang: String) = when (lang.lowercase().take(3)) {
     else        -> "\uD83C\uDF10"
 }
 
-// ⚡ FIX: "Seek Debouncer" totally halts playback crashes from remote rapid-firing
 @Composable
 fun PlayerProgressControls(
     exoWrapper: ExoPlayerWrapper, isPlaying: Boolean, isRtl: Boolean,
@@ -1159,7 +1129,6 @@ fun PlayerProgressControls(
     var videoDuration   by remember { mutableLongStateOf(1L) }
     var seekFocused     by remember { mutableStateOf(false) }
 
-    // ⚡ NEW: Safely handles intense remote clicking
     var pendingSeekPosition by remember { mutableStateOf<Long?>(null) }
 
     LaunchedEffect(isPlaying) {
@@ -1172,7 +1141,6 @@ fun PlayerProgressControls(
         }
     }
 
-    // ⚡ FIX: Only commit the scrub to ExoPlayer after 400ms of remote inactivity!
     LaunchedEffect(pendingSeekPosition) {
         pendingSeekPosition?.let { pos ->
             delay(400)
