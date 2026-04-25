@@ -92,9 +92,32 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
         }
     }
 
+    fun toggleFavorite(channel: ChannelEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.dao.setFavorite(channel.id, !channel.isFavorite)
+        }
+    }
+
     suspend fun getProgramsForChannel(channel: ChannelEntity, currentTime: Long): List<EpgProgramEntity> {
         val startTime = currentTime - (24 * 60 * 60 * 1000)
         return repository.getFuturePrograms(channel, startTime)
+    }
+
+    suspend fun getFullDayProgramsForChannel(channel: ChannelEntity, dayStartMs: Long, dayEndMs: Long): List<EpgProgramEntity> {
+        return repository.getFullDayPrograms(channel, dayStartMs, dayEndMs)
+    }
+
+    /**
+     * Builds a catch-up URL from a channel's base stream URL and a program's start time.
+     * Supports Xtream Codes format: appends `?utc={epoch}&lutc={current_epoch}`
+     * Also supports timeshift format in the URL path if detected.
+     */
+    fun buildCatchupUrl(channelUrl: String, programStartTime: Long): String {
+        val utcSeconds = programStartTime / 1000
+        val nowSeconds = System.currentTimeMillis() / 1000
+        // Xtream Codes standard catch-up format
+        val separator = if (channelUrl.contains("?")) "&" else "?"
+        return "${channelUrl}${separator}utc=${utcSeconds}&lutc=${nowSeconds}"
     }
 
     fun getNextChannelUrl(currentUrl: String): String? {
@@ -151,6 +174,55 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
             } finally {
                 _isLoading.value = false
             }
+        }
+    }
+
+    fun updatePlaylist(name: String, url: String, epgUrl: String) {
+        val current = activePlaylist.value ?: return
+        if (_isLoading.value) return
+        viewModelScope.launch {
+            _isLoading.value = true
+            try {
+                val trimmedUrl = url.trim()
+                val trimmedEpg = epgUrl.trim()
+                val urlChanged = trimmedUrl != current.url
+                val epgChanged = trimmedEpg != current.epgUrl
+
+                // Always update the entity with new name/urls
+                val updated = current.copy(
+                    name = name.ifBlank { current.name },
+                    url = trimmedUrl.ifBlank { current.url },
+                    epgUrl = trimmedEpg,
+                    lastUpdated = System.currentTimeMillis()
+                )
+                repository.dao.insertPlaylist(updated)
+
+                // Re-fetch channels if M3U changed
+                if (urlChanged && trimmedUrl.isNotBlank()) {
+                    repository.dao.clearChannels(current.id)
+                    M3uParser.parseStreaming(current.id, trimmedUrl) { batch ->
+                        repository.dao.insertChannels(batch)
+                    }
+                }
+
+                // Re-fetch EPG if changed
+                if (epgChanged && trimmedEpg.isNotBlank()) {
+                    repository.loadEpg(trimmedEpg, current.id)
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun deletePlaylist() {
+        val current = activePlaylist.value ?: return
+        viewModelScope.launch {
+            repository.dao.clearChannels(current.id)
+            repository.dao.clearAllEpg()
+            repository.dao.deactivateAllPlaylists()
         }
     }
 

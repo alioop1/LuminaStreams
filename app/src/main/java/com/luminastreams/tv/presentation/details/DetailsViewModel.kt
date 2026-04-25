@@ -107,6 +107,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             is DetailsEvent.ClearPlayUrl          -> _state.update { it.copy(readyToPlayUrl = null) }
             is DetailsEvent.CancelScraping        -> cancelActiveScraping()
             is DetailsEvent.RefreshProgress       -> refreshProgress()
+            is DetailsEvent.MarkEpisodeWatched    -> markEpisodeWatched(event.season, event.episode)
+            is DetailsEvent.MarkEpisodeUnwatched  -> markEpisodeUnwatched(event.season, event.episode)
         }
     }
 
@@ -562,6 +564,39 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 }
                 _state.update { it.copy(episodes = refreshed) }
             }
+        }
+    }
+
+    private fun markEpisodeWatched(season: Int, episode: Int) {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            // Save as 100% watched (position = duration)
+            val key = progressManager.episodeKey(imdbId, season, episode)
+            progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L)
+            // Refresh episode list in UI
+            val eps = _state.value.episodes.map { ep ->
+                if (ep.seasonNumber == season && ep.episodeNumber == episode)
+                    ep.copy(progress = 1f, hasWatched = true)
+                else ep
+            }
+            _state.update { it.copy(episodes = eps) }
+        }
+    }
+
+    private fun markEpisodeUnwatched(season: Int, episode: Int) {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val key = progressManager.episodeKey(imdbId, season, episode)
+            progressManager.remove(key)
+            // Refresh episode list in UI
+            val eps = _state.value.episodes.map { ep ->
+                if (ep.seasonNumber == season && ep.episodeNumber == episode)
+                    ep.copy(progress = 0f, hasWatched = false)
+                else ep
+            }
+            _state.update { it.copy(episodes = eps) }
         }
     }
 

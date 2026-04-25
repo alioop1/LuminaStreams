@@ -38,6 +38,9 @@ interface IptvDao {
     @Query("SELECT * FROM channels WHERE isFavorite = 1 ORDER BY number ASC")
     fun getFavoriteChannels(): Flow<List<ChannelEntity>>
 
+    @Query("UPDATE channels SET isFavorite = :isFavorite WHERE id = :channelId")
+    suspend fun setFavorite(channelId: String, isFavorite: Boolean)
+
     // הזרקת הלוגואים (רק אם הערוץ ללא לוגו)
     @Query("""
         UPDATE channels 
@@ -99,5 +102,27 @@ interface IptvDao {
         name: String,
         cleanName: String,
         currentTime: Long
+    ): List<EpgProgramEntity>
+
+    // EPG full-day range — for catch-up guide (past + future programs in a time window)
+    @Query("""
+        SELECT * FROM epg_programs 
+        WHERE (
+            channelId COLLATE NOCASE IN (:id, :tvgId, :tvgName, :name)
+            OR channelId COLLATE NOCASE LIKE '%' || :cleanName || '%'
+        )
+        AND endTime > :startFrom
+        AND startTime < :endBefore
+        ORDER BY startTime ASC 
+        LIMIT 100
+    """)
+    suspend fun getEpgForChannelInRange(
+        id: String,
+        tvgId: String,
+        tvgName: String,
+        name: String,
+        cleanName: String,
+        startFrom: Long,
+        endBefore: Long
     ): List<EpgProgramEntity>
 }

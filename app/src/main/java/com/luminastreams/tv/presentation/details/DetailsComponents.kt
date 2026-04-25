@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -180,22 +181,57 @@ fun PremiumIconButton(icon: ImageVector, modifier: Modifier = Modifier, tint: Co
 }
 
 @Composable
-fun EpisodeCardOptimized(episode: Episode, fallback: String, modifier: Modifier = Modifier, onFocused: () -> Unit, onClick: () -> Unit) {
+fun EpisodeCardOptimized(
+    episode: Episode,
+    fallback: String,
+    modifier: Modifier = Modifier,
+    onFocused: () -> Unit,
+    onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null
+) {
     Surface(
-        onClick = onClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+        onClick = onClick,
+        onLongClick = onLongClick ?: {},
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
         scale = ClickableSurfaceDefaults.scale(1.05f),
         // ⚡ WIRED THE ONFOCUSED TRIGGER BACK IN!
         modifier = modifier.width(340.dp).aspectRatio(16f/9f).onFocusChanged { if (it.isFocused) onFocused() }
     ) {
         Box(Modifier.fillMaxSize()) {
-            AsyncImage(model = episode.stillUrl.ifBlank { fallback }, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+            AsyncImage(
+                model = episode.stillUrl.ifBlank { fallback },
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().then(
+                    if (episode.hasWatched) Modifier.alpha(0.5f) else Modifier
+                )
+            )
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)), startY = 100f)))
+
+            // ✅ Watched badge — top-right green checkmark
+            if (episode.hasWatched) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(12.dp)
+                        .size(28.dp)
+                        .background(Color(0xFF32D74B), RoundedCornerShape(50))
+                        .border(2.dp, Color.White.copy(0.3f), RoundedCornerShape(50)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                }
+            }
+
             Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
                 Text("E${episode.episodeNumber} • ${episode.title}", color = ColorTextMain, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
+            // Progress bar — red for in-progress, green for fully watched
             if (episode.progress > 0f) {
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp).background(Color.DarkGray)) {
-                    Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(ColorAccentIsland))
+                    Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(
+                        if (episode.hasWatched) Color(0xFF32D74B) else ColorAccentIsland
+                    ))
                 }
             }
         }
@@ -234,5 +270,48 @@ fun SeasonPill(seasonNumber: Int, isSelected: Boolean, modifier: Modifier = Modi
             fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
         )
+    }
+}
+
+@Composable
+fun InfoChip(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label.uppercase(), color = Color.White.copy(0.4f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+        Spacer(Modifier.height(6.dp))
+        Text(value, color = ColorTextMain, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    }
+}
+
+@Composable
+fun RecommendationCard(rec: Recommendation, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = {},
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale = ClickableSurfaceDefaults.scale(1.06f),
+        border = ClickableSurfaceDefaults.border(
+            focusedBorder = Border(BorderStroke(2.dp, Color.White)),
+            border = Border.None
+        ),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(elevationColor = Color.White.copy(0.2f), elevation = 20.dp)),
+        modifier = modifier.width(150.dp).aspectRatio(2f / 3f)
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = rec.posterUrl,
+                contentDescription = rec.title,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
+            )
+            Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.8f)), startY = 200f)))
+            Text(
+                rec.title,
+                color = ColorTextMain,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)
+            )
+        }
     }
 }

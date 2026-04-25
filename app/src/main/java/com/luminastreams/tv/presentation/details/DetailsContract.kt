@@ -100,4 +100,8 @@ sealed interface DetailsEvent {
     object CancelScraping : DetailsEvent
     /** Called every time the Details screen becomes visible, to sync latest watch progress. */
     object RefreshProgress : DetailsEvent
+    /** Mark a specific episode as fully watched (sets progress to 100%). */
+    data class MarkEpisodeWatched(val season: Int, val episode: Int) : DetailsEvent
+    /** Remove watch progress for a specific episode. */
+    data class MarkEpisodeUnwatched(val season: Int, val episode: Int) : DetailsEvent
 }

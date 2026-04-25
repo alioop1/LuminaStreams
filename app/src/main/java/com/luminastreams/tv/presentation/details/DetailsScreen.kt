@@ -165,6 +165,37 @@ fun DetailsScreen(
 
                         Spacer(Modifier.height(48.dp))
                         Text(media.overview, color = ColorTextMain.copy(0.8f), fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(0.65f), maxLines = 3, overflow = TextOverflow.Ellipsis)
+
+                        // ── Movie / Series Progress Bar ──
+                        if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
+                            Spacer(Modifier.height(24.dp))
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth(0.35f)
+                                        .height(6.dp)
+                                        .background(Color.White.copy(0.15f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                                ) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxWidth(state.contentProgress ?: 0f)
+                                            .fillMaxHeight()
+                                            .background(
+                                                if (state.contentIsFinished) Color(0xFF32D74B) else ColorAccentIsland,
+                                                androidx.compose.foundation.shape.RoundedCornerShape(50)
+                                            )
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    text = if (state.contentIsFinished) tr("Watched", "נצפה")
+                                           else "${((state.contentProgress ?: 0f) * 100).toInt()}% ${tr("watched", "נצפה")}",
+                                    color = if (state.contentIsFinished) Color(0xFF32D74B) else ColorTextMain.copy(0.5f),
+                                    fontSize = 13.sp
+                                )
+                            }
+                        }
+
                         Spacer(Modifier.height(48.dp))
 
                         val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
@@ -250,7 +281,11 @@ fun DetailsScreen(
                                             fallback = media.backdropUrl,
                                             modifier = if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier,
                                             onFocused = { if(ep.stillUrl.isNotBlank()) currentBackdrop = ep.stillUrl },
-                                            onClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber)) }
+                                            onClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber)) },
+                                            onLongClick = {
+                                                if (ep.hasWatched) onEvent(DetailsEvent.MarkEpisodeUnwatched(ep.seasonNumber, ep.episodeNumber))
+                                                else onEvent(DetailsEvent.MarkEpisodeWatched(ep.seasonNumber, ep.episodeNumber))
+                                            }
                                         )
                                     }
                                 }
@@ -280,9 +315,81 @@ fun DetailsScreen(
                         }
                     }
                 }
+
+                // --- DETAILS INFO BAR ---
+                item {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 64.dp)
+                            .background(Color.White.copy(0.06f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
+                            .padding(horizontal = 32.dp, vertical = 20.dp),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (media.director.isNotBlank()) {
+                            InfoChip(tr("Director", "במאי"), media.director)
+                        }
+                        if (media.studios.isNotEmpty()) {
+                            InfoChip(tr("Studio", "אולפן"), media.studios.first())
+                        }
+                        if (media.runtimeMinutes > 0) {
+                            InfoChip(tr("Runtime", "משך"), "${media.runtimeMinutes / 60}h ${media.runtimeMinutes % 60}m")
+                        }
+                        if (media.releaseDate.isNotBlank()) {
+                            InfoChip(tr("Release", "שנת יציאה"), media.releaseDate.take(4))
+                        }
+                        if (media.genres.isNotEmpty()) {
+                            InfoChip(tr("Genres", "ז'אנרים"), media.genres.take(2).joinToString(" • "))
+                        }
+                    }
+                }
+
+                // --- MORE FROM THIS COLLECTION ---
+                if (!media.collectionName.isNullOrBlank() && media.collectionItems.isNotEmpty()) {
+                    item {
+                        Column {
+                            Text(media.collectionName!!, color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp))
+                            Spacer(Modifier.height(24.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(horizontal = 64.dp),
+                                modifier = Modifier.focusGroup()
+                            ) {
+                                itemsIndexed(media.collectionItems) { _, rec ->
+                                    RecommendationCard(rec)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // --- MORE WITH {ACTOR} ---
+                if (!media.starringActorName.isNullOrBlank() && media.starringItems.isNotEmpty()) {
+                    item {
+                        Column {
+                            Text(
+                                "${tr("More with", "עוד עם")} ${media.starringActorName}",
+                                color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 64.dp)
+                            )
+                            Spacer(Modifier.height(24.dp))
+                            LazyRow(
+                                horizontalArrangement = Arrangement.spacedBy(20.dp),
+                                contentPadding = PaddingValues(horizontal = 64.dp),
+                                modifier = Modifier.focusGroup()
+                            ) {
+                                itemsIndexed(media.starringItems) { _, rec ->
+                                    RecommendationCard(rec)
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
-// --- PREMIUM SOURCES BOTTOM SHEET ---
+// --- PREMIUM SOURCES BOTTOM SHEET (restored to original density) ---
+            CompositionLocalProvider(LocalDensity provides currentDensity) {
             AnimatedVisibility(
                 visible = showSources,
                 enter = fadeIn(tween(300)) + slideInVertically(initialOffsetY = { it }, animationSpec = tween(400, easing = LinearOutSlowInEasing)),
@@ -291,7 +398,6 @@ fun DetailsScreen(
             ) {
                 Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.BottomCenter) {
 
-                    // ⚡ FIX: Removed fillMaxHeight so it hugs the bottom elegantly
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -315,7 +421,6 @@ fun DetailsScreen(
                                 Box(Modifier.fillMaxWidth().height(180.dp), Alignment.Center) { Text(st.message, color = ColorAccentIsland, fontSize = 24.sp) }
                             }
                             else -> {
-                                // ⚡ FIX: Switched back to LazyRow for a single, clean horizontal ribbon!
                                 LazyRow(
                                     horizontalArrangement = Arrangement.spacedBy(20.dp),
                                     contentPadding = PaddingValues(start = 64.dp, end = 64.dp, bottom = 64.dp),
@@ -335,6 +440,7 @@ fun DetailsScreen(
                     }
                 }
             }
+            } // end source density restore
     }
     }
 }

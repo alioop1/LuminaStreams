@@ -71,4 +71,17 @@ class IptvRepository(val dao: IptvDao) {
             currentTime = currentTime
         )
     }
+
+    suspend fun getFullDayPrograms(channel: ChannelEntity, startFrom: Long, endBefore: Long): List<EpgProgramEntity> {
+        val cleanName = channel.name.replace(Regex("[^a-zA-Z0-9]"), "").lowercase()
+        return dao.getEpgForChannelInRange(
+            id = channel.id,
+            tvgId = channel.tvgId,
+            tvgName = channel.tvgName,
+            name = channel.name,
+            cleanName = cleanName,
+            startFrom = startFrom,
+            endBefore = endBefore
+        )
+    }
 }
