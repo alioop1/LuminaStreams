@@ -23,6 +23,20 @@ interface MediaRepository {
         sortBy: String,
         page: Int
     ): Result<List<Movie>>
+
+    suspend fun discoverFiltered(
+        type: String,
+        genreId: String? = null,
+        releaseDateGte: String? = null,
+        releaseDateLte: String? = null,
+        voteGte: Float? = null,
+        language: String? = null,
+        networkId: String? = null,
+        runtimeGte: Int? = null,
+        runtimeLte: Int? = null,
+        sortBy: String = "popularity.desc",
+        page: Int = 1
+    ): Result<List<SearchResult>>
 }
 
 // ── PlayerRepository ───────────────────────────────────────────────────────

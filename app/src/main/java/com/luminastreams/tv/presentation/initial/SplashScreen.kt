@@ -21,7 +21,6 @@ import androidx.compose.ui.unit.sp
 import androidx.tv.material3.Text
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
-import com.luminastreams.tv.MainActivity
 import kotlinx.coroutines.delay
 
 @Composable
@@ -104,7 +103,6 @@ fun SplashScreen(onTimeout: () -> Unit) {
     val context = LocalContext.current
 
     LaunchedEffect(Unit) {
-        (context as? MainActivity)?.soundManager?.playSplash()
         delay(3500)
         onTimeout()
     }

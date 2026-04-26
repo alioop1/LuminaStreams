@@ -20,6 +20,7 @@ enum class MediaTypeFilter { ANY, MOVIE, TV_SHOW, ANIME }
 enum class RuntimeFilter { ANY, SHORT, MEDIUM, LONG, EPIC }
 enum class RatingTier { ANY, MASTERPIECE, GREAT, GOOD }
 enum class LanguageFilter { ANY, ENGLISH, HEBREW, KOREAN, JAPANESE, SPANISH, FRENCH }
+enum class NetworkFilter { ANY, NETFLIX, HBO, APPLE_TV, DISNEY_PLUS, AMAZON, HULU }
 
 @Immutable
 data class SearchFilters(
@@ -34,14 +35,14 @@ data class SearchFilters(
     val runtime:     RuntimeFilter = RuntimeFilter.ANY,
     val ratingTier:  RatingTier    = RatingTier.ANY,
     val language:    LanguageFilter = LanguageFilter.ANY,
-    val network:     String?       = null,
+    val network:     NetworkFilter = NetworkFilter.ANY,
     val mood:        String?       = null
 ) {
     val isActive: Boolean get() =
         typeFilter != MediaTypeFilter.ANY || genre != null || minYear > 1920 || maxYear < 2026 || minRating > 0f ||
                 quality != QualityFilter.ANY || dubbedOnly || sortBy != SortBy.POPULARITY ||
                 runtime != RuntimeFilter.ANY || ratingTier != RatingTier.ANY ||
-                language != LanguageFilter.ANY || network != null || mood != null
+                language != LanguageFilter.ANY || network != NetworkFilter.ANY || mood != null
 }
 
 @Immutable
@@ -64,7 +65,7 @@ data class SearchState(
     val searchHistory:           List<String> = emptyList(),
     val autocompleteSuggestions: List<String> = emptyList()
 ) {
-    private fun applyFilters(list: List<SearchResult>): List<SearchResult> {
+    private fun applyFilters(list: List<SearchResult>, skipServerFiltered: Boolean = false): List<SearchResult> {
         var r = list
 
         if (filters.typeFilter != MediaTypeFilter.ANY) {
@@ -76,13 +77,14 @@ data class SearchState(
             }
         }
 
-        if (filters.genre != null)
-            r = r.filter { it.genre.equals(filters.genre, ignoreCase = true) }
+        // Only apply genre filter client-side for text-search results (not discovery, which is already server-filtered)
+        if (filters.genre != null && !skipServerFiltered)
+            r = r.filter { it.genre.contains(filters.genre!!, ignoreCase = true) }
 
-        if (filters.minRating > 0f)
+        if (filters.minRating > 0f && !skipServerFiltered)
             r = r.filter { it.rating >= filters.minRating }
 
-        if (filters.minYear > 1920 || filters.maxYear < 2026)
+        if ((filters.minYear > 1920 || filters.maxYear < 2026) && !skipServerFiltered)
             r = r.filter { yr ->
                 val y = yr.releaseYear.toIntOrNull() ?: return@filter true
                 y in filters.minYear..filters.maxYear
@@ -103,7 +105,10 @@ data class SearchState(
 
         r = when (filters.sortBy) {
             SortBy.RATING -> r.sortedByDescending { it.rating }
-            SortBy.NEWEST -> r.sortedByDescending { it.releaseYear.toIntOrNull() ?: 0 }
+            SortBy.NEWEST -> r.sortedWith(
+                compareByDescending<SearchResult> { it.releaseYear.toIntOrNull() ?: 0 }
+                    .thenByDescending { it.rating }
+            )
             SortBy.TITLE -> r.sortedBy { it.title }
             SortBy.POPULARITY -> r
         }
@@ -112,6 +117,7 @@ data class SearchState(
     }
 
     val activeResults: List<SearchResult> get() {
+        val isDiscovery = query.isBlank() && source != SearchSource.FUZER
         val base = when {
             source == SearchSource.FUZER  -> fuzerResults
             query.isBlank()               -> discoveryResults
@@ -119,7 +125,8 @@ data class SearchState(
             source == SearchSource.SERIES -> tmdbResults.filter { it.type == MediaType.TV_SHOW }
             else                          -> tmdbResults
         }
-        return if (filters.isActive) applyFilters(base) else base
+        // Skip server-filtered fields for discovery results (already filtered by TMDB API)
+        return if (filters.isActive) applyFilters(base, skipServerFiltered = isDiscovery) else base
     }
 
     val isLoading: Boolean get() = when (source) {
@@ -156,6 +163,8 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         "פאודה", "קופה ראשית", "הבורר", "שנות ה-80"
     )
 
+    private var discoveryJob: Job? = null
+
     init {
         loadHistory()
         observeQuery()
@@ -166,9 +175,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         when (intent) {
             is SearchIntent.UpdateQuery      -> handleQueryUpdate(intent.query)
             is SearchIntent.SelectSource     -> handleSourceChange(intent.source)
-            is SearchIntent.UpdateFilters    -> _state.update { it.copy(filters = intent.filters) }
+            is SearchIntent.UpdateFilters    -> { _state.update { it.copy(filters = intent.filters) }; loadFilteredDiscovery(intent.filters) }
             is SearchIntent.ToggleFilters    -> _state.update { it.copy(showFilters = !it.showFilters) }
-            is SearchIntent.ClearFilters     -> _state.update { it.copy(filters = SearchFilters()) }
+            is SearchIntent.ClearFilters     -> { _state.update { it.copy(filters = SearchFilters()) }; loadDiscovery() }
             is SearchIntent.ClearHistory     -> clearHistory()
             is SearchIntent.RemoveHistoryItem-> removeHistoryItem(intent.item)
         }
@@ -227,10 +236,24 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         _state.update { it.copy(isTmdbLoading = true) }
         try {
             val isHe = query.any { it in '\u0590'..'\u05FF' }
-            val p1 = repository.searchMulti(query, 1, isHe).getOrDefault(emptyList())
-            val p2 = repository.searchMulti(query, 2, isHe).getOrDefault(emptyList())
+            val results = coroutineScope {
+                val pages = (1..3).map { page ->
+                    async { repository.searchMulti(query, page, isHe).getOrDefault(emptyList()) }
+                }
+                // Bilingual: also search in English if query is Hebrew
+                val extraPages = if (isHe) {
+                    (1..2).map { page ->
+                        async { repository.searchMulti(query, page, false).getOrDefault(emptyList()) }
+                    }
+                } else emptyList()
 
-            _state.update { it.copy(tmdbResults = (p1 + p2).distinctBy { r -> r.id }, isTmdbLoading = false) }
+                (pages + extraPages).awaitAll().flatten()
+            }
+
+            _state.update { it.copy(
+                tmdbResults = results.distinctBy { r -> r.id }.filter { it.posterUrl.isNotBlank() },
+                isTmdbLoading = false
+            ) }
         } catch (_: Exception) {
             _state.update { it.copy(tmdbResults = emptyList(), isTmdbLoading = false) }
         }
@@ -274,20 +297,152 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun loadDiscovery() {
-        viewModelScope.launch {
+        discoveryJob?.cancel()
+        discoveryJob = viewModelScope.launch {
             _state.update { it.copy(isDiscoveryLoading = true) }
             try {
-                val p1 = repository.getDiscoverySearch(1).getOrDefault(emptyList())
-                val p2 = repository.getDiscoverySearch(2).getOrDefault(emptyList())
+                val pages = coroutineScope {
+                    (1..3).map { page ->
+                        async { repository.getDiscoverySearch(page).getOrDefault(emptyList()) }
+                    }.awaitAll().flatten()
+                }
 
                 _state.update { it.copy(
-                    discoveryResults   = (p1 + p2).distinctBy { r -> r.id },
+                    discoveryResults   = pages.distinctBy { r -> r.id }.filter { it.posterUrl.isNotBlank() },
                     isDiscoveryLoading = false
                 ) }
             } catch (_: Exception) {
                 _state.update { it.copy(isDiscoveryLoading = false) }
             }
         }
+    }
+
+    private fun loadFilteredDiscovery(filters: SearchFilters) {
+        if (!filters.isActive) { loadDiscovery(); return }
+
+        discoveryJob?.cancel()
+        discoveryJob = viewModelScope.launch {
+            _state.update { it.copy(isDiscoveryLoading = true) }
+            try {
+                val type = when (filters.typeFilter) {
+                    MediaTypeFilter.MOVIE -> "movie"
+                    MediaTypeFilter.TV_SHOW, MediaTypeFilter.ANIME -> "tv"
+                    else -> "both"
+                }
+
+                val genreId = filters.genre?.let { genreNameToTmdbId(it) }?.toString()
+
+                val (dateGte, dateLte) = when {
+                    filters.minYear > 1920 || filters.maxYear < 2026 -> {
+                        "${filters.minYear}-01-01" to "${filters.maxYear}-12-31"
+                    }
+                    else -> null to null
+                }
+
+                val voteGte = when {
+                    filters.ratingTier == RatingTier.MASTERPIECE -> 8.0f
+                    filters.ratingTier == RatingTier.GREAT -> 7.0f
+                    filters.ratingTier == RatingTier.GOOD -> 6.0f
+                    filters.minRating > 0f -> filters.minRating
+                    else -> null
+                }
+
+                val lang = when (filters.language) {
+                    LanguageFilter.ENGLISH -> "en"
+                    LanguageFilter.HEBREW -> "he"
+                    LanguageFilter.KOREAN -> "ko"
+                    LanguageFilter.JAPANESE -> "ja"
+                    LanguageFilter.SPANISH -> "es"
+                    LanguageFilter.FRENCH -> "fr"
+                    else -> null
+                }
+
+                val networkId = when (filters.network) {
+                    NetworkFilter.NETFLIX -> "213"
+                    NetworkFilter.HBO -> "49"
+                    NetworkFilter.APPLE_TV -> "2552"
+                    NetworkFilter.DISNEY_PLUS -> "2739"
+                    NetworkFilter.AMAZON -> "1024"
+                    NetworkFilter.HULU -> "453"
+                    else -> null
+                }
+
+                val (rtGte, rtLte) = when (filters.runtime) {
+                    RuntimeFilter.SHORT -> null to 90
+                    RuntimeFilter.MEDIUM -> 90 to 120
+                    RuntimeFilter.LONG -> 120 to 180
+                    RuntimeFilter.EPIC -> 180 to null
+                    else -> null to null
+                }
+
+                // Sort: default genre browsing = newest first, others respect user choice
+                val sort = when (filters.sortBy) {
+                    SortBy.RATING -> "vote_average.desc"
+                    SortBy.NEWEST -> "primary_release_date.desc"
+                    SortBy.TITLE -> "original_title.asc"
+                    SortBy.POPULARITY -> if (filters.genre != null) {
+                        "primary_release_date.desc"  // Categories default: newest first
+                    } else "popularity.desc"
+                }
+
+                // Unlimited loading: 15 pages for genre (300+ movies/series), 5 for other filters
+                val maxPages = if (filters.genre != null) 15 else 5
+
+                // Parallel batch loading for speed
+                val allResults = mutableListOf<SearchResult>()
+                val batchSize = 5  // 5 pages per batch for speed
+                for (batch in 1..maxPages step batchSize) {
+                    val pages = (batch until (batch + batchSize).coerceAtMost(maxPages + 1))
+                    val batchResults = coroutineScope {
+                        pages.map { page ->
+                            async {
+                                repository.discoverFiltered(
+                                    type = type, genreId = genreId,
+                                    releaseDateGte = dateGte, releaseDateLte = dateLte,
+                                    voteGte = voteGte, language = lang, networkId = networkId,
+                                    runtimeGte = rtGte, runtimeLte = rtLte,
+                                    sortBy = sort, page = page
+                                ).getOrDefault(emptyList())
+                            }
+                        }.awaitAll().flatten()
+                    }
+                    allResults.addAll(batchResults)
+
+                    // Update UI progressively after first batch
+                    if (batch == 1 && allResults.isNotEmpty()) {
+                        _state.update { it.copy(
+                            discoveryResults = allResults.distinctBy { r -> r.id }
+                                .filter { r -> r.posterUrl.isNotBlank() },
+                            isDiscoveryLoading = allResults.size < 40 // Still loading if more pages
+                        ) }
+                    }
+                }
+
+                val final = allResults
+                    .distinctBy { r -> r.id }
+                    .filter { r -> r.posterUrl.isNotBlank() }
+                    // Default sort: Year DESC, then Rating DESC within same year
+                    .sortedWith(
+                        compareByDescending<SearchResult> { it.releaseYear.toIntOrNull() ?: 0 }
+                            .thenByDescending { it.rating }
+                    )
+
+                _state.update { it.copy(
+                    discoveryResults = final,
+                    isDiscoveryLoading = false
+                ) }
+            } catch (_: Exception) {
+                _state.update { it.copy(isDiscoveryLoading = false) }
+            }
+        }
+    }
+
+    private fun genreNameToTmdbId(name: String): Int? = when (name.lowercase()) {
+        "action" -> 28; "adventure" -> 12; "animation", "anime" -> 16; "comedy" -> 35
+        "crime" -> 80; "documentary" -> 99; "drama" -> 18; "family" -> 10751
+        "fantasy" -> 14; "history" -> 36; "horror" -> 27; "music" -> 10402
+        "mystery" -> 9648; "romance" -> 10749; "sci-fi", "science fiction" -> 878
+        "thriller" -> 53; "war" -> 10752; "western" -> 37; else -> null
     }
 
     private fun saveToHistory(q: String) {

@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.DeviceProfile
+import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.domain.usecase.AuthResult
 import com.luminastreams.tv.domain.usecase.RealDebridAuthManager
 import kotlinx.coroutines.Dispatchers
@@ -15,9 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.Request
 import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.URL
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -103,6 +103,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     // ── TRUE SERVER VERIFICATION ──────────────────────────────────────────────
+    private val trustedClient = TrustedHttpClient.builder().build()
+
     fun checkRealDebridAccount() {
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(rdSpeedTesting = true, rdSpeedTestResult = "Contacting Server...") }
@@ -110,28 +112,28 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
             if (token.isEmpty()) return@launch
 
             try {
-                val url = URL("https://api.real-debrid.com/rest/1.0/user")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "GET"
-                conn.connectTimeout = 6_000
-                conn.readTimeout = 6_000
-                conn.setRequestProperty("Authorization", "Bearer $token")
+                val request = Request.Builder()
+                    .url("https://api.real-debrid.com/rest/1.0/user")
+                    .header("Authorization", "Bearer $token")
+                    .build()
 
-                if (conn.responseCode == 200) {
-                    val jsonStr = conn.inputStream.bufferedReader().use { it.readText() }
+                val response = trustedClient.newCall(request).execute()
+                if (response.code == 200) {
+                    val jsonStr = response.body.string()
                     val json = JSONObject(jsonStr)
 
                     val type = json.optString("type", "unknown")
                     val username = json.optString("username", "User")
-                    val expiration = json.optString("expiration", "Unknown").take(10) // Gets YYYY-MM-DD
+                    val expiration = json.optString("expiration", "Unknown").take(10)
 
                     val statusStr = if (type == "premium") "🟢 Premium ($username) | Exp: $expiration"
                     else "🔴 Free Account ($username)"
 
                     _state.update { it.copy(rdSpeedTestResult = statusStr, rdSpeedTesting = false) }
                 } else {
-                    _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${conn.responseCode})", rdSpeedTesting = false) }
+                    _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${response.code})", rdSpeedTesting = false) }
                 }
+                response.close()
             } catch (e: Exception) {
                 _state.update { it.copy(rdSpeedTestResult = "✗ Network Error: Could not reach Real-Debrid", rdSpeedTesting = false) }
             }
@@ -158,12 +160,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private fun checkUrlStatus(urlString: String): Boolean {
         return try {
-            val url = URL(urlString)
-            val conn = url.openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.connectTimeout = 4000
-            conn.readTimeout = 4000
-            conn.responseCode in 200..299
+            val request = Request.Builder().url(urlString).build()
+            val response = trustedClient.newCall(request).execute()
+            val success = response.code in 200..299
+            response.close()
+            success
         } catch (e: Exception) {
             false
         }

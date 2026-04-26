@@ -35,10 +35,10 @@ fun SearchResultsGrid(
     onResultClick: (SearchResult) -> Unit
 ) {
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(minSize = if (isFuzer) 156.dp else 140.dp),
-        contentPadding = PaddingValues(start = 32.dp, end = 32.dp, top = 32.dp, bottom = 48.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
+        columns = GridCells.Adaptive(minSize = if (isFuzer) 156.dp else 150.dp),
+        contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 16.dp, bottom = 48.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize()
     ) {
         itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
@@ -59,15 +59,14 @@ fun ShimmerGrid() {
     val p by inf.animateFloat(0f, 1f, infiniteRepeatable(tween(1200, easing = LinearEasing), RepeatMode.Restart), label = "sp")
     val shimmer = Brush.linearGradient(listOf(Color(0xFF0F0F14), Color(0xFF1A1A24), Color(0xFF0F0F14)), start = Offset(p * 1600f - 800f, 0f), end = Offset(p * 1600f, 400f))
     LazyVerticalGrid(
-        columns = GridCells.Adaptive(148.dp), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxSize()
+        columns = GridCells.Adaptive(150.dp),
+        contentPadding = PaddingValues(horizontal = 48.dp, vertical = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        modifier = Modifier.fillMaxSize()
     ) {
         items(18) {
-            Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(10.dp)).background(shimmer))
-                Box(Modifier.fillMaxWidth(0.65f).height(10.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-                Box(Modifier.fillMaxWidth(0.4f).height(8.dp).clip(RoundedCornerShape(4.dp)).background(shimmer))
-            }
+            Box(Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(RoundedCornerShape(14.dp)).background(shimmer))
         }
     }
 }

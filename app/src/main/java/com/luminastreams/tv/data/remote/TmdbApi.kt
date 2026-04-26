@@ -86,7 +86,24 @@ interface TmdbApi {
     @GET("discover/tv") suspend fun discoverTv(@Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("with_genres") genres: String): TmdbResponse
     @GET("movie/{movie_id}") suspend fun getMovieDetails(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbMovieDetailsDto
     @GET("tv/{tv_id}") suspend fun getTvDetails(@Path("tv_id") seriesId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbTvDetailsDto
-    @GET("discover/{type}") suspend fun discoverMedia(@Path("type") type: String, @Query("with_genres") genreId: String? = null, @Query("primary_release_year") year: String? = null, @Query("sort_by") sortBy: String = "popularity.desc", @Query("language") language: String = "en-US", @Query("page") page: Int = 1, @Query("api_key") apiKey: String = Constants.TMDB_API_KEY): TmdbResponse
+    @GET("discover/{type}") suspend fun discoverMedia(
+        @Path("type") type: String,
+        @Query("with_genres") genreId: String? = null,
+        @Query("primary_release_year") year: String? = null,
+        @Query("primary_release_date.gte") releaseDateGte: String? = null,
+        @Query("primary_release_date.lte") releaseDateLte: String? = null,
+        @Query("first_air_date.gte") airDateGte: String? = null,
+        @Query("first_air_date.lte") airDateLte: String? = null,
+        @Query("vote_average.gte") voteGte: Float? = null,
+        @Query("with_original_language") language: String? = null,
+        @Query("with_networks") networkId: String? = null,
+        @Query("with_runtime.gte") runtimeGte: Int? = null,
+        @Query("with_runtime.lte") runtimeLte: Int? = null,
+        @Query("sort_by") sortBy: String = "popularity.desc",
+        @Query("language") uiLanguage: String = "en-US",
+        @Query("page") page: Int = 1,
+        @Query("api_key") apiKey: String = Constants.TMDB_API_KEY
+    ): TmdbResponse
 
     @GET("search/multi") suspend fun searchMulti(
         @Query("query") query: String,

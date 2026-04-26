@@ -104,4 +104,8 @@ sealed interface DetailsEvent {
     data class MarkEpisodeWatched(val season: Int, val episode: Int) : DetailsEvent
     /** Remove watch progress for a specific episode. */
     data class MarkEpisodeUnwatched(val season: Int, val episode: Int) : DetailsEvent
+
+    // --- הוספנו כאן ללא סוגריים ---
+    object MarkMovieWatched : DetailsEvent
+    object MarkMovieUnwatched : DetailsEvent
 }

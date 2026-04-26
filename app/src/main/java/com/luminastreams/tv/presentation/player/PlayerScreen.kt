@@ -12,10 +12,8 @@ import kotlinx.coroutines.Dispatchers
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
-import android.content.pm.ActivityInfo
 import android.view.KeyEvent
 import android.view.ViewGroup
-import android.view.WindowManager
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
@@ -24,7 +22,6 @@ import androidx.compose.animation.core.tween
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -304,6 +301,8 @@ fun IsolatedUpNextCard(
     nextEpEpisode: Int,
     isSameSeasonNext: Boolean,
     isRtl: Boolean,
+    logoUrl: String = "",
+    title: String = "",
     onPlayNext: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -321,8 +320,8 @@ fun IsolatedUpNextCard(
 
     AnimatedVisibility(
         visible  = showNextEpisodeCard,
-        enter    = slideInHorizontally(initialOffsetX = { if (isRtl) -it else it }, animationSpec = tween(350)) + fadeIn(tween(250)),
-        exit     = slideOutHorizontally(targetOffsetX = { if (isRtl) -it else it }, animationSpec = tween(280)) + fadeOut(tween(200)),
+        enter    = fadeIn(tween(300)),
+        exit     = fadeOut(tween(250)),
         modifier = Modifier
             .padding(start = if (isRtl) 48.dp else 0.dp, end = if (isRtl) 0.dp else 48.dp, bottom = 135.dp)
             .zIndex(150f)
@@ -336,11 +335,10 @@ fun IsolatedUpNextCard(
 
         Column(
             modifier = Modifier
-                .width(360.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(Color(0xF0101018))
-                .border(1.dp, WHITE.copy(0.12f), RoundedCornerShape(18.dp))
-                .padding(horizontal = 20.dp, vertical = 18.dp)
+                .width(400.dp)
+                .clip(RoundedCornerShape(24.dp))
+                .background(Color(0xE8080810))
+                .padding(24.dp)
                 .focusGroup()
                 .onPreviewKeyEvent { ev ->
                     if (ev.type == KeyEventType.KeyDown) {
@@ -353,45 +351,61 @@ fun IsolatedUpNextCard(
                     } else false
                 }
         ) {
-            Text(tr("UP NEXT", "הבא בתור"), color = DIM.copy(0.6f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+            // Series logo or title
+            val validLogo = logoUrl.takeIf { it.isNotBlank() && it != "null" && it != "none" }
+            if (validLogo != null) {
+                coil.compose.AsyncImage(
+                    model = validLogo,
+                    contentDescription = title,
+                    modifier = Modifier.heightIn(max = 56.dp).fillMaxWidth(0.7f).padding(bottom = 12.dp),
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    alignment = Alignment.CenterStart
+                )
+            } else if (title.isNotBlank()) {
+                Text(title, color = WHITE, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 1, modifier = Modifier.padding(bottom = 12.dp))
+            }
+
+            Text(tr("UP NEXT", "הבא בתור"), color = RED, fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
             Spacer(Modifier.height(6.dp))
             Text(
-                if (isSameSeasonNext) tr("Episode $nextEpEpisode", "פרק $nextEpEpisode") else tr("Season $nextEpSeason • Episode $nextEpEpisode", "עונה $nextEpSeason • פרק $nextEpEpisode"),
-                color = WHITE, fontSize = 19.sp, fontWeight = FontWeight.Black
+                if (isSameSeasonNext) tr("Episode $nextEpEpisode", "פרק $nextEpEpisode") else tr("S$nextEpSeason • E$nextEpEpisode", "עונה $nextEpSeason • פרק $nextEpEpisode"),
+                color = WHITE, fontSize = 22.sp, fontWeight = FontWeight.Black
             )
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(16.dp))
 
-            Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(50)).background(WHITE.copy(0.15f))) {
+            // Progress bar
+            Box(Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(50)).background(WHITE.copy(0.12f))) {
                 Box(Modifier.fillMaxWidth((10f - countdown) / 10f).fillMaxHeight().background(RED))
             }
-            Spacer(Modifier.height(14.dp))
+            Spacer(Modifier.height(18.dp))
 
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Surface(
                     onClick = onPlayNext,
                     shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                     colors = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                    scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    glow     = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.5f), 16.dp)),
-                    modifier = Modifier.weight(1f).height(46.dp).focusRequester(nextFR)
+                    scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                    border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+                    glow   = ClickableSurfaceDefaults.glow(focusedGlow = Glow(RED.copy(0.4f), 12.dp)),
+                    modifier = Modifier.weight(1f).height(48.dp).focusRequester(nextFR)
                 ) {
                     Box(Modifier.fillMaxSize(), Alignment.Center) {
                         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.PlayArrow, null, Modifier.size(18.dp))
-                            Text(tr("Play ($countdown)", "נגן ($countdown)"), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Icon(Icons.Default.PlayArrow, null, Modifier.size(20.dp))
+                            Text(tr("Play ($countdown)", "נגן ($countdown)"), fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         }
                     }
                 }
                 Surface(
                     onClick = onDismiss,
                     shape  = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
-                    colors = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.08f), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
-                    border = ClickableSurfaceDefaults.border(border = Border(BorderStroke(1.dp, WHITE.copy(0.2f))), focusedBorder = Border.None),
-                    scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                    modifier = Modifier.height(46.dp).focusRequester(dismissFR)
+                    colors = ClickableSurfaceDefaults.colors(containerColor = WHITE.copy(0.06f), focusedContainerColor = WHITE, contentColor = WHITE.copy(0.7f), focusedContentColor = Color.Black),
+                    border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+                    scale  = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                    modifier = Modifier.height(48.dp).focusRequester(dismissFR)
                 ) {
-                    Box(Modifier.padding(horizontal = 18.dp).fillMaxHeight(), Alignment.Center) {
-                        Text(tr("Dismiss", "דחה"), fontSize = 13.sp)
+                    Box(Modifier.padding(horizontal = 20.dp).fillMaxHeight(), Alignment.Center) {
+                        Text(tr("Dismiss", "דחה"), fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -498,12 +512,15 @@ fun PlayerScreen(
     LaunchedEffect(surfaceReady) {
         if (surfaceReady && !prepared) {
             prepared = true
-            exo.prepareStream(videoUrl)
 
-            if (savedPosition <= 30_000L) {
-                exo.play()
-            } else {
+            if (savedPosition > 30_000L) {
+                // Don't play yet — wait for resume dialog
+                exo.player.playWhenReady = false
+                exo.prepareStream(videoUrl)
                 exo.pause()
+            } else {
+                // No saved position — play immediately from start
+                exo.prepareStream(videoUrl)
             }
 
             delay(3000)
@@ -744,6 +761,8 @@ fun PlayerScreen(
                 nextEpEpisode = nextEpEpisode ?: 0,
                 isSameSeasonNext = nextEpSeason == season,
                 isRtl = isRtl,
+                logoUrl = logoUrl,
+                title = title,
                 onPlayNext = {
                     if (nextEpSeason != null && nextEpEpisode != null) {
                         playerPrefs.edit { putInt("auto_play_season", nextEpSeason); putInt("auto_play_episode", nextEpEpisode) }
@@ -782,14 +801,14 @@ fun PlayerScreen(
                         }
                     ) {
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition); exo.play() },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition); exo.player.playWhenReady = true; exo.play() },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.play() },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.player.playWhenReady = true; exo.play() },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),

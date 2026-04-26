@@ -9,7 +9,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
-
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -151,7 +150,7 @@ fun BentoCard(title: String, value: String, isWide: Boolean = false) {
 }
 
 @Composable
-fun ActionIsland(playText: String, modifier: Modifier = Modifier, onPlayClick: () -> Unit, onSourcesClick: () -> Unit, onTrailerClick: () -> Unit, isFavorite: Boolean, onFavClick: () -> Unit) {
+fun ActionIsland(playText: String, modifier: Modifier = Modifier, onPlayClick: () -> Unit, onSourcesClick: () -> Unit, onTrailerClick: () -> Unit, isFavorite: Boolean, onFavClick: () -> Unit, isWatched: Boolean = false, onWatchedClick: (() -> Unit)? = null) {
     Row(Modifier.clip(RoundedCornerShape(50)).background(Color.White.copy(0.1f)).padding(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Surface(
             onClick = onPlayClick, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -168,6 +167,9 @@ fun ActionIsland(playText: String, modifier: Modifier = Modifier, onPlayClick: (
         PremiumIconButton(Icons.AutoMirrored.Filled.List, onClick = onSourcesClick)
         PremiumIconButton(Icons.Default.PlayCircleOutline, onClick = onTrailerClick)
         PremiumIconButton(if(isFavorite) Icons.Default.Check else Icons.Default.Add, tint = if(isFavorite) Color(0xFF00E676) else ColorTextMain, onClick = onFavClick)
+        if (onWatchedClick != null) {
+            PremiumIconButton(if(isWatched) Icons.Default.Visibility else Icons.Default.VisibilityOff, tint = if(isWatched) Color(0xFF32D74B) else ColorTextMain, onClick = onWatchedClick)
+        }
     }
 }
 
@@ -186,18 +188,21 @@ fun EpisodeCardOptimized(
     fallback: String,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit,
-    onClick: () -> Unit,
-    onLongClick: (() -> Unit)? = null
+    onClick: () -> Unit
 ) {
     Surface(
         onClick = onClick,
-        onLongClick = onLongClick ?: {},
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-        scale = ClickableSurfaceDefaults.scale(1.05f),
-        // ⚡ WIRED THE ONFOCUSED TRIGGER BACK IN!
-        modifier = modifier.width(340.dp).aspectRatio(16f/9f).onFocusChanged { if (it.isFocused) onFocused() }
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None, pressedBorder = Border.None),
+        glow = ClickableSurfaceDefaults.glow(glow = Glow.None, focusedGlow = Glow.None, pressedGlow = Glow.None),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Black, focusedContainerColor = Color.Black),
+        modifier = modifier
+            .width(340.dp)
+            .aspectRatio(16f / 9f)
+            .onFocusChanged { if (it.isFocused) onFocused() }
     ) {
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp))) {
             AsyncImage(
                 model = episode.stillUrl.ifBlank { fallback },
                 contentDescription = null,
@@ -226,7 +231,7 @@ fun EpisodeCardOptimized(
             Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
                 Text("E${episode.episodeNumber} • ${episode.title}", color = ColorTextMain, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
-            // Progress bar — red for in-progress, green for fully watched
+            // Progress bar
             if (episode.progress > 0f) {
                 Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp).background(Color.DarkGray)) {
                     Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(
@@ -243,7 +248,10 @@ fun CastCardOptimized(actor: CastMember, modifier: Modifier = Modifier) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(130.dp)) {
         Surface(
             onClick = {}, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-            scale = ClickableSurfaceDefaults.scale(1.08f),
+            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
+            border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None, pressedBorder = Border.None),
+            glow = ClickableSurfaceDefaults.glow(glow = Glow.None, focusedGlow = Glow.None, pressedGlow = Glow.None),
+            colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
             modifier = Modifier.fillMaxWidth().aspectRatio(2f/3f)
         ) { AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
         Spacer(Modifier.height(16.dp))

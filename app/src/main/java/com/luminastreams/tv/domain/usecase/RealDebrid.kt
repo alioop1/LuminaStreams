@@ -10,8 +10,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
+import com.luminastreams.tv.core.TrustedHttpClient
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
@@ -19,7 +19,6 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import retrofit2.http.*
 import java.util.Locale
-import java.util.concurrent.TimeUnit
 
 // ── Auth API interface ─────────────────────────────────────────────────────
 interface RealDebridAuthApi {
@@ -66,6 +65,7 @@ class RealDebridAuthManager(private val context: Context) {
 
     private val api = Retrofit.Builder()
         .baseUrl("https://api.real-debrid.com/")
+        .client(TrustedHttpClient.builder().build())
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(RealDebridAuthApi::class.java)
@@ -110,10 +110,7 @@ class RealDebridAuthManager(private val context: Context) {
 // ── RealDebridManager ──────────────────────────────────────────────────────
 class RealDebridManager {
 
-    private val okHttpClient = OkHttpClient.Builder()
-        .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
-        .build()
+    private val okHttpClient = TrustedHttpClient.builder().build()
 
     private val api = Retrofit.Builder()
         .baseUrl("https://api.real-debrid.com/rest/1.0/")
@@ -197,7 +194,7 @@ class RealDebridManager {
             if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר!")
 
             // 1. העלאת הקובץ ל-Real Debrid
-            val client = OkHttpClient()
+            val client = TrustedHttpClient.builder().build()
             val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
             val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
 

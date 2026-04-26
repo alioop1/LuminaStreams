@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
 import com.luminastreams.tv.core.LuminaApp
+import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.domain.usecase.RealDebridManager
@@ -28,7 +29,6 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLDecoder
 import java.util.concurrent.ConcurrentHashMap
-import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import com.luminastreams.tv.data.local.WatchProgressManager
 import androidx.core.content.edit
@@ -56,13 +56,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private val isHebrew: Boolean get() = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
 
-    private val okHttpClient = OkHttpClient.Builder().connectTimeout(30, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).build()
+    private val okHttpClient = TrustedHttpClient.builder().build()
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder().baseUrl("https://torrentio.strem.fun/").client(okHttpClient).addConverterFactory(GsonConverterFactory.create()).build().create(DynamicTorrentioApi::class.java)
 
     private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
     private var scrapingJob: Job? = null
     private var resolveJob: Job? = null
-    
+
     companion object {
         /** Track all torrent IDs we've added to RD so we can delete them on cleanup across the app session */
         private val activeTorrentIds = CopyOnWriteArrayList<String>()
@@ -109,6 +109,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             is DetailsEvent.RefreshProgress       -> refreshProgress()
             is DetailsEvent.MarkEpisodeWatched    -> markEpisodeWatched(event.season, event.episode)
             is DetailsEvent.MarkEpisodeUnwatched  -> markEpisodeUnwatched(event.season, event.episode)
+            is DetailsEvent.MarkMovieWatched    -> markMovieWatched()
+            is DetailsEvent.MarkMovieUnwatched  -> markMovieUnwatched()
         }
     }
 
@@ -373,7 +375,16 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
             if (season != null && episode != null) {
                 appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
+                    putInt("current_season", season)
+                    putInt("current_episode", episode)
+                    putInt("total_episodes_in_season", _state.value.episodes.size)
                     putInt("total_seasons", _state.value.mediaInfo.totalSeasons)
+                }
+            } else {
+                // Movie — clear season/episode to prevent stale series data
+                appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
+                    putInt("current_season", -1)
+                    putInt("current_episode", -1)
                 }
             }
 
@@ -456,30 +467,31 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     }
 
     private fun processRealDebridLink(stream: AdvancedStreamSource) {
+        // ⚡ התיקון: חסימה מוחלטת של לחיצה כפולה (Double Click) ⚡
+        // אם האפליקציה כבר התחילה לעבד מקור, היא תתעלם מכל לחיצה נוספת
+        if (resolveJob?.isActive == true) return
+
         if (stream.directUrl?.startsWith("http") == true) {
-            resolveJob?.cancel()
             resolveJob = viewModelScope.launch(Dispatchers.IO) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
                 try {
-                    // Fast pre-flight check to prevent ExoPlayer ParserException on dead links
                     val fastClient = okHttpClient.newBuilder()
                         .connectTimeout(2, TimeUnit.SECONDS)
                         .readTimeout(2, TimeUnit.SECONDS)
                         .build()
-                        
+
                     val request = okhttp3.Request.Builder().url(stream.directUrl).head().build()
                     val response = fastClient.newCall(request).execute()
                     val contentType = response.header("Content-Type") ?: ""
                     val isHtml = contentType.contains("text/html", ignoreCase = true)
                     response.close()
-                    
+
                     if (isHtml) {
                         _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "הקישור פג תוקף או נמחק משרתי RD. נסה מקור אחר." else "Link expired or deleted from RD. Try another source.")) }
                     } else {
                         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                     }
                 } catch (e: Exception) {
-                    // Fallback to trying to play it anyway if the fast network check fails or times out
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                 }
             }
@@ -487,14 +499,11 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         }
         if (stream.infoHash.isNullOrBlank()) return
 
-        // Cancel any previous resolve job to prevent races
-        resolveJob?.cancel()
-
         resolveJob = viewModelScope.launch(Dispatchers.IO) {
             val token = getRdToken()
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
 
-            // Clean up previous torrents before adding a new one
+            // מנקה טורנטים ישנים
             cleanupActiveTorrents(token)
 
             try {
@@ -508,17 +517,15 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     },
                     onFailure = { e ->
                         val msg = e.message ?: ""
-                        // If error 2000/2004 (RD_CONFLICT), cleanup and retry once
                         if (msg == "RD_CONFLICT" || msg.contains("2000") || msg.contains("2004")) {
                             cleanupActiveTorrents(token)
-                            // Small delay before retry to let RD process the deletion
                             kotlinx.coroutines.delay(1200)
                             val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
                                 activeTorrentIds.add(torrentId)
                             }
                             retry.fold(
                                 onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
-                                onFailure = { e2 -> 
+                                onFailure = { e2 ->
                                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "שגיאת כפל ב-RD: ${e2.message}" else "RD Conflict: ${e2.message}")) }
                                 }
                             )
@@ -597,6 +604,26 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 else ep
             }
             _state.update { it.copy(episodes = eps) }
+        }
+    }
+
+    private fun markMovieWatched() {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val key = progressManager.movieKey(imdbId)
+            progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L)
+            _state.update { it.copy(contentProgress = 1f, contentIsFinished = true) }
+        }
+    }
+
+    private fun markMovieUnwatched() {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val key = progressManager.movieKey(imdbId)
+            progressManager.remove(key)
+            _state.update { it.copy(contentProgress = 0f, contentIsFinished = false) }
         }
     }
 

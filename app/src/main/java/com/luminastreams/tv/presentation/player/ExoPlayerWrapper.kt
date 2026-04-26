@@ -16,7 +16,8 @@ import androidx.media3.common.VideoSize
 import androidx.media3.common.text.Cue
 import androidx.media3.common.text.CueGroup
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import com.luminastreams.tv.core.TrustedHttpClient
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -124,11 +125,18 @@ class ExoPlayerWrapper(context: Context) {
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
 
-    private val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
-        .setAllowCrossProtocolRedirects(true)
-        .setConnectTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20_000 else 10_000)
-        .setReadTimeoutMs(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30_000 else 15_000)
+    private val httpDataSourceFactory = OkHttpDataSource.Factory(
+        TrustedHttpClient.builder()
+            .connectTimeout(
+                (if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 10L),
+                java.util.concurrent.TimeUnit.SECONDS
+            )
+            .readTimeout(
+                (if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30L else 15L),
+                java.util.concurrent.TimeUnit.SECONDS
+            )
+            .build()
+    ).setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
     private val dataSourceFactory  = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
     private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
@@ -249,7 +257,7 @@ class ExoPlayerWrapper(context: Context) {
         })
     }
 
-    fun prepareStream(videoUrl: String) {
+    fun prepareStream(videoUrl: String, startPositionMs: Long = C.TIME_UNSET) {
         _playerError.value      = null
         _subtitleApplied.value  = false
         _currentCues.value      = emptyList()
@@ -258,7 +266,11 @@ class ExoPlayerWrapper(context: Context) {
         _isDolbyVision.value    = false
         _isDolbyAtmos.value     = false
         try {
-            player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
+            if (startPositionMs > 0 && startPositionMs != C.TIME_UNSET) {
+                player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build(), startPositionMs)
+            } else {
+                player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build())
+            }
             player.prepare()
             player.playWhenReady = true
         } catch (e: Exception) {

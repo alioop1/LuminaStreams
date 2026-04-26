@@ -1,5 +1,6 @@
 package com.luminastreams.tv.data.remote
 
+import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -28,7 +29,7 @@ object FuzerEngine {
         override fun loadForRequest(url: HttpUrl): List<Cookie> = store[url.host] ?: emptyList()
     }
 
-    private val client = OkHttpClient.Builder()
+    private val client = TrustedHttpClient.builder()
         .cookieJar(cookieJar)
         .followRedirects(true)
         .followSslRedirects(true)

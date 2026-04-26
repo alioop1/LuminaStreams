@@ -72,7 +72,7 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
             type        = if (actualType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
             rating      = voteAverage,
             releaseYear = (if (actualType == "tv") firstAirDate else releaseDate)?.take(4) ?: "",
-            genre       = genreIds?.firstOrNull()?.let { tmdbGenreName(it) } ?: ""
+            genre       = genreIds?.mapNotNull { tmdbGenreName(it).ifBlank { null } }?.joinToString(", ") ?: ""
         )
     }
 
@@ -150,8 +150,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
 
     override suspend fun getDiscoverySearch(page: Int): Result<List<SearchResult>> = withContext(Dispatchers.IO) {
         try {
-            val movies = async { api.discoverMedia(type = "movie", language = "en-US", page = page, sortBy = "popularity.desc") }
-            val tvs    = async { api.discoverMedia(type = "tv", language = "en-US", page = page, sortBy = "popularity.desc") }
+            val movies = async { api.discoverMedia(type = "movie", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
+            val tvs    = async { api.discoverMedia(type = "tv", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
 
             val combined = mutableListOf<TmdbMediaDto>()
             combined.addAll(movies.await().results.map { it.copy(mediaType = "movie") })
@@ -186,7 +186,7 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                     genreId  = genreParam.ifBlank { null },
                     year     = null,
                     sortBy   = "popularity.desc",
-                    language = tmdbLang,
+                    uiLanguage = tmdbLang,
                     page     = 1,
                     apiKey   = Constants.TMDB_API_KEY
                 )
@@ -237,7 +237,7 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 genreId  = genreId,
                 year     = year,
                 sortBy   = sortBy,
-                language = tmdbLang,
+                uiLanguage = tmdbLang,
                 page     = page,
                 apiKey   = Constants.TMDB_API_KEY
             )
@@ -245,6 +245,57 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .filter { it.posterPath != null }
                 .map { it.toMovie(type) }
             Result.success(items)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun discoverFiltered(
+        type: String,
+        genreId: String?,
+        releaseDateGte: String?,
+        releaseDateLte: String?,
+        voteGte: Float?,
+        language: String?,
+        networkId: String?,
+        runtimeGte: Int?,
+        runtimeLte: Int?,
+        sortBy: String,
+        page: Int
+    ): Result<List<SearchResult>> = withContext(Dispatchers.IO) {
+        try {
+            val isMovie = type == "movie"
+            val isBoth = type == "both"
+
+            val results = mutableListOf<TmdbMediaDto>()
+
+            if (isBoth || isMovie) {
+                val movieResp = api.discoverMedia(
+                    type = "movie", genreId = genreId,
+                    releaseDateGte = releaseDateGte, releaseDateLte = releaseDateLte,
+                    voteGte = voteGte, language = language,
+                    runtimeGte = runtimeGte, runtimeLte = runtimeLte,
+                    sortBy = sortBy, uiLanguage = tmdbLang, page = page
+                )
+                results.addAll(movieResp.results.map { it.copy(mediaType = "movie") })
+            }
+            if (isBoth || !isMovie) {
+                val tvResp = api.discoverMedia(
+                    type = "tv", genreId = genreId,
+                    airDateGte = releaseDateGte, airDateLte = releaseDateLte,
+                    voteGte = voteGte, language = language, networkId = networkId,
+                    runtimeGte = runtimeGte, runtimeLte = runtimeLte,
+                    sortBy = sortBy, uiLanguage = tmdbLang, page = page
+                )
+                results.addAll(tvResp.results.map { it.copy(mediaType = "tv") })
+            }
+
+            val mapped = results
+                .filter { it.posterPath != null }
+                .map { it.toSearchResult(it.mediaType ?: "movie") }
+                .distinctBy { it.id }
+
+            Result.success(mapped)
         } catch (e: Exception) {
             Result.failure(e)
         }

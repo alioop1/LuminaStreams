@@ -18,14 +18,18 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.runtime.*
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -43,7 +47,9 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -95,6 +101,7 @@ fun IptvScreen(
     val selectedGroup by viewModel.selectedGroup.collectAsStateWithLifecycle()
     val showQr by viewModel.showQrScreen.collectAsStateWithLifecycle()
     val ipAddress by viewModel.ipAddress.collectAsStateWithLifecycle()
+    val activePlaylist by viewModel.activePlaylist.collectAsStateWithLifecycle()
 
     val focusedEpg by viewModel.focusedEpg.collectAsStateWithLifecycle()
     var focusedChannel by remember { mutableStateOf<ChannelEntity?>(null) }
@@ -118,6 +125,16 @@ fun IptvScreen(
 
     LaunchedEffect(Unit) { delay(100); try { categoryFocusRequester.requestFocus() } catch (_: Exception) {} }
 
+    // Dynamic layout direction based on app language setting
+    val context = LocalContext.current
+    val appLang = remember {
+        context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
+            .getString("app_lang", "he") ?: "he"
+    }
+    val isHeb = appLang == "he"
+    val layoutDir = if (isHeb) LayoutDirection.Rtl else LayoutDirection.Ltr
+
+    CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -137,13 +154,25 @@ fun IptvScreen(
 
             // ─── TOP BAR: PS5 HORIZONTAL RIBBON ───
             Box(modifier = Modifier.fillMaxWidth().padding(top = 32.dp, start = 48.dp, end = 48.dp)) {
-                val displayGroups = listOf("All", "Favorites") + groups.filter { it != "All" && it != "Favorites" } + listOf("EPG Guide", "Settings")
+                // Always use English keys internally, translate only for display
+                val builtinGroups = listOf(
+                    "All" to (if (isHeb) "הכל" else "All"),
+                    "Favorites" to (if (isHeb) "מועדפים" else "Favorites")
+                )
+                val userGroups = groups.filter { it != "All" && it != "Favorites" }.map { it to it }
+                val systemGroups = listOf(
+                    "EPG Guide" to (if (isHeb) "מדריך שידורים" else "EPG Guide"),
+                    "Settings" to (if (isHeb) "הגדרות" else "Settings")
+                )
+                val displayGroups = builtinGroups + userGroups + systemGroups
+
                 Ps5CategoryRibbon(
                     groups = displayGroups,
                     selectedGroup = selectedGroup,
                     onGroupSelect = { viewModel.selectGroup(it) },
                     gridFocusRequester = gridFocusRequester,
-                    modifier = Modifier.focusRequester(categoryFocusRequester)
+                    firstItemFocusRequester = categoryFocusRequester,
+                    modifier = Modifier
                 )
             }
 
@@ -154,7 +183,16 @@ fun IptvScreen(
             Box(modifier = Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, bottom = 48.dp)) {
                 Crossfade(targetState = selectedGroup, animationSpec = tween(400), label = "fade") { currentGroup ->
                     when {
-                        currentGroup == "Settings" -> { Box(Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(ColorPs5Gray)) { IptvSettingsScreen() } }
+                        currentGroup == "Settings" -> {
+                            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(24.dp)).background(ColorPs5Gray)) {
+                                IptvSettingsScreen(
+                                    activePlaylist = activePlaylist,
+                                    onUpdatePlaylist = { name, url, epg -> viewModel.updatePlaylist(name, url, epg) },
+                                    onDeletePlaylist = { viewModel.deletePlaylist() },
+                                    onAddPlaylist = { viewModel.openQrSetup() }
+                                )
+                            }
+                        }
                         currentGroup == "EPG Guide" -> {
                             EpgGuideScreen(
                                 channels = channels, viewModel = viewModel, onPlayChannel = onPlayChannel,
@@ -170,16 +208,16 @@ fun IptvScreen(
                                 contentPadding = PaddingValues(top = 16.dp, bottom = 64.dp),
                                 horizontalArrangement = Arrangement.spacedBy(24.dp),
                                 verticalArrangement = Arrangement.spacedBy(24.dp),
-                                // ⚡ FIX 1: Use focusGroup to route D-Pad navigation properly
                                 modifier = Modifier.focusGroup()
                             ) {
                                 gridItems(channels, key = { it.id }) { channel ->
-                                    // ⚡ FIX 2: Pass modifier directly to the card. Removed the broken Box.
                                     Ps5ChannelCard(
                                         channel = channel,
+                                        isFavorite = channel.isFavorite,
                                         modifier = if (channel == channels.firstOrNull()) Modifier.focusRequester(gridFocusRequester) else Modifier,
                                         onClick = { onPlayChannel(channel.id) },
-                                        onFocus = { focusedChannel = channel; viewModel.onChannelFocused(channel) }
+                                        onFocus = { focusedChannel = channel; viewModel.onChannelFocused(channel) },
+                                        onFavoriteToggle = { viewModel.toggleFavorite(channel) }
                                     )
                                 }
                             }
@@ -189,7 +227,6 @@ fun IptvScreen(
             }
         }
 
-        // ⚡ FEATURE 10: Cinematic Idle Screensaver Overlay
         AnimatedVisibility(
             visible = isScreensaverActive,
             enter = fadeIn(tween(1500)), exit = fadeOut(tween(500)),
@@ -198,25 +235,26 @@ fun IptvScreen(
             CinematicScreensaver(channel = focusedChannel)
         }
     }
+    } // end CompositionLocalProvider
 }
 
 // ─── PS5 COMPONENTS ───
 
 @Composable
-private fun Ps5CategoryRibbon(groups: List<String>, selectedGroup: String, onGroupSelect: (String) -> Unit, gridFocusRequester: FocusRequester, modifier: Modifier = Modifier) {
+private fun Ps5CategoryRibbon(groups: List<Pair<String, String>>, selectedGroup: String, onGroupSelect: (String) -> Unit, gridFocusRequester: FocusRequester, firstItemFocusRequester: FocusRequester? = null, modifier: Modifier = Modifier) {
     LazyRow(
         modifier = modifier.fillMaxWidth().focusProperties { down = gridFocusRequester },
         horizontalArrangement = Arrangement.spacedBy(16.dp),
         contentPadding = PaddingValues(horizontal = 8.dp)
     ) {
-        items(groups, key = { it }) { group ->
-            val isSelected = group == selectedGroup
+        items(groups, key = { it.first }) { (key, displayName) ->
+            val isSelected = key == selectedGroup
+            val isFirstItem = key == "All"
 
-            // ⚡ THE MISSING VARIABLE IS RESTORED HERE
             val isFocused = remember { mutableStateOf(false) }
 
             Surface(
-                onClick = { onGroupSelect(group) },
+                onClick = { onGroupSelect(key) },
                 colors = ClickableSurfaceDefaults.colors(
                     containerColor = if (isSelected) ColorTextMain else Color.Transparent,
                     focusedContainerColor = ColorTextMain,
@@ -226,13 +264,12 @@ private fun Ps5CategoryRibbon(groups: List<String>, selectedGroup: String, onGro
                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                 scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                 border = ClickableSurfaceDefaults.border(focusedBorder = Border.None, border = Border.None),
-
-                // ⚡ FIXED: Now properly sets the value
-                modifier = Modifier.onFocusChanged { isFocused.value = it.isFocused }
+                modifier = Modifier
+                    .then(if (isFirstItem && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier)
+                    .onFocusChanged { isFocused.value = it.isFocused }
             ) {
-                // ⚡ FIXED: Now properly reads the value
                 Text(
-                    text = group,
+                    text = displayName,
                     fontWeight = if (isFocused.value || isSelected) FontWeight.Black else FontWeight.Bold,
                     fontSize = 15.sp,
                     letterSpacing = 0.5.sp,
@@ -257,7 +294,7 @@ private fun Ps5HeroSection(channel: ChannelEntity?, epg: EpgProgramEntity?) {
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.background(ColorLiveBlue.copy(0.2f), RoundedCornerShape(4.dp)).border(1.dp, ColorLiveBlue, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-                            Text("NOW PLAYING", color = ColorLiveBlue, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                            Text(if (LocalLayoutDirection.current == LayoutDirection.Rtl) "עכשיו בשידור" else "NOW PLAYING", color = ColorLiveBlue, fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Text(text = epg.title, color = ColorTextMain.copy(alpha = 0.8f), fontSize = 20.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -278,17 +315,22 @@ private fun Ps5HeroSection(channel: ChannelEntity?, epg: EpgProgramEntity?) {
 }
 
 @Composable
-private fun Ps5ChannelCard(channel: ChannelEntity, modifier: Modifier = Modifier, onClick: () -> Unit, onFocus: () -> Unit) {
-    // ⚡ BULLETPROOF STATE DECLARATIONS (No special imports needed)
+private fun Ps5ChannelCard(channel: ChannelEntity, isFavorite: Boolean = false, modifier: Modifier = Modifier, onClick: () -> Unit, onFocus: () -> Unit, onFavoriteToggle: () -> Unit = {}) {
     val isFocused = remember { mutableStateOf(false) }
     val imageLoadFailed = remember { mutableStateOf(false) }
 
     Surface(
         onClick = onClick,
-        modifier = modifier.aspectRatio(16f/9f).onFocusChanged {
-            isFocused.value = it.isFocused
-            if (it.isFocused) onFocus()
-        },
+        modifier = modifier.aspectRatio(16f/9f)
+            .onPreviewKeyEvent { event ->
+                if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU) {
+                    onFavoriteToggle(); true
+                } else false
+            }
+            .onFocusChanged {
+                isFocused.value = it.isFocused
+                if (it.isFocused) onFocus()
+            },
         colors = ClickableSurfaceDefaults.colors(containerColor = ColorPs5Gray, focusedContainerColor = ColorPs5Gray),
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp), focusedShape = RoundedCornerShape(12.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -309,12 +351,28 @@ private fun Ps5ChannelCard(channel: ChannelEntity, modifier: Modifier = Modifier
                     Text(text = channel.name.take(1).uppercase(), color = ColorTextMain.copy(alpha = if(isFocused.value) 1f else 0.5f), fontSize = 48.sp, fontWeight = FontWeight.Black)
                 }
             }
+            // Favorite heart icon — top end corner
+            if (isFavorite || isFocused.value) {
+                Box(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)
+                        .background(if (isFavorite) Color(0xFFFF2D55).copy(0.9f) else Color.Black.copy(0.5f), CircleShape)
+                        .size(28.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
             Box(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color.Black.copy(if(isFocused.value) 0.8f else 0.4f)).padding(horizontal = 16.dp, vertical = 12.dp)) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Text(text = channel.name, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = ColorTextMain, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     if (channel.number > 0) {
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text(text = "CH ${channel.number}", color = ColorTextMain.copy(0.5f), fontSize = 11.sp, fontWeight = FontWeight.Black)
+                        Text(text = if (LocalLayoutDirection.current == LayoutDirection.Rtl) "ערוץ ${channel.number}" else "CH ${channel.number}", color = ColorTextMain.copy(0.5f), fontSize = 11.sp, fontWeight = FontWeight.Black)
                     }
                 }
             }
@@ -347,7 +405,7 @@ fun EpgGuideScreen(channels: List<ChannelEntity>, viewModel: IptvViewModel, onPl
                 Spacer(modifier = Modifier.width(16.dp))
                 LazyRow(modifier = Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (programs.isEmpty()) {
-                        item { EpgProgramBlock("No Schedule Available", 0L, 0L, false, false, currentTime, { onPlayChannel(channel.id) }, if (index == 0) firstItemFocus else null) }
+                        item { EpgProgramBlock(if (LocalLayoutDirection.current == LayoutDirection.Rtl) "אין לוח שידורים" else "No Schedule Available", 0L, 0L, false, false, currentTime, { onPlayChannel(channel.id) }, if (index == 0) firstItemFocus else null) }
                     } else {
                         itemsIndexed(programs, key = { i, prog -> "${prog.startTime}_$i" }) { i, prog ->
                             val isLive = currentTime in prog.startTime..prog.endTime
@@ -390,10 +448,10 @@ fun EpgProgramBlock(title: String, startTime: Long, endTime: Long, isLive: Boole
                     Text(text = timeString, color = if (isLive) ColorLiveBlue else Color.White.copy(alpha = 0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     if (isLive) {
                         Spacer(modifier = Modifier.width(12.dp))
-                        Box(modifier = Modifier.background(ColorLiveBlue, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text("LIVE", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black) }
+                        Box(modifier = Modifier.background(ColorLiveBlue, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text(if (LocalLayoutDirection.current == LayoutDirection.Rtl) "שידור חי" else "LIVE", color = Color.Black, fontSize = 9.sp, fontWeight = FontWeight.Black) }
                     } else if (isPast) {
                         Spacer(modifier = Modifier.width(12.dp))
-                        Box(modifier = Modifier.background(ColorCatchup.copy(0.2f), RoundedCornerShape(4.dp)).border(1.dp, ColorCatchup, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text("↺ CATCHUP", color = ColorCatchup, fontSize = 9.sp, fontWeight = FontWeight.Black) }
+                        Box(modifier = Modifier.background(ColorCatchup.copy(0.2f), RoundedCornerShape(4.dp)).border(1.dp, ColorCatchup, RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) { Text(if (LocalLayoutDirection.current == LayoutDirection.Rtl) "↺ הקלטה" else "↺ CATCHUP", color = ColorCatchup, fontSize = 9.sp, fontWeight = FontWeight.Black) }
                     }
                 }
                 Spacer(modifier = Modifier.height(4.dp))
@@ -442,14 +500,15 @@ fun CinematicScreensaver(channel: ChannelEntity?) {
 
 @Composable
 private fun EmptyStateView(onSetupClick: () -> Unit) {
+    val isHeb = LocalLayoutDirection.current == LayoutDirection.Rtl
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(Icons.Default.Tv, contentDescription = null, tint = Color.White.copy(alpha = 0.2f), modifier = Modifier.size(100.dp))
-            Spacer(modifier = Modifier.height(24.dp)); Text("No Channels Found", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Medium)
-            Spacer(modifier = Modifier.height(8.dp)); Text("Configure your playlist to start watching.", color = Color.White.copy(alpha = 0.5f), fontSize = 18.sp)
+            Spacer(modifier = Modifier.height(24.dp)); Text(if (isHeb) "לא נמצאו ערוצים" else "No Channels Found", color = Color.White, fontSize = 32.sp, fontWeight = FontWeight.Medium)
+            Spacer(modifier = Modifier.height(8.dp)); Text(if (isHeb) "הגדר את הפלייליסט שלך כדי להתחיל לצפות." else "Configure your playlist to start watching.", color = Color.White.copy(alpha = 0.5f), fontSize = 18.sp)
             Spacer(modifier = Modifier.height(40.dp))
             Surface(onClick = onSetupClick, colors = ClickableSurfaceDefaults.colors(containerColor = ColorGlass, focusedContainerColor = Color.White, contentColor = Color.White, focusedContentColor = Color.Black), shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)), scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f)) {
-                Text("Setup IPTV", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp))
+                Text(if (isHeb) "הגדר IPTV" else "Setup IPTV", fontWeight = FontWeight.SemiBold, fontSize = 18.sp, modifier = Modifier.padding(horizontal = 32.dp, vertical = 16.dp))
             }
         }
     }
@@ -459,15 +518,19 @@ private fun EmptyStateView(onSetupClick: () -> Unit) {
 fun CrispTextField(value: String, label: String, onValueChange: (String) -> Unit, isLast: Boolean = false) {
     val focusManager = LocalFocusManager.current
     OutlinedTextField(
-        value = value, onValueChange = onValueChange, label = { Text(label, fontWeight = FontWeight.Bold) }, keyboardOptions = KeyboardOptions(imeAction = if (isLast) ImeAction.Done else ImeAction.Next),
+        value = value, onValueChange = onValueChange,
+        label = { Text(label, fontWeight = FontWeight.Bold, color = Color.White.copy(0.6f)) },
+        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium),
+        keyboardOptions = KeyboardOptions(imeAction = if (isLast) ImeAction.Done else ImeAction.Next),
         modifier = Modifier.fillMaxWidth().onPreviewKeyEvent { event -> if (event.type == KeyEventType.KeyDown) { when (event.nativeKeyEvent.keyCode) { KeyEvent.KEYCODE_DPAD_DOWN -> { focusManager.moveFocus(FocusDirection.Down); true }; KeyEvent.KEYCODE_DPAD_UP -> { focusManager.moveFocus(FocusDirection.Up); true }; else -> false } } else false },
         shape = RoundedCornerShape(12.dp),
-        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.White, unfocusedBorderColor = Color.White.copy(alpha = 0.2f), focusedLabelColor = Color.White, unfocusedLabelColor = Color.White.copy(alpha = 0.5f), focusedTextColor = Color.White, unfocusedTextColor = Color.White.copy(alpha = 0.8f), focusedContainerColor = Color.White.copy(alpha = 0.1f), unfocusedContainerColor = Color.White.copy(alpha = 0.05f))
+        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent, focusedLabelColor = Color.White, unfocusedLabelColor = Color.White.copy(alpha = 0.4f), focusedTextColor = Color.White, unfocusedTextColor = Color.White, cursorColor = Color.White, focusedContainerColor = Color.White.copy(alpha = 0.1f), unfocusedContainerColor = Color.White.copy(alpha = 0.05f))
     )
 }
 
 @Composable
 fun IptvSetupOverlay(ipAddress: String, onClose: () -> Unit, onManualSubmit: (String, String, String) -> Unit) {
+    val isHeb = LocalLayoutDirection.current == LayoutDirection.Rtl
     var name by remember { mutableStateOf("") }
     var url by remember { mutableStateOf("") }
     var epg by remember { mutableStateOf("") }
@@ -477,24 +540,24 @@ fun IptvSetupOverlay(ipAddress: String, onClose: () -> Unit, onManualSubmit: (St
     Box(modifier = Modifier.fillMaxSize().background(Color(0xD9000000)).onPreviewKeyEvent { event -> if (event.type == KeyEventType.KeyDown && (event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK || event.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_ESCAPE)) { onClose(); true } else false }, contentAlignment = Alignment.Center) {
         Row(modifier = Modifier.width(880.dp).height(460.dp).background(ColorPs5Gray, RoundedCornerShape(32.dp)).border(1.dp, ColorGlass, RoundedCornerShape(32.dp)).padding(32.dp)) {
             Column(modifier = Modifier.weight(1.2f).fillMaxHeight().padding(end = 32.dp), verticalArrangement = Arrangement.Center) {
-                Text("Manual Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text("Enter your IPTV provider details below.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp); Spacer(modifier = Modifier.height(24.dp))
-                CrispTextField(value = name, label = "Playlist Name (Optional)", onValueChange = { name = it }); Spacer(modifier = Modifier.height(16.dp)); CrispTextField(value = url, label = "M3U Link (Required)", onValueChange = { url = it }); Spacer(modifier = Modifier.height(16.dp)); CrispTextField(value = epg, label = "EPG Link (Optional)", onValueChange = { epg = it }, isLast = true); Spacer(modifier = Modifier.height(32.dp))
-                Button(onClick = { onManualSubmit(name, url, epg) }, colors = ButtonDefaults.colors(containerColor = ColorGlass, focusedContainerColor = Color.White, contentColor = Color.White, focusedContentColor = Color.Black), shape = ButtonDefaults.shape(RoundedCornerShape(12.dp)), modifier = Modifier.fillMaxWidth().height(48.dp)) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Connect Now", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) } }
+                Text(if (isHeb) "הגדרה ידנית" else "Manual Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text(if (isHeb) "הזן את פרטי ספק ה-IPTV שלך למטה." else "Enter your IPTV provider details below.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp); Spacer(modifier = Modifier.height(24.dp))
+                CrispTextField(value = name, label = if (isHeb) "שם פלייליסט (אופציונלי)" else "Playlist Name (Optional)", onValueChange = { name = it }); Spacer(modifier = Modifier.height(16.dp)); CrispTextField(value = url, label = if (isHeb) "קישור M3U (נדרש)" else "M3U Link (Required)", onValueChange = { url = it }); Spacer(modifier = Modifier.height(16.dp)); CrispTextField(value = epg, label = if (isHeb) "קישור EPG (אופציונלי)" else "EPG Link (Optional)", onValueChange = { epg = it }, isLast = true); Spacer(modifier = Modifier.height(32.dp))
+                Button(onClick = { onManualSubmit(name, url, epg) }, colors = ButtonDefaults.colors(containerColor = ColorGlass, focusedContainerColor = Color.White, contentColor = Color.White, focusedContentColor = Color.Black), shape = ButtonDefaults.shape(RoundedCornerShape(12.dp)), modifier = Modifier.fillMaxWidth().height(48.dp)) { Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(if (isHeb) "התחבר עכשיו" else "Connect Now", fontWeight = FontWeight.SemiBold, fontSize = 16.sp) } }
             }
             Box(modifier = Modifier.fillMaxHeight().width(1.dp).background(ColorGlass))
             Column(modifier = Modifier.weight(0.8f).fillMaxHeight().padding(start = 32.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Quick Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text("Scan the QR code with your phone.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, textAlign = TextAlign.Center); Spacer(modifier = Modifier.height(32.dp))
+                Text(if (isHeb) "הגדרה מהירה" else "Quick Setup", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.SemiBold); Spacer(modifier = Modifier.height(8.dp)); Text(if (isHeb) "סרוק את קוד ה-QR עם הטלפון שלך." else "Scan the QR code with your phone.", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp, textAlign = TextAlign.Center); Spacer(modifier = Modifier.height(32.dp))
                 Box(modifier = Modifier.size(180.dp).background(Color.White, RoundedCornerShape(12.dp)).border(2.dp, if (isError) Color(0xFFFF453A) else Color(0xFF32D74B), RoundedCornerShape(12.dp)), contentAlignment = Alignment.Center) {
                     if (isError) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(Icons.Default.Tv, contentDescription = "Error", tint = Color(0xFFFF453A), modifier = Modifier.size(48.dp))
-                            Spacer(modifier = Modifier.height(8.dp)); Text("No Network", color = Color(0xFFFF453A), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                            Spacer(modifier = Modifier.height(8.dp)); Text(if (isHeb) "אין רשת" else "No Network", color = Color(0xFFFF453A), fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         }
                     } else if (qrBitmap != null) { Image(bitmap = qrBitmap, contentDescription = "QR Code", modifier = Modifier.padding(8.dp).fillMaxSize()) }
                 }
                 Spacer(modifier = Modifier.height(24.dp))
-                if (!isError) { Text("Or open this address on your phone:", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp); Spacer(modifier = Modifier.height(4.dp)); Text(text = ipAddress, color = Color(0xFF32D74B), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
-                else { Text("Please connect TV to Wi-Fi", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp) }
+                if (!isError) { Text(if (isHeb) "או פתח את הכתובת הזו בטלפון:" else "Or open this address on your phone:", color = Color.White.copy(alpha = 0.5f), fontSize = 12.sp); Spacer(modifier = Modifier.height(4.dp)); Text(text = ipAddress, color = Color(0xFF32D74B), fontSize = 18.sp, fontWeight = FontWeight.Bold) }
+                else { Text(if (isHeb) "חבר את הטלוויזיה ל-Wi-Fi" else "Please connect TV to Wi-Fi", color = Color.White.copy(alpha = 0.5f), fontSize = 14.sp) }
             }
         }
     }

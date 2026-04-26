@@ -12,7 +12,6 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
-import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.animation.EnterTransition
@@ -49,7 +48,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.luminastreams.tv.core.DeviceProfile
-import com.luminastreams.tv.core.SoundManager
 import com.luminastreams.tv.data.repository.MediaRepositoryImpl
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.presentation.details.DetailsEvent
@@ -75,7 +73,7 @@ private const val FORCED_DENSITY_DPI = 190
 
 class MainActivity : ComponentActivity() {
 
-    var soundManager: SoundManager? = null
+
 
     override fun attachBaseContext(newBase: Context) {
         val dm = newBase.resources.displayMetrics
@@ -101,31 +99,14 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        soundManager = SoundManager(this)
+
 
         setContent {
             LuminaTheme { LuminaAppShell() }
         }
     }
 
-    @android.annotation.SuppressLint("RestrictedApi")
-    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        if (event.action == KeyEvent.ACTION_DOWN) {
-            when (event.keyCode) {
-                KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
-                    soundManager?.playClick()
-                }
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN,
-                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                    soundManager?.playNav()
-                }
-            }
-        }
-        return super.dispatchKeyEvent(event)
-    }
-
     override fun onDestroy() {
-        soundManager?.release()
         super.onDestroy()
     }
 }

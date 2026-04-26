@@ -24,7 +24,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.*
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -43,6 +45,14 @@ import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
 import java.util.Locale
 import kotlinx.coroutines.launch
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 // 🎨 PALETTE
 private val ColorBgDark = Color(0xFF050507)
@@ -63,6 +73,9 @@ fun DetailsScreen(
     val scope = rememberCoroutineScope()
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     var showSources by remember { mutableStateOf(false) }
+    var selectedEpisode by remember { mutableStateOf<Episode?>(null) }
+    var selectedEpisodeIdx by remember { mutableIntStateOf(-1) }
+    val returnToEpisodeFR = remember { FocusRequester() }
 
     // FOCUS REQUESTERS
     val playFR = remember { FocusRequester() }
@@ -85,6 +98,35 @@ fun DetailsScreen(
 
     LaunchedEffect(state.isLoadingData) { if (!state.isLoadingData) { delay(250); runCatching { playFR.requestFocus() } } }
 
+    // Refresh watch progress every time this screen is resumed (e.g. after returning from player)
+    // Also check for auto-play next episode request
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                onEvent(DetailsEvent.RefreshProgress)
+
+                // Check if the player requested auto-play next episode
+                val playerPrefs = context.getSharedPreferences("player_context", 0)
+                val autoSeason = playerPrefs.getInt("auto_play_season", -1)
+                val autoEpisode = playerPrefs.getInt("auto_play_episode", -1)
+                if (autoSeason > 0 && autoEpisode > 0) {
+                    // Clear immediately so it doesn't re-trigger
+                    playerPrefs.edit().remove("auto_play_season").remove("auto_play_episode").apply()
+
+                    // Switch season if needed and trigger scraping
+                    if (autoSeason != state.selectedSeason) {
+                        onEvent(DetailsEvent.SelectSeason(autoSeason))
+                    }
+                    showSources = true
+                    onEvent(DetailsEvent.InitiateScraping(state.mediaInfo.imdbId, autoSeason, autoEpisode))
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(showSources, state.availableStreams) {
         if (showSources && state.availableStreams.isNotEmpty()) {
             delay(300)
@@ -92,8 +134,17 @@ fun DetailsScreen(
         }
     }
 
+    // Restore focus to the episode card after popup closes
+    LaunchedEffect(selectedEpisode) {
+        if (selectedEpisode == null && selectedEpisodeIdx >= 0) {
+            delay(150)
+            runCatching { returnToEpisodeFR.requestFocus() }
+        }
+    }
+
     BackHandler {
-        if (showSources) { showSources = false; onEvent(DetailsEvent.CancelScraping) }
+        if (selectedEpisode != null) selectedEpisode = null
+        else if (showSources) { showSources = false; onEvent(DetailsEvent.CancelScraping) }
         else onNavigateBack()
     }
 
@@ -166,33 +217,35 @@ fun DetailsScreen(
                         Spacer(Modifier.height(48.dp))
                         Text(media.overview, color = ColorTextMain.copy(0.8f), fontSize = 18.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth(0.65f), maxLines = 3, overflow = TextOverflow.Ellipsis)
 
-                        // ── Movie / Series Progress Bar ──
-                        if (!media.isSeries && (state.contentProgress ?: 0f) >= 0.02f) {
-                            Spacer(Modifier.height(24.dp))
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth(0.35f)
-                                        .height(6.dp)
-                                        .background(Color.White.copy(0.15f), androidx.compose.foundation.shape.RoundedCornerShape(50))
-                                ) {
+// ── Movie Progress Bar ──
+                        if (!media.isSeries) {
+                            if ((state.contentProgress ?: 0f) >= 0.02f) {
+                                Spacer(Modifier.height(24.dp))
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                     Box(
                                         Modifier
-                                            .fillMaxWidth(state.contentProgress ?: 0f)
-                                            .fillMaxHeight()
-                                            .background(
-                                                if (state.contentIsFinished) Color(0xFF32D74B) else ColorAccentIsland,
-                                                androidx.compose.foundation.shape.RoundedCornerShape(50)
-                                            )
+                                            .fillMaxWidth(0.35f)
+                                            .height(6.dp)
+                                            .background(Color.White.copy(0.15f), androidx.compose.foundation.shape.RoundedCornerShape(50))
+                                    ) {
+                                        Box(
+                                            Modifier
+                                                .fillMaxWidth(state.contentProgress ?: 0f)
+                                                .fillMaxHeight()
+                                                .background(
+                                                    if (state.contentIsFinished) Color(0xFF32D74B) else ColorAccentIsland,
+                                                    androidx.compose.foundation.shape.RoundedCornerShape(50)
+                                                )
+                                        )
+                                    }
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        text = if (state.contentIsFinished) tr("Watched", "נצפה")
+                                        else "${((state.contentProgress ?: 0f) * 100).toInt()}% ${tr("watched", "נצפה")}",
+                                        color = if (state.contentIsFinished) Color(0xFF32D74B) else ColorTextMain.copy(0.5f),
+                                        fontSize = 13.sp
                                     )
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    text = if (state.contentIsFinished) tr("Watched", "נצפה")
-                                           else "${((state.contentProgress ?: 0f) * 100).toInt()}% ${tr("watched", "נצפה")}",
-                                    color = if (state.contentIsFinished) Color(0xFF32D74B) else ColorTextMain.copy(0.5f),
-                                    fontSize = 13.sp
-                                )
                             }
                         }
 
@@ -201,7 +254,6 @@ fun DetailsScreen(
                         val isPartiallyWatched = (state.contentProgress ?: 0f) >= 0.02f && !state.contentIsFinished
                         ActionIsland(
                             playText = if(isPartiallyWatched) tr("Continue S${state.lastWatchedSeason?:1}:E${state.lastWatchedEpisode?:1}", "המשך צפייה") else tr("Play Now", "נגן עכשיו"),
-                            // ⚡ THE FIX: Hard-wire the D-PAD DOWN directly to the Season tabs!
                             modifier = Modifier
                                 .focusRequester(playFR)
                                 .focusProperties {
@@ -213,8 +265,42 @@ fun DetailsScreen(
                             onSourcesClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
                             onTrailerClick = { launchNativeTrailer(context, media.trailerUrl, media.title) },
                             isFavorite = media.isFavorite,
-                            onFavClick = { onEvent(DetailsEvent.ToggleFavorite) }
+                            onFavClick = { onEvent(DetailsEvent.ToggleFavorite) },
+                            isWatched = if (!media.isSeries) state.contentIsFinished else false,
+                            onWatchedClick = if (!media.isSeries) {{ 
+                                if (state.contentIsFinished) onEvent(DetailsEvent.MarkMovieUnwatched)
+                                else onEvent(DetailsEvent.MarkMovieWatched)
+                            }} else null
                         )
+
+                        // ── Info Chips Bar ──
+                        Spacer(Modifier.height(32.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            val chips = buildList {
+                                if (media.director.isNotBlank()) add(tr("Director", "במאי") to media.director)
+                                if (media.studios.isNotEmpty()) add(tr("Studio", "אולפן") to media.studios.first())
+                                if (media.runtimeMinutes > 0) add(tr("Runtime", "משך") to "${media.runtimeMinutes / 60}h ${media.runtimeMinutes % 60}m")
+                                if (media.releaseDate.isNotBlank()) add(tr("Release", "שנת יציאה") to media.releaseDate.take(4))
+                                if (media.genres.isNotEmpty()) add(tr("Genres", "ז'אנרים") to media.genres.take(2).joinToString(" · "))
+                            }
+                            chips.forEachIndexed { idx, (label, value) ->
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    modifier = Modifier
+                                        .background(Color.White.copy(0.06f), androidx.compose.foundation.shape.RoundedCornerShape(14.dp))
+                                        .padding(horizontal = 32.dp, vertical = 16.dp)
+                                ) {
+                                    Text(label.uppercase(), color = ColorTextMain.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Spacer(Modifier.height(6.dp))
+                                    Text(value, color = ColorTextMain, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                                if (idx < chips.lastIndex) Spacer(Modifier.width(16.dp))
+                            }
+                        }
                     }
                 }
 
@@ -279,13 +365,13 @@ fun DetailsScreen(
                                         EpisodeCardOptimized(
                                             episode = ep,
                                             fallback = media.backdropUrl,
-                                            modifier = if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier,
+                                            modifier = when {
+                                                idx == selectedEpisodeIdx -> Modifier.focusRequester(returnToEpisodeFR).then(if (idx == 0) Modifier.focusRequester(firstEpisodeFR) else Modifier)
+                                                idx == 0 -> Modifier.focusRequester(firstEpisodeFR)
+                                                else -> Modifier
+                                            },
                                             onFocused = { if(ep.stillUrl.isNotBlank()) currentBackdrop = ep.stillUrl },
-                                            onClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber)) },
-                                            onLongClick = {
-                                                if (ep.hasWatched) onEvent(DetailsEvent.MarkEpisodeUnwatched(ep.seasonNumber, ep.episodeNumber))
-                                                else onEvent(DetailsEvent.MarkEpisodeWatched(ep.seasonNumber, ep.episodeNumber))
-                                            }
+                                            onClick = { selectedEpisodeIdx = idx; selectedEpisode = ep }
                                         )
                                     }
                                 }
@@ -316,34 +402,7 @@ fun DetailsScreen(
                     }
                 }
 
-                // --- DETAILS INFO BAR ---
-                item {
-                    Row(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 64.dp)
-                            .background(Color.White.copy(0.06f), androidx.compose.foundation.shape.RoundedCornerShape(16.dp))
-                            .padding(horizontal = 32.dp, vertical = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (media.director.isNotBlank()) {
-                            InfoChip(tr("Director", "במאי"), media.director)
-                        }
-                        if (media.studios.isNotEmpty()) {
-                            InfoChip(tr("Studio", "אולפן"), media.studios.first())
-                        }
-                        if (media.runtimeMinutes > 0) {
-                            InfoChip(tr("Runtime", "משך"), "${media.runtimeMinutes / 60}h ${media.runtimeMinutes % 60}m")
-                        }
-                        if (media.releaseDate.isNotBlank()) {
-                            InfoChip(tr("Release", "שנת יציאה"), media.releaseDate.take(4))
-                        }
-                        if (media.genres.isNotEmpty()) {
-                            InfoChip(tr("Genres", "ז'אנרים"), media.genres.take(2).joinToString(" • "))
-                        }
-                    }
-                }
+
 
                 // --- MORE FROM THIS COLLECTION ---
                 if (!media.collectionName.isNullOrBlank() && media.collectionItems.isNotEmpty()) {
@@ -392,11 +451,11 @@ fun DetailsScreen(
             CompositionLocalProvider(LocalDensity provides currentDensity) {
             AnimatedVisibility(
                 visible = showSources,
-                enter = fadeIn(tween(300)) + slideInVertically(initialOffsetY = { it }, animationSpec = tween(400, easing = LinearOutSlowInEasing)),
-                exit = fadeOut(tween(300)) + slideOutVertically(targetOffsetY = { it }, animationSpec = tween(400, easing = FastOutLinearInEasing)),
+                enter = fadeIn(tween(250)),
+                exit = fadeOut(tween(200)),
                 modifier = Modifier.zIndex(100f)
             ) {
-                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.7f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.BottomCenter) {
+                Box(Modifier.fillMaxSize().background(Color.Black.copy(0.85f)).clickable(remember { MutableInteractionSource() }, null) { showSources = false; onEvent(DetailsEvent.CancelScraping) }, Alignment.BottomCenter) {
 
                     Column(
                         modifier = Modifier
@@ -441,6 +500,107 @@ fun DetailsScreen(
                 }
             }
             } // end source density restore
+    }
+
+    // ── Episode Options Popup ───────────────────────────────────────
+    selectedEpisode?.let { ep ->
+        val epPlayFR = remember { FocusRequester() }
+
+        LaunchedEffect(ep) { delay(200); runCatching { epPlayFR.requestFocus() } }
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(0.75f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(520.dp)
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(Color.White.copy(0.08f))
+                    .padding(36.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    "E${ep.episodeNumber} • ${ep.title}",
+                    color = ColorTextMain, fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold, textAlign = TextAlign.Center,
+                    maxLines = 2, modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // ▶ Play — auto-focused
+                Surface(
+                    onClick = {
+                        selectedEpisode = null
+                        showSources = true
+                        onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber))
+                    },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = ColorAccentIsland,
+                        contentColor = ColorTextMain,
+                        focusedContainerColor = ColorTextMain,
+                        focusedContentColor = Color.Black
+                    ),
+                    scale = ClickableSurfaceDefaults.scale(1.05f),
+                    modifier = Modifier.fillMaxWidth().height(64.dp).focusRequester(epPlayFR)
+                ) {
+                    Row(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        Icon(Icons.Default.PlayArrow, null, Modifier.size(28.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(tr("Play Episode", "הפעל פרק"), fontWeight = FontWeight.Black, fontSize = 20.sp)
+                    }
+                }
+
+                // ✓ Toggle Watched
+                Surface(
+                    onClick = {
+                        if (ep.hasWatched) onEvent(DetailsEvent.MarkEpisodeUnwatched(ep.seasonNumber, ep.episodeNumber))
+                        else onEvent(DetailsEvent.MarkEpisodeWatched(ep.seasonNumber, ep.episodeNumber))
+                        selectedEpisode = null
+                        // Focus restore happens via LaunchedEffect below
+                    },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color.White.copy(0.1f),
+                        contentColor = ColorTextMain,
+                        focusedContainerColor = if (ep.hasWatched) Color(0xFF32D74B) else Color.White.copy(0.2f),
+                        focusedContentColor = if (ep.hasWatched) Color.White else ColorTextMain
+                    ),
+                    scale = ClickableSurfaceDefaults.scale(1.05f),
+                    modifier = Modifier.fillMaxWidth().height(56.dp)
+                ) {
+                    Row(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                        Icon(if (ep.hasWatched) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, Modifier.size(24.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            if (ep.hasWatched) tr("Mark as Unwatched", "סמן כלא נצפה")
+                            else tr("Mark as Watched", "סמן כנצפה"),
+                            fontWeight = FontWeight.Bold, fontSize = 18.sp
+                        )
+                    }
+                }
+
+                // ✕ Cancel
+                Surface(
+                    onClick = { selectedEpisode = null },
+                    shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                    colors = ClickableSurfaceDefaults.colors(
+                        containerColor = Color.Transparent,
+                        contentColor = Color.White.copy(0.5f),
+                        focusedContainerColor = Color.White.copy(0.1f),
+                        focusedContentColor = ColorTextMain
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(48.dp)
+                ) {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        Text(tr("Cancel", "ביטול"), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
     }
     }
 }

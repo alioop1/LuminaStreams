@@ -49,7 +49,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.datasource.okhttp.OkHttpDataSource
+import com.luminastreams.tv.core.TrustedHttpClient
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.DefaultHlsExtractorFactory
@@ -118,7 +119,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
     var seekPosition by remember { mutableStateOf(0L) }
     var seekDuration by remember { mutableStateOf(0L) }
 
-    val currentChannel = remember(currentUrl) { channels.find { currentUrl.startsWith(it.streamUrl) } }
+    val currentChannel by remember { derivedStateOf { channels.find { currentUrl.startsWith(it.streamUrl) } } }
     var currentEpg by remember { mutableStateOf<EpgProgramEntity?>(null) }
 
     // Ticking OSD clock — updates every minute, not on every recompose
@@ -165,8 +166,9 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
 
 
     LaunchedEffect(currentChannel) {
-        if (currentChannel != null) {
-            val programs = viewModel.getProgramsForChannel(currentChannel, System.currentTimeMillis())
+        val ch = currentChannel
+        if (ch != null) {
+            val programs = viewModel.getProgramsForChannel(ch, System.currentTimeMillis())
             currentEpg = programs.firstOrNull { System.currentTimeMillis() in it.startTime..it.endTime } ?: programs.firstOrNull()
         }
     }
@@ -195,11 +197,13 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         val isDifferentUrl = exoPlayer.currentMediaItem?.localConfiguration?.uri?.toString() != currentUrl
 
         if (isDifferentUrl) {
-            val httpDataSourceFactory = DefaultHttpDataSource.Factory().setAllowCrossProtocolRedirects(true).setUserAgent("VLC/3.0.0")
+            val httpDataSourceFactory = OkHttpDataSource.Factory(TrustedHttpClient.builder().build()).setUserAgent("VLC/3.0.0")
             val tsFlags = DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
-            val baseIsHls = currentChannel?.streamUrl?.contains(".m3u8", ignoreCase = true) == true
-            val urlIsHls = currentUrl.contains(".m3u8", ignoreCase = true)
-            val isHls = urlIsHls || baseIsHls
+            val urlLower = currentUrl.lowercase()
+            val baseUrl = currentChannel?.streamUrl?.lowercase() ?: ""
+            val isHls = urlLower.contains(".m3u8") || baseUrl.contains(".m3u8")
+                    || urlLower.contains("/live/") || urlLower.contains("/get.php?")
+                    || urlLower.contains("/streaming/") || urlLower.contains("type=m3u")
 
             val mediaItem = MediaItem.fromUri(currentUrl)
             val mediaSource = if (isHls) {
@@ -228,7 +232,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
 
     DisposableEffect(lifecycleOwner) {
         val lifecycleObserver = LifecycleEventObserver { _, event ->
-            when (event) { Lifecycle.Event.ON_PAUSE -> exoPlayer.pause(); Lifecycle.Event.ON_RESUME -> exoPlayer.play(); Lifecycle.Event.ON_DESTROY -> exoPlayer.release(); else -> {} }
+            when (event) { Lifecycle.Event.ON_PAUSE -> exoPlayer.pause(); Lifecycle.Event.ON_RESUME -> exoPlayer.play(); else -> {} }
         }
         val playerListener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
@@ -246,6 +250,25 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
                     retryCount++
                     actionMessage = "Stream stalled, retrying ($retryCount/3)..."
                     exoPlayer.seekToDefaultPosition()
+                    exoPlayer.prepare()
+                    exoPlayer.playWhenReady = true
+                    return
+                }
+
+                // Auto-fallback: If Progressive source failed (ParserException), retry as HLS
+                val isParserError = error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED
+                        || error.errorCode == PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED
+                        || error.cause?.javaClass?.simpleName == "UnrecognizedInputFormatException"
+                if (isParserError && retryCount < 1) {
+                    retryCount++
+                    actionMessage = "Retrying as HLS stream..."
+                    val httpFactory = OkHttpDataSource.Factory(TrustedHttpClient.builder().build()).setUserAgent("VLC/3.0.0")
+                    val tsFlags = DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
+                    val hlsSource = HlsMediaSource.Factory(httpFactory)
+                        .setExtractorFactory(DefaultHlsExtractorFactory(tsFlags, true))
+                        .setAllowChunklessPreparation(true)
+                        .createMediaSource(MediaItem.fromUri(currentUrl))
+                    exoPlayer.setMediaSource(hlsSource)
                     exoPlayer.prepare()
                     exoPlayer.playWhenReady = true
                     return
@@ -379,7 +402,8 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                         Box(modifier = Modifier.size(88.dp).background(Color.White, RoundedCornerShape(24.dp)).padding(8.dp), contentAlignment = Alignment.Center) {
-                            if (currentChannel?.logoUrl?.isNotBlank() == true) AsyncImage(model = currentChannel.logoUrl, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                            val ch = currentChannel
+                            if (ch != null && ch.logoUrl.isNotBlank()) AsyncImage(model = ch.logoUrl, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                             else Text(currentChannel?.name?.take(1) ?: "", color = Color.Black, fontSize = 32.sp, fontWeight = FontWeight.Bold)
                         }
                         Spacer(modifier = Modifier.width(24.dp))
@@ -449,9 +473,10 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
             exit = fadeOut(tween(300)) + slideOutVertically(animationSpec = tween(400, easing = FastOutLinearInEasing), targetOffsetY = { it }),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            if (currentChannel != null) {
+            val ch = currentChannel
+            if (ch != null) {
                 EpgGuideOverlay(
-                    channel = currentChannel,
+                    channel = ch,
                     viewModel = viewModel,
                     focusRequester = epgFocusRequester,
                     onClose = { showEpgGuide = false },
@@ -462,8 +487,8 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
                     onPlayLive = {
                         showEpgGuide = false
                         // Re-load the original stream URL
-                        if (currentUrl != currentChannel.streamUrl) {
-                            currentUrl = currentChannel.streamUrl
+                        if (currentUrl != ch.streamUrl) {
+                            currentUrl = ch.streamUrl
                         }
                     }
                 )
