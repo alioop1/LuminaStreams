@@ -253,6 +253,7 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
     override suspend fun discoverFiltered(
         type: String,
         genreId: String?,
+        tvGenreId: String?,
         releaseDateGte: String?,
         releaseDateLte: String?,
         voteGte: Float?,
@@ -280,8 +281,9 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 results.addAll(movieResp.results.map { it.copy(mediaType = "movie") })
             }
             if (isBoth || !isMovie) {
+                val effectiveTvGenreId = tvGenreId ?: genreId
                 val tvResp = api.discoverMedia(
-                    type = "tv", genreId = genreId,
+                    type = "tv", genreId = effectiveTvGenreId,
                     airDateGte = releaseDateGte, airDateLte = releaseDateLte,
                     voteGte = voteGte, language = language, networkId = networkId,
                     runtimeGte = runtimeGte, runtimeLte = runtimeLte,

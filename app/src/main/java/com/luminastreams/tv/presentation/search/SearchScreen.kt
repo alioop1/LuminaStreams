@@ -1,8 +1,8 @@
 @file:OptIn(
-    androidx.tv.material3.ExperimentalTvMaterial3Api::class,
+    ExperimentalTvMaterial3Api::class,
     androidx.compose.ui.ExperimentalComposeUiApi::class,
     androidx.compose.foundation.ExperimentalFoundationApi::class,
-    androidx.compose.animation.ExperimentalAnimationApi::class
+    ExperimentalAnimationApi::class
 )
 package com.luminastreams.tv.presentation.search
 
@@ -94,13 +94,12 @@ fun SearchScreen(
 
     var focusedBackdrop by remember { mutableStateOf<String?>(null) }
     var searchOpen by remember { mutableStateOf(false) }
-    var searchFocused by remember { mutableStateOf(false) }
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val searchBtnFR = remember { FocusRequester() }
 
     BackHandler {
         when {
             state.showFilters -> onIntent(SearchIntent.ToggleFilters)
+            state.filters.isActive -> onIntent(SearchIntent.ClearFilters)
             state.query.isNotBlank() -> onIntent(SearchIntent.UpdateQuery(""))
             else -> onNavigateBack()
         }
@@ -110,6 +109,8 @@ fun SearchScreen(
     LaunchedEffect(state.showFilters) { if (state.showFilters) { delay(150); runCatching { filterFR.requestFocus() } } }
     // When search opens, focus the input
     LaunchedEffect(searchOpen) { if (searchOpen) { delay(100); runCatching { inputFR.requestFocus() } } }
+    // When genre changes (enter/exit category), focus the first result
+    LaunchedEffect(state.filters.genre) { delay(200); runCatching { firstResultFR.requestFocus() } }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF040408))) {
         // Dynamic backdrop
@@ -132,11 +133,36 @@ fun SearchScreen(
                 modifier = Modifier.fillMaxWidth().padding(start = 48.dp, end = 48.dp, top = 28.dp, bottom = 16.dp)
             ) { isOpen ->
                 if (!isOpen) {
-                    // ── Collapsed: Tabs + Search icon + Filter ──
+                    // ── Collapsed: Tabs + Search + Filter + Reset ──
                     Row(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        // Back/Reset button — always visible when genre is active
+                        if (state.filters.genre != null) {
+                            Surface(
+                                onClick = { onIntent(SearchIntent.ClearFilters) },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                colors = ClickableSurfaceDefaults.colors(
+                                    containerColor = RED.copy(0.25f),
+                                    focusedContainerColor = RED
+                                ),
+                                border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+                                modifier = Modifier.height(38.dp)
+                                    .focusProperties { down = firstResultFR }
+                            ) {
+                                Row(
+                                    Modifier.padding(horizontal = 16.dp).fillMaxHeight(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(Icons.Default.ArrowBack, null, Modifier.size(18.dp), tint = Color.White)
+                                    Text(tr("Categories", "קטגוריות"), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                            Spacer(Modifier.width(16.dp))
+                        }
+
                         val tabs = listOf(
                             SearchSource.ALL to tr("All", "הכל"),
                             SearchSource.MOVIES to tr("Movies", "סרטים"),
@@ -231,7 +257,6 @@ fun SearchScreen(
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text, imeAction = ImeAction.Search),
                                     decorationBox = { inner -> Box(Modifier.weight(1f)) { if (state.query.isEmpty()) Text(tr("Search movies, series...", "חיפוש סרטים, סדרות..."), color = Color.White.copy(0.25f), fontSize = 17.sp); inner() } },
                                     modifier = Modifier.weight(1f).focusRequester(inputFR)
-                                        .onFocusChanged { searchFocused = it.isFocused }
                                         .focusProperties { down = firstResultFR }
                                         .onPreviewKeyEvent { ev ->
                                             if (ev.type == KeyEventType.KeyDown && ev.key == Key.DirectionDown) {
@@ -279,7 +304,7 @@ fun SearchScreen(
                             border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
                             modifier = Modifier.height(36.dp)
                                 .let { if (idx == 0) it.focusRequester(firstChipFR) else it }
-                                .focusProperties { up = inputFR; down = firstResultFR }
+                                .focusProperties { up = firstTabFR; down = firstResultFR }
                         ) {
                             Row(Modifier.padding(horizontal = 16.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Icon(Icons.Default.History, null, Modifier.size(14.dp))
@@ -302,13 +327,22 @@ fun SearchScreen(
                         state.isLoading || state.isFuzerLoading -> ShimmerGrid()
                         isFuzer && state.fuzerError != null -> FuzerError(state.fuzerError)
                         results.isEmpty() -> EmptyStateMessage(tr("No results found", "לא נמצאו תוצאות"))
+                        state.filters.genre != null && state.query.isBlank() -> {
+                            // Genre browsing: year-grouped rows
+                            YearGroupedResults(results, firstResultFR, firstTabFR, { focusedBackdrop = it.backdropUrl }, onResultClick)
+                        }
                         else -> SearchResultsGrid(results, isFuzer, firstResultFR, { focusedBackdrop = it.backdropUrl }, onResultClick)
                     }
                 } else {
                     // Discovery mode — category grid with real backdrops
                     CategoryGrid(firstResultFR, firstTabFR, firstChipFR, state.searchHistory.isNotEmpty(), state.discoveryResults) { cat ->
-                        // Apply genre filter directly — shows filtered discovery results
-                        val filters = SearchFilters(genre = cat.genre)
+                        // Apply genre + type filter based on active source tab
+                        val typeFilter = when (state.source) {
+                            SearchSource.MOVIES -> MediaTypeFilter.MOVIE
+                            SearchSource.SERIES -> MediaTypeFilter.TV_SHOW
+                            else -> MediaTypeFilter.ANY
+                        }
+                        val filters = SearchFilters(genre = cat.genre, typeFilter = typeFilter)
                         onIntent(SearchIntent.UpdateFilters(filters))
                     }
                 }
@@ -366,9 +400,9 @@ private fun CategoryGrid(
         for (cat in CATEGORIES) {
             if (cat.genre != null && !map.containsKey(cat.genre)) {
                 val match = withBackdrop.firstOrNull {
-                    it.genre.contains(cat.genre, true) && it.backdropUrl!! !in usedUrls
+                    it.genre.contains(cat.genre, true) && it.backdropUrl !in usedUrls
                 } ?: withBackdrop.firstOrNull {
-                    it.genre.contains(cat.genre.take(4), true) && it.backdropUrl!! !in usedUrls
+                    it.genre.contains(cat.genre.take(4), true) && it.backdropUrl !in usedUrls
                 }
                 if (match != null) {
                     map[cat.genre] = match.backdropUrl!!
@@ -380,7 +414,7 @@ private fun CategoryGrid(
         // Fill remaining with any unused backdrop
         for (cat in CATEGORIES) {
             if (!map.containsKey(cat.genre)) {
-                val unused = withBackdrop.firstOrNull { it.backdropUrl!! !in usedUrls }
+                val unused = withBackdrop.firstOrNull { it.backdropUrl !in usedUrls }
                 if (unused != null) {
                     map[cat.genre] = unused.backdropUrl!!
                     usedUrls.add(unused.backdropUrl!!)
@@ -412,7 +446,7 @@ private fun CategoryGrid(
                 backdropUrl = genreBackdrops[cat.genre],
                 modifier = Modifier
                     .let { if (idx == 0) it.focusRequester(firstResultFR) else it }
-                    .let { if (idx < 5) it.focusProperties { up = if (hasChips) chipFR else navBarFR } else it },
+                    .focusProperties { up = if (hasChips) chipFR else navBarFR },
                 onClick = { onClick(cat) }
             )
         }
@@ -422,8 +456,8 @@ private fun CategoryGrid(
 @Composable
 private fun PremiumCategoryCard(
     cat: CategoryDef,
-    backdropUrl: String? = null,
     modifier: Modifier = Modifier,
+    backdropUrl: String? = null,
     onClick: () -> Unit
 ) {
     val ctx = LocalContext.current
@@ -477,22 +511,6 @@ private fun PremiumCategoryCard(
         }
     }
 }
-
-// ── Helper components ──────────────────────────────────────────────────
-@Composable
-fun HorizontalMediaRow(title: String, items: List<SearchResult>, isFuzer: Boolean, firstItemFR: FocusRequester, onFocusCard: (SearchResult) -> Unit, onClick: (SearchResult) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 64.dp, vertical = 12.dp))
-        LazyRow(contentPadding = PaddingValues(horizontal = 64.dp), horizontalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.fillMaxWidth().focusProperties { canFocus = false }) {
-            itemsIndexed(items, key = { _, r -> r.id }) { idx, result ->
-                MediaSearchCard(result, isFuzer, Modifier.width(160.dp).let { if (idx == 0) it.focusRequester(firstItemFR) else it }, { onFocusCard(result) }, { onClick(result) })
-            }
-        }
-    }
-}
-
-@Composable
-fun LoadingRow(text: String) { Box(Modifier.fillMaxWidth().padding(horizontal = 64.dp, vertical = 24.dp)) { Text(text, color = Color(0xFF00D4FF), fontSize = 16.sp, fontWeight = FontWeight.Medium) } }
 
 @Composable
 fun EmptyStateMessage(text: String) { Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { Text(text, color = Color(0x66FFFFFF), fontSize = 20.sp) } }

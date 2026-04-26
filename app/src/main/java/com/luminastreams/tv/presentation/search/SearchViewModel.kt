@@ -330,7 +330,13 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     else -> "both"
                 }
 
-                val genreId = filters.genre?.let { genreNameToTmdbId(it) }?.toString()
+                val movieGenreId = filters.genre?.let { genreNameToTmdbId(it, forTv = false) }?.toString()
+                val tvGenreId = filters.genre?.let { genreNameToTmdbId(it, forTv = true) }?.toString()
+                val genreId = when (type) {
+                    "movie" -> movieGenreId
+                    "tv" -> tvGenreId
+                    else -> movieGenreId  // for "both", repository handles each call separately
+                }
 
                 val (dateGte, dateLte) = when {
                     filters.minYear > 1920 || filters.maxYear < 2026 -> {
@@ -380,9 +386,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     SortBy.RATING -> "vote_average.desc"
                     SortBy.NEWEST -> "primary_release_date.desc"
                     SortBy.TITLE -> "original_title.asc"
-                    SortBy.POPULARITY -> if (filters.genre != null) {
-                        "primary_release_date.desc"  // Categories default: newest first
-                    } else "popularity.desc"
+                    SortBy.POPULARITY -> "popularity.desc"
                 }
 
                 // Unlimited loading: 15 pages for genre (300+ movies/series), 5 for other filters
@@ -397,7 +401,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                         pages.map { page ->
                             async {
                                 repository.discoverFiltered(
-                                    type = type, genreId = genreId,
+                                    type = type, genreId = genreId, tvGenreId = tvGenreId,
                                     releaseDateGte = dateGte, releaseDateLte = dateLte,
                                     voteGte = voteGte, language = lang, networkId = networkId,
                                     runtimeGte = rtGte, runtimeLte = rtLte,
@@ -421,11 +425,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                 val final = allResults
                     .distinctBy { r -> r.id }
                     .filter { r -> r.posterUrl.isNotBlank() }
-                    // Default sort: Year DESC, then Rating DESC within same year
-                    .sortedWith(
-                        compareByDescending<SearchResult> { it.releaseYear.toIntOrNull() ?: 0 }
-                            .thenByDescending { it.rating }
-                    )
 
                 _state.update { it.copy(
                     discoveryResults = final,
@@ -437,12 +436,25 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    private fun genreNameToTmdbId(name: String): Int? = when (name.lowercase()) {
-        "action" -> 28; "adventure" -> 12; "animation", "anime" -> 16; "comedy" -> 35
-        "crime" -> 80; "documentary" -> 99; "drama" -> 18; "family" -> 10751
-        "fantasy" -> 14; "history" -> 36; "horror" -> 27; "music" -> 10402
-        "mystery" -> 9648; "romance" -> 10749; "sci-fi", "science fiction" -> 878
-        "thriller" -> 53; "war" -> 10752; "western" -> 37; else -> null
+    private fun genreNameToTmdbId(name: String, forTv: Boolean = false): Int? {
+        if (forTv) {
+            // TMDB TV genre IDs (different from movie IDs!)
+            return when (name.lowercase()) {
+                "action" -> 10759; "adventure" -> 10759; "animation", "anime" -> 16; "comedy" -> 35
+                "crime" -> 80; "documentary" -> 99; "drama" -> 18; "family" -> 10751
+                "fantasy" -> 10765; "horror" -> null; "mystery" -> 9648
+                "romance" -> null; "sci-fi", "science fiction" -> 10765
+                "thriller" -> null; "war" -> 10768; "western" -> 37; else -> null
+            }
+        }
+        // Movie genre IDs
+        return when (name.lowercase()) {
+            "action" -> 28; "adventure" -> 12; "animation", "anime" -> 16; "comedy" -> 35
+            "crime" -> 80; "documentary" -> 99; "drama" -> 18; "family" -> 10751
+            "fantasy" -> 14; "history" -> 36; "horror" -> 27; "music" -> 10402
+            "mystery" -> 9648; "romance" -> 10749; "sci-fi", "science fiction" -> 878
+            "thriller" -> 53; "war" -> 10752; "western" -> 37; else -> null
+        }
     }
 
     private fun saveToHistory(q: String) {

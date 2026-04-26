@@ -27,6 +27,7 @@ interface MediaRepository {
     suspend fun discoverFiltered(
         type: String,
         genreId: String? = null,
+        tvGenreId: String? = null,
         releaseDateGte: String? = null,
         releaseDateLte: String? = null,
         voteGte: Float? = null,

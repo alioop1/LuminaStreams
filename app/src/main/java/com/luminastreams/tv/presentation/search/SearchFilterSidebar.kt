@@ -372,7 +372,6 @@ fun FilterSidebar(
                     Spacer(Modifier.height(8.dp))
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         itemsIndexed(QUICK_PRESETS) { _, preset ->
-                            var pFocused by remember { mutableStateOf(false) }
                             Surface(
                                 onClick = { onUpdate(preset.apply(filters)) },
                                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
@@ -385,7 +384,6 @@ fun FilterSidebar(
                                 border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
                                 scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
                                 modifier = Modifier.height(32.dp)
-                                    .onFocusChanged { pFocused = it.isFocused }
                             ) {
                                 Row(
                                     Modifier.padding(horizontal = 12.dp).fillMaxHeight(),
