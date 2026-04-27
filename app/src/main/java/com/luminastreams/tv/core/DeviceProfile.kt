@@ -145,7 +145,7 @@ object DeviceProfile {
 
         return when {
             totalRamMb >= 6000 -> Tier.HIGH
-            totalRamMb >= 3000 -> Tier.HIGH
+            totalRamMb >= 3000 -> Tier.MID
             else               -> Tier.MID
         }
     }

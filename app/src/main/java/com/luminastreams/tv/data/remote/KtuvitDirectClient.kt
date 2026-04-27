@@ -21,17 +21,29 @@ class KtuvitDirectClient(private val context: Context) {
         private const val LOGIN_URL   = "${BASE}Services/MembershipService.svc/Login"
         private const val UA          = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
         private const val PREF        = "ktuvit_auth"
+        private const val COOKIE_MAX_AGE_MS = 24 * 60 * 60 * 1000L // 24 hours
     }
 
     var cookie: String? = null
         private set
-        get() = field ?: context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .getString("cookie", null).also { field = it }
+        get() {
+            if (field != null) return field
+            val prefs = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            val savedCookie = prefs.getString("cookie", null) ?: return null
+            val savedTime = prefs.getLong("cookie_time", 0L)
+            // Invalidate cookie if older than 24 hours
+            if (System.currentTimeMillis() - savedTime > COOKIE_MAX_AGE_MS) {
+                prefs.edit { remove("cookie"); remove("cookie_time") }
+                return null
+            }
+            field = savedCookie
+            return field
+        }
 
     private fun saveCookie(c: String) {
         cookie = c
         context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-            .edit { putString("cookie", c) }
+            .edit { putString("cookie", c); putLong("cookie_time", System.currentTimeMillis()) }
     }
 
     suspend fun login(email: String, password: String): Boolean = withContext(Dispatchers.IO) {

@@ -36,6 +36,18 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
 
+    override fun onCleared() {
+        super.onCleared()
+        // Clean up cached subtitle files from previous sessions
+        try {
+            app.cacheDir.listFiles()?.forEach { file ->
+                if (file.name.startsWith("subtitle_") || file.name.startsWith("ktuvit_")) {
+                    file.delete()
+                }
+            }
+        } catch (_: Exception) {}
+    }
+
     fun loadMedia(videoUrl: String, imdbId: String, season: Int? = null, episode: Int? = null) {
         _state.update { it.copy(videoUrl = videoUrl, isSubtitlesLoading = true) }
 

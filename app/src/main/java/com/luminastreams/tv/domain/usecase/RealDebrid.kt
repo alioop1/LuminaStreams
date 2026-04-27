@@ -73,7 +73,7 @@ class RealDebridAuthManager(private val context: Context) {
     fun startDeviceAuthFlow(): Flow<AuthResult> = flow {
         try {
             val codeResponse = api.getDeviceCode(CLIENT_ID)
-            if (codeResponse.user_code.isNullOrEmpty()) {
+            if (codeResponse.user_code.isEmpty()) {
                 emit(AuthResult.Error("שגיאה במשיכת קוד משרת RD"))
                 return@flow
             }
@@ -82,9 +82,16 @@ class RealDebridAuthManager(private val context: Context) {
             var credentialsRetrieved = false
             var clientIdToUse = ""
             var clientSecretToUse = ""
+            var pollAttempts = 0
+            val maxPollAttempts = 60 // ~5 minutes max (interval is usually 5s)
 
             while (!credentialsRetrieved) {
                 delay((codeResponse.interval * 1000).toLong())
+                pollAttempts++
+                if (pollAttempts > maxPollAttempts) {
+                    emit(AuthResult.Error("זמן האימות פג. נסה שוב."))
+                    return@flow
+                }
                 val credResponse = api.getCredentials(CLIENT_ID, codeResponse.device_code)
                 if (credResponse.isSuccessful && credResponse.body() != null) {
                     clientIdToUse = credResponse.body()!!.client_id
@@ -120,6 +127,7 @@ class RealDebridManager {
         .create(RealDebridApi::class.java)
 
     // 1. טיפול במגנטים (Torrentio וכדומה)
+    @Suppress("unused") // Public API — used by callers that don't need torrent tracking
     suspend fun resolveMagnetToStream(magnetUri: String, apiToken: String): Result<String> =
         resolveMagnetToStreamTracked(magnetUri, apiToken) { /* no tracking */ }
 
@@ -194,7 +202,6 @@ class RealDebridManager {
             if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר!")
 
             // 1. העלאת הקובץ ל-Real Debrid
-            val client = TrustedHttpClient.builder().build()
             val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
             val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
 
@@ -204,7 +211,7 @@ class RealDebridManager {
                 .put(reqBody)
                 .build()
 
-            val response = client.newCall(request).execute()
+            val response = okHttpClient.newCall(request).execute()
 
             // ⚡ FIX: Removed redundant safe call and added clean fallback
             val responseBodyString = response.body.string().ifBlank { "{}" }

@@ -40,6 +40,21 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     LaunchedEffect(isRtl) { viewModel.setLanguage(isRtl) }
 
+    // ⚡ FIX: Reclaim focus when returning from any other screen (Details, Search, etc.)
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                // Only reclaim if we're not already on the navbar
+                if (!focusState.isNavFocused) {
+                    focusState.focusTrigger++
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     val rows by viewModel.uiRows.collectAsStateWithLifecycle()
     var currentTab by remember { mutableStateOf(state.selectedTab) }
     var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }

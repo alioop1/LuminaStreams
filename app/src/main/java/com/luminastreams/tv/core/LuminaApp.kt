@@ -113,7 +113,7 @@ class LuminaApp : Application() {
             }
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizeBytes(memoryCacheBytes.toInt())
+                    .maxSizeBytes(memoryCacheBytes.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
                     .build()
             }
             .diskCache {

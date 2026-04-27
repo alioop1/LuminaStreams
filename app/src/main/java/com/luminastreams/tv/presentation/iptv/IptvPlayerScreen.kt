@@ -94,8 +94,8 @@ private fun formatDuration(ms: Long): String {
     val h = totalSec / 3600
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
-    return if (h > 0) String.format("%d:%02d:%02d", h, m, s)
-    else String.format("%d:%02d", m, s)
+    return if (h > 0) String.format(Locale.US, "%d:%02d:%02d", h, m, s)
+    else String.format(Locale.US, "%d:%02d", m, s)
 }
 
 @OptIn(UnstableApi::class, ExperimentalTvMaterial3Api::class)
@@ -182,6 +182,8 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
     var retryCount by remember { mutableIntStateOf(0) }
     LaunchedEffect(currentUrl) { retryCount = 0 }
 
+    val iptvHttpClient = remember { TrustedHttpClient.builder().build() }
+
     val exoPlayer = remember {
         val renderersFactory = DefaultRenderersFactory(context).setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         val trackSelector = DefaultTrackSelector(context).apply { setParameters(buildUponParameters().setSelectUndeterminedTextLanguage(true).setExceedRendererCapabilitiesIfNecessary(true).setExceedAudioConstraintsIfNecessary(true)) }
@@ -197,7 +199,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         val isDifferentUrl = exoPlayer.currentMediaItem?.localConfiguration?.uri?.toString() != currentUrl
 
         if (isDifferentUrl) {
-            val httpDataSourceFactory = OkHttpDataSource.Factory(TrustedHttpClient.builder().build()).setUserAgent("VLC/3.0.0")
+            val httpDataSourceFactory = OkHttpDataSource.Factory(iptvHttpClient).setUserAgent("VLC/3.0.0")
             val tsFlags = DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
             val urlLower = currentUrl.lowercase()
             val baseUrl = currentChannel?.streamUrl?.lowercase() ?: ""
@@ -262,7 +264,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
                 if (isParserError && retryCount < 1) {
                     retryCount++
                     actionMessage = "Retrying as HLS stream..."
-                    val httpFactory = OkHttpDataSource.Factory(TrustedHttpClient.builder().build()).setUserAgent("VLC/3.0.0")
+                    val httpFactory = OkHttpDataSource.Factory(iptvHttpClient).setUserAgent("VLC/3.0.0")
                     val tsFlags = DefaultTsPayloadReaderFactory.FLAG_ENABLE_HDMV_DTS_AUDIO_STREAMS or DefaultTsPayloadReaderFactory.FLAG_IGNORE_SPLICE_INFO_STREAM
                     val hlsSource = HlsMediaSource.Factory(httpFactory)
                         .setExtractorFactory(DefaultHlsExtractorFactory(tsFlags, true))

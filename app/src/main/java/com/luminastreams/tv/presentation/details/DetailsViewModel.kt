@@ -76,22 +76,27 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         super.onCleared()
         scrapingJob?.cancel()
         resolveJob?.cancel()
+        // Cleanup OkHttpClient connections
+        okHttpClient.dispatcher.cancelAll()
+        okHttpClient.connectionPool.evictAll()
         // Best-effort cleanup of any active torrents on RD
         val token = getRdToken()
         if (token.isNotBlank() && activeTorrentIds.isNotEmpty()) {
             val ids = activeTorrentIds.toList()
             activeTorrentIds.clear()
-            // Fire-and-forget cleanup using a non-viewModelScope dispatcher
-            kotlinx.coroutines.GlobalScope.launch(Dispatchers.IO) {
-                ids.forEach { id ->
-                    try {
-                        val request = okhttp3.Request.Builder()
-                            .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$id")
-                            .header("Authorization", "Bearer $token")
-                            .delete()
-                            .build()
-                        okHttpClient.newCall(request).execute().close()
-                    } catch (_: Exception) {}
+            // Fire-and-forget cleanup with timeout to prevent leak
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+                withTimeoutOrNull(5000) {
+                    ids.forEach { id ->
+                        try {
+                            val request = okhttp3.Request.Builder()
+                                .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$id")
+                                .header("Authorization", "Bearer $token")
+                                .delete()
+                                .build()
+                            okHttpClient.newCall(request).execute().close()
+                        } catch (_: Exception) {}
+                    }
                 }
             }
         }
@@ -143,7 +148,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         }
     }
 
-    private fun playFuzerDirect(torrentUrl: String) {
+    private fun playFuzerDirect(torrentUrl: String, retryCount: Int = 0) {
         viewModelScope.launch(Dispatchers.IO) {
             val token = getRdToken()
             if (token.isEmpty()) {
@@ -166,14 +171,18 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             ).fold(
                 onSuccess = { url -> _state.update { it.copy(readyToPlayUrl = url, scrapingStatus = ScrapingStatus.Idle) } },
                 onFailure = { e ->
-                    if (e.message == "RD_CONFLICT") {
+                    if (e.message == "RD_CONFLICT" && retryCount < 3) {
                         viewModelScope.launch(Dispatchers.IO) {
                             cleanupActiveTorrents(token)
                             delay(1000)
-                            playFuzerDirect(torrentUrl) // Recursive retry after cleanup
+                            playFuzerDirect(torrentUrl, retryCount + 1)
                         }
                     } else {
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת RD: " else "RD Error: ") + e.message)) }
+                        val errorMsg = if (e.message == "RD_CONFLICT")
+                            (if (isHebrew) "שגיאת RD: קונפליקט מתמשך — נסה שוב מאוחר יותר" else "RD Error: Persistent conflict — try again later")
+                        else
+                            (if (isHebrew) "שגיאת RD: " else "RD Error: ") + e.message
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(errorMsg)) }
                     }
                 }
             )
@@ -491,7 +500,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     } else {
                         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                     }
-                } catch (e: Exception) {
+                } catch (_: Exception) {
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                 }
             }
@@ -519,7 +528,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         val msg = e.message ?: ""
                         if (msg == "RD_CONFLICT" || msg.contains("2000") || msg.contains("2004")) {
                             cleanupActiveTorrents(token)
-                            kotlinx.coroutines.delay(1200)
+                            delay(1200)
                             val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
                                 activeTorrentIds.add(torrentId)
                             }

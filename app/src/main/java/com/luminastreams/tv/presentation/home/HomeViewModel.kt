@@ -1,3 +1,4 @@
+@file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package com.luminastreams.tv.presentation.home
 
 import androidx.lifecycle.ViewModel
@@ -44,8 +45,7 @@ class HomeViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         activeJob?.cancel()
-        http.dispatcher.executorService.shutdown()
-        http.connectionPool.evictAll()
+        http.dispatcher.cancelAll()
     }
 
     private val maxConnections = when (DeviceProfile.tier) {
@@ -205,8 +205,9 @@ class HomeViewModel : ViewModel() {
 
     fun loadMore(id: String) {
         if (id == "ribbon" || id.startsWith("fuzer") || loadingSet.contains(id)) return
-        loadingSet.add(id)
         val nextPage = (pageMap[id] ?: 1) + 1
+        if (nextPage > 20) return  // TMDB practical limit
+        loadingSet.add(id)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
@@ -248,40 +249,39 @@ class HomeViewModel : ViewModel() {
 
                 if (url.isNotEmpty()) {
                     val newItems = fetch(url, mt)
-                    if (newItems.isNotEmpty()) {
-                        pageMap[id] = nextPage
-                        _state.update { s ->
-                            when (id) {
-                                "movieTrending"  -> s.copy(movieTrending  = s.movieTrending  + newItems)
-                                "moviePremieres" -> s.copy(moviePremieres = s.moviePremieres + newItems)
-                                "movieAnimation" -> s.copy(movieAnimation = s.movieAnimation + newItems)
-                                "movieAction"    -> s.copy(movieAction    = s.movieAction    + newItems)
-                                "movieDrama"     -> s.copy(movieDrama     = s.movieDrama     + newItems)
-                                "movieScifi"     -> s.copy(movieScifi     = s.movieScifi     + newItems)
-                                "movieTopRated"  -> s.copy(movieTopRated  = s.movieTopRated  + newItems)
-                                "movieNetflix"   -> s.copy(movieNetflix   = s.movieNetflix   + newItems)
-                                "movieAppleTV"   -> s.copy(movieAppleTV   = s.movieAppleTV   + newItems)
-                                "movieDisney"    -> s.copy(movieDisney    = s.movieDisney    + newItems)
-                                "movieHBO"       -> s.copy(movieHBO       = s.movieHBO       + newItems)
-                                "movieAmazon"    -> s.copy(movieAmazon    = s.movieAmazon    + newItems)
-                                "movieParamount" -> s.copy(movieParamount = s.movieParamount + newItems)
-                                "movieHulu"      -> s.copy(movieHulu      = s.movieHulu      + newItems)
-                                "tvTrending"     -> s.copy(tvTrending     = s.tvTrending     + newItems)
-                                "tvPremieres"    -> s.copy(tvPremieres    = s.tvPremieres    + newItems)
-                                "tvAnimation"    -> s.copy(tvAnimation    = s.tvAnimation    + newItems)
-                                "tvDrama"        -> s.copy(tvDrama        = s.tvDrama        + newItems)
-                                "tvCrime"        -> s.copy(tvCrime        = s.tvCrime        + newItems)
-                                "tvScifi"        -> s.copy(tvScifi        = s.tvScifi        + newItems)
-                                "tvTopRated"     -> s.copy(tvTopRated     = s.tvTopRated     + newItems)
-                                "tvNetflix"      -> s.copy(tvNetflix      = s.tvNetflix      + newItems)
-                                "tvAppleTV"      -> s.copy(tvAppleTV      = s.tvAppleTV      + newItems)
-                                "tvDisney"       -> s.copy(tvDisney       = s.tvDisney       + newItems)
-                                "tvHBO"          -> s.copy(tvHBO          = s.tvHBO          + newItems)
-                                "tvAmazon"       -> s.copy(tvAmazon       = s.tvAmazon       + newItems)
-                                "tvParamount"    -> s.copy(tvParamount    = s.tvParamount    + newItems)
-                                "tvHulu"         -> s.copy(tvHulu         = s.tvHulu         + newItems)
-                                else -> s
-                            }
+                    if (newItems.isEmpty()) { loadingSet.remove(id); return@launch }  // Stop pagination on empty
+                    pageMap[id] = nextPage
+                    _state.update { s ->
+                        when (id) {
+                            "movieTrending"  -> s.copy(movieTrending  = s.movieTrending  + newItems)
+                            "moviePremieres" -> s.copy(moviePremieres = s.moviePremieres + newItems)
+                            "movieAnimation" -> s.copy(movieAnimation = s.movieAnimation + newItems)
+                            "movieAction"    -> s.copy(movieAction    = s.movieAction    + newItems)
+                            "movieDrama"     -> s.copy(movieDrama     = s.movieDrama     + newItems)
+                            "movieScifi"     -> s.copy(movieScifi     = s.movieScifi     + newItems)
+                            "movieTopRated"  -> s.copy(movieTopRated  = s.movieTopRated  + newItems)
+                            "movieNetflix"   -> s.copy(movieNetflix   = s.movieNetflix   + newItems)
+                            "movieAppleTV"   -> s.copy(movieAppleTV   = s.movieAppleTV   + newItems)
+                            "movieDisney"    -> s.copy(movieDisney    = s.movieDisney    + newItems)
+                            "movieHBO"       -> s.copy(movieHBO       = s.movieHBO       + newItems)
+                            "movieAmazon"    -> s.copy(movieAmazon    = s.movieAmazon    + newItems)
+                            "movieParamount" -> s.copy(movieParamount = s.movieParamount + newItems)
+                            "movieHulu"      -> s.copy(movieHulu      = s.movieHulu      + newItems)
+                            "tvTrending"     -> s.copy(tvTrending     = s.tvTrending     + newItems)
+                            "tvPremieres"    -> s.copy(tvPremieres    = s.tvPremieres    + newItems)
+                            "tvAnimation"    -> s.copy(tvAnimation    = s.tvAnimation    + newItems)
+                            "tvDrama"        -> s.copy(tvDrama        = s.tvDrama        + newItems)
+                            "tvCrime"        -> s.copy(tvCrime        = s.tvCrime        + newItems)
+                            "tvScifi"        -> s.copy(tvScifi        = s.tvScifi        + newItems)
+                            "tvTopRated"     -> s.copy(tvTopRated     = s.tvTopRated     + newItems)
+                            "tvNetflix"      -> s.copy(tvNetflix      = s.tvNetflix      + newItems)
+                            "tvAppleTV"      -> s.copy(tvAppleTV      = s.tvAppleTV      + newItems)
+                            "tvDisney"       -> s.copy(tvDisney       = s.tvDisney       + newItems)
+                            "tvHBO"          -> s.copy(tvHBO          = s.tvHBO          + newItems)
+                            "tvAmazon"       -> s.copy(tvAmazon       = s.tvAmazon       + newItems)
+                            "tvParamount"    -> s.copy(tvParamount    = s.tvParamount    + newItems)
+                            "tvHulu"         -> s.copy(tvHulu         = s.tvHulu         + newItems)
+                            else -> s
                         }
                     }
                 }
@@ -420,7 +420,7 @@ class HomeViewModel : ViewModel() {
             _state.update { currentState ->
                 var nextState = currentState
                 results.forEach { (updater, data) ->
-                    nextState = updater(nextState, data)
+                    nextState = updater(nextState, data.distinctBy { it.id })
                 }
                 nextState
             }
@@ -430,7 +430,7 @@ class HomeViewModel : ViewModel() {
     }
 
     // fetch() is always called from an IO-dispatched coroutine — no need for inner withContext
-    private suspend fun fetch(url: String, mediaType: String): List<Movie> {
+    private fun fetch(url: String, mediaType: String): List<Movie> {
         return try {
             val bodyStr = http.newCall(Request.Builder().url(url).build()).execute().use { it.body.string() }
             val arr = JSONObject(bodyStr).optJSONArray("results") ?: return emptyList()

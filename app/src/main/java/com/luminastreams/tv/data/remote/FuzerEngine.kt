@@ -100,7 +100,14 @@ object FuzerEngine {
         ).execute()
         return resp.use { response ->
             val bytes = response.body.bytes()
-            if (bytes.isEmpty()) null else decodeBody(bytes)
+            if (bytes.isEmpty()) return@use null
+            val html = decodeBody(bytes)
+            // Detect expired session: if the response is a login page, reset login flag
+            if (html.contains("do=login", ignoreCase = true) && html.contains("vb_login_username", ignoreCase = true)) {
+                isLoggedIn = false
+                return@use null
+            }
+            html
         }
     }
 

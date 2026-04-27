@@ -25,6 +25,8 @@ class SubtitleScraper {
         episode  : Int?    = null,
         langCode : String  = "heb"
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
+        var searchConn: HttpURLConnection? = null
+        var dlConn: HttpURLConnection? = null
         try {
             val sdLang = when (langCode.lowercase().take(3)) {
                 "he", "heb", "iw" -> "HE"
@@ -43,7 +45,7 @@ class SubtitleScraper {
                 searchUrl += "&season_number=$season&episode_number=$episode"
             }
 
-            val searchConn = openGet(searchUrl)
+            searchConn = openGet(searchUrl)
             if (searchConn.responseCode != 200) {
                 return@withContext Result.failure(Exception("subdl search HTTP ${searchConn.responseCode}"))
             }
@@ -70,7 +72,7 @@ class SubtitleScraper {
             }
 
             val dlUrl  = "$DL_BASE$downloadPath"
-            val dlConn = openGet(dlUrl)
+            dlConn = openGet(dlUrl)
             if (dlConn.responseCode != 200) {
                 return@withContext Result.failure(Exception("subdl download HTTP ${dlConn.responseCode}"))
             }
@@ -89,6 +91,9 @@ class SubtitleScraper {
             Result.failure(Exception("קובץ כתוביות תקין לא נמצא בארכיון"))
         } catch (e: Exception) {
             Result.failure(e)
+        } finally {
+            try { searchConn?.disconnect() } catch (_: Exception) {}
+            try { dlConn?.disconnect() } catch (_: Exception) {}
         }
     }
 

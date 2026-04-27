@@ -68,18 +68,17 @@ data class SearchState(
     private fun applyFilters(list: List<SearchResult>, skipServerFiltered: Boolean = false): List<SearchResult> {
         var r = list
 
-        if (filters.typeFilter != MediaTypeFilter.ANY) {
-            r = when (filters.typeFilter) {
-                MediaTypeFilter.MOVIE -> r.filter { it.type == MediaType.MOVIE }
-                MediaTypeFilter.TV_SHOW -> r.filter { it.type == MediaType.TV_SHOW }
-                MediaTypeFilter.ANIME -> r.filter { it.genre.contains("Animation", true) }
-                else -> r
-            }
+        r = when (filters.typeFilter) {
+            MediaTypeFilter.MOVIE -> r.filter { it.type == MediaType.MOVIE }
+            MediaTypeFilter.TV_SHOW -> r.filter { it.type == MediaType.TV_SHOW }
+            MediaTypeFilter.ANIME -> r.filter { it.genre.contains("Animation", true) }
+            MediaTypeFilter.ANY -> r
         }
 
         // Only apply genre filter client-side for text-search results (not discovery, which is already server-filtered)
-        if (filters.genre != null && !skipServerFiltered)
-            r = r.filter { it.genre.contains(filters.genre!!, ignoreCase = true) }
+        val genreFilter = filters.genre
+        if (genreFilter != null && !skipServerFiltered)
+            r = r.filter { it.genre.contains(genreFilter, ignoreCase = true) }
 
         if (filters.minRating > 0f && !skipServerFiltered)
             r = r.filter { it.rating >= filters.minRating }
@@ -389,8 +388,12 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     SortBy.POPULARITY -> "popularity.desc"
                 }
 
-                // Unlimited loading: 15 pages for genre (300+ movies/series), 5 for other filters
-                val maxPages = if (filters.genre != null) 15 else 5
+                // Unlimited loading: batch pages for genre discovery, scaled by query type
+                val maxPages = when {
+                    filters.genre != null && type == "both" -> 8   // 8×2 = 16 calls, ~160 results
+                    filters.genre != null -> 12                     // 12 calls, ~240 results
+                    else -> 5
+                }
 
                 // Parallel batch loading for speed
                 val allResults = mutableListOf<SearchResult>()

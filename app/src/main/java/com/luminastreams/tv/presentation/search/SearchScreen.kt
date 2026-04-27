@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.*
@@ -22,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -31,7 +33,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -62,7 +63,7 @@ private fun tr(en: String, he: String): String =
 private data class CategoryDef(val en: String, val he: String, val genre: String? = null)
 
 private val CATEGORIES = listOf(
-    CategoryDef("Top Box Office", "הנצפים ביותר"),
+    CategoryDef("Top Box Office", "הנצפים ביותר", "_popular_"),
     CategoryDef("Action", "אקשן", "Action"),
     CategoryDef("Sci-Fi", "מדע בדיוני", "Sci-Fi"),
     CategoryDef("Comedy", "קומדיה", "Comedy"),
@@ -138,10 +139,14 @@ fun SearchScreen(
                         Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Back/Reset button — always visible when genre is active
-                        if (state.filters.genre != null) {
+                        // Back/Reset button — visible when filters active or search query present
+                        if (state.filters.isActive || state.query.isNotBlank()) {
                             Surface(
-                                onClick = { onIntent(SearchIntent.ClearFilters) },
+                                onClick = {
+                                    if (state.query.isNotBlank()) onIntent(SearchIntent.UpdateQuery(""))
+                                    if (state.filters.isActive) onIntent(SearchIntent.ClearFilters)
+                                    searchOpen = false
+                                },
                                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                                 colors = ClickableSurfaceDefaults.colors(
                                     containerColor = RED.copy(0.25f),
@@ -156,7 +161,7 @@ fun SearchScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Icon(Icons.Default.ArrowBack, null, Modifier.size(18.dp), tint = Color.White)
+                                    Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(18.dp), tint = Color.White)
                                     Text(tr("Categories", "קטגוריות"), fontSize = 14.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                             }
@@ -327,8 +332,8 @@ fun SearchScreen(
                         state.isLoading || state.isFuzerLoading -> ShimmerGrid()
                         isFuzer && state.fuzerError != null -> FuzerError(state.fuzerError)
                         results.isEmpty() -> EmptyStateMessage(tr("No results found", "לא נמצאו תוצאות"))
-                        state.filters.genre != null && state.query.isBlank() -> {
-                            // Genre browsing: year-grouped rows
+                        state.filters.isActive && state.query.isBlank() && !isFuzer -> {
+                            // Category browsing: year-grouped rows
                             YearGroupedResults(results, firstResultFR, firstTabFR, { focusedBackdrop = it.backdropUrl }, onResultClick)
                         }
                         else -> SearchResultsGrid(results, isFuzer, firstResultFR, { focusedBackdrop = it.backdropUrl }, onResultClick)
@@ -342,7 +347,10 @@ fun SearchScreen(
                             SearchSource.SERIES -> MediaTypeFilter.TV_SHOW
                             else -> MediaTypeFilter.ANY
                         }
-                        val filters = SearchFilters(genre = cat.genre, typeFilter = typeFilter)
+                        val genre = if (cat.genre == "_popular_") null else cat.genre
+                        val sort = if (cat.genre == "_popular_") SortBy.POPULARITY else SortBy.POPULARITY
+                        val filters = SearchFilters(genre = genre, typeFilter = typeFilter, sortBy = sort,
+                            ratingTier = if (cat.genre == "_popular_") RatingTier.GOOD else RatingTier.ANY)
                         onIntent(SearchIntent.UpdateFilters(filters))
                     }
                 }
@@ -392,8 +400,8 @@ private fun CategoryGrid(
 
         // "Top Box Office" gets the first result
         if (withBackdrop.isNotEmpty()) {
-            map[null] = withBackdrop.first().backdropUrl!!
-            usedUrls.add(withBackdrop.first().backdropUrl!!)
+            map[null] = withBackdrop.first().backdropUrl ?: ""
+            usedUrls.add(withBackdrop.first().backdropUrl ?: "")
         }
 
         // Match each genre to a UNIQUE backdrop — skip already-used images
@@ -405,8 +413,8 @@ private fun CategoryGrid(
                     it.genre.contains(cat.genre.take(4), true) && it.backdropUrl !in usedUrls
                 }
                 if (match != null) {
-                    map[cat.genre] = match.backdropUrl!!
-                    usedUrls.add(match.backdropUrl!!)
+                    map[cat.genre] = match.backdropUrl ?: ""
+                    usedUrls.add(match.backdropUrl ?: "")
                 }
             }
         }
@@ -416,8 +424,8 @@ private fun CategoryGrid(
             if (!map.containsKey(cat.genre)) {
                 val unused = withBackdrop.firstOrNull { it.backdropUrl !in usedUrls }
                 if (unused != null) {
-                    map[cat.genre] = unused.backdropUrl!!
-                    usedUrls.add(unused.backdropUrl!!)
+                    map[cat.genre] = unused.backdropUrl ?: ""
+                    usedUrls.add(unused.backdropUrl ?: "")
                 } else if (withBackdrop.isNotEmpty()) {
                     // Absolute last resort: use poster URL instead of backdrop for variety
                     val posterFallback = discoveryResults.firstOrNull {
@@ -462,20 +470,26 @@ private fun PremiumCategoryCard(
 ) {
     val ctx = LocalContext.current
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    var focused by remember { mutableStateOf(false) }
+    val interactionSource = remember { MutableInteractionSource() }
+    val focused by interactionSource.collectIsFocusedAsState()
 
     val imgAlpha by animateFloatAsState(if (focused) 1f else 0.7f, tween(300), label = "ia")
 
     Surface(
         onClick = onClick,
+        interactionSource = interactionSource,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF0A0A0F), focusedContainerColor = Color(0xFF0A0A0F)),
-        border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None),
+        border = ClickableSurfaceDefaults.border(
+            border = Border.None,
+            focusedBorder = Border.None,
+            pressedBorder = Border.None
+        ),
         glow = ClickableSurfaceDefaults.glow(Glow.None, Glow(Color.White.copy(0.20f), 12.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
         modifier = modifier
             .fillMaxWidth().aspectRatio(16f / 9f)
-            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(16.dp))
     ) {
         Box(Modifier.fillMaxSize()) {
             // Full image background
