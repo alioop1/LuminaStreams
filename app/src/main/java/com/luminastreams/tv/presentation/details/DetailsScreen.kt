@@ -261,8 +261,24 @@ fun DetailsScreen(
                                         down = selectedSeasonFR
                                     }
                                 },
-                            onPlayClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
-                            onSourcesClick = { showSources = true; onEvent(DetailsEvent.InitiateScraping(media.imdbId)) },
+                            onPlayClick = {
+                                showSources = true
+                                // ⚡ FIX: When resuming a series, pass the last watched season+episode
+                                // so the scraping engine finds the correct episode, not a generic result.
+                                if (media.isSeries && isPartiallyWatched && state.lastWatchedSeason != null && state.lastWatchedEpisode != null) {
+                                    onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.lastWatchedSeason, state.lastWatchedEpisode))
+                                } else {
+                                    onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                }
+                            },
+                            onSourcesClick = {
+                                showSources = true
+                                if (media.isSeries && isPartiallyWatched && state.lastWatchedSeason != null && state.lastWatchedEpisode != null) {
+                                    onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.lastWatchedSeason, state.lastWatchedEpisode))
+                                } else {
+                                    onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                }
+                            },
                             onTrailerClick = { launchNativeTrailer(context, media.trailerUrl, media.title) },
                             isFavorite = media.isFavorite,
                             onFavClick = { onEvent(DetailsEvent.ToggleFavorite) },

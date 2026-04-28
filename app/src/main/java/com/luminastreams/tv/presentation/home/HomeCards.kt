@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
@@ -271,39 +272,94 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
 
 @Composable
 fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {
+    val ctx = LocalContext.current
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
     val animatedScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.05f else 1.0f,
-        animationSpec = tween(150),
+        targetValue = if (isFocused) 1.08f else 1.0f,
+        animationSpec = tween(200),
         label = "scale"
     )
+
+    // Brand-specific gradient backgrounds — dark tones that CONTRAST with logo colors
+    val gradientBrush = when (brand) {
+        StudioBrand.NETFLIX    -> Brush.linearGradient(listOf(Color(0xFF141414), Color(0xFF1C1C1C)))  // Dark charcoal — red logo pops
+        StudioBrand.DISNEY     -> Brush.linearGradient(listOf(Color(0xFF0A1628), Color(0xFF142240)))  // Deep navy — white/blue Disney arc pops
+        StudioBrand.APPLE_TV   -> Brush.linearGradient(listOf(Color(0xFF1A1A2E), Color(0xFF2A2A40)))  // Dark slate — black Apple logo visible
+        StudioBrand.HBO        -> Brush.linearGradient(listOf(Color(0xFF1A0A2E), Color(0xFF2D1B4E)))  // Deep purple — HBO brand identity
+        StudioBrand.AMAZON     -> Brush.linearGradient(listOf(Color(0xFF0A1E2C), Color(0xFF0F2B3D)))  // Dark navy-teal — cyan logo pops
+        StudioBrand.PARAMOUNT  -> Brush.linearGradient(listOf(Color(0xFF0A0F1E), Color(0xFF141E35)))  // Deep dark blue — blue logo pops
+        StudioBrand.HULU       -> Brush.linearGradient(listOf(Color(0xFF0A1A14), Color(0xFF0F2A1E)))  // Very dark green — green logo pops
+    }
+
+    // TMDB Network logo paths (transparent PNGs — pulled from /3/network/{id} API)
+    // Using 'original' quality for maximum sharpness on TV screens
+    val logoUrl = "https://image.tmdb.org/t/p/original" + when (brand) {
+        StudioBrand.NETFLIX    -> "/wwemzKWzjKYJFfCeiB57q3r4Bcm.png"
+        StudioBrand.DISNEY     -> "/1edZOYAfoyZyZ3rklNSiUpXX30Q.png"
+        StudioBrand.APPLE_TV   -> "/bngHRFi794mnMq34gfVcm9nDxN1.png"
+        StudioBrand.HBO        -> "/tuomPhY2UtuPTqqFnKMVHvSb724.png"
+        StudioBrand.AMAZON     -> "/w7HfLNm9CWwRmAMU58udl2L7We7.png"
+        StudioBrand.PARAMOUNT  -> "/fi83B1oztoS47xxcemFdPMhIzK.png"
+        StudioBrand.HULU       -> "/pqUTCleNUiTLAVlelGxUgWn1ELh.png"
+    }
+
+    val logoRequest = remember(logoUrl) {
+        ImageRequest.Builder(ctx)
+            .data(logoUrl)
+            .diskCacheKey(logoUrl)
+            .size(400)  // Downsample to 400px — sharp enough for 180dp card, saves memory
+            .memoryCachePolicy(CachePolicy.ENABLED)
+            .diskCachePolicy(CachePolicy.ENABLED)
+            .allowHardware(false) // Disabled for PNG transparency on all GPU tiers
+            .crossfade(false)
+            .build()
+    }
 
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) WHITE.copy(0.15f) else CARD_BG,
-            focusedContainerColor = WHITE
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.Transparent
         ),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
         border = ClickableSurfaceDefaults.border(
-            border = Border(border = BorderStroke(1.5.dp, if (isSelected) WHITE else Color.Transparent), shape = RoundedCornerShape(12.dp)),
-            focusedBorder = Border(border = BorderStroke(3.dp, WHITE), shape = RoundedCornerShape(12.dp))
+            border = Border(
+                border = BorderStroke(if (isSelected) 2.dp else 0.dp, if (isSelected) WHITE.copy(0.6f) else Color.Transparent),
+                shape = RoundedCornerShape(16.dp)
+            ),
+            focusedBorder = Border(
+                border = BorderStroke(3.dp, WHITE),
+                shape = RoundedCornerShape(16.dp)
+            )
         ),
+        glow = ClickableSurfaceDefaults.glow(Glow.None, Glow(Color.White.copy(0.15f), 12.dp)),
         modifier = modifier
-            .width(130.dp)
-            .height(65.dp)
+            .width(180.dp)
+            .height(90.dp)
             .graphicsLayer {
                 scaleX = animatedScale
                 scaleY = animatedScale
             }
             .onFocusChanged { if (it.isFocused) onFocused() }
     ) {
-        Box(Modifier.fillMaxSize(), Alignment.Center) {
-            StudioBadge(brand = brand, isActive = true, isLarge = true)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(gradientBrush, RoundedCornerShape(16.dp)),
+            Alignment.Center
+        ) {
+            AsyncImage(
+                model = logoRequest,
+                contentDescription = brand.name,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxWidth(0.72f)
+                    .fillMaxHeight(0.55f)
+            )
         }
     }
 }

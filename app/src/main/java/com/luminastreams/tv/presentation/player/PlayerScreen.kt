@@ -448,6 +448,7 @@ fun PlayerScreen(
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
     var hasStartedPlaying by remember { mutableStateOf(false) }
+    var decodeRetryCount  by remember { mutableIntStateOf(0) }
 
     val playerPrefs = remember { context.getSharedPreferences("player_context", Context.MODE_PRIVATE) }
     val seasonPref  = remember { playerPrefs.getInt("current_season", -1) }
@@ -514,9 +515,11 @@ fun PlayerScreen(
             prepared = true
 
             if (savedPosition > 30_000L) {
-                // Don't play yet — wait for resume dialog
+                // Don't play yet — wait for resume dialog.
+                // ⚡ FIX: Pass savedPosition to prepareStream so ExoPlayer
+                // starts buffering from the correct position, not from 0.
                 exo.player.playWhenReady = false
-                exo.prepareStream(videoUrl)
+                exo.prepareStream(videoUrl, startPositionMs = savedPosition)
                 exo.pause()
             } else {
                 // No saved position — play immediately from start
@@ -808,7 +811,7 @@ fun PlayerScreen(
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.player.playWhenReady = true; exo.play() },
+                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.seekTo(0); exo.player.playWhenReady = true; exo.play() },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -821,7 +824,28 @@ fun PlayerScreen(
 
         if (error != null) {
             val errorFR = remember { FocusRequester() }
-            LaunchedEffect(error) { delay(100); runCatching { errorFR.requestFocus() } }
+            val retryFR = remember { FocusRequester() }
+            val isDecodeError = error?.let {
+                it.contains("Decoder", ignoreCase = true) || it.contains("Decoding", ignoreCase = true)
+            } ?: false
+            val canRetry = isDecodeError && decodeRetryCount < 2
+
+            // ⚡ FIX: Auto-retry decode errors once before showing error to user
+            LaunchedEffect(error, decodeRetryCount) {
+                if (isDecodeError && decodeRetryCount == 0) {
+                    // First decode error — auto-retry silently
+                    decodeRetryCount++
+                    val currentPos = exo.player.currentPosition.coerceAtLeast(0L)
+                    exo.clearError()
+                    delay(300)
+                    exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                    return@LaunchedEffect
+                }
+                delay(100); runCatching { if (canRetry) retryFR.requestFocus() else errorFR.requestFocus() }
+            }
+
+            // Only show error UI if it's not a first-time auto-retry
+            if (!(isDecodeError && decodeRetryCount <= 1 && exo.playerError.value == null)) {
             Box(Modifier.fillMaxSize().background(Color.Black.copy(0.88f)).zIndex(200f), Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(20.dp), modifier = Modifier.padding(48.dp)) {
                     Box(Modifier.size(80.dp).background(RED.copy(0.15f), CircleShape), Alignment.Center) {
@@ -830,12 +854,34 @@ fun PlayerScreen(
                     Text(tr("Playback Error", "שגיאת נגן"), color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
                     Text(error!!, color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
                     Spacer(Modifier.height(8.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                        if (canRetry) {
+                            Surface(
+                                onClick = {
+                                    decodeRetryCount++
+                                    val currentPos = exo.player.currentPosition.coerceAtLeast(0L)
+                                    exo.clearError()
+                                    exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                                },
+                                shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                                colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2563EB), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
+                                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+                                modifier = Modifier.height(52.dp).focusRequester(retryFR)
+                            ) {
+                                Box(Modifier.padding(horizontal = 32.dp).fillMaxHeight(), Alignment.Center) {
+                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Icon(Icons.Default.Refresh, null, Modifier.size(18.dp))
+                                        Text(tr("Retry", "נסה שוב"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center)
+                                    }
+                                }
+                            }
+                        }
                     Surface(
                         onClick  = { exo.clearError(); onNavigateBack() },
                         shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                         colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                         scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-                        modifier = Modifier.height(52.dp).focusRequester(errorFR)
+                        modifier = Modifier.height(52.dp).then(if (!canRetry) Modifier.focusRequester(errorFR) else Modifier)
                     ) {
                         Box(Modifier.padding(horizontal = 32.dp).fillMaxHeight(), Alignment.Center) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -844,7 +890,9 @@ fun PlayerScreen(
                             }
                         }
                     }
+                    }
                 }
+            }
             }
         }
 

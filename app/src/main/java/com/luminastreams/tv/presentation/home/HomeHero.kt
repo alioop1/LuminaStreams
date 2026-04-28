@@ -29,15 +29,22 @@ import com.luminastreams.tv.core.DeviceProfile
 @Composable
 fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
-    val heroUrl = hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl
+    // Full-quality backdrop from TMDB — decoded at device screen resolution
+    val heroUrl = (hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl)
+        ?.replace("/w780/", "/original/")
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+
+    // Decode at actual screen resolution — sharp on 1080p AND 4K TVs
+    val dm = ctx.resources.displayMetrics
+    val screenW = dm.widthPixels
+    val screenH = dm.heightPixels
 
     Box(Modifier.fillMaxSize().background(BG)) {
         if (!heroUrl.isNullOrBlank()) {
             AsyncImage(
                 model = ImageRequest.Builder(ctx)
                     .data(heroUrl)
-                    .size(1920, 1080) // Cap at 1080p — identical visually behind vignette, halves GPU/RAM cost
+                    .size(screenW, screenH) // Match device panel — no upscale, no waste
                     .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
                     .build(),
                 contentDescription = null,
@@ -47,16 +54,16 @@ fun BackdropLayer(hero: Movie?) {
             )
         }
 
-        // Deep vignette specifically tailored for PS5 UI
+        // Deep cinematic vignette — strengthened for premium readability
         Box(Modifier.fillMaxSize()
-            .background(Brush.verticalGradient(0.0f to Color(0x77000000), 0.3f to Color.Transparent)) // Top Nav Shadow
+            .background(Brush.verticalGradient(0.0f to Color(0x99000000), 0.3f to Color.Transparent)) // Top Nav Shadow (60%)
             .background(
                 Brush.horizontalGradient(
-                    *if (isRtl) arrayOf(0.0f to Color(0xAA000000), 0.50f to Color.Transparent)
-                    else arrayOf(0.50f to Color.Transparent, 1.0f to Color(0xAA000000))
+                    *if (isRtl) arrayOf(0.0f to Color(0xBB000000), 0.55f to Color.Transparent)
+                    else arrayOf(0.45f to Color.Transparent, 1.0f to Color(0xBB000000))
                 )
-            ) // Side Hero Shadow
-            .background(Brush.verticalGradient(0.4f to Color.Transparent, 1.0f to BG)) // Deep Bottom Shadow for the Row Cycler
+            ) // Side Hero Shadow (73%)
+            .background(Brush.verticalGradient(0.35f to Color.Transparent, 0.85f to BG, 1.0f to BG)) // Deep Bottom Shadow
         )
     }
 }

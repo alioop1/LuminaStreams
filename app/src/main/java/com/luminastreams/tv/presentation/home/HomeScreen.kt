@@ -18,6 +18,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.LayoutDirection
@@ -84,6 +85,33 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) focusState.heroMovie = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }?.firstOrNull()
     }
 
+    // 🚀 Prefetch hero backdrops — download /original/ for first movie of each row in background
+    // After first prefetch, all hero transitions are instant from disk cache (0ms)
+    val prefetchCtx = LocalContext.current
+    LaunchedEffect(rows.size) {
+        if (rows.isEmpty()) return@LaunchedEffect
+        val dm = prefetchCtx.resources.displayMetrics
+        val sw = dm.widthPixels; val sh = dm.heightPixels
+        val seen = mutableSetOf<String>()
+        rows.asSequence()
+            .mapNotNull { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }
+            .mapNotNull { it.firstOrNull() }
+            .take(10) // Cap at 10 prefetches to avoid network flood
+            .forEach { movie ->
+                val raw = (movie.backdropUrl.takeIf { it.isNotBlank() } ?: movie.posterUrl)
+                    .replace("/w780/", "/original/")
+                if (raw.isNotBlank() && seen.add(raw)) {
+                    val req = coil.request.ImageRequest.Builder(prefetchCtx)
+                        .data(raw)
+                        .size(sw, sh)
+                        .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                        .build()
+                    coil.Coil.imageLoader(prefetchCtx).enqueue(req)
+                    delay(150) // Stagger to avoid network congestion
+                }
+            }
+    }
     BackHandler(enabled = focusState.isNavFocused) { focusState.isNavFocused = false }
 
     Box(

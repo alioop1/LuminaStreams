@@ -455,8 +455,8 @@ class HomeViewModel : ViewModel() {
                 out += Movie(
                     id              = "${mt}_${j.optInt("id")}",
                     title           = title,
-                    posterUrl       = "$imgBase/original$posterPath",
-                    backdropUrl     = "$imgBase/original$backdropRaw",
+                    posterUrl       = "$imgBase/w500$posterPath",
+                    backdropUrl     = "$imgBase/w780$backdropRaw",
                     overview        = j.optString("overview"),
                     year            = date.take(4).toIntOrNull() ?: 0,
                     genre           = genreLabel(j.optJSONArray("genre_ids")?.optInt(0, 0) ?: 0, mt),
