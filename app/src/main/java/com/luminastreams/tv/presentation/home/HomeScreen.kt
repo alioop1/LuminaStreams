@@ -28,6 +28,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.navigation.NavController
 import androidx.tv.material3.*
 import com.luminastreams.tv.core.DeviceProfile
+import com.luminastreams.tv.core.tr
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -37,6 +38,7 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val heroUpdateDelayMs = when (DeviceProfile.tier) { DeviceProfile.Tier.LOW -> 520L; DeviceProfile.Tier.MID -> 420L; DeviceProfile.Tier.HIGH -> 260L }
+    val appContext = LocalContext.current.applicationContext
 
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     LaunchedEffect(isRtl) { viewModel.setLanguage(isRtl) }
@@ -46,6 +48,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                // 🔥 Refresh Continue Watching on every resume (data may have changed)
+                viewModel.refreshContinueWatching(appContext)
                 // Only reclaim if we're not already on the navbar
                 if (!focusState.isNavFocused) {
                     focusState.focusTrigger++
@@ -54,6 +58,14 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // 🔥 FIX: Also refresh Continue Watching AFTER initial data load completes
+    // ON_RESUME fires before loadAll() finishes, so allContent is empty on first scan
+    LaunchedEffect(state.isLoading) {
+        if (!state.isLoading) {
+            viewModel.refreshContinueWatching(appContext)
+        }
     }
 
     val rows by viewModel.uiRows.collectAsStateWithLifecycle()
@@ -83,6 +95,12 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
     LaunchedEffect(state.isLoading, rows.size) {
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) focusState.heroMovie = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }?.firstOrNull()
+    }
+
+    // 🎬 Hero Enrichment — fetch logo, cast, runtime when hero changes
+    LaunchedEffect(focusState.heroMovie?.id) {
+        val hero = focusState.heroMovie ?: return@LaunchedEffect
+        viewModel.enrichHeroData(hero)
     }
 
     // 🚀 Prefetch hero backdrops — download /original/ for first movie of each row in background
@@ -174,7 +192,15 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                     .padding(start = 52.dp, end = 52.dp, bottom = 24.dp),
                 contentAlignment = Alignment.BottomStart
             ) {
-                HeroOverlay(focusState.heroMovie)
+                HeroOverlay(
+                    hero = focusState.heroMovie,
+                    isEnriching = state.heroEnrichedId != focusState.heroMovie?.id,
+                    logoUrl = state.heroLogoUrl.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
+                    runtime = state.heroRuntime.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
+                    cast = state.heroCast.takeIf { state.heroEnrichedId == focusState.heroMovie?.id } ?: emptyList(),
+                    localizedOverview = state.heroOverview.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
+                    localizedGenre = state.heroGenre.takeIf { state.heroEnrichedId == focusState.heroMovie?.id }
+                )
             }
 
             // 3. Row Cycler (Strict Height limit at the bottom)

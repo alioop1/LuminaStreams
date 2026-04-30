@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -26,12 +27,12 @@ import kotlinx.coroutines.delay
 @Composable
 fun SmartProgressBar(modifier: Modifier = Modifier) {
     val barGradient = remember {
-
         Brush.horizontalGradient(
             colors = listOf(
-                Color(0xFF000000),
-                Color(0xFF666666),
-                Color(0xFFFF3300)
+                Color(0x00E2E2E2), // Transparent Pearl Gray
+                Color(0xFFB0B5B9), // Solid Pearl Gray
+                Color(0xFFFF3B30), // Fire Red
+                Color(0xFFFF8A66)  // Bright Pearl Fire Red edge
             )
         )
     }
@@ -45,36 +46,51 @@ fun SmartProgressBar(modifier: Modifier = Modifier) {
         )
     }
 
-    // ⚡ FIX 1: Derived State
-    val percent by remember { derivedStateOf { (progressAnim.value * 100).toInt() } }
-
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            text = "LOADING $percent%",
-            color = Color.White.copy(alpha = 0.8f),
-            fontSize = 13.sp,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-            letterSpacing = 3.sp
+            text = "L O A D I N G",
+            color = Color(0x88FFFFFF),
+            fontSize = 10.sp,
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+            letterSpacing = 8.sp
         )
 
-        Spacer(modifier = Modifier.height(10.dp))
+        Spacer(modifier = Modifier.height(16.dp))
 
-        // ⚡ FIX 2: Draw-Phase Rendering
-        Spacer(
+        // ⚡ Premium ultra-thin laser track
+        Box(
             modifier = Modifier
-                .width(280.dp)
-                .height(6.dp)
-                .clip(RoundedCornerShape(50))
-                .background(Color(0xFF1A1A1A))
+                .width(320.dp)
+                .height(2.dp)
+                .background(Color(0x1AFFFFFF), RoundedCornerShape(50))
                 .drawWithContent {
-                    drawContent() // Draw the background track
-                    drawRect(
-                        brush = barGradient,
-                        size = size.copy(width = size.width * progressAnim.value) // Draw the fill
-                    )
+                    drawContent() // Draw the dark track
+                    val currentWidth = size.width * progressAnim.value
+                    
+                    if (currentWidth > 0) {
+                        // 1. Draw the gradient fill
+                        drawRect(
+                            brush = barGradient,
+                            size = size.copy(width = currentWidth)
+                        )
+                        
+                        // 2. Draw outer glow dot
+                        drawCircle(
+                            color = Color(0x66FF3B30), // Fire Red glow
+                            radius = 6.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(x = currentWidth, y = size.height / 2f)
+                        )
+                        
+                        // 3. Draw solid white core dot at the leading edge
+                        drawCircle(
+                            color = Color.White,
+                            radius = 2.dp.toPx(),
+                            center = androidx.compose.ui.geometry.Offset(x = currentWidth, y = size.height / 2f)
+                        )
+                    }
                 }
         )
     }

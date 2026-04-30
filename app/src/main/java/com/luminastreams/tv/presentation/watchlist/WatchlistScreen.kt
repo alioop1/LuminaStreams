@@ -48,14 +48,14 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.R
 import com.luminastreams.tv.core.DeviceProfile
+import com.luminastreams.tv.core.tr
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.presentation.home.PosterCard
 import kotlinx.coroutines.delay
 
 private val BG = Color(0xFF070707)
 
-@Composable
-fun tr(en: String, he: String): String = if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+
 
 @Composable
 fun WatchlistScreen(
@@ -113,15 +113,6 @@ fun WatchlistScreen(
                 }
 
                 Spacer(Modifier.width(32.dp))
-                Image(
-                    painter = painterResource(id = R.drawable.logo_lumina_unified),
-                    contentDescription = "Lumina Logo",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.height(34.dp)
-                )
-                Spacer(Modifier.width(32.dp))
-                Box(Modifier.width(2.dp).height(28.dp).background(Color(0x33FFFFFF)))
-                Spacer(Modifier.width(32.dp))
                 Text(
                     text = tr("My Watchlist", "הרשימה שלי"),
                     color = Color.White,
@@ -160,9 +151,10 @@ fun WatchlistScreen(
                         }
                     }
                 } else {
+                    val gridState = rememberLazyGridState()
                     LazyVerticalGrid(
                         columns = GridCells.Adaptive(minSize = 138.dp),
-                        state = rememberLazyGridState(),
+                        state = gridState,
                         contentPadding = PaddingValues(start = 48.dp, end = 48.dp, top = 8.dp, bottom = 48.dp),
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalArrangement = Arrangement.spacedBy(24.dp),
@@ -172,10 +164,14 @@ fun WatchlistScreen(
                             .focusGroup()
                             .focusRestorer()
                             .onPreviewKeyEvent { ev ->
-                                // STRICT FOCUS ROUTING: If pressing UP on the top row of the grid, force focus to the Back Button!
+                                // Only intercept UP when scrolled to the very top of the grid
                                 if (ev.key == Key.DirectionUp && ev.type == KeyEventType.KeyDown) {
-                                    runCatching { backFR.requestFocus() }
-                                    return@onPreviewKeyEvent true
+                                    val firstVisible = gridState.firstVisibleItemIndex
+                                    val firstOffset = gridState.firstVisibleItemScrollOffset
+                                    if (firstVisible == 0 && firstOffset == 0) {
+                                        runCatching { backFR.requestFocus() }
+                                        return@onPreviewKeyEvent true
+                                    }
                                 }
                                 false
                             }
@@ -184,10 +180,6 @@ fun WatchlistScreen(
                             PosterCard(
                                 movie = movie,
                                 modifier = Modifier
-                                    .focusProperties {
-                                        // Prevents native focus from trapping you inside the grid
-                                        up = backFR
-                                    }
                                     .onFocusChanged { if (it.isFocused) focusedMovie = movie },
                                 onClick = { onMovieClick(movie.id) }
                             )

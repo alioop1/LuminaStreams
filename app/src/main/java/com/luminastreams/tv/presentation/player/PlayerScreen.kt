@@ -72,10 +72,9 @@ import kotlinx.coroutines.delay
 import kotlin.math.abs
 import android.graphics.Color as AndroidColor
 import com.luminastreams.tv.data.local.WatchProgressManager
+import com.luminastreams.tv.core.tr
 
-@Composable
-fun tr(en: String, he: String): String =
-    if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+
 
 private tailrec fun Context.findActivity(): Activity? = when (this) {
     is Activity -> this
@@ -420,6 +419,7 @@ fun PlayerScreen(
     title:          String = "",
     backdropUrl:    String = "",
     logoUrl:        String = "",
+    fullId:         String = "",
     onNavigateBack: () -> Unit,
     viewModel:      PlayerViewModel = viewModel()
 ) {
@@ -566,6 +566,11 @@ fun PlayerScreen(
                             progressManager.save(progressKey, pos, dur)
                         } else {
                             progressManager.save(progressKey, dur, dur)
+                        }
+                        // Save IMDB→TMDB bridge for "Continue Watching" matching
+                        if (imdbId.isNotBlank() && fullId.isNotBlank()) {
+                            context.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)
+                                .edit().putString(imdbId, fullId).apply()
                         }
                     }
                 }

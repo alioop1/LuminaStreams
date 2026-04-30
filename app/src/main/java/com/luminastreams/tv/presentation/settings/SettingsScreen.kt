@@ -38,6 +38,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.*
 import androidx.tv.material3.*
 import com.luminastreams.tv.core.DeviceProfile
+import com.luminastreams.tv.core.tr
 import kotlinx.coroutines.delay
 
 private val BG_DARK       = Color(0xFF070709)
@@ -50,10 +51,7 @@ private val ACCENT_GOLD   = Color(0xFFE5C07B)
 private val ACCENT_BLUE   = Color(0xFF4D90FE)
 private val ACCENT_GREEN  = Color(0xFF43A047)
 
-@Composable
-fun tr(en: String, he: String): String {
-    return if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
-}
+
 
 @Composable
 fun SettingsScreen(

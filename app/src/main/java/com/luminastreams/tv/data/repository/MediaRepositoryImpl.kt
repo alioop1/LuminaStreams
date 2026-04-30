@@ -150,19 +150,21 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
 
     override suspend fun getDiscoverySearch(page: Int): Result<List<SearchResult>> = withContext(Dispatchers.IO) {
         try {
-            val movies = async { api.discoverMedia(type = "movie", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
-            val tvs    = async { api.discoverMedia(type = "tv", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
+            coroutineScope {
+                val movies = async { api.discoverMedia(type = "movie", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
+                val tvs    = async { api.discoverMedia(type = "tv", uiLanguage = "en-US", page = page, sortBy = "popularity.desc") }
 
-            val combined = mutableListOf<TmdbMediaDto>()
-            combined.addAll(movies.await().results.map { it.copy(mediaType = "movie") })
-            combined.addAll(tvs.await().results.map { it.copy(mediaType = "tv") })
+                val combined = mutableListOf<TmdbMediaDto>()
+                combined.addAll(movies.await().results.map { it.copy(mediaType = "movie") })
+                combined.addAll(tvs.await().results.map { it.copy(mediaType = "tv") })
 
-            val results = combined
-                .filter { it.posterPath != null }
-                .map { it.toSearchResult(it.mediaType ?: "movie") }
-                .sortedByDescending { it.rating }
+                val results = combined
+                    .filter { it.posterPath != null }
+                    .map { it.toSearchResult(it.mediaType ?: "movie") }
+                    .sortedByDescending { it.rating }
 
-            Result.success(results)
+                Result.success(results)
+            }
         } catch (e: Exception) {
             Result.failure(e)
         }

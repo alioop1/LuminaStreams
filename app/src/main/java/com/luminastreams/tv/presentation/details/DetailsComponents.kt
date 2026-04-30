@@ -194,7 +194,10 @@ fun EpisodeCardOptimized(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
         scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
-        border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None, pressedBorder = Border.None),
+        border = ClickableSurfaceDefaults.border(
+            border = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, Color.White))
+        ),
         glow = ClickableSurfaceDefaults.glow(glow = Glow.None, focusedGlow = Glow.None, pressedGlow = Glow.None),
         colors = ClickableSurfaceDefaults.colors(containerColor = Color.Black, focusedContainerColor = Color.Black),
         modifier = modifier
@@ -247,13 +250,23 @@ fun EpisodeCardOptimized(
 fun CastCardOptimized(actor: CastMember, modifier: Modifier = Modifier) {
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier.width(130.dp)) {
         Surface(
-            onClick = {}, shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
+            onClick = {},
+            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
             scale = ClickableSurfaceDefaults.scale(focusedScale = 1.08f),
-            border = ClickableSurfaceDefaults.border(border = Border.None, focusedBorder = Border.None, pressedBorder = Border.None),
-            glow = ClickableSurfaceDefaults.glow(glow = Glow.None, focusedGlow = Glow.None, pressedGlow = Glow.None),
-            colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
-            modifier = Modifier.fillMaxWidth().aspectRatio(2f/3f)
-        ) { AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize()) }
+            border = ClickableSurfaceDefaults.border(
+                border = Border.None,
+                focusedBorder = Border(BorderStroke(2.dp, Color.White))
+            ),
+            colors = ClickableSurfaceDefaults.colors(
+                containerColor = Color.Transparent,
+                focusedContainerColor = Color.Transparent
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+        ) {
+            AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        }
         Spacer(Modifier.height(16.dp))
         Text(actor.name, color = ColorTextMain, fontSize = 14.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, maxLines = 1)
         Text(actor.character, color = ColorTextMain.copy(0.5f), fontSize = 12.sp, textAlign = TextAlign.Center, maxLines = 1)
@@ -291,16 +304,19 @@ fun InfoChip(label: String, value: String) {
 }
 
 @Composable
-fun RecommendationCard(rec: Recommendation, modifier: Modifier = Modifier) {
+fun RecommendationCard(rec: Recommendation, modifier: Modifier = Modifier, onClick: () -> Unit = {}) {
     Surface(
-        onClick = {},
+        onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale = ClickableSurfaceDefaults.scale(1.06f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.06f),
         border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(BorderStroke(2.dp, Color.White)),
-            border = Border.None
+            border = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, Color.White))
         ),
-        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(elevationColor = Color.White.copy(0.2f), elevation = 20.dp)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.Transparent
+        ),
         modifier = modifier.width(150.dp).aspectRatio(2f / 3f)
     ) {
         Box(Modifier.fillMaxSize()) {

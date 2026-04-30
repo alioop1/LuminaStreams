@@ -39,14 +39,3 @@ interface MediaRepository {
         page: Int = 1
     ): Result<List<SearchResult>>
 }
-
-// ── PlayerRepository ───────────────────────────────────────────────────────
-interface PlayerRepository {
-    suspend fun getStreamUrl(movieId: String, type: String): Result<String>
-    suspend fun getEmbedSources(movieId: String, type: String): Result<List<String>>
-    suspend fun getTvEpisodeStreamUrl(
-        seriesId: String,
-        season: Int,
-        episode: Int
-    ): Result<String>
-}

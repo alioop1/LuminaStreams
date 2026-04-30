@@ -5,7 +5,6 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -23,7 +22,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -33,7 +31,7 @@ import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.CachePolicy
 import coil.request.ImageRequest
-import com.luminastreams.tv.R
+import com.luminastreams.tv.core.tr
 import com.luminastreams.tv.domain.model.Movie
 import kotlin.math.roundToInt
 
@@ -42,29 +40,6 @@ private fun quantizeProgress(progress: Float): Float {
     return (progress * 100f).roundToInt().coerceIn(1, 99) / 100f
 }
 
-@Composable
-fun StudioBadge(brand: StudioBrand, isActive: Boolean, isLarge: Boolean = false) {
-    val imageRes = when (brand) {
-        StudioBrand.NETFLIX -> R.drawable.logo_netflix; StudioBrand.APPLE_TV -> R.drawable.logo_appletv
-        StudioBrand.DISNEY -> R.drawable.logo_disney; StudioBrand.HBO -> R.drawable.logo_hbo
-        StudioBrand.AMAZON -> R.drawable.logo_amazon; StudioBrand.PARAMOUNT -> R.drawable.logo_paramount
-        StudioBrand.HULU -> R.drawable.logo_hulu
-    }
-    Box(
-        modifier = Modifier
-            .height(if (isLarge) 32.dp else 22.dp)
-            .width(if (isLarge) 80.dp else 50.dp)
-            .alpha(if (isActive) 1f else 0.4f),
-        contentAlignment = Alignment.Center
-    ) {
-        Image(
-            painter = painterResource(imageRes),
-            contentDescription = brand.name,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier.fillMaxSize()
-        )
-    }
-}
 
 @Composable
 fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> Unit = {}, onClick: () -> Unit) {

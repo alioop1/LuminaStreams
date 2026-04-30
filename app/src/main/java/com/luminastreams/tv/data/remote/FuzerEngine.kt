@@ -94,7 +94,7 @@ object FuzerEngine {
         }
     }
 
-    private fun getHtml(url: String): String? {
+    private suspend fun getHtml(url: String, isRetry: Boolean = false): String? {
         val resp = client.newCall(
             Request.Builder().url(url).headers(defaultHeaders("$BASE/browse.php")).build()
         ).execute()
@@ -102,9 +102,13 @@ object FuzerEngine {
             val bytes = response.body.bytes()
             if (bytes.isEmpty()) return@use null
             val html = decodeBody(bytes)
-            // Detect expired session: if the response is a login page, reset login flag
+            // Detect expired session: if the response is a login page, try to recover once
             if (html.contains("do=login", ignoreCase = true) && html.contains("vb_login_username", ignoreCase = true)) {
                 isLoggedIn = false
+                if (!isRetry) {
+                    ensureLogin()
+                    return@use getHtml(url, isRetry = true) // Single retry after re-login
+                }
                 return@use null
             }
             html

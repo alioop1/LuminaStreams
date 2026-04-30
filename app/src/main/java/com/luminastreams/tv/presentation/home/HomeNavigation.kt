@@ -3,10 +3,12 @@ package com.luminastreams.tv.presentation.home
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.runtime.*
@@ -25,6 +27,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.tv.material3.*
 import com.luminastreams.tv.R
+import com.luminastreams.tv.core.tr
 import kotlinx.coroutines.delay
 
 @Composable
@@ -65,6 +68,10 @@ fun Ps5TopNav(
         }
     }
 
+    // In RTL: navbar on LEFT (opposite content side), clock on RIGHT
+    // In LTR: navbar on RIGHT (opposite content side), clock on LEFT
+    // We achieve this by putting clock FIRST and icons SECOND with SpaceBetween,
+    // since Compose Row auto-reverses in RTL — this puts clock on right and icons on left in RTL.
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -73,31 +80,64 @@ fun Ps5TopNav(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
+        ClockText()
+
+        Spacer(Modifier.weight(1f))
+
         Row(
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Image(
-                painter = painterResource(R.drawable.logo_lumina_unified),
-                contentDescription = "Logo",
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.height(48.dp).padding(end = 24.dp)
-            )
-
-            // UX IMPROVEMENT: Focus Requester dynamically targets the currently active tab instead of just Search!
-            val searchFR = if (activeTab !in listOf("ראשי", "סרטים", "סדרות", "Fuzer", "iptv", "Watchlist", "Settings")) navFocusRequester else null
-
-            NavIconButton(Icons.Default.Search, false, searchFR, onSearch)
-            NavIconButton(Icons.Default.Home, activeTab == "ראשי", if (activeTab == "ראשי") navFocusRequester else null, onHomeTab)
-            NavIconButton(Icons.Default.Movie, activeTab == "סרטים", if (activeTab == "סרטים") navFocusRequester else null, onMoviesTab)
-            NavIconButton(Icons.Default.Tv, activeTab == "סדרות", if (activeTab == "סדרות") navFocusRequester else null, onSeriesTab)
-            NavIconButton(Icons.Default.LocalMovies, activeTab == "Fuzer", if (activeTab == "Fuzer") navFocusRequester else null, onFuzer)
-            NavIconButton(Icons.Default.Cast, activeTab == "iptv", if (activeTab == "iptv") navFocusRequester else null, onIptv)
-            NavIconButton(Icons.Default.Bookmark, activeTab == "Watchlist", if (activeTab == "Watchlist") navFocusRequester else null, onWatchlist)
-            NavIconButton(Icons.Default.Settings, activeTab == "Settings", if (activeTab == "Settings") navFocusRequester else null, onSettings)
+            NavIconButton(Icons.Default.Search, false, navFocusRequester, onSearch)
+            NavIconButton(Icons.Default.WorkspacePremium, false, null, {}) // Premium/Crown
+            NavIconButton(Icons.Default.Tv, false, null, onIptv)
+            NavIconButton(Icons.Default.Cast, false, null, {})
+            NavIconButton(Icons.Default.Bookmark, false, null, onWatchlist)
+            NavIconButton(Icons.Default.Settings, false, null, onSettings)
+            
+            // Profile Circle
+            Surface(
+                onClick = {},
+                shape = ClickableSurfaceDefaults.shape(CircleShape),
+                modifier = Modifier.size(36.dp).padding(start = 8.dp)
+            ) {
+                Image(
+                    painter = painterResource(id = R.drawable.logo_lumina_glow), // Placeholder for profile pic
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop
+                )
+            }
         }
+    }
+}
 
-        ClockText()
+@Composable
+fun NavTextTab(text: String, isSelected: Boolean, onClick: () -> Unit) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isFocused by interactionSource.collectIsFocusedAsState()
+
+    Surface(
+        onClick = onClick,
+        interactionSource = interactionSource,
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.Transparent,
+            contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.5f),
+            focusedContentColor = Color.White
+        ),
+        modifier = Modifier.padding(horizontal = 4.dp)
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                text = text,
+                fontSize = 15.sp,
+                fontWeight = if (isSelected || isFocused) FontWeight.Bold else FontWeight.Medium,
+                modifier = Modifier.padding(vertical = 8.dp)
+            )
+            if (isSelected) {
+                Box(Modifier.width(20.dp).height(2.dp).background(Color.Red, RoundedCornerShape(1.dp)))
+            }
+        }
     }
 }
 
@@ -106,25 +146,22 @@ fun NavIconButton(icon: ImageVector, isSelected: Boolean, fr: FocusRequester?, o
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
 
-    val animatedScale by animateFloatAsState(targetValue = if (isFocused) 1.15f else 1.0f, animationSpec = tween(150), label = "navScale")
-
     Surface(
         onClick = onClick,
         interactionSource = interactionSource,
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent,
-            focusedContainerColor = Color.White,
-            contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.6f),
-            focusedContentColor = Color.Black
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.White.copy(alpha = 0.15f),
+            contentColor = if (isSelected) Color.White else Color.White.copy(alpha = 0.7f),
+            focusedContentColor = Color.White
         ),
         shape = ClickableSurfaceDefaults.shape(CircleShape),
         modifier = Modifier
-            .size(46.dp)
-            .graphicsLayer { scaleX = animatedScale; scaleY = animatedScale }
+            .size(38.dp)
             .let { if (fr != null) it.focusRequester(fr) else it }
     ) {
         Box(Modifier.fillMaxSize(), Alignment.Center) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(24.dp))
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
         }
     }
 }

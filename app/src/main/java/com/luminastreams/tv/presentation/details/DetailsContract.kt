@@ -57,7 +57,7 @@ data class MediaDetailsInfo(
     val cast: List<CastMember> = emptyList(),
     val totalSeasons: Int = 0, val isFavorite: Boolean = false, val trailerUrl: String? = null,
     val collectionName: String? = null, val collectionItems: List<Recommendation> = emptyList(),
-    val starringActorName: String? = null, val starringItems: List<Recommendation> = emptyList()
+    val directorName: String? = null, val directorItems: List<Recommendation> = emptyList()
 ) {
     val displayStudios: String get() = studios.take(2).joinToString(" • ").uppercase()
     val displayGenres:  String get() = genres.take(3).joinToString(" • ")

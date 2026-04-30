@@ -1,10 +1,12 @@
 @file:OptIn(kotlinx.coroutines.FlowPreview::class)
 package com.luminastreams.tv.presentation.home
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
 import com.luminastreams.tv.core.DeviceProfile
+import com.luminastreams.tv.data.local.WatchProgressManager
 import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.Dispatchers
@@ -89,6 +91,179 @@ class HomeViewModel : ViewModel() {
         if (_state.value.selectedTab == "Fuzer") loadFuzerContent() else loadAll()
     }
 
+    // ── Hero Enrichment ───────────────────────────────────────────────
+    // Fetches logo, cast, and runtime for the currently displayed hero movie.
+    // Single lightweight API call, debounced by heroEnrichedId.
+    private var heroEnrichJob: Job? = null
+
+    fun enrichHeroData(movie: Movie) {
+        val movieId = movie.id
+        if (movieId == _state.value.heroEnrichedId) return // already fetched
+
+        heroEnrichJob?.cancel()
+        heroEnrichJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val numericId = movieId.substringAfter("_").takeIf { it.isNotBlank() } ?: movieId
+                val type = if (movie.mediaType == "tv") "tv" else "movie"
+                val lang = if (currentIsRtl) "he-IL" else "en-US"
+                val url = "https://api.themoviedb.org/3/$type/$numericId?api_key=${Constants.TMDB_API_KEY}&language=$lang&append_to_response=credits,images&include_image_language=en,null"
+
+                val response = http.newCall(Request.Builder().url(url).build()).execute()
+                if (!response.isSuccessful) { response.close(); return@launch }
+
+                val json = JSONObject(response.body?.string() ?: return@launch)
+                response.close()
+
+                // Extract logo URL (prefer English logo, fallback to any)
+                val logoPath = json.optJSONObject("images")
+                    ?.optJSONArray("logos")
+                    ?.let { logos ->
+                        var best: String? = null
+                        for (i in 0 until logos.length()) {
+                            val logo = logos.getJSONObject(i)
+                            val path = logo.optString("file_path", "")
+                            if (path.isNotBlank()) {
+                                best = path
+                                break // take first available
+                            }
+                        }
+                        best
+                    }
+                val logoUrl = if (logoPath != null) "${imgBase}/w500$logoPath" else null
+
+                // Extract runtime
+                val runtime = json.optInt("runtime", 0).takeIf { it > 0 }
+                    ?: json.optJSONArray("episode_run_time")?.let {
+                        if (it.length() > 0) it.optInt(0) else null
+                    }
+
+                // Extract top 3 cast names
+                val castArray = json.optJSONObject("credits")?.optJSONArray("cast")
+                val castNames = mutableListOf<String>()
+                if (castArray != null) {
+                    for (i in 0 until minOf(castArray.length(), 3)) {
+                        val name = castArray.getJSONObject(i).optString("name", "")
+                        if (name.isNotBlank()) castNames.add(name)
+                    }
+                }
+
+                // Extract localized overview (Hebrew if RTL)
+                val overview = json.optString("overview", "").takeIf { it.isNotBlank() }
+
+                // Extract localized genre names (Hebrew if RTL)
+                val genresArray = json.optJSONArray("genres")
+                val genreNames = mutableListOf<String>()
+                if (genresArray != null) {
+                    for (i in 0 until minOf(genresArray.length(), 2)) {
+                        val name = genresArray.getJSONObject(i).optString("name", "")
+                        if (name.isNotBlank()) genreNames.add(name)
+                    }
+                }
+                val genreStr = genreNames.joinToString(" · ").takeIf { it.isNotBlank() }
+
+                _state.update {
+                    it.copy(
+                        heroLogoUrl = logoUrl,
+                        heroRuntime = runtime,
+                        heroCast = castNames,
+                        heroOverview = overview,
+                        heroGenre = genreStr,
+                        heroEnrichedId = movieId
+                    )
+                }
+            } catch (_: Exception) {
+                // Silently fail — hero will show text title instead of logo
+            }
+        }
+    }
+
+    /**
+     * Scans WatchProgressManager for all in-progress content and builds
+     * a "Continue Watching" list sorted by most recently watched.
+     * Called from UI layer on resume since HomeViewModel has no Context.
+     */
+    fun refreshContinueWatching(context: Context) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pm = WatchProgressManager(context)
+            val prefs = context.getSharedPreferences("lumina_watch_v2", Context.MODE_PRIVATE)
+            val bridge = context.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)
+            val allContent = _state.value.let { s ->
+                (s.movieTrending + s.tvTrending + s.moviePremieres + s.movieAction +
+                 s.movieAnimation + s.movieDrama + s.movieScifi + s.movieTopRated +
+                 s.tvPremieres + s.tvDrama + s.tvCrime + s.tvAnimation + s.tvTopRated +
+                 s.movieNetflix + s.movieAppleTV + s.movieDisney + s.movieHBO + s.movieAmazon +
+                 s.movieParamount + s.movieHulu + s.tvNetflix + s.tvAppleTV + s.tvDisney +
+                 s.tvHBO + s.tvAmazon + s.tvParamount + s.tvHulu +
+                 s.fuzerMovies + s.fuzerSeries + s.fuzerMoviesHD + s.fuzerSeriesHD +
+                 s.fuzerMovies4K + s.fuzerSeries4K + s.fuzerDubbedMovies + s.fuzerDubbedSeries)
+                    .distinctBy { it.id }
+            }
+
+            val movieMap = allContent.associateBy { it.id }
+            val watchedItems = mutableListOf<Pair<Movie, Long>>()
+            val seenIds = mutableSetOf<String>()
+
+            // ── PASS 1: Scan progress keys and try to match to Movies ──
+            prefs.all.forEach { (key, _) ->
+                val scrapeId = when {
+                    key.startsWith("movie_") -> key.removePrefix("movie_")
+                    key.startsWith("ep_")    -> key.removePrefix("ep_").substringBefore("_s")
+                    else -> null
+                } ?: return@forEach
+
+                // Strategy A: Bridge lookup (IMDB → TMDB)
+                var movie: Movie? = bridge.getString(scrapeId, null)?.let { movieMap[it] }
+
+                // Strategy B: If scrapeId is "tmdb:12345", construct TMDB display ID directly
+                if (movie == null && scrapeId.startsWith("tmdb:")) {
+                    val tmdbNum = scrapeId.removePrefix("tmdb:")
+                    movie = movieMap["movie_$tmdbNum"] ?: movieMap["tv_$tmdbNum"]
+                }
+
+                if (movie == null) return@forEach
+                val progress = pm.get(key) ?: return@forEach
+
+                if (progress.hasStarted && !progress.isFinished && seenIds.add(movie.id)) {
+                    watchedItems.add(movie.copy(progress = progress.fraction) to progress.lastWatchedAt)
+                }
+            }
+
+            // ── PASS 2: Reverse scan — for each Movie, check if progress keys exist ──
+            // This covers cases where the bridge hasn't been populated yet
+            if (watchedItems.size < 20) {
+                val allKeys = prefs.all.keys
+                allContent.forEach { movie ->
+                    if (movie.id in seenIds) return@forEach
+                    // Extract numeric TMDB ID from movie.id (e.g., "movie_12345" → "12345")
+                    val tmdbNum = movie.id.substringAfter("_")
+                    val type = movie.id.substringBefore("_") // "movie" or "tv"
+
+                    // Check for tmdb:-prefixed progress keys
+                    val tmdbKey = if (type == "movie") "movie_tmdb:$tmdbNum" else "ep_tmdb:${tmdbNum}_s"
+                    val matchKey = if (type == "movie") {
+                        allKeys.firstOrNull { it == "movie_tmdb:$tmdbNum" }
+                    } else {
+                        allKeys.firstOrNull { it.startsWith("ep_tmdb:${tmdbNum}_s") }
+                    }
+
+                    if (matchKey != null) {
+                        val progress = pm.get(matchKey)
+                        if (progress != null && progress.hasStarted && !progress.isFinished && seenIds.add(movie.id)) {
+                            watchedItems.add(movie.copy(progress = progress.fraction) to progress.lastWatchedAt)
+                        }
+                    }
+                }
+            }
+
+            val sorted = watchedItems
+                .sortedByDescending { it.second }
+                .take(20)
+                .map { it.first }
+
+            _state.update { it.copy(continueWatching = sorted) }
+        }
+    }
+
     private fun mergeStudioContent(movies: List<Movie>, series: List<Movie>): List<Movie> {
         return (movies + series).sortedByDescending { it.rating }.distinctBy { it.id }
     }
@@ -135,10 +310,12 @@ class HomeViewModel : ViewModel() {
         val newRows = buildList {
             when (currentState.selectedTab) {
                 "ראשי" -> {
+                    // 🔥 Continue Watching — always FIRST row when content exists
+                    if (currentState.continueWatching.isNotEmpty()) add(RowDef.Regular("continueWatching", trFunc("▶  Continue Watching", "▶  המשך צפייה"), currentState.continueWatching))
                     if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Movies", "סרטים פופולריים"), currentState.movieTrending.distinctBy { it.id }))
                     if (homeHbo.isNotEmpty()) add(RowDef.Studio("homeHBO", StudioBrand.HBO, homeHbo))
-                    if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
                     if (homeNetflix.isNotEmpty()) add(RowDef.Studio("homeNetflix", StudioBrand.NETFLIX, homeNetflix))
+                    if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
                     if (homeAmazon.isNotEmpty()) add(RowDef.Studio("homeAmazon", StudioBrand.AMAZON, homeAmazon))
                     if (homeAppleTv.isNotEmpty()) add(RowDef.Studio("homeAppleTv", StudioBrand.APPLE_TV, homeAppleTv))
                     if (homeDisney.isNotEmpty()) add(RowDef.Studio("homeDisney", StudioBrand.DISNEY, homeDisney))

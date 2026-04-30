@@ -45,6 +45,10 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
         else flowOf(listOf("All", "Favorites"))
     }.stateIn(viewModelScope, SharingStarted.Lazily, listOf("All", "Favorites"))
 
+    // 📺 Recently Watched — circular logos row
+    val recentlyWatched: StateFlow<List<ChannelEntity>> = repository.dao.getRecentlyWatched()
+        .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
     private val _focusedEpg = MutableStateFlow<EpgProgramEntity?>(null)
     val focusedEpg = _focusedEpg.asStateFlow()
 
@@ -95,6 +99,12 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
     fun toggleFavorite(channel: ChannelEntity) {
         viewModelScope.launch(Dispatchers.IO) {
             repository.dao.setFavorite(channel.id, !channel.isFavorite)
+        }
+    }
+
+    fun markChannelWatched(channelId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.dao.setLastWatched(channelId, System.currentTimeMillis())
         }
     }
 

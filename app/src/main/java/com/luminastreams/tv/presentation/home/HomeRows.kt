@@ -38,6 +38,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.tv.material3.ClickableSurfaceDefaults
 import androidx.tv.material3.Surface
 import androidx.tv.material3.Text
+import com.luminastreams.tv.core.tr
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.delay
 import kotlin.math.abs
@@ -61,10 +62,17 @@ fun ConsoleRowCycler(
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val forwardKey = if (isRtl) Key.DirectionLeft else Key.DirectionRight
 
-    // Trigger focus to posters only when navigating from Sidebar/TopBar
+    // Track whether the focus request should be immediate (row cycling) or deferred (from navbar)
+    val isDeferredFocus = remember { mutableStateOf(false) }
+
+    // Trigger focus to posters — immediate for row cycling, deferred for navbar return
     LaunchedEffect(focusState.focusTrigger) {
         if (focusState.focusTrigger > 0 && !focusState.isNavFocused) {
-            delay(150) // Wait for crossfade to clear the layout tree
+            if (isDeferredFocus.value) {
+                delay(150) // Wait for crossfade only when coming from navbar/sidebar
+                isDeferredFocus.value = false
+            }
+            // Immediate focus request — no gap for native focus to escape
             runCatching { firstCardFR.requestFocus() }
         }
     }
@@ -112,6 +120,7 @@ fun ConsoleRowCycler(
                         if (ev.type == KeyEventType.KeyDown) {
                             // Safely move from Sidebar -> Posters
                             if (ev.key == forwardKey) {
+                                isDeferredFocus.value = true // deferred because we're crossing components
                                 runCatching { firstCardFR.requestFocus() }
                                 return@onPreviewKeyEvent true
                             }
@@ -139,6 +148,7 @@ fun ConsoleRowCycler(
                     Surface(
                         onClick = {
                             // If they explicitly CLICK a category, snap focus right into the posters
+                            isDeferredFocus.value = true
                             focusState.focusTrigger++
                         },
                         colors = ClickableSurfaceDefaults.colors(
@@ -184,7 +194,8 @@ fun ConsoleRowCycler(
                             Key.DirectionUp -> {
                                 if (safeIndex > 0) {
                                     focusState.currentRowIndex--
-                                    focusState.focusTrigger++ // triggers focus lock to new category
+                                    isDeferredFocus.value = false // immediate — no delay during row cycling
+                                    focusState.focusTrigger++
                                     true
                                 } else {
                                     // Explicitly force focus to the NavBar if pressing UP on the top row's posters
@@ -195,9 +206,10 @@ fun ConsoleRowCycler(
                             Key.DirectionDown -> {
                                 if (safeIndex < rows.size - 1) {
                                     focusState.currentRowIndex++
-                                    focusState.focusTrigger++ // triggers focus lock to new category
+                                    isDeferredFocus.value = false // immediate — no delay during row cycling
+                                    focusState.focusTrigger++
                                     true
-                                } else false
+                                } else true // Consume event at the last row to prevent focus escaping to navbar
                             }
                             Key.Back, Key.Escape -> {
                                 // PS5 MAGIC: Pressing Back instantly drops you out of the posters and into the Sidebar
@@ -273,23 +285,18 @@ private fun LandscapeRowData(movies: List<Movie>, isActive: Boolean, firstCardFR
     val rowState = rememberLazyListState()
     RememberPagedRowLoad(rowState, onLoadMore)
 
-    LaunchedEffect(isActive) {
-        if (isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0)
-    }
-
     LazyRow(
         state = rowState,
         contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.spacedBy(20.dp),
         flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
-        // FIXED: Only attach FocusGroup and Restorer to the active row to prevent spatial focus from leaking into invisible rows
+        // FIXED: Attach FocusRequester and Restorer to the row itself
         modifier = Modifier.fillMaxWidth()
             .focusProperties { canFocus = isActive }
-            .let { if (isActive) it.focusGroup().focusRestorer() else it }
+            .let { if (isActive) it.focusGroup().focusRestorer().focusRequester(firstCardFR) else it }
     ) {
         itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
-            val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
-            LandscapeCard(movie, mod, { onFocus(movie) }) { onClick(movie.id) }
+            LandscapeCard(movie, Modifier, { onFocus(movie) }) { onClick(movie.id) }
         }
     }
 }
@@ -300,10 +307,6 @@ private fun PortraitRowData(movies: List<Movie>, isActive: Boolean, firstCardFR:
     val rowState = rememberLazyListState()
     RememberPagedRowLoad(rowState, onLoadMore)
 
-    LaunchedEffect(isActive) {
-        if (isActive && rowState.firstVisibleItemIndex > 0) rowState.scrollToItem(0)
-    }
-
     LazyRow(
         state = rowState,
         contentPadding = PaddingValues(horizontal = 32.dp, vertical = 8.dp),
@@ -311,11 +314,10 @@ private fun PortraitRowData(movies: List<Movie>, isActive: Boolean, firstCardFR:
         flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
         modifier = Modifier.fillMaxWidth()
             .focusProperties { canFocus = isActive }
-            .let { if (isActive) it.focusGroup().focusRestorer() else it }
+            .let { if (isActive) it.focusGroup().focusRestorer().focusRequester(firstCardFR) else it }
     ) {
         itemsIndexed(movies, key = { _, m -> m.id }) { index, movie ->
-            val mod = if (isActive && index == 0) Modifier.focusRequester(firstCardFR) else Modifier
-            PosterCard(movie, mod, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
+            PosterCard(movie, Modifier, PORT_W, PORT_H, { onFocus(movie) }) { onClick(movie.id) }
         }
     }
 }
@@ -333,11 +335,10 @@ private fun StudioRibbonRowData(isActive: Boolean, firstCardFR: FocusRequester, 
         flingBehavior = rememberSnapFlingBehavior(lazyListState = rowState),
         modifier = Modifier.fillMaxWidth()
             .focusProperties { canFocus = isActive }
-            .let { if (isActive) it.focusGroup().focusRestorer() else it }
+            .let { if (isActive) it.focusGroup().focusRestorer().focusRequester(firstCardFR) else it }
     ) {
         itemsIndexed(brands) { index, brand ->
-            val mod = if (isActive && index == targetIndex) Modifier.focusRequester(firstCardFR) else Modifier
-            StudioLogoButton(brand = brand, isSelected = activeFilter == brand.name, modifier = mod, onFocused = { onFocus() }, onClick = { onStudioFilterClick(brand.name) })
+            StudioLogoButton(brand = brand, isSelected = activeFilter == brand.name, modifier = Modifier, onFocused = { onFocus() }, onClick = { onStudioFilterClick(brand.name) })
         }
     }
 }

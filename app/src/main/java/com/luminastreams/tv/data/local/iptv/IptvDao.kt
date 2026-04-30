@@ -41,6 +41,12 @@ interface IptvDao {
     @Query("UPDATE channels SET isFavorite = :isFavorite WHERE id = :channelId")
     suspend fun setFavorite(channelId: String, isFavorite: Boolean)
 
+    @Query("UPDATE channels SET lastWatched = :timestamp WHERE id = :channelId")
+    suspend fun setLastWatched(channelId: String, timestamp: Long)
+
+    @Query("SELECT * FROM channels WHERE lastWatched > 0 ORDER BY lastWatched DESC LIMIT 10")
+    fun getRecentlyWatched(): Flow<List<ChannelEntity>>
+
     // הזרקת הלוגואים (רק אם הערוץ ללא לוגו)
     @Query("""
         UPDATE channels 

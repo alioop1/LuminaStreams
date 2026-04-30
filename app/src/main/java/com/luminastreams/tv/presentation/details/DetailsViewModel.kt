@@ -76,15 +76,17 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         super.onCleared()
         scrapingJob?.cancel()
         resolveJob?.cancel()
-        // Cleanup OkHttpClient connections
-        okHttpClient.dispatcher.cancelAll()
-        okHttpClient.connectionPool.evictAll()
-        // Best-effort cleanup of any active torrents on RD
+
+        // Best-effort cleanup of any active torrents on RD — BEFORE killing the dispatcher
         val token = getRdToken()
         if (token.isNotBlank() && activeTorrentIds.isNotEmpty()) {
             val ids = activeTorrentIds.toList()
             activeTorrentIds.clear()
-            // Fire-and-forget cleanup with timeout to prevent leak
+            // Dedicated lightweight client so cancelAll() on the main client doesn't kill cleanup
+            val cleanupClient = okhttp3.OkHttpClient.Builder()
+                .connectTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .readTimeout(3, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
             kotlinx.coroutines.CoroutineScope(Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
                 withTimeoutOrNull(5000) {
                     ids.forEach { id ->
@@ -94,12 +96,23 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                                 .header("Authorization", "Bearer $token")
                                 .delete()
                                 .build()
-                            okHttpClient.newCall(request).execute().close()
+                            cleanupClient.newCall(request).execute().close()
                         } catch (_: Exception) {}
                     }
                 }
             }
         }
+
+        // Now safe to kill the main client's connections
+        // ⚡ FIX: evictAll() closes SSL sockets which is a BLOCKING network op.
+        // onCleared() runs on Main Thread → NetworkOnMainThreadException crash.
+        // Fire-and-forget on IO thread to avoid the crash.
+        Thread {
+            runCatching {
+                okHttpClient.dispatcher.cancelAll()
+                okHttpClient.connectionPool.evictAll()
+            }
+        }.start()
     }
 
     fun onEvent(event: DetailsEvent) {
@@ -194,12 +207,16 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             onSuccess = { dto ->
                 val rawImdb  = dto.external_ids?.imdbId
                 val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
+                // Save IMDB→TMDB bridge so "Continue Watching" can match progress keys to Movie IDs
+                saveIdMapping(scrapeId, "movie_${dto.id}")
                 val genres   = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") } ?: listOf("Drama")
                 val studios  = dto.productionCompanies?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") } ?: listOf("Independent")
                 val castList = dto.credits?.cast?.take(15)?.mapNotNull {
                     if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "${Constants.IMAGE_W300}${it.profilePath}") else null
                 } ?: emptyList()
-                val directorName   = dto.credits?.crew?.find { it.job == "Director" }?.name ?: ""
+                val directorCrew     = dto.credits?.crew?.find { it.job == "Director" }
+                val directorId       = directorCrew?.id
+                val directorFullName = directorCrew?.name ?: ""
                 val trailerUrl     = fetchRealTrailer(scrapeId, "movie")
 
                 // OPTIMIZATION: Uses suspend function to query SQLite DB
@@ -208,9 +225,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val collectionId   = dto.belongsToCollection?.id
                 val collectionName = dto.belongsToCollection?.name
                 val collectionItems = if (collectionId != null) fetchCollectionViaHttp(collectionId) else emptyList()
-                val primaryActorId   = dto.credits?.cast?.firstOrNull()?.id
-                val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
-                val starringItems    = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
+                val directorItems    = if (directorId != null) fetchActorWorksViaHttp(directorId) else emptyList()
                 val qualityHint      = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
                 val movieProg        = progressManager.getMovie(scrapeId)
                 val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
@@ -227,9 +242,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = false, releaseDate = dto.releaseDate?.take(4) ?: "", runtimeMinutes = dto.runtime ?: 0,
                             tmdbRating = dto.voteAverage.toDouble(), imdbRating = dto.voteAverage.toDouble(), ageRating = "R",
-                            studios = studios, genres = genres, director = directorName, cast = castList,
+                            studios = studios, genres = genres, director = directorFullName, cast = castList,
                             trailerUrl = trailerUrl, isFavorite = isSaved, collectionName = collectionName,
-                            collectionItems = collectionItems, starringActorName = primaryActorName, starringItems = starringItems
+                            collectionItems = collectionItems, directorName = directorFullName, directorItems = directorItems
                         )
                     )
                 }
@@ -243,20 +258,19 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             onSuccess = { dto ->
                 val rawImdb  = dto.external_ids?.imdbId
                 val scrapeId = if (!rawImdb.isNullOrBlank()) rawImdb else "tmdb:${dto.id}"
+                // Save IMDB→TMDB bridge so "Continue Watching" can match progress keys to Movie IDs
+                saveIdMapping(scrapeId, "tv_${dto.id}")
                 val genres   = dto.genres?.map { it.name }?.ifEmpty { listOf("Drama") } ?: listOf("Drama")
                 val studios  = dto.networks?.map { it.name }?.take(3)?.ifEmpty { listOf("Independent") } ?: listOf("Independent")
                 val castList = dto.credits?.cast?.take(15)?.mapNotNull {
                     if (it.profilePath != null) CastMember(it.id.toString(), it.name, it.character, "${Constants.IMAGE_W300}${it.profilePath}") else null
                 } ?: emptyList()
-                val creatorName      = dto.credits?.crew?.find { it.job == "Creator" || it.department == "Writing" }?.name ?: ""
+                val creatorCrew      = dto.credits?.crew?.find { it.job == "Creator" || it.job == "Executive Producer" || it.department == "Writing" }
+                val creatorId        = creatorCrew?.id
+                val creatorFullName  = creatorCrew?.name
                 val trailerUrl       = fetchRealTrailer(scrapeId, "series")
-
-                // OPTIMIZATION: Uses suspend function to query SQLite DB
                 val isSaved          = watchlistRepository.isInWatchlist("tv_$id")
-
-                val primaryActorId   = dto.credits?.cast?.firstOrNull()?.id
-                val primaryActorName = dto.credits?.cast?.firstOrNull()?.name
-                val starringItems    = if (primaryActorId != null) fetchActorWorksViaHttp(primaryActorId) else emptyList()
+                val directorItems    = if (creatorId != null) fetchActorWorksViaHttp(creatorId) else emptyList()
                 val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
                 val fullLogoUrl      = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
                 val latestEp         = progressManager.getLatestEpisodeProgress(scrapeId)
@@ -274,8 +288,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = true, releaseDate = dto.firstAirDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(),
                             imdbRating = dto.voteAverage.toDouble(), ageRating = "TV-MA", studios = studios, genres = genres,
-                            director = creatorName, cast = castList, totalSeasons = dto.numberOfSeasons,
-                            trailerUrl = trailerUrl, isFavorite = isSaved, starringActorName = primaryActorName, starringItems = starringItems
+                            director = creatorFullName ?: "", cast = castList, totalSeasons = dto.numberOfSeasons,
+                            trailerUrl = trailerUrl, isFavorite = isSaved, directorName = creatorFullName, directorItems = directorItems
                         )
                     )
                 }
@@ -640,7 +654,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         val info  = _state.value.mediaInfo
         val movie = Movie(id = info.id, title = info.title, posterUrl = info.posterUrl, backdropUrl = info.backdropUrl,
             rating = info.tmdbRating.toFloat(), mediaType = if (info.isSeries) "tv" else "movie",
-            overview = info.overview, year = info.releaseDate.toIntOrNull() ?: 0, genre = info.genres.firstOrNull() ?: "")
+            overview = info.overview, year = info.releaseDate.take(4).toIntOrNull() ?: 0, genre = info.genres.firstOrNull() ?: "")
 
         // OPTIMIZATION: Push database writing to background thread
         viewModelScope.launch(Dispatchers.IO) {
@@ -697,5 +711,16 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             } catch (_: Exception) {}
         }
         list
+    }
+
+    /**
+     * Persists a mapping from IMDB scrapeId (e.g. "tt1234567") to TMDB displayId (e.g. "movie_12345").
+     * Used by HomeViewModel to bridge progress keys (IMDB-based) to Movie.id (TMDB-based)
+     * for the "Continue Watching" row.
+     */
+    private fun saveIdMapping(scrapeId: String, tmdbDisplayId: String) {
+        if (scrapeId.isBlank() || tmdbDisplayId.isBlank()) return
+        appContext.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)
+            .edit { putString(scrapeId, tmdbDisplayId) }
     }
 }

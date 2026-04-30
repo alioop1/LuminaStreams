@@ -5,8 +5,6 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalLayoutDirection
-import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import com.luminastreams.tv.domain.model.Movie
 import kotlinx.coroutines.flow.collectLatest
@@ -31,8 +29,6 @@ val ROW_PORTRAIT_H  = 260.dp
 
 val placeholderBrush = Brush.verticalGradient(listOf(Color(0xFF2A2A2A), CARD_BG))
 
-@Composable
-fun tr(en: String, he: String): String = if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
 
 @Composable
 fun RememberPagedRowLoad(rowState: androidx.compose.foundation.lazy.LazyListState, onLoadMore: () -> Unit) {

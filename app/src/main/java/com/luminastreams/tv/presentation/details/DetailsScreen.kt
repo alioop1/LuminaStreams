@@ -53,21 +53,22 @@ import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.luminastreams.tv.core.tr
 
 // 🎨 PALETTE
 private val ColorBgDark = Color(0xFF050507)
 private val ColorTextMain = Color(0xFFFFFFFF)
 private val ColorAccentIsland = Color(0xFFE50914)
 
-@Composable
-fun tr(en: String, he: String): String = if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+
 
 @Composable
 fun DetailsScreen(
     state: DetailsScreenState,
     onEvent: (DetailsEvent) -> Unit,
     onPlayDirectUrl: (String, String, String, String, String, String) -> Unit,
-    onNavigateBack: () -> Unit = {}
+    onNavigateBack: () -> Unit = {},
+    onNavigateToDetails: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -432,19 +433,19 @@ fun DetailsScreen(
                                 modifier = Modifier.focusGroup()
                             ) {
                                 itemsIndexed(media.collectionItems) { _, rec ->
-                                    RecommendationCard(rec)
+                                    RecommendationCard(rec, onClick = { onNavigateToDetails(rec.id) })
                                 }
                             }
                         }
                     }
                 }
 
-                // --- MORE WITH {ACTOR} ---
-                if (!media.starringActorName.isNullOrBlank() && media.starringItems.isNotEmpty()) {
+                // --- 🎬 MORE FROM DIRECTOR ---
+                if (!media.directorName.isNullOrBlank() && media.directorItems.isNotEmpty()) {
                     item {
                         Column {
                             Text(
-                                "${tr("More with", "עוד עם")} ${media.starringActorName}",
+                                "🎬  ${tr("More from", "עוד מ-")}${media.directorName}",
                                 color = ColorTextMain, fontSize = 28.sp, fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 64.dp)
                             )
@@ -454,8 +455,8 @@ fun DetailsScreen(
                                 contentPadding = PaddingValues(horizontal = 64.dp),
                                 modifier = Modifier.focusGroup()
                             ) {
-                                itemsIndexed(media.starringItems) { _, rec ->
-                                    RecommendationCard(rec)
+                                itemsIndexed(media.directorItems) { _, rec ->
+                                    RecommendationCard(rec, onClick = { onNavigateToDetails(rec.id) })
                                 }
                             }
                         }

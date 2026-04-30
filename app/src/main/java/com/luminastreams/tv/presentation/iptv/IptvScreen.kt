@@ -53,7 +53,9 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.tv.material3.*
@@ -102,6 +104,7 @@ fun IptvScreen(
     val showQr by viewModel.showQrScreen.collectAsStateWithLifecycle()
     val ipAddress by viewModel.ipAddress.collectAsStateWithLifecycle()
     val activePlaylist by viewModel.activePlaylist.collectAsStateWithLifecycle()
+    val recentlyWatched by viewModel.recentlyWatched.collectAsStateWithLifecycle()
 
     val focusedEpg by viewModel.focusedEpg.collectAsStateWithLifecycle()
     var focusedChannel by remember { mutableStateOf<ChannelEntity?>(null) }
@@ -176,11 +179,30 @@ fun IptvScreen(
                 )
             }
 
-            // ─── MIDDLE: MASSIVE HERO SECTION ───
-            Ps5HeroSection(channel = focusedChannel, epg = focusedEpg)
+            // ─── MIDDLE: HERO or RECENTLY WATCHED ───
+            val showRecent = recentlyWatched.isNotEmpty() && selectedGroup != "Settings" && selectedGroup != "EPG Guide"
+
+            // When Recently Watched exists, IT becomes the hero (no separate hero section)
+            if (!showRecent) {
+                Ps5HeroSection(channel = focusedChannel, epg = focusedEpg)
+            }
+
+            // ─── RECENTLY WATCHED: FULL-WIDTH HERO ROW ───
+            AnimatedVisibility(visible = showRecent, enter = fadeIn(tween(300)) + expandVertically(), exit = fadeOut(tween(200)) + shrinkVertically()) {
+                RecentlyWatchedRow(
+                    channels = recentlyWatched,
+                    isHeb = isHeb,
+                    focusedChannelName = focusedChannel?.name,
+                    onPlayChannel = { id ->
+                        viewModel.markChannelWatched(id)
+                        onPlayChannel(id)
+                    },
+                    onFocusChannel = { ch -> focusedChannel = ch; viewModel.onChannelFocused(ch) }
+                )
+            }
 
             // ─── BOTTOM: CINEMATIC CONTENT GRID ───
-            Box(modifier = Modifier.fillMaxSize().padding(start = 48.dp, end = 48.dp, bottom = 48.dp)) {
+            Box(modifier = Modifier.weight(1f).padding(start = 48.dp, end = 48.dp, bottom = 48.dp)) {
                 Crossfade(targetState = selectedGroup, animationSpec = tween(400), label = "fade") { currentGroup ->
                     when {
                         currentGroup == "Settings" -> {
@@ -215,7 +237,10 @@ fun IptvScreen(
                                         channel = channel,
                                         isFavorite = channel.isFavorite,
                                         modifier = if (channel == channels.firstOrNull()) Modifier.focusRequester(gridFocusRequester) else Modifier,
-                                        onClick = { onPlayChannel(channel.id) },
+                                        onClick = {
+                                            viewModel.markChannelWatched(channel.id)
+                                            onPlayChannel(channel.id)
+                                        },
                                         onFocus = { focusedChannel = channel; viewModel.onChannelFocused(channel) },
                                         onFavoriteToggle = { viewModel.toggleFavorite(channel) }
                                     )
@@ -493,6 +518,185 @@ fun CinematicScreensaver(channel: ChannelEntity?) {
                 }
             }
         }
+    }
+}
+
+// ─── 📺 RECENTLY WATCHED: FULL-WIDTH HERO ROW ───
+
+@Composable
+private fun RecentlyWatchedRow(
+    channels: List<ChannelEntity>,
+    isHeb: Boolean,
+    focusedChannelName: String?,
+    onPlayChannel: (String) -> Unit,
+    onFocusChannel: (ChannelEntity) -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp)
+    ) {
+        // ── Focused channel name (big, like the Hero used to be) ──
+        if (!focusedChannelName.isNullOrBlank()) {
+            Text(
+                text = focusedChannelName,
+                color = ColorTextMain,
+                fontSize = 42.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                letterSpacing = (-0.5).sp,
+                modifier = Modifier.padding(horizontal = 56.dp).padding(bottom = 8.dp)
+            )
+        }
+
+        // ── Title row — right side for RTL ──
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 56.dp, vertical = 8.dp)
+        ) {
+            Text("📺", fontSize = 22.sp)
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = if (isHeb) "ערוצים אחרונים" else "Recently Watched",
+                color = ColorTextMain,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // ── Circles row ──
+        LazyRow(
+            horizontalArrangement = Arrangement.spacedBy(32.dp),
+            contentPadding = PaddingValues(horizontal = 56.dp),
+            modifier = Modifier.fillMaxWidth().focusGroup()
+        ) {
+            itemsIndexed(channels, key = { _, ch -> "recent_${ch.id}" }) { _, channel ->
+                RecentChannelBubble(
+                    channel = channel,
+                    onPlay = { onPlayChannel(channel.id) },
+                    onFocus = { onFocusChannel(channel) }
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+    }
+}
+
+@Composable
+private fun RecentChannelBubble(
+    channel: ChannelEntity,
+    onPlay: () -> Unit,
+    onFocus: () -> Unit
+) {
+    val isFocused = remember { mutableStateOf(false) }
+    val imageLoadFailed = remember { mutableStateOf(false) }
+
+    val animatedScale by animateFloatAsState(
+        targetValue = if (isFocused.value) 1.15f else 1.0f,
+        animationSpec = tween(250), label = "bubbleScale"
+    )
+    val ringAlpha by animateFloatAsState(
+        targetValue = if (isFocused.value) 1f else 0.45f,
+        animationSpec = tween(300), label = "ringAlpha"
+    )
+
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(140.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(140.dp)
+        ) {
+            // Outer cyan ring — always visible, brighter on focus
+            Box(
+                modifier = Modifier
+                    .size(134.dp)
+                    .graphicsLayer {
+                        scaleX = animatedScale
+                        scaleY = animatedScale
+                    }
+                    .alpha(ringAlpha)
+                    .border(
+                        width = if (isFocused.value) 3.dp else 2.dp,
+                        color = ColorLiveBlue,
+                        shape = CircleShape
+                    )
+            )
+
+            // Inner circle with logo
+            Surface(
+                onClick = onPlay,
+                shape = ClickableSurfaceDefaults.shape(CircleShape),
+                scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
+                border = ClickableSurfaceDefaults.border(
+                    border = Border.None,
+                    focusedBorder = Border(BorderStroke(2.dp, Color.White.copy(0.5f)))
+                ),
+                colors = ClickableSurfaceDefaults.colors(
+                    containerColor = Color(0xFF1B2D38),
+                    focusedContainerColor = Color(0xFF1E3545)
+                ),
+                modifier = Modifier
+                    .size(120.dp)
+                    .graphicsLayer {
+                        scaleX = animatedScale
+                        scaleY = animatedScale
+                    }
+                    .onFocusChanged {
+                        isFocused.value = it.isFocused
+                        if (it.isFocused) onFocus()
+                    }
+            ) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    if (channel.logoUrl.isNotBlank() && !imageLoadFailed.value) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(channel.logoUrl).size(300).crossfade(true).build(),
+                            contentDescription = channel.name,
+                            contentScale = ContentScale.Fit,
+                            onState = { if (it is AsyncImagePainter.State.Error) imageLoadFailed.value = true },
+                            modifier = Modifier.size(72.dp)
+                        )
+                    } else {
+                        Text(
+                            text = channel.name.take(2).uppercase(),
+                            color = ColorTextMain,
+                            fontSize = 30.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                    }
+                }
+            }
+
+            // LIVE dot
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .offset(x = (-10).dp, y = 10.dp)
+                    .size(14.dp)
+                    .graphicsLayer {
+                        scaleX = animatedScale
+                        scaleY = animatedScale
+                    }
+                    .background(ColorLiveBlue, CircleShape)
+                    .border(2.dp, ColorOledBlack, CircleShape)
+            )
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = channel.name,
+            color = if (isFocused.value) ColorTextMain else ColorTextMain.copy(0.65f),
+            fontSize = 13.sp,
+            fontWeight = if (isFocused.value) FontWeight.Bold else FontWeight.Medium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
     }
 }
 

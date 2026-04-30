@@ -53,11 +53,10 @@ import androidx.tv.material3.*
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.domain.model.SearchResult
+import com.luminastreams.tv.core.tr
 import kotlinx.coroutines.delay
 
-@Composable
-private fun tr(en: String, he: String): String =
-    if (LocalLayoutDirection.current == LayoutDirection.Rtl) he else en
+
 
 // ── Category definitions for discovery grid ─────────────────────────────
 private data class CategoryDef(val en: String, val he: String, val genre: String? = null)

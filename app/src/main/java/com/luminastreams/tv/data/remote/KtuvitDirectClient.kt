@@ -68,12 +68,13 @@ class KtuvitDirectClient(private val context: Context) {
         year: Int? = null,
         imdbId: String? = null
     ): String? = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
             val searchType = if (isSeries) "1" else "0"
             val yearStr    = year?.toString() ?: ""
             val safeName   = name.replace("\"", "")
             val body = """{"request":{"FilmName":"$safeName","Actors":[],"Studios":null,"Directors":[],"Genres":[],"Countries":[],"Languages":[],"Year":"$yearStr","Rating":[],"Page":1,"SearchType":"$searchType","WithSubsOnly":false}}"""
-            val conn = openPost(SEARCH, body, cookie)
+            conn = openPost(SEARCH, body, cookie)
             if (conn.responseCode !in 200..299) return@withContext null
             val json  = conn.inputStream.bufferedReader().readText()
             val films = JSONObject(json).optString("d")
@@ -88,28 +89,36 @@ class KtuvitDirectClient(private val context: Context) {
             if (films.length() > 0) films.getJSONObject(0).optString("ID").ifEmpty { null } else null
         } catch (e: Exception) {
             e.printStackTrace(); null
+        } finally {
+            conn?.disconnect()
         }
     }
 
     data class KtuvitSub(val id: String, val name: String, val downloads: Int, val fileType: String)
 
     suspend fun getSubsListMovie(ktuvitId: String): List<KtuvitSub> = withContext(Dispatchers.IO) {
+        var conn: HttpURLConnection? = null
         try {
-            val conn = openGet("$MOVIE_URL$ktuvitId", cookie)
+            conn = openGet("$MOVIE_URL$ktuvitId", cookie)
             if (conn.responseCode !in 200..299) return@withContext emptyList()
             parseSubsHtml(conn.inputStream.bufferedReader().readText())
-        } catch (e: Exception) { e.printStackTrace(); emptyList() }
+        } catch (e: Exception) { e.printStackTrace(); emptyList() } finally {
+            conn?.disconnect()
+        }
     }
 
     suspend fun getSubsListEpisode(ktuvitId: String, season: Int, episode: Int): List<KtuvitSub> =
         withContext(Dispatchers.IO) {
+            var conn: HttpURLConnection? = null
             try {
                 val url  = "${EPISODE_URL}moduleName=SubtitlesList&SeriesID=$ktuvitId&Season=$season&Episode=$episode"
-                val conn = openGet(url, cookie)
+                conn = openGet(url, cookie)
                 if (conn.responseCode !in 200..299) return@withContext emptyList()
                 val html = conn.inputStream.bufferedReader().readText()
                 parseSubsHtml("<!DOCTYPE html><table id=\"subtitlesList\"><thead><tr/></thead>$html</table>")
-            } catch (e: Exception) { e.printStackTrace(); emptyList() }
+            } catch (e: Exception) { e.printStackTrace(); emptyList() } finally {
+                conn?.disconnect()
+            }
         }
 
     private fun parseSubsHtml(html: String): List<KtuvitSub> {
@@ -134,20 +143,25 @@ class KtuvitDirectClient(private val context: Context) {
         subId: String,
         fileType: String = "srt"
     ): File? = withContext(Dispatchers.IO) {
+        var reqConn: HttpURLConnection? = null
+        var dlConn: HttpURLConnection? = null
         try {
             val reqBody = """{"request":{"FilmID":"$ktuvitTitleId","SubtitleID":"$subId","FontSize":0,"FontColor":"","PredefinedLayout":-1}}"""
-            val reqConn = openPost(REQ_DL, reqBody, cookie)
+            reqConn = openPost(REQ_DL, reqBody, cookie)
             if (reqConn.responseCode !in 200..299) return@withContext null
             val identifier = JSONObject(reqConn.inputStream.bufferedReader().readText())
                 .optString("d").let { JSONObject(it) }.optString("DownloadIdentifier")
             if (identifier.isNullOrEmpty()) return@withContext null
-            val dlConn = openGet("$DL_FILE$identifier", cookie)
+            dlConn = openGet("$DL_FILE$identifier", cookie)
             if (dlConn.responseCode !in 200..299) return@withContext null
             val outFile = File(context.cacheDir, "ktuvit_${subId}.$fileType")
             outFile.writeBytes(dlConn.inputStream.readBytes())
             outFile
         } catch (e: Exception) {
             e.printStackTrace(); null
+        } finally {
+            reqConn?.disconnect()
+            dlConn?.disconnect()
         }
     }
 

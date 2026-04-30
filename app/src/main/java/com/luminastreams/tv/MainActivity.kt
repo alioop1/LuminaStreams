@@ -215,21 +215,28 @@ fun AppNavHostContainer(
                     val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
                     val safePoster   = URLEncoder.encode(poster.ifBlank { "none" }, "UTF-8")
                     val safeLogo     = URLEncoder.encode(logo.ifBlank { "none" }, "UTF-8")
-                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&posterUrl=$safePoster&logoUrl=$safeLogo")
+                    // Pass fullId (TMDB display ID) so the player can save the IMDB→TMDB bridge
+                    val safeFullId   = URLEncoder.encode(fullId, "UTF-8")
+                    navController.navigate("player?videoUrl=$safeUrl&imdbId=$safeImdb&title=$safeTitle&backdropUrl=$safeBackdrop&posterUrl=$safePoster&logoUrl=$safeLogo&fullId=$safeFullId")
                 },
-                onNavigateBack        = { navController.popBackStack() }
+                onNavigateBack        = { navController.popBackStack() },
+                onNavigateToDetails   = { id ->
+                    val safeId = URLEncoder.encode(id, "UTF-8")
+                    navController.navigate("details?fullId=$safeId")
+                }
             )
         }
 
         composable(
-            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&posterUrl={posterUrl}&logoUrl={logoUrl}",
+            route     = "player?videoUrl={videoUrl}&imdbId={imdbId}&title={title}&backdropUrl={backdropUrl}&posterUrl={posterUrl}&logoUrl={logoUrl}&fullId={fullId}",
             arguments = listOf(
                 navArgument("videoUrl")    { type = NavType.StringType; defaultValue = "" },
                 navArgument("imdbId")      { type = NavType.StringType; defaultValue = "_" },
                 navArgument("title")       { type = NavType.StringType; defaultValue = "" },
                 navArgument("backdropUrl") { type = NavType.StringType; defaultValue = "" },
                 navArgument("posterUrl")   { type = NavType.StringType; defaultValue = "" },
-                navArgument("logoUrl")     { type = NavType.StringType; defaultValue = "" }
+                navArgument("logoUrl")     { type = NavType.StringType; defaultValue = "" },
+                navArgument("fullId")      { type = NavType.StringType; defaultValue = "" }
             )
         ) { back ->
             val videoUrl    = URLDecoder.decode(back.arguments?.getString("videoUrl") ?: "", "UTF-8")
@@ -237,6 +244,7 @@ fun AppNavHostContainer(
             val title       = URLDecoder.decode(back.arguments?.getString("title") ?: "", "UTF-8")
             val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
             val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
+            val playerFullId = URLDecoder.decode(back.arguments?.getString("fullId") ?: "", "UTF-8")
 
             if (videoUrl.isNotBlank()) {
                 PlayerScreen(
@@ -245,6 +253,7 @@ fun AppNavHostContainer(
                     title          = title,
                     backdropUrl    = backdropUrl,
                     logoUrl        = logoUrl,
+                    fullId         = playerFullId,
                     onNavigateBack = { navController.popBackStack() }
                 )
             }

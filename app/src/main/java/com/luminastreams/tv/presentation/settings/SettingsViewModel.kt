@@ -109,7 +109,10 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(rdSpeedTesting = true, rdSpeedTestResult = "Contacting Server...") }
             val token = _state.value.rdToken
-            if (token.isEmpty()) return@launch
+            if (token.isEmpty()) {
+                _state.update { it.copy(rdSpeedTesting = false, rdSpeedTestResult = "⚠ No token configured") }
+                return@launch
+            }
 
             try {
                 val request = Request.Builder()

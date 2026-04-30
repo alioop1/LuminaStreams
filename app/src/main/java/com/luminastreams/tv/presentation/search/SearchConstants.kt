@@ -13,10 +13,3 @@ val GOLD         = Color(0xFFFFCC00)
 val ACCENT_BLUE  = Color(0xFF00D4FF)
 val ACCENT_PINK  = Color(0xFFFF2D78)
 val ACCENT_GREEN = Color(0xFF00E676)
-
-val HINTS = listOf(
-    "חיפוש סרטים, סדרות...",
-    "נסה לחפש \"הבורר\" או \"פאודה\"...",
-    "חפש לפי במאי, שחקן או ז'אנר...",
-    "גלה מה חם היום ב-Fuzer..."
-)

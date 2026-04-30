@@ -16,6 +16,8 @@ data class HomeState(
     val error:                String?      = null,
     val selectedTab:          String       = "ראשי",
     val selectedStudioFilter: String?      = null,
+    // ── Continue Watching ──────────────────────────────────────────────────
+    val continueWatching: List<Movie> = emptyList(),
     // ── Movies ──────────────────────────────────────────────────────────────
     val movieTrending:  List<Movie>  = emptyList(),
     val moviePremieres: List<Movie>  = emptyList(),
@@ -65,7 +67,14 @@ data class HomeState(
     val isFilterComplete:  Boolean      = false,
     val selectedGenreName: String       = "",
     val discoveryResults:  List<Movie>  = emptyList(),
-    val focusedItem:       Movie?       = null
+    val focusedItem:       Movie?       = null,
+    // ── Hero Enrichment (fetched on hero change) ─────────────────────────
+    val heroLogoUrl:       String?      = null,
+    val heroRuntime:       Int?         = null,
+    val heroCast:          List<String> = emptyList(),
+    val heroOverview:      String?      = null,   // localized synopsis (Hebrew/English)
+    val heroGenre:         String?      = null,   // localized genre names
+    val heroEnrichedId:    String?      = null   // prevents duplicate API calls
 )
 
 object FuzerCats {
