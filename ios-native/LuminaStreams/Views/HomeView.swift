@@ -221,8 +221,6 @@ struct HomeView: View {
                         .shadow(color: Color.white.opacity(0.35), radius: 8)
                     }
 
-                    Spacer()
-
                     // Carousel Dots
                     HStack(spacing: 5) {
                         ForEach(0..<min(viewModel.heroItems.count, 6), id: \.self) { idx in
@@ -231,9 +229,11 @@ struct HomeView: View {
                                 .frame(width: idx == viewModel.heroIndex ? 7 : 5, height: idx == viewModel.heroIndex ? 7 : 5)
                         }
                     }
+                    .padding(.horizontal, 8)
                 }
                 .padding(.top, 4)
             }
+            .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }

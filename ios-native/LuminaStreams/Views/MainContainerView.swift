@@ -1,7 +1,6 @@
 import SwiftUI
 
 enum LuminaSection: String, CaseIterable, Identifiable {
-    case search    = "search"
     case home      = "home"
     case movies    = "movies"
     case series    = "series"
@@ -9,13 +8,13 @@ enum LuminaSection: String, CaseIterable, Identifiable {
     case fuzer     = "fuzer"
     case debrid    = "debrid"
     case watchlist = "watchlist"
+    case search    = "search"
     case settings  = "settings"
 
     var id: String { rawValue }
 
     var icon: String {
         switch self {
-        case .search:    return "magnifyingglass"
         case .home:      return "house.fill"
         case .movies:    return "film.fill"
         case .series:    return "tv.fill"
@@ -23,13 +22,13 @@ enum LuminaSection: String, CaseIterable, Identifiable {
         case .fuzer:     return "sparkles"
         case .debrid:    return "cloud.fill"
         case .watchlist: return "heart.fill"
+        case .search:    return "magnifyingglass"
         case .settings:  return "gearshape.fill"
         }
     }
 
     func title(isRTL: Bool) -> String {
         switch self {
-        case .search:    return isRTL ? "חיפוש" : "Search"
         case .home:      return isRTL ? "בית" : "Home"
         case .movies:    return isRTL ? "סרטים" : "Movies"
         case .series:    return isRTL ? "סדרות" : "Series"
@@ -37,6 +36,7 @@ enum LuminaSection: String, CaseIterable, Identifiable {
         case .fuzer:     return "Fuzer"
         case .debrid:    return "Debrid"
         case .watchlist: return isRTL ? "מועדפים" : "Watchlist"
+        case .search:    return isRTL ? "חיפוש" : "Search"
         case .settings:  return isRTL ? "הגדרות" : "Settings"
         }
     }
@@ -56,6 +56,7 @@ struct MainContainerView: View {
     var body: some View {
         GeometryReader { proxy in
             let isLandscape = proxy.size.width > proxy.size.height
+            let isPad = UIDevice.current.userInterfaceIdiom == .pad
 
             NavigationStack {
                 ZStack(alignment: .top) {
@@ -96,10 +97,10 @@ struct MainContainerView: View {
                             SettingsView()
                         }
                     }
-                    .padding(.top, isLandscape ? 58 : 68)
+                    .padding(.top, isLandscape ? 64 : (isPad ? 74 : 100))
 
-                    // PS5 Top Nav Bar with High-Visibility Circular Glass Buttons
-                    ps5TopBar(isLandscape: isLandscape)
+                    // Safe PS5 Top Bar with Dynamic Island Avoidance
+                    ps5TopBar(isLandscape: isLandscape, isPad: isPad)
                 }
                 .navigationDestination(
                     isPresented: Binding(
@@ -119,76 +120,104 @@ struct MainContainerView: View {
         .onReceive(clockTimer) { _ in updateClock() }
     }
 
-    // ── PS5 Top Bar with Pure Vector Shapes & Original Spacing ─────────────
+    // ── Safe PS5 Top Bar (Clean Dynamic Island Clearance & No Text Wrap) ────
     @ViewBuilder
-    private func ps5TopBar(isLandscape: Bool) -> some View {
+    private func ps5TopBar(isLandscape: Bool, isPad: Bool) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                // Brand: LUMINA STREAMS
-                HStack(spacing: 3) {
-                    Text("LUMINA")
-                        .font(.system(size: 16, weight: .black, design: .rounded))
-                        .foregroundColor(.white)
-                    Text("STREAMS")
-                        .font(.system(size: 16, weight: .light, design: .rounded))
-                        .foregroundColor(.white.opacity(0.7))
+            if isLandscape || isPad {
+                // Horizontal Single-Row Layout (Landscape / iPad)
+                HStack(spacing: 14) {
+                    brandLogoView
+                    Spacer(minLength: 12)
+                    actionButtonsScrollView
+                    Spacer(minLength: 12)
+                    liveClockView
                 }
-                .environment(\.layoutDirection, .leftToRight)
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3)) { activeSection = .home }
+                .padding(.horizontal, isLandscape ? 48 : 24)
+                .padding(.vertical, 8)
+            } else {
+                // 2-Row Vertical Layout (iPhone Portrait - Clears Dynamic Island & Prevents Cramping)
+                VStack(spacing: 8) {
+                    HStack {
+                        brandLogoView
+                        Spacer()
+                        liveClockView
+                    }
+                    .padding(.horizontal, 16)
+
+                    actionButtonsScrollView
+                        .padding(.horizontal, 10)
                 }
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+            }
 
-                Spacer(minLength: 6)
+            Divider().background(Color.white.opacity(0.08))
+        }
+        .background(
+            LuminaTheme.blackBg.opacity(0.96)
+                .background(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .top)
+        )
+    }
 
-                // Circular PS5 Action Icons (Exact Android TV Placement)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 8) {
-                        ForEach(LuminaSection.allCases) { section in
-                            let isSelected = activeSection == section
-                            Button {
-                                withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                                    activeSection = section
-                                    if section == .movies || section == .series {
-                                        homeVM.selectedStudio = nil
-                                        homeVM.studioCategories = []
-                                    }
-                                }
-                            } label: {
-                                ZStack {
-                                    Circle()
-                                        .fill(isSelected ? Color.white : Color.white.opacity(0.08))
-                                        .frame(width: 36, height: 36)
-                                        .overlay(
-                                            Circle()
-                                                .stroke(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
-                                        )
-                                        .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
+    private var brandLogoView: some View {
+        HStack(spacing: 4) {
+            Text("LUMINA")
+                .font(.system(size: 17, weight: .black, design: .rounded))
+                .foregroundColor(.white)
+            Text("STREAMS")
+                .font(.system(size: 17, weight: .light, design: .rounded))
+                .foregroundColor(.white.opacity(0.75))
+        }
+        .fixedSize()
+        .environment(\.layoutDirection, .leftToRight)
+        .onTapGesture {
+            withAnimation(.spring(response: 0.3)) { activeSection = .home }
+        }
+    }
 
-                                    Image(systemName: section.icon)
-                                        .font(.system(size: 14, weight: .semibold))
-                                        .foregroundColor(isSelected ? .black : .white)
-                                }
+    private var liveClockView: some View {
+        Text(currentTimeString)
+            .font(.system(size: 13, weight: .medium, design: .monospaced))
+            .foregroundColor(.white.opacity(0.75))
+            .fixedSize()
+    }
+
+    private var actionButtonsScrollView: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(LuminaSection.allCases) { section in
+                    let isSelected = activeSection == section
+                    Button {
+                        withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                            activeSection = section
+                            if section == .movies || section == .series {
+                                homeVM.selectedStudio = nil
+                                homeVM.studioCategories = []
                             }
-                            .buttonStyle(.plain)
+                        }
+                    } label: {
+                        ZStack {
+                            Circle()
+                                .fill(isSelected ? Color.white : Color.white.opacity(0.08))
+                                .frame(width: 38, height: 38)
+                                .overlay(
+                                    Circle()
+                                        .stroke(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
+                                )
+                                .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
+
+                            Image(systemName: section.icon)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(isSelected ? .black : .white)
                         }
                     }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
+                    .buttonStyle(.plain)
                 }
-
-                // Live Clock
-                Text(currentTimeString)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(.white.opacity(0.75))
             }
-            .padding(.horizontal, isLandscape ? 40 : 16)
-            .padding(.top, 4)
-            .padding(.bottom, 8)
-            .background(
-                LuminaTheme.blackBg.opacity(0.94)
-                    .background(.ultraThinMaterial)
-            )
-            Divider().background(Color.white.opacity(0.08))
+            .padding(.horizontal, 4)
+            .padding(.vertical, 2)
         }
     }
 
