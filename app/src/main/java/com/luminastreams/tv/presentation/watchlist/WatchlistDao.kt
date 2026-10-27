@@ -23,6 +23,18 @@ interface WatchlistDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun addToWatchlist(movie: WatchlistEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(movies: List<WatchlistEntity>)
+
+    @androidx.room.Transaction
+    suspend fun replaceWatchlist(movies: List<WatchlistEntity>) {
+        clearWatchlist()
+        insertAll(movies)
+    }
+
     @Query("DELETE FROM watchlist WHERE id = :id")
     suspend fun removeFromWatchlist(id: String)
+
+    @Query("DELETE FROM watchlist")
+    suspend fun clearWatchlist()
 }

@@ -8,18 +8,22 @@ import com.luminastreams.tv.data.local.iptv.IptvDao
 import com.luminastreams.tv.data.local.iptv.PlaylistEntity
 import com.luminastreams.tv.data.local.watchlist.WatchlistDao
 import com.luminastreams.tv.data.local.watchlist.WatchlistEntity
+import com.luminastreams.tv.data.local.entities.UserEntity
+import com.luminastreams.tv.data.local.dao.UserDao
 
 @Database(
     entities = [
         PlaylistEntity::class,
         ChannelEntity::class,
         EpgProgramEntity::class,
-        WatchlistEntity::class
+        WatchlistEntity::class,
+        UserEntity::class
     ],
-    version = 2, // Bumped version to migrate the new watchlist table
+    version = 3, // Bumped for User storage
     exportSchema = false
 )
 abstract class LuminaDatabase : RoomDatabase() {
     abstract fun iptvDao(): IptvDao
     abstract fun watchlistDao(): WatchlistDao
+    abstract fun userDao(): UserDao
 }

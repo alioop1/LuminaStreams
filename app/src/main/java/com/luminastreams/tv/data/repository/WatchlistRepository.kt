@@ -30,4 +30,16 @@ class WatchlistRepository(private val dao: WatchlistDao) {
         }
         return !exists // Returns true if added, false if removed
     }
+
+    suspend fun clearWatchlist() {
+        dao.clearWatchlist()
+    }
+
+    suspend fun addToWatchlist(movie: Movie) {
+        dao.addToWatchlist(movie.toEntity())
+    }
+
+    suspend fun replaceWatchlist(movies: List<Movie>) {
+        dao.replaceWatchlist(movies.map { it.toEntity() })
+    }
 }

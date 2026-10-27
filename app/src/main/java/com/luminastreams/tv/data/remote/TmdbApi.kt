@@ -46,6 +46,14 @@ data class BelongsToCollectionDto(
     @SerializedName("backdrop_path") val backdropPath: String?
 )
 
+data class ReviewResultDto(
+    val author: String,
+    val content: String,
+    @SerializedName("author_details") val authorDetails: AuthorDetailsDto?
+)
+data class AuthorDetailsDto(val rating: Double?)
+data class ReviewsDto(val results: List<ReviewResultDto>?)
+
 data class TmdbMovieDetailsDto(
     val id: Int, val title: String, val overview: String?,
     @SerializedName("backdrop_path") val backdropPath: String?,
@@ -56,7 +64,9 @@ data class TmdbMovieDetailsDto(
     @SerializedName("production_companies") val productionCompanies: List<ProductionCompanyDto>?,
     val credits: CreditsDto?, val external_ids: ExternalIdsDto?,
     val images: ImagesDto?,
-    @SerializedName("belongs_to_collection") val belongsToCollection: BelongsToCollectionDto?
+    @SerializedName("belongs_to_collection") val belongsToCollection: BelongsToCollectionDto?,
+    val reviews: ReviewsDto?,
+    val videos: VideosDto?
 )
 
 data class TmdbTvDetailsDto(
@@ -68,8 +78,13 @@ data class TmdbTvDetailsDto(
     val status: String?, @SerializedName("number_of_seasons") val numberOfSeasons: Int,
     val genres: List<GenreDto>?, val networks: List<NetworkDto>?,
     val credits: CreditsDto?, val external_ids: ExternalIdsDto?,
-    val images: ImagesDto?
+    val images: ImagesDto?,
+    val reviews: ReviewsDto?,
+    val videos: VideosDto?
 )
+
+data class VideosDto(val results: List<VideoResultDto>?)
+data class VideoResultDto(val key: String, val site: String, val type: String)
 
 data class CreditsDto(val cast: List<CastDto>, val crew: List<CrewDto>?)
 data class CastDto(val id: Int, val name: String, val character: String, @SerializedName("profile_path") val profilePath: String?)
@@ -80,12 +95,25 @@ data class RdTorrentInfoResponse(val id: String, val filename: String, val statu
 data class RdTorrentFile(val id: Int, val path: String, val bytes: Long, val selected: Int)
 data class RdUnrestrictResponse(val id: String, val filename: String, val mimeType: String, val filesize: Long, val link: String, val download: String)
 
+data class TmdbPersonDetailsDto(
+    val id: Int,
+    val name: String,
+    val biography: String?,
+    val birthday: String?,
+    val deathday: String?,
+    @SerializedName("place_of_birth") val placeOfBirth: String?,
+    @SerializedName("profile_path") val profilePath: String?,
+    @SerializedName("combined_credits") val combinedCredits: CombinedCreditsDto?
+)
+
+data class CombinedCreditsDto(val cast: List<TmdbMediaDto>?)
+
 interface TmdbApi {
     @GET("trending/all/week") suspend fun getTrending(@Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("page") page: Int = 1): TmdbResponse
     @GET("discover/movie") suspend fun discoverMovies(@Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("with_genres") genres: String): TmdbResponse
     @GET("discover/tv") suspend fun discoverTv(@Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("with_genres") genres: String): TmdbResponse
-    @GET("movie/{movie_id}") suspend fun getMovieDetails(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbMovieDetailsDto
-    @GET("tv/{tv_id}") suspend fun getTvDetails(@Path("tv_id") seriesId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images"): TmdbTvDetailsDto
+    @GET("movie/{movie_id}") suspend fun getMovieDetails(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images,reviews", @Query("include_image_language") imageLangs: String = "he,en,null"): TmdbMovieDetailsDto
+    @GET("tv/{tv_id}") suspend fun getTvDetails(@Path("tv_id") seriesId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images,reviews", @Query("include_image_language") imageLangs: String = "he,en,null"): TmdbTvDetailsDto
     @GET("discover/{type}") suspend fun discoverMedia(
         @Path("type") type: String,
         @Query("with_genres") genreId: String? = null,
@@ -112,6 +140,13 @@ interface TmdbApi {
         @Query("include_adult") includeAdult: Boolean = false,
         @Query("api_key") apiKey: String = Constants.TMDB_API_KEY
     ): TmdbResponse
+
+    @GET("person/{person_id}") suspend fun getPersonDetails(
+        @Path("person_id") personId: String,
+        @Query("api_key") apiKey: String = Constants.TMDB_API_KEY,
+        @Query("append_to_response") append: String = "combined_credits",
+        @Query("language") language: String = "en-US"
+    ): TmdbPersonDetailsDto
 }
 
 interface RealDebridApi {

@@ -1,11 +1,13 @@
 package com.luminastreams.tv.data.remote
 
+import com.luminastreams.tv.core.TrustedHttpClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.json.JSONObject
 import java.io.BufferedInputStream
-import java.net.HttpURLConnection
-import java.net.URL
+import java.io.ByteArrayInputStream
+import java.util.concurrent.TimeUnit
 import java.util.zip.ZipInputStream
 
 class SubtitleScraper {
@@ -16,8 +18,14 @@ class SubtitleScraper {
         private const val SEARCH_BASE = "https://api.subdl.com/api/v1/subtitles"
         private const val DL_BASE     = "https://dl.subdl.com"
         private const val USER_AGENT  = "Mozilla/5.0 (Android TV; Android 12) LuminaStreams/1.0"
-        private const val TIMEOUT_MS  = 12_000
+        private const val TIMEOUT_MS  = 12_000L
     }
+
+    private val client = TrustedHttpClient.builder()
+        .connectTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .readTimeout(TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        .followRedirects(true)
+        .build()
 
     suspend fun fetchSubtitleInMemory(
         imdbId   : String,
@@ -25,8 +33,6 @@ class SubtitleScraper {
         episode  : Int?    = null,
         langCode : String  = "heb"
     ): Result<ByteArray> = withContext(Dispatchers.IO) {
-        var searchConn: HttpURLConnection? = null
-        var dlConn: HttpURLConnection? = null
         try {
             val sdLang = when (langCode.lowercase().take(3)) {
                 "he", "heb", "iw" -> "HE"
@@ -39,18 +45,25 @@ class SubtitleScraper {
             }
 
             val cleanId   = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
-            // Correct URL: https://api.subdl.com/api/v1/subtitles?imdb_id=...&lang=...
             var searchUrl = "$SEARCH_BASE?imdb_id=$cleanId&lang=$sdLang&subs_per_page=5"
             if (season != null && episode != null) {
                 searchUrl += "&season_number=$season&episode_number=$episode"
             }
 
-            searchConn = openGet(searchUrl)
-            if (searchConn.responseCode != 200) {
-                return@withContext Result.failure(Exception("subdl search HTTP ${searchConn.responseCode}"))
+            val searchRequest = Request.Builder()
+                .url(searchUrl)
+                .header("User-Agent", USER_AGENT)
+                .header("Accept", "application/json, */*")
+                .build()
+            val searchResponse = client.newCall(searchRequest).execute()
+            if (!searchResponse.isSuccessful) {
+                val code = searchResponse.code
+                searchResponse.close()
+                return@withContext Result.failure(Exception("subdl search HTTP $code"))
             }
 
-            val body = searchConn.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            val body = searchResponse.body?.string() ?: ""
+            searchResponse.close()
             val json = JSONObject(body)
 
             if (!json.optBoolean("status", false)) {
@@ -71,13 +84,22 @@ class SubtitleScraper {
                 return@withContext Result.failure(Exception("לא נמצא url בתשובת subdl"))
             }
 
-            val dlUrl  = "$DL_BASE$downloadPath"
-            dlConn = openGet(dlUrl)
-            if (dlConn.responseCode != 200) {
-                return@withContext Result.failure(Exception("subdl download HTTP ${dlConn.responseCode}"))
+            val dlUrl = "$DL_BASE$downloadPath"
+            val dlRequest = Request.Builder()
+                .url(dlUrl)
+                .header("User-Agent", USER_AGENT)
+                .build()
+            val dlResponse = client.newCall(dlRequest).execute()
+            if (!dlResponse.isSuccessful) {
+                val code = dlResponse.code
+                dlResponse.close()
+                return@withContext Result.failure(Exception("subdl download HTTP $code"))
             }
 
-            ZipInputStream(BufferedInputStream(dlConn.inputStream)).use { zis ->
+            val dlBytes = dlResponse.body?.bytes() ?: byteArrayOf()
+            dlResponse.close()
+
+            ZipInputStream(BufferedInputStream(ByteArrayInputStream(dlBytes))).use { zis ->
                 var entry = zis.nextEntry
                 while (entry != null) {
                     val name = entry.name.lowercase()
@@ -91,20 +113,6 @@ class SubtitleScraper {
             Result.failure(Exception("קובץ כתוביות תקין לא נמצא בארכיון"))
         } catch (e: Exception) {
             Result.failure(e)
-        } finally {
-            try { searchConn?.disconnect() } catch (_: Exception) {}
-            try { dlConn?.disconnect() } catch (_: Exception) {}
         }
-    }
-
-    private fun openGet(urlString: String): HttpURLConnection {
-        val conn = URL(urlString).openConnection() as HttpURLConnection
-        conn.requestMethod           = "GET"
-        conn.connectTimeout          = TIMEOUT_MS
-        conn.readTimeout             = TIMEOUT_MS
-        conn.instanceFollowRedirects = true
-        conn.setRequestProperty("User-Agent", USER_AGENT)
-        conn.setRequestProperty("Accept",     "application/json, */*")
-        return conn
     }
 }

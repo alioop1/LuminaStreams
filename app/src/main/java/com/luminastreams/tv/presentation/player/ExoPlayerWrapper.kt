@@ -1,5 +1,7 @@
 @file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @file:Suppress("UNUSED", "UNUSED_VARIABLE")
+// ── Streaming Stability Overhaul v2 ──
+// Fixes: stall watchdog, aggressive retry, connection pool flush, buffer tuning
 
 package com.luminastreams.tv.presentation.player
 
@@ -60,6 +62,29 @@ class ExoPlayerWrapper(context: Context) {
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
+    private val preAllocateBuffer = prefs.getBoolean("pre_buffer", false)
+
+    private val loadControl: DefaultLoadControl = DefaultLoadControl.Builder()
+        .setTargetBufferBytes(
+            if (preAllocateBuffer) {
+                when {
+                    DeviceProfile.totalRamMb > 2500 -> 500 * 1024 * 1024 // 500MB for High-End (e.g. Shield Pro)
+                    DeviceProfile.totalRamMb > 1500 -> 250 * 1024 * 1024 // 250MB for Mid-End
+                    else -> 150 * 1024 * 1024 // 150MB for Low-End TVs
+                }
+            } else {
+                100 * 1024 * 1024 // 100MB Default
+            }
+        )
+        .setBufferDurationsMs(
+            if (preAllocateBuffer && DeviceProfile.totalRamMb > 2500) 120_000 else 50_000,   // minBuffer
+            if (preAllocateBuffer && DeviceProfile.totalRamMb > 2500) 600_000 else if (preAllocateBuffer) 300_000 else 120_000,  // maxBuffer: up to 10 minutes for beast mode
+            2_500,    // bufferForPlayback
+            5_000     // bufferAfterRebuffer
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+
     private val renderersFactory = DefaultRenderersFactory(appContext).apply {
         setExtensionRendererMode(
             when {
@@ -111,32 +136,23 @@ class ExoPlayerWrapper(context: Context) {
         setParameters(params.build())
     }
 
-    // Fast-start buffer config: starts playback after 1.5s of content (not 5s)
-    // while continuing to buffer up to 70s in the background.
-    // Critical for 4K REMUX (60-80Mbps) where 5s = 37-50MB initial wait.
-    private val loadControl: DefaultLoadControl = DefaultLoadControl.Builder()
-        .setTargetBufferBytes(100 * 1024 * 1024)
-        .setBufferDurationsMs(
-            5_000,   // min buffer: reduced from 15s default to 5s for faster start
-            70_000,  // max buffer: 70 seconds (enough headroom for 4K)
-            1_500,   // buffer for playback: 1.5s — start playing almost immediately
-            3_000    // buffer for rebuffer: 3s — quick recovery after seek
+    // ── OkHttp client for streaming — tuned for RD CDN reliability ──
+    // readTimeout = 0 (infinite) is CRITICAL: when ExoPlayer's buffer is full it stops
+    // calling read() for up to a minute. A finite readTimeout would kill a healthy stream.
+    // Instead, we rely on the stall watchdog to detect truly dead connections.
+    private val streamingClient = TrustedHttpClient.builder()
+        .connectTimeout(
+            (if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 15L),
+            java.util.concurrent.TimeUnit.SECONDS
         )
-        .setPrioritizeTimeOverSizeThresholds(true)
+        .readTimeout(0L, java.util.concurrent.TimeUnit.SECONDS)   // Infinite — ExoPlayer controls read pacing
+        .writeTimeout(0L, java.util.concurrent.TimeUnit.SECONDS)
+        .connectionPool(okhttp3.ConnectionPool(5, 5, java.util.concurrent.TimeUnit.MINUTES))
+        .retryOnConnectionFailure(true) // OkHttp-level retry on TCP reset / connection drop
         .build()
 
-    private val httpDataSourceFactory = OkHttpDataSource.Factory(
-        TrustedHttpClient.builder()
-            .connectTimeout(
-                (if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 10L),
-                java.util.concurrent.TimeUnit.SECONDS
-            )
-            .readTimeout(
-                (if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30L else 15L),
-                java.util.concurrent.TimeUnit.SECONDS
-            )
-            .build()
-    ).setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+    private val httpDataSourceFactory = OkHttpDataSource.Factory(streamingClient)
+        .setUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
 
     private val dataSourceFactory  = DefaultDataSource.Factory(appContext, httpDataSourceFactory)
     private val mediaSourceFactory = DefaultMediaSourceFactory(appContext)
@@ -167,6 +183,23 @@ class ExoPlayerWrapper(context: Context) {
                 exo.javaClass.getMethod("setAudioOffloadPreferences", cls).invoke(exo, op)
             }
         }
+
+    // ── Auto-retry state for connection drops ──
+    private var _autoRetryCount = 0
+    private var _lastStreamUrl: String? = null
+    private var _lastSubtitleUrl: String? = null
+    private companion object {
+        const val MAX_AUTO_RETRIES = 10 // RD link is valid — retry aggressively, user should NEVER see an error
+    }
+
+    // ── Stall detection watchdog ──
+    // Catches edge case: TCP connection alive but server stopped sending bytes.
+    // Only counts stall time when player.isPlaying — initial buffering is NOT a stall.
+    private var _stallWatchdogHandler: android.os.Handler? = null
+    private var _lastBufferedPosition = 0L
+    private var _stallCheckCount = 0
+    private val STALL_CHECK_INTERVAL_MS = 5_000L  // Check every 5s
+    private val STALL_MAX_CHECKS = 4              // After 4 checks (20s) with no progress → force retry
 
     private val _isPlaying       = MutableStateFlow(false)
     val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
@@ -235,6 +268,35 @@ class ExoPlayerWrapper(context: Context) {
             }
 
             override fun onPlayerError(error: PlaybackException) {
+                val isRecoverable = error.errorCode in listOf(
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+                    PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
+                    PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+                    PlaybackException.ERROR_CODE_IO_UNSPECIFIED
+                )
+
+                if (isRecoverable && _autoRetryCount < MAX_AUTO_RETRIES) {
+                    // Silent reconnect — user should never see this happen
+                    _autoRetryCount++
+                    val resumePos = player.currentPosition.coerceAtLeast(0L)
+                    val wasPlayWhenReady = player.playWhenReady
+                    val savedSubUrl = _lastSubtitleUrl
+                    val streamUrl = _lastStreamUrl ?: return
+                    player.stop()
+                    player.clearMediaItems()
+                    _playerError.value = null
+                    // Kill stale sockets so OkHttp opens a fresh connection with correct Range header
+                    flushStaleConnections()
+                    // Fast retry: 1.5s base, max 4s — RD CDN is reliable, just reconnect quickly
+                    val retryDelayMs = 1_500L + ((_autoRetryCount - 1).coerceAtMost(3) * 800L)
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        retryStream(streamUrl, resumePos, wasPlayWhenReady, savedSubUrl)
+                    }, retryDelayMs)
+                    return
+                }
+
                 _playerError.value = when (error.errorCode) {
                     PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
                     PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error."
@@ -253,6 +315,15 @@ class ExoPlayerWrapper(context: Context) {
 
             override fun onPlaybackStateChanged(s: Int) {
                 if (s == Player.STATE_ENDED) _isPlaying.value = false
+                // Reset auto-retry counter once playback is healthy again
+                if (s == Player.STATE_READY && _autoRetryCount > 0) _autoRetryCount = 0
+
+                // ── Stall watchdog: detect STATE_BUFFERING hangs ──
+                if (s == Player.STATE_BUFFERING) {
+                    startStallWatchdog()
+                } else {
+                    stopStallWatchdog()
+                }
             }
         })
     }
@@ -265,6 +336,9 @@ class ExoPlayerWrapper(context: Context) {
         _videoAspectRatio.value = 0f
         _isDolbyVision.value    = false
         _isDolbyAtmos.value     = false
+        _lastStreamUrl          = videoUrl
+        _autoRetryCount         = 0 // Reset retry counter for fresh streams
+        stopStallWatchdog()
         try {
             if (startPositionMs > 0 && startPositionMs != C.TIME_UNSET) {
                 player.setMediaItem(MediaItem.Builder().setUri(videoUrl.toUri()).build(), startPositionMs)
@@ -275,6 +349,37 @@ class ExoPlayerWrapper(context: Context) {
             player.playWhenReady = true
         } catch (e: Exception) {
             _playerError.value = "Failed to prepare: ${e.message}"
+        }
+    }
+
+    /**
+     * Internal retry after a recoverable CDN error. Unlike prepareStream(), this does NOT
+     * reset subtitle/DV/Atmos state, preserves the play intent, and re-applies subtitles
+     * if they were active before the error.
+     */
+    private fun retryStream(videoUrl: String, resumePos: Long, wasPlayWhenReady: Boolean, savedSubUrl: String?) {
+        _lastStreamUrl = videoUrl
+        stopStallWatchdog() // Stop any active stall watchdog before retry
+        try {
+            val mediaItemBuilder = MediaItem.Builder().setUri(videoUrl.toUri())
+
+            // Re-attach subtitle if one was active before the error
+            if (!savedSubUrl.isNullOrBlank()) {
+                val mimeType = if (savedSubUrl.contains(".vtt", ignoreCase = true))
+                    MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+                val subtitleConfig = MediaItem.SubtitleConfiguration.Builder(savedSubUrl.toUri())
+                    .setMimeType(mimeType)
+                    .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                    .setRoleFlags(C.ROLE_FLAG_SUBTITLE)
+                    .build()
+                mediaItemBuilder.setSubtitleConfigurations(listOf(subtitleConfig))
+            }
+
+            player.setMediaItem(mediaItemBuilder.build(), resumePos)
+            player.prepare()
+            player.playWhenReady = wasPlayWhenReady
+        } catch (e: Exception) {
+            _playerError.value = "Failed to retry: ${e.message}"
         }
     }
 
@@ -340,6 +445,8 @@ class ExoPlayerWrapper(context: Context) {
         // ⚡ FIX: Restore the correct intent to play
         player.playWhenReady = wasPlayWhenReady
 
+        // Track the subtitle URL so auto-retry can restore it after CDN reconnection
+        _lastSubtitleUrl = subtitleUrl
         _subtitleApplied.value = true
     }
 
@@ -353,6 +460,7 @@ class ExoPlayerWrapper(context: Context) {
 
     /** Stop playback and release the HTTP connection to the source URL */
     fun stopPlayback() {
+        stopStallWatchdog()
         try {
             player.stop()
             player.clearMediaItems()
@@ -361,10 +469,76 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun release() {
+        stopStallWatchdog()
         try {
             player.stop()
             player.clearMediaItems()
             player.release()
         } catch (_: Exception) {}
+        // Flush the streaming connection pool to free resources
+        try { streamingClient.connectionPool.evictAll() } catch (_: Exception) {}
+    }
+
+    // ── Connection Pool Management ──
+
+    /** Force-close all idle HTTP connections to prevent reusing dead RD CDN sockets after a drop */
+    private fun flushStaleConnections() {
+        try { streamingClient.connectionPool.evictAll() } catch (_: Exception) {}
+    }
+
+    // ── Stall Watchdog ──
+    // Detects when ExoPlayer is stuck in STATE_BUFFERING with no new data arriving.
+    // This catches the silent-hang case where the CDN keeps the TCP connection alive
+    // but stops sending bytes — ExoPlayer will wait forever (or until readTimeout).
+
+    private fun startStallWatchdog() {
+        stopStallWatchdog()
+        _lastBufferedPosition = player.bufferedPosition
+        _stallCheckCount = 0
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
+        _stallWatchdogHandler = handler
+        handler.postDelayed(object : Runnable {
+            override fun run() {
+                if (_stallWatchdogHandler == null) return
+                val currentBuffered = player.bufferedPosition
+                if (player.playbackState != Player.STATE_BUFFERING) {
+                    stopStallWatchdog()
+                    return
+                }
+                // Only count stall time if the player was already playing —
+                // don't kill the initial buffering phase on slow starts
+                val wasAlreadyPlaying = player.currentPosition > 5_000L
+                if (currentBuffered <= _lastBufferedPosition && wasAlreadyPlaying) {
+                    _stallCheckCount++
+                    if (_stallCheckCount >= STALL_MAX_CHECKS && _autoRetryCount < MAX_AUTO_RETRIES) {
+                        _autoRetryCount++
+                        val resumePos = player.currentPosition.coerceAtLeast(0L)
+                        val wasPlayWhenReady = player.playWhenReady
+                        val savedSubUrl = _lastSubtitleUrl
+                        val streamUrl = _lastStreamUrl ?: return
+                        player.stop()
+                        player.clearMediaItems()
+                        _playerError.value = null
+                        flushStaleConnections()
+                        stopStallWatchdog()
+                        val retryDelayMs = 1_500L + ((_autoRetryCount - 1).coerceAtMost(3) * 800L)
+                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                            retryStream(streamUrl, resumePos, wasPlayWhenReady, savedSubUrl)
+                        }, retryDelayMs)
+                        return
+                    }
+                } else {
+                    _stallCheckCount = 0
+                    _lastBufferedPosition = currentBuffered
+                }
+                handler.postDelayed(this, STALL_CHECK_INTERVAL_MS)
+            }
+        }, STALL_CHECK_INTERVAL_MS)
+    }
+
+    private fun stopStallWatchdog() {
+        _stallWatchdogHandler?.removeCallbacksAndMessages(null)
+        _stallWatchdogHandler = null
+        _stallCheckCount = 0
     }
 }

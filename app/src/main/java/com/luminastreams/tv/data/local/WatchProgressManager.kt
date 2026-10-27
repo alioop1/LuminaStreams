@@ -58,17 +58,19 @@ class WatchProgressManager(context: Context) {
 
     // ── Write ─────────────────────────────────────────────────────────────────
 
-    fun save(key: String, positionMs: Long, durationMs: Long) {
-        if (key.isBlank() || durationMs <= 0L) return
+    fun save(key: String, positionMs: Long, durationMs: Long, tmdbId: String? = null): String? {
+        if (key.isBlank() || durationMs <= 0L) return null
         val json = JSONObject().apply {
             put("p", positionMs)
             put("d", durationMs)
             put("t", System.currentTimeMillis())
+            if (!tmdbId.isNullOrBlank()) put("tmdb", tmdbId)
         }.toString()
         prefs.edit().putString(key, json).apply()
+        return json
     }
 
-    fun remove(key: String) = prefs.edit().remove(key).apply()
+    fun deleteProgress(key: String) = prefs.edit().remove(key).apply()
 
     // ── Read ──────────────────────────────────────────────────────────────────
 
@@ -118,5 +120,49 @@ class WatchProgressManager(context: Context) {
                 if (get(key)?.isFinished == true) ep else null
             }
             .toSet()
+    }
+    /**
+     * Returns all stored progress as a map of key to JSON string.
+     */
+    fun getAllProgress(): Map<String, String> {
+        return prefs.all.mapValues { it.value.toString() }
+    }
+
+    /**
+     * Merges cloud progress into local preferences.
+     */
+    fun mergeCloudProgress(cloudMap: Map<String, String>, context: Context? = null) {
+        val editor = prefs.edit()
+        val bridgeEditor = context?.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)?.edit()
+        cloudMap.forEach { (key, value) ->
+            // Skip empty values — these represent deleted progress from the cloud
+            if (value.isBlank()) {
+                editor.remove(key) // Mirror the deletion locally
+                return@forEach
+            }
+            // Only update if cloud progress is newer or we don't have it locally
+            val local = get(key)
+            val cloudJson = runCatching { JSONObject(value) }.getOrNull() ?: return@forEach
+            val cloud = runCatching {
+                WatchProgress(cloudJson.getLong("p"), cloudJson.getLong("d"), cloudJson.getLong("t"))
+            }.getOrNull() ?: return@forEach // Skip malformed JSON — don't overwrite valid local data
+
+            if (local == null || cloud.lastWatchedAt > local.lastWatchedAt) {
+                editor.putString(key, value)
+            }
+
+            // Reconstruct the IMDB→TMDB bridge from the embedded "tmdb" field
+            val tmdbId = cloudJson.optString("tmdb", "")
+            if (tmdbId.isNotBlank() && bridgeEditor != null) {
+                val imdbId = when {
+                    key.startsWith("ep_") -> key.removePrefix("ep_").substringBefore("_s")
+                    key.startsWith("movie_") -> key.removePrefix("movie_")
+                    else -> null
+                }
+                if (imdbId != null) bridgeEditor.putString(imdbId, tmdbId)
+            }
+        }
+        editor.apply()
+        bridgeEditor?.apply()
     }
 }

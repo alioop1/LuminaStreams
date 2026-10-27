@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import java.net.Inet4Address
 import java.net.NetworkInterface
+import kotlin.coroutines.cancellation.CancellationException
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
@@ -76,6 +77,7 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
                         }
                         repository.dao.insertPlaylist(playlist.copy(lastUpdated = now))
                     } catch (e: Exception) {
+                        if (e is CancellationException) throw e
                         e.printStackTrace()
                     }
                 }
@@ -180,6 +182,7 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
                 }
                 closeQrSetup()
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             } finally {
                 _isLoading.value = false
@@ -220,6 +223,7 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
                     repository.loadEpg(trimmedEpg, current.id)
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 e.printStackTrace()
             } finally {
                 _isLoading.value = false
@@ -232,7 +236,7 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
         viewModelScope.launch {
             repository.dao.clearChannels(current.id)
             repository.dao.clearAllEpg()
-            repository.dao.deactivateAllPlaylists()
+            repository.dao.deletePlaylist(current.id)
         }
     }
 

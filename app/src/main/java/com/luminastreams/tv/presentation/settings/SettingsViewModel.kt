@@ -9,6 +9,10 @@ import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.domain.usecase.AuthResult
 import com.luminastreams.tv.domain.usecase.RealDebridAuthManager
+import com.luminastreams.tv.core.LuminaApp
+import com.luminastreams.tv.data.sync.SyncManager
+import com.luminastreams.tv.domain.repository.AuthRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,15 +27,44 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     private val prefs = application.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
     private val authManager = RealDebridAuthManager(application)
+    private val app = application as LuminaApp
+    private val syncManager: SyncManager = app.syncManager
+    private val authRepository: AuthRepository = app.authRepository
 
     private val _state = MutableStateFlow(SettingsState())
     val state: StateFlow<SettingsState> = _state.asStateFlow()
 
     init {
-        loadAllSettings()
+        viewModelScope.launch(Dispatchers.IO) { loadAllSettings() }
         calculateRealCacheSize()
         loadDeviceInfo()
-        checkServerStatuses() // Run health check on launch!
+        checkServerStatuses()
+
+        val hasToken = prefs.getString("rd_api_token", "")?.isNotBlank() == true
+
+        // Auto-check RD account status on launch if token exists
+        if (hasToken) {
+            checkRealDebridAccount()
+        }
+
+        // Observe Firebase auth state for user email display
+        viewModelScope.launch {
+            authRepository.currentUser.collect { user ->
+                _state.update { it.copy(userEmail = user?.email) }
+            }
+        }
+
+        // Observe sync status from SyncManager
+        viewModelScope.launch {
+            syncManager.syncStatus.collect { status ->
+                _state.update { it.copy(syncStatus = status) }
+            }
+        }
+        viewModelScope.launch {
+            syncManager.isSyncing.collect { syncing ->
+                _state.update { it.copy(isSyncing = syncing) }
+            }
+        }
     }
 
     fun setCategory(category: SettingsCategory) {
@@ -51,10 +84,11 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 yellowSubtitles    = prefs.getBoolean("yellow_subs", false),
                 subtitleFontScale  = prefs.getString("subtitle_font_scale", "medium") ?: "medium",
                 saveSearchHistory  = prefs.getBoolean("save_history", true),
-                subtitleCacheOnly  = prefs.getBoolean("subtitle_cache_only", false),
                 liteUiMode         = prefs.getBoolean("lite_ui", false),
                 reduceMotion       = prefs.getBoolean("reduce_motion", false),
                 preAllocateBuffer  = prefs.getBoolean("pre_buffer", false),
+                maxResolution      = prefs.getString("max_resolution", "Unlimited") ?: "Unlimited",
+                maxFileSize        = prefs.getString("max_file_size", "Unlimited") ?: "Unlimited"
             )
         }
         DeviceProfile.forceLowTier      = prefs.getBoolean("lite_ui", false)
@@ -69,7 +103,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 "hw_accel"            -> current.copy(hwAcceleration    = value)
                 "yellow_subs"         -> current.copy(yellowSubtitles   = value)
                 "save_history"        -> current.copy(saveSearchHistory = value)
-                "subtitle_cache_only" -> current.copy(subtitleCacheOnly = value)
                 "lite_ui"             -> {
                     DeviceProfile.forceLowTier = value
                     current.copy(liteUiMode = value)
@@ -94,6 +127,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                 "preferred_audio_lang" -> current.copy(preferredAudioLang = value)
                 "def_subs"             -> current.copy(defaultSubtitles   = value)
                 "subtitle_font_scale"  -> current.copy(subtitleFontScale  = value)
+                "max_resolution"       -> current.copy(maxResolution      = value)
+                "max_file_size"        -> current.copy(maxFileSize        = value)
                 else                   -> current
             }
         }
@@ -104,6 +139,8 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
 
     // ── TRUE SERVER VERIFICATION ──────────────────────────────────────────────
     private val trustedClient = TrustedHttpClient.builder().build()
+
+    private var isRefreshingRdAccount = false
 
     fun checkRealDebridAccount() {
         viewModelScope.launch(Dispatchers.IO) {
@@ -121,24 +158,60 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     .build()
 
                 val response = trustedClient.newCall(request).execute()
-                if (response.code == 200) {
-                    val jsonStr = response.body.string()
-                    val json = JSONObject(jsonStr)
+                response.use { resp ->
+                    if (resp.code == 200) {
+                        val jsonStr = resp.body.string()
+                        val json = JSONObject(jsonStr)
 
-                    val type = json.optString("type", "unknown")
-                    val username = json.optString("username", "User")
-                    val expiration = json.optString("expiration", "Unknown").take(10)
+                        val type = json.optString("type", "unknown")
+                        val username = json.optString("username", "User")
+                        val expiration = json.optString("expiration", "Unknown").take(10)
 
-                    val statusStr = if (type == "premium") "🟢 Premium ($username) | Exp: $expiration"
-                    else "🔴 Free Account ($username)"
+                        val statusStr = if (type == "premium") "🟢 Premium ($username) | Exp: $expiration"
+                        else "🔴 Free Account ($username)"
 
-                    _state.update { it.copy(rdSpeedTestResult = statusStr, rdSpeedTesting = false) }
-                } else {
-                    _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${response.code})", rdSpeedTesting = false) }
+                        _state.update { it.copy(rdSpeedTestResult = statusStr, rdSpeedTesting = false) }
+                    } else if ((resp.code == 401 || resp.code == 403) && !isRefreshingRdAccount) {
+                        isRefreshingRdAccount = true
+                        val newToken = com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
+                        isRefreshingRdAccount = false
+                        if (newToken != null) {
+                            _state.update { it.copy(rdToken = newToken) }
+                            checkRealDebridAccount()
+                            return@launch
+                        } else {
+                            _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${resp.code})", rdSpeedTesting = false) }
+                        }
+                    } else {
+                        _state.update { it.copy(rdSpeedTestResult = "⚠ Token Expired or Invalid (HTTP ${resp.code})", rdSpeedTesting = false) }
+                    }
                 }
-                response.close()
+            } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
-                _state.update { it.copy(rdSpeedTestResult = "✗ Network Error: Could not reach Real-Debrid", rdSpeedTesting = false) }
+                // Retry once after 2s — cold boot may not have network ready
+                delay(2000)
+                try {
+                    val retryReq = Request.Builder()
+                        .url("https://api.real-debrid.com/rest/1.0/user")
+                        .header("Authorization", "Bearer $token")
+                        .build()
+                    val retryResp = trustedClient.newCall(retryReq).execute()
+                    retryResp.use { resp ->
+                        if (resp.code == 200) {
+                            val json = JSONObject(resp.body.string())
+                            val type = json.optString("type", "unknown")
+                            val username = json.optString("username", "User")
+                            val expiration = json.optString("expiration", "Unknown").take(10)
+                            val statusStr = if (type == "premium") "🟢 Premium ($username) | Exp: $expiration"
+                            else "🔴 Free Account ($username)"
+                            _state.update { it.copy(rdSpeedTestResult = statusStr, rdSpeedTesting = false) }
+                        } else {
+                            _state.update { it.copy(rdSpeedTestResult = "✗ Network Error: Could not reach Real-Debrid", rdSpeedTesting = false) }
+                        }
+                    }
+                } catch (_: Exception) {
+                    _state.update { it.copy(rdSpeedTestResult = "✗ Network Error: Could not reach Real-Debrid", rdSpeedTesting = false) }
+                }
             }
         }
     }
@@ -148,8 +221,15 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isCheckingServers = true, rdServerStatus = "Checking...", torrentioServerStatus = "Checking...") }
 
-            val rdUp = checkUrlStatus("https://api.real-debrid.com/rest/1.0/time")
-            val torrentioUp = checkUrlStatus("https://torrentio.strem.fun/manifest.json")
+            // Retry up to 3 times with increasing delay for cold boot network readiness
+            var rdUp = false
+            var torrentioUp = false
+            for (attempt in 1..3) {
+                rdUp = checkUrlStatus("https://api.real-debrid.com/rest/1.0/time")
+                torrentioUp = checkUrlStatus("https://torrentio.strem.fun/manifest.json")
+                if (rdUp && torrentioUp) break
+                if (attempt < 3) delay(if (attempt == 1) 1500L else 3000L)
+            }
 
             _state.update {
                 it.copy(
@@ -252,6 +332,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
                     }
                     is AuthResult.Success -> {
                         loadAllSettings()
+                        // Restart the proactive token refresh loop with the new credentials
+                        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.stop()
+                        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.start(getApplication())
                         _state.update { it.copy(authStatus = SettingsAuthStatus.Success) }
                         checkRealDebridAccount()
                     }
@@ -264,8 +347,20 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     }
 
     fun logoutRealDebrid() {
-        prefs.edit { remove("rd_api_token") }
+        prefs.edit {
+            remove("rd_api_token")
+            remove("rd_refresh_token")
+            remove("rd_client_id")
+            remove("rd_client_secret")
+        }
+        // Stop the background token refresh — no credentials to refresh
+        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.stop()
         loadAllSettings()
         _state.update { it.copy(rdSpeedTestResult = null) }
+    }
+
+    // ── Cloud Sync ────────────────────────────────────────────────────────────────────
+    fun triggerManualSync() {
+        syncManager.fullSync()
     }
 }

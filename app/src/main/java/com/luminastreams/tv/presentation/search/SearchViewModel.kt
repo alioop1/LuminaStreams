@@ -63,7 +63,8 @@ data class SearchState(
     val isDiscoveryLoading: Boolean            = false,
 
     val searchHistory:           List<String> = emptyList(),
-    val autocompleteSuggestions: List<String> = emptyList()
+    val autocompleteSuggestions: List<String> = emptyList(),
+    val cachedActiveResults:     List<SearchResult>? = null
 ) {
     private fun applyFilters(list: List<SearchResult>, skipServerFiltered: Boolean = false): List<SearchResult> {
         var r = list
@@ -116,6 +117,8 @@ data class SearchState(
     }
 
     val activeResults: List<SearchResult> get() {
+        // Use pre-computed results if available (set by ViewModel after state updates)
+        cachedActiveResults?.let { return it }
         val isDiscovery = query.isBlank() && source != SearchSource.FUZER
         val base = when {
             source == SearchSource.FUZER  -> fuzerResults
@@ -164,10 +167,20 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private var discoveryJob: Job? = null
 
+    private val settingsPrefs = application.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+
     init {
-        loadHistory()
+        viewModelScope.launch(Dispatchers.IO) { loadHistory() }
         observeQuery()
         loadDiscovery()
+
+        // ⚡ Pre-compute activeResults on IO whenever result-affecting fields change
+        viewModelScope.launch(Dispatchers.Default) {
+            _state.debounce(50).collectLatest { s ->
+                val cached = s.copy(cachedActiveResults = null).activeResults
+                _state.update { it.copy(cachedActiveResults = cached) }
+            }
+        }
     }
 
     fun onIntent(intent: SearchIntent) {
@@ -216,7 +229,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun observeQuery() {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             queryFlow
                 .debounce(380)
                 .distinctUntilChanged()
@@ -297,7 +310,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun loadDiscovery() {
         discoveryJob?.cancel()
-        discoveryJob = viewModelScope.launch {
+        discoveryJob = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isDiscoveryLoading = true) }
             try {
                 val pages = coroutineScope {
@@ -320,7 +333,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         if (!filters.isActive) { loadDiscovery(); return }
 
         discoveryJob?.cancel()
-        discoveryJob = viewModelScope.launch {
+        discoveryJob = viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isDiscoveryLoading = true) }
             try {
                 val type = when (filters.typeFilter) {
@@ -461,6 +474,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun saveToHistory(q: String) {
+        if (!settingsPrefs.getBoolean("save_history", true)) return
         val h = (listOf(q) + _state.value.searchHistory).distinct().take(8)
         historyPrefs.edit { putString("history_items", h.joinToString("||")) }
         _state.update { it.copy(searchHistory = h) }

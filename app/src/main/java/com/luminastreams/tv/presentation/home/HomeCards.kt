@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -55,7 +56,6 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
             .size(600)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(true)
             .crossfade(false)
             .build()
     }
@@ -66,7 +66,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
         label = "scale"
     )
 
-    Column(modifier = modifier.width(LAND_W)) {
+    Column(modifier = Modifier.width(LAND_W)) {
         Surface(
             onClick = onClick,
             interactionSource = interactionSource,
@@ -78,7 +78,7 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                 focusedBorder = Border(border = BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp))
             ),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .height(LAND_H)
                 .graphicsLayer {
@@ -154,7 +154,6 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             .size(400)
             .memoryCachePolicy(CachePolicy.ENABLED)
             .diskCachePolicy(CachePolicy.ENABLED)
-            .allowHardware(true)
             .crossfade(false)
             .build()
     }
@@ -166,7 +165,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
     )
 
     Column(
-        modifier = modifier.width(cardW),
+        modifier = Modifier.width(cardW),
         horizontalAlignment = Alignment.Start
     ) {
         Surface(
@@ -180,7 +179,7 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
                 focusedBorder = Border(border = BorderStroke(3.dp, Color.White), shape = RoundedCornerShape(10.dp))
             ),
             glow = ClickableSurfaceDefaults.glow(Glow.None, Glow.None),
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
                 .height(cardH)
                 .graphicsLayer { scaleX = animatedScale; scaleY = animatedScale }
@@ -266,18 +265,19 @@ fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier
         StudioBrand.AMAZON     -> Brush.linearGradient(listOf(Color(0xFF0A1E2C), Color(0xFF0F2B3D)))  // Dark navy-teal — cyan logo pops
         StudioBrand.PARAMOUNT  -> Brush.linearGradient(listOf(Color(0xFF0A0F1E), Color(0xFF141E35)))  // Deep dark blue — blue logo pops
         StudioBrand.HULU       -> Brush.linearGradient(listOf(Color(0xFF0A1A14), Color(0xFF0F2A1E)))  // Very dark green — green logo pops
+        StudioBrand.SONY       -> Brush.linearGradient(listOf(Color(0xFF050A14), Color(0xFF152238)))  // Dark corporate blue
     }
 
-    // TMDB Network logo paths (transparent PNGs — pulled from /3/network/{id} API)
-    // Using 'original' quality for maximum sharpness on TV screens
-    val logoUrl = "https://image.tmdb.org/t/p/original" + when (brand) {
-        StudioBrand.NETFLIX    -> "/wwemzKWzjKYJFfCeiB57q3r4Bcm.png"
-        StudioBrand.DISNEY     -> "/1edZOYAfoyZyZ3rklNSiUpXX30Q.png"
-        StudioBrand.APPLE_TV   -> "/bngHRFi794mnMq34gfVcm9nDxN1.png"
-        StudioBrand.HBO        -> "/tuomPhY2UtuPTqqFnKMVHvSb724.png"
-        StudioBrand.AMAZON     -> "/w7HfLNm9CWwRmAMU58udl2L7We7.png"
-        StudioBrand.PARAMOUNT  -> "/fi83B1oztoS47xxcemFdPMhIzK.png"
-        StudioBrand.HULU       -> "/pqUTCleNUiTLAVlelGxUgWn1ELh.png"
+    // TMDB Network logo paths (transparent PNGs) and external fallbacks
+    val logoUrl = when (brand) {
+        StudioBrand.NETFLIX    -> "https://image.tmdb.org/t/p/original/wwemzKWzjKYJFfCeiB57q3r4Bcm.png"
+        StudioBrand.DISNEY     -> "https://image.tmdb.org/t/p/original/1edZOYAfoyZyZ3rklNSiUpXX30Q.png"
+        StudioBrand.APPLE_TV   -> "https://image.tmdb.org/t/p/original/bngHRFi794mnMq34gfVcm9nDxN1.png"
+        StudioBrand.HBO        -> "https://image.tmdb.org/t/p/original/tuomPhY2UtuPTqqFnKMVHvSb724.png"
+        StudioBrand.AMAZON     -> "https://image.tmdb.org/t/p/original/w7HfLNm9CWwRmAMU58udl2L7We7.png"
+        StudioBrand.PARAMOUNT  -> "https://image.tmdb.org/t/p/original/fi83B1oztoS47xxcemFdPMhIzK.png"
+        StudioBrand.HULU       -> "https://image.tmdb.org/t/p/original/pqUTCleNUiTLAVlelGxUgWn1ELh.png"
+        StudioBrand.SONY       -> "" // Handled via Text composable
     }
 
     val logoRequest = remember(logoUrl) {
@@ -327,14 +327,25 @@ fun StudioLogoButton(brand: StudioBrand, isSelected: Boolean, modifier: Modifier
                 .background(gradientBrush, RoundedCornerShape(16.dp)),
             Alignment.Center
         ) {
-            AsyncImage(
-                model = logoRequest,
-                contentDescription = brand.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxWidth(0.72f)
-                    .fillMaxHeight(0.55f)
-            )
+            if (brand == StudioBrand.SONY) {
+                Text(
+                    text = "SONY",
+                    color = Color.White,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp,
+                    fontFamily = FontFamily.Serif
+                )
+            } else {
+                AsyncImage(
+                    model = logoRequest,
+                    contentDescription = brand.name,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxWidth(0.72f)
+                        .fillMaxHeight(0.55f)
+                )
+            }
         }
     }
 }

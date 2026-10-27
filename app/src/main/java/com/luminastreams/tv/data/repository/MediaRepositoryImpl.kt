@@ -15,14 +15,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
+import com.luminastreams.tv.core.TrustedHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 class MediaRepositoryImpl(private val context: Context) : MediaRepository {
 
-    private val okhttp = OkHttpClient.Builder()
+    // Uses TrustedHttpClient to bypass SSL cert chain validation on older Android TV devices
+    private val okhttp = TrustedHttpClient.builder()
         .connectTimeout(8,  TimeUnit.SECONDS)
         .readTimeout(10,    TimeUnit.SECONDS)
         .writeTimeout(10,   TimeUnit.SECONDS)
@@ -34,6 +35,13 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(TmdbApi::class.java)
+
+    private val omdbApi: com.luminastreams.tv.data.api.OmdbApi = Retrofit.Builder()
+        .baseUrl(Constants.OMDB_BASE_URL)
+        .client(okhttp)
+        .addConverterFactory(GsonConverterFactory.create())
+        .build()
+        .create(com.luminastreams.tv.data.api.OmdbApi::class.java)
 
     private val tmdbLang: String get() {
         val prefsLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -226,6 +234,15 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
             }
         }
 
+    override suspend fun getPersonDetails(id: String): Result<com.luminastreams.tv.data.api.TmdbPersonDetailsDto> =
+        withContext(Dispatchers.IO) {
+            try {
+                Result.success(api.getPersonDetails(id, Constants.TMDB_API_KEY, language = tmdbLang))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
     override suspend fun discoverMedia(
         type    : String,
         genreId : String?,
@@ -304,4 +321,16 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
             Result.failure(e)
         }
     }
+
+    override suspend fun getOmdbDetails(imdbId: String): Result<com.luminastreams.tv.data.api.OmdbResponseDto> =
+        withContext(Dispatchers.IO) {
+            try {
+                if (imdbId.isBlank() || !imdbId.startsWith("tt")) {
+                    return@withContext Result.failure(Exception("Invalid IMDb ID"))
+                }
+                Result.success(omdbApi.getTitleDetails(imdbId = imdbId))
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
 }

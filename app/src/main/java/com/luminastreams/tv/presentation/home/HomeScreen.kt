@@ -9,7 +9,6 @@ import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
@@ -33,9 +32,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
 
+private val TMDB_WIDTH_REGEX = Regex("/w\\d+/")
+
 @Composable
 fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavController, onMovieClick: (String) -> Unit) {
-    val focusState = rememberSaveable(saver = HomeFocusState.Saver) { HomeFocusState() }
+    val focusState = remember { HomeFocusState() }
     val isLow = DeviceProfile.tier == DeviceProfile.Tier.LOW
     val heroUpdateDelayMs = when (DeviceProfile.tier) { DeviceProfile.Tier.LOW -> 520L; DeviceProfile.Tier.MID -> 420L; DeviceProfile.Tier.HIGH -> 260L }
     val appContext = LocalContext.current.applicationContext
@@ -43,34 +44,37 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
     val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     LaunchedEffect(isRtl) { viewModel.setLanguage(isRtl) }
 
-    // ⚡ FIX: Reclaim focus when returning from any other screen (Details, Search, etc.)
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    var resumeCount by remember { mutableIntStateOf(0) }
+
     DisposableEffect(lifecycleOwner) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
             if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                // 🔥 Refresh Continue Watching on every resume (data may have changed)
                 viewModel.refreshContinueWatching(appContext)
-                // Only reclaim if we're not already on the navbar
-                if (!focusState.isNavFocused) {
-                    focusState.focusTrigger++
-                }
+                resumeCount++
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 🔥 FIX: Also refresh Continue Watching AFTER initial data load completes
-    // ON_RESUME fires before loadAll() finishes, so allContent is empty on first scan
-    LaunchedEffect(state.isLoading) {
-        if (!state.isLoading) {
-            viewModel.refreshContinueWatching(appContext)
+    // Restore focus when returning from other screens (settings, details, etc.)
+    LaunchedEffect(resumeCount) {
+        if (resumeCount > 0) {
+            focusState.isNavFocused = false
+            delay(500) // Wait for Compose to fully re-attach FocusRequesters
+            focusState.focusTrigger++
         }
     }
+
+
 
     val rows by viewModel.uiRows.collectAsStateWithLifecycle()
     var currentTab by remember { mutableStateOf(state.selectedTab) }
     var currentFilter by remember { mutableStateOf(state.selectedStudioFilter) }
+
+    var pendingFilterFocus by remember { mutableStateOf(false) }
+    var pendingTabFocus by remember { mutableStateOf(false) } // 🚀 מנגנון חדש לסנכרון הפוקוס בעת מעבר עמוד
 
     LaunchedEffect(state.selectedTab, state.selectedStudioFilter) {
         if (currentTab != state.selectedTab) {
@@ -78,17 +82,34 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             currentFilter = state.selectedStudioFilter
             focusState.currentRowIndex = 0
             focusState.isNavFocused = false
-            focusState.focusTrigger++
+            pendingTabFocus = true // מסמן שיש להמתין לעדכון השורות לפני הקפצת הפוקוס
         } else if (currentFilter != state.selectedStudioFilter) {
             currentFilter = state.selectedStudioFilter
         }
     }
 
-    LaunchedEffect(rows, focusState.isNavFocused) {
+    // מפעיל את הפוקוס רק כשהשורות מוכנות ורונדרו במלואן
+    LaunchedEffect(rows) {
+        if (pendingTabFocus && rows.isNotEmpty()) {
+            delay(150) // מוודא שה-Compose סיים לרנדר את הלוגואים של הסטודיו
+            pendingTabFocus = false
+            focusState.currentRowIndex = 0
+            focusState.focusTrigger++
+        }
+        if (pendingFilterFocus && rows.size > 1) {
+            delay(150)
+            pendingFilterFocus = false
+            focusState.currentRowIndex = 1 // מדלג לשורת הפוסטרים (1)
+            focusState.focusTrigger++
+        }
+    }
+
+    LaunchedEffect(Unit) {
         snapshotFlow { focusState.currentRowIndex }.distinctUntilChanged().collectLatest { ri ->
             if (focusState.isNavFocused) return@collectLatest
             delay(if (isLow) 800L else heroUpdateDelayMs)
-            val m = rows.getOrNull(ri)?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; is RowDef.StudioRibbon -> emptyList() } }?.firstOrNull()
+            val currentRows = viewModel.uiRows.value
+            val m = currentRows.getOrNull(ri)?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; is RowDef.StudioRibbon -> emptyList() } }?.firstOrNull()
             if (m != null && m.id != focusState.heroMovie?.id) focusState.heroMovie = m
         }
     }
@@ -97,38 +118,34 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
         if (!state.isLoading && rows.isNotEmpty() && focusState.heroMovie == null) focusState.heroMovie = rows.firstOrNull { it !is RowDef.StudioRibbon }?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }?.firstOrNull()
     }
 
-    // 🎬 Hero Enrichment — fetch logo, cast, runtime when hero changes
     LaunchedEffect(focusState.heroMovie?.id) {
         val hero = focusState.heroMovie ?: return@LaunchedEffect
         viewModel.enrichHeroData(hero)
     }
 
-    // 🚀 Prefetch hero backdrops — download /original/ for first movie of each row in background
-    // After first prefetch, all hero transitions are instant from disk cache (0ms)
     val prefetchCtx = LocalContext.current
     LaunchedEffect(rows.size) {
         if (rows.isEmpty()) return@LaunchedEffect
-        val dm = prefetchCtx.resources.displayMetrics
-        val sw = dm.widthPixels; val sh = dm.heightPixels
-        val seen = mutableSetOf<String>()
-        rows.asSequence()
-            .mapNotNull { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }
-            .mapNotNull { it.firstOrNull() }
-            .take(10) // Cap at 10 prefetches to avoid network flood
-            .forEach { movie ->
-                val raw = (movie.backdropUrl.takeIf { it.isNotBlank() } ?: movie.posterUrl)
-                    .replace("/w780/", "/original/")
-                if (raw.isNotBlank() && seen.add(raw)) {
-                    val req = coil.request.ImageRequest.Builder(prefetchCtx)
-                        .data(raw)
-                        .size(sw, sh)
-                        .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .diskCachePolicy(coil.request.CachePolicy.ENABLED)
-                        .build()
-                    coil.Coil.imageLoader(prefetchCtx).enqueue(req)
-                    delay(150) // Stagger to avoid network congestion
-                }
-            }
+        
+        // Only prefetch the VERY FIRST hero image to make the initial screen load faster.
+        // Doing this for 10 full-res images crashes the memory cache and causes the app to get stuck.
+        val firstHero = rows.firstOrNull { it !is RowDef.StudioRibbon }
+            ?.let { r -> when (r) { is RowDef.Regular -> r.movies; is RowDef.Studio -> r.movies; else -> null } }
+            ?.firstOrNull() ?: return@LaunchedEffect
+            
+        val raw = (firstHero.backdropUrl.takeIf { it.isNotBlank() } ?: firstHero.posterUrl)
+            .replace(TMDB_WIDTH_REGEX, "/original/")
+            
+        if (raw.isNotBlank()) {
+            val req = coil.request.ImageRequest.Builder(prefetchCtx)
+                .data(raw)
+                // Downsample slightly instead of full display metrics to save memory
+                .size(1920, 1080)
+                .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+                .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+                .build()
+            coil.Coil.imageLoader(prefetchCtx).enqueue(req)
+        }
     }
     BackHandler(enabled = focusState.isNavFocused) { focusState.isNavFocused = false }
 
@@ -144,6 +161,12 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                             if (focusState.isNavFocused) {
                                 focusState.isNavFocused = false
                                 focusState.focusTrigger++
+                                return@onPreviewKeyEvent true
+                            }
+                        }
+                        Key.DirectionUp -> {
+                            if (!focusState.isNavFocused && focusState.currentRowIndex == 0) {
+                                focusState.isNavFocused = true
                                 return@onPreviewKeyEvent true
                             }
                         }
@@ -166,25 +189,23 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
 
         BackdropLayer(focusState.heroMovie)
 
-        // STRICT VERTICAL STACKING (Prevents any overlapping UI)
         Column(Modifier.fillMaxSize()) {
 
-            // 1. Navigation (Top Left)
             Ps5TopNav(
-                activeTab = state.selectedTab,
                 isFocused = focusState.isNavFocused,
                 onNavFocus = { focusState.isNavFocused = true; focusState.currentRowIndex = 0 },
                 onSearch = { navController.navigate("search") },
-                onHomeTab = { viewModel.selectTab("ראשי"); viewModel.setStudioFilter(null) },
-                onMoviesTab = { viewModel.selectTab("סרטים"); viewModel.setStudioFilter(null) },
-                onSeriesTab = { viewModel.selectTab("סדרות"); viewModel.setStudioFilter(null) },
-                onFuzer = { viewModel.selectTab("Fuzer"); viewModel.loadFuzerContent() },
                 onWatchlist = { navController.navigate("watchlist") },
                 onSettings = { navController.navigate("settings") },
-                onIptv = { navController.navigate("iptv") }
+                onIptv = { navController.navigate("iptv") },
+                onMovies = { viewModel.selectTab("movies") },
+                onSeries = { viewModel.selectTab("series") },
+                onHome = { viewModel.selectTab("home") },
+                onFuzer = { viewModel.selectTab("Fuzer") },
+                onProfileClick = { navController.navigate("auth") },
+                selectedTab = state.selectedTab
             )
 
-            // 2. Hero Information (Takes all middle space, anchors to BottomStart)
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -203,26 +224,30 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                 )
             }
 
-            // 3. Row Cycler (Strict Height limit at the bottom)
+            val rememberedOnMovieClick = remember<(String) -> Unit> { { id -> onMovieClick(id) } }
+            val rememberedOnHeroUpdate: (com.luminastreams.tv.domain.model.Movie?) -> Unit = remember { { if (it != null) focusState.heroMovie = it } }
+            val rememberedOnLoadMore = remember<(String) -> Unit> { { id -> viewModel.loadMore(id.substringBefore("::")) } }
+
             ConsoleRowCycler(
                 rows = rows,
                 focusState = focusState,
                 activeFilter = currentFilter,
-                onMovieClick = onMovieClick,
-                onHeroUpdate = { if (it != null) focusState.heroMovie = it },
+                onMovieClick = rememberedOnMovieClick,
+                onHeroUpdate = rememberedOnHeroUpdate,
                 onStudioFilterClick = { filter ->
-                    if (state.selectedStudioFilter == filter) viewModel.setStudioFilter(null)
-                    else {
+                    if (state.selectedStudioFilter == filter) {
+                        viewModel.setStudioFilter(null)
+                        pendingFilterFocus = false
+                    } else {
                         viewModel.setStudioFilter(filter)
-                        focusState.currentRowIndex = 1
-                        focusState.focusTrigger++
+                        pendingFilterFocus = true
                     }
                 },
-                onLoadMore = { id -> viewModel.loadMore(id.substringBefore("::")) },
+                onLoadMore = rememberedOnLoadMore,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(340.dp) // Fixed height ensures it never crushes the text
-                    .padding(bottom = 32.dp)
+                    .weight(1.2f)
+                    .padding(bottom = 16.dp)
             )
         }
     }

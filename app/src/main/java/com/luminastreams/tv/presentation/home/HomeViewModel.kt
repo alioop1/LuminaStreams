@@ -9,6 +9,7 @@ import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.data.local.WatchProgressManager
 import com.luminastreams.tv.data.remote.FuzerEngine
 import com.luminastreams.tv.domain.model.Movie
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -23,7 +24,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
+import com.luminastreams.tv.core.TrustedHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.Collections
@@ -47,7 +48,14 @@ class HomeViewModel : ViewModel() {
     override fun onCleared() {
         super.onCleared()
         activeJob?.cancel()
-        http.dispatcher.cancelAll()
+        // evictAll() closes SSL sockets — blocking network op.
+        // onCleared() runs on Main Thread → NetworkOnMainThreadException crash.
+        Thread {
+            runCatching {
+                http.dispatcher.cancelAll()
+                http.connectionPool.evictAll()
+            }
+        }.start()
     }
 
     private val maxConnections = when (DeviceProfile.tier) {
@@ -56,7 +64,7 @@ class HomeViewModel : ViewModel() {
         DeviceProfile.Tier.LOW  -> 3
     }
 
-    private val http = OkHttpClient.Builder()
+    private val http = TrustedHttpClient.builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(15, TimeUnit.SECONDS)
         .connectionPool(okhttp3.ConnectionPool(maxConnections, 5, TimeUnit.MINUTES))
@@ -74,9 +82,26 @@ class HomeViewModel : ViewModel() {
         loadAll()
     }
 
-    fun selectTab(tab: String) = _state.update { it.copy(selectedTab = tab) }
+    fun selectTab(tab: String) {
+        _state.update { it.copy(selectedTab = tab) }
+        if (tab == "Fuzer" && _state.value.fuzerItems.isEmpty()) {
+            loadFuzerContent()
+        }
+        val currentStudio = _state.value.selectedStudioFilter
+        if (currentStudio != null && (tab == "movies" || tab == "series")) {
+            loadStudioCategories(currentStudio, isMovies = tab == "movies")
+        }
+    }
 
-    fun setStudioFilter(studio: String?) = _state.update { it.copy(selectedStudioFilter = studio) }
+    fun setStudioFilter(studio: String?) {
+        _state.update { it.copy(selectedStudioFilter = studio) }
+        if (studio != null) {
+            loadStudioCategories(studio, isMovies = _state.value.selectedTab == "movies")
+        } else {
+            studioJob?.cancel()
+            _state.update { it.copy(activeStudioCategories = emptyList(), isStudioLoading = false) }
+        }
+    }
 
     fun setLanguage(isRtl: Boolean) {
         if (currentIsRtl != isRtl) {
@@ -89,6 +114,70 @@ class HomeViewModel : ViewModel() {
 
     fun retry() {
         if (_state.value.selectedTab == "Fuzer") loadFuzerContent() else loadAll()
+    }
+
+    // ── Studio Dynamic Loading ────────────────────────────────────────
+    private var studioJob: Job? = null
+
+    private fun loadStudioCategories(studio: String, isMovies: Boolean) {
+        studioJob?.cancel()
+        _state.update { it.copy(isStudioLoading = true, activeStudioCategories = emptyList(), activeStudioError = null) }
+        
+        studioJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val k = Constants.TMDB_API_KEY
+                val region = "US"
+                val mt = if (isMovies) "movie" else "tv"
+                val prefix = if (isMovies) "discover/movie" else "discover/tv"
+                
+                // Base filter per studio
+                val studioFilter = when (studio) {
+                    "HBO"       -> if (isMovies) "with_watch_providers=1899|384&watch_region=$region" else "with_networks=49|3186"
+                    "AMAZON"    -> if (isMovies) "with_watch_providers=119&watch_region=$region" else "with_networks=1024"
+                    "PARAMOUNT" -> if (isMovies) "with_companies=4" else "with_networks=4330|67"
+                    "HULU"      -> if (isMovies) "with_watch_providers=15&watch_region=$region" else "with_networks=453"
+                    "NETFLIX"   -> if (isMovies) "with_watch_providers=8&watch_region=$region" else "with_networks=213"
+                    "APPLE_TV"  -> if (isMovies) "with_watch_providers=350&watch_region=$region" else "with_networks=2552"
+                    "DISNEY"    -> if (isMovies) "with_companies=2|3|420" else "with_networks=2739"
+                    "SONY"      -> "with_companies=5|34|559"
+                    else        -> ""
+                }
+                
+                if (studioFilter.isEmpty()) {
+                    _state.update { it.copy(isStudioLoading = false) }
+                    return@launch
+                }
+
+                // Define categories to fetch
+                val queries = listOf(
+                    Triple("top", "Most Popular", "הכי פופולרי") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&sort_by=popularity.desc",
+                    Triple("action", "Action & Adventure", "פעולה והרפתקאות") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=28|10759&sort_by=popularity.desc",
+                    Triple("ani", "Animation", "אנימציה") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=16&sort_by=popularity.desc",
+                    Triple("comedy", "Comedy", "קומדיה") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=35&sort_by=popularity.desc",
+                    Triple("drama", "Drama", "דרמה") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=18&sort_by=popularity.desc",
+                    Triple("scifi", "Sci-Fi & Fantasy", "מדע בדיוני ופנטזיה") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=878|14|10765&sort_by=popularity.desc",
+                    Triple("crime", "Crime & Mystery", "פשע ומסתורין") to "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&with_genres=80|9648&sort_by=popularity.desc"
+                )
+
+                val results = coroutineScope {
+                    queries.map { (meta, url) ->
+                        async { meta to fetch(url, mt) }
+                    }.awaitAll()
+                }
+
+                val categories = results.mapNotNull { (meta, movies) ->
+                    val distinct = movies.distinctBy { it.id }
+                    if (distinct.isNotEmpty()) {
+                        StudioCategory(id = "studio_${studio}_${meta.first}_${if(isMovies) "m" else "t"}", titleEn = meta.second, titleHe = meta.third, movies = distinct)
+                    } else null
+                }
+
+                _state.update { it.copy(activeStudioCategories = categories, isStudioLoading = false) }
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                _state.update { it.copy(activeStudioError = e.message, isStudioLoading = false) }
+            }
+        }
     }
 
     // ── Hero Enrichment ───────────────────────────────────────────────
@@ -111,7 +200,7 @@ class HomeViewModel : ViewModel() {
                 val response = http.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { response.close(); return@launch }
 
-                val json = JSONObject(response.body?.string() ?: return@launch)
+                val json = JSONObject(response.body.string())
                 response.close()
 
                 // Extract logo URL (prefer English logo, fallback to any)
@@ -137,13 +226,16 @@ class HomeViewModel : ViewModel() {
                         if (it.length() > 0) it.optInt(0) else null
                     }
 
-                // Extract top 3 cast names
+                // Extract top 3 cast members with photos
                 val castArray = json.optJSONObject("credits")?.optJSONArray("cast")
-                val castNames = mutableListOf<String>()
+                val castMembers = mutableListOf<CastMember>()
                 if (castArray != null) {
-                    for (i in 0 until minOf(castArray.length(), 3)) {
-                        val name = castArray.getJSONObject(i).optString("name", "")
-                        if (name.isNotBlank()) castNames.add(name)
+                    for (i in 0 until minOf(castArray.length(), 4)) {
+                        val obj = castArray.getJSONObject(i)
+                        val name = obj.optString("name", "")
+                        val profilePath = obj.optString("profile_path", "")
+                        val fullProfileUrl = if (profilePath.isNotBlank() && profilePath != "null") "$imgBase/w185$profilePath" else null
+                        if (name.isNotBlank()) castMembers.add(CastMember(name, fullProfileUrl))
                     }
                 }
 
@@ -165,12 +257,13 @@ class HomeViewModel : ViewModel() {
                     it.copy(
                         heroLogoUrl = logoUrl,
                         heroRuntime = runtime,
-                        heroCast = castNames,
+                        heroCast = castMembers,
                         heroOverview = overview,
                         heroGenre = genreStr,
                         heroEnrichedId = movieId
                     )
                 }
+            } catch (e: CancellationException) { throw e
             } catch (_: Exception) {
                 // Silently fail — hero will show text title instead of logo
             }
@@ -182,9 +275,11 @@ class HomeViewModel : ViewModel() {
      * a "Continue Watching" list sorted by most recently watched.
      * Called from UI layer on resume since HomeViewModel has no Context.
      */
+    private var cachedProgressManager: WatchProgressManager? = null
+
     fun refreshContinueWatching(context: Context) {
         viewModelScope.launch(Dispatchers.IO) {
-            val pm = WatchProgressManager(context)
+            val pm = cachedProgressManager ?: WatchProgressManager(context.applicationContext).also { cachedProgressManager = it }
             val prefs = context.getSharedPreferences("lumina_watch_v2", Context.MODE_PRIVATE)
             val bridge = context.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)
             val allContent = _state.value.let { s ->
@@ -268,29 +363,7 @@ class HomeViewModel : ViewModel() {
         return (movies + series).sortedByDescending { it.rating }.distinctBy { it.id }
     }
 
-    private fun generateStudioRows(baseId: String, brand: StudioBrand, movies: List<Movie>, _tr: (String, String) -> String): List<RowDef> {
-        val list = mutableListOf<RowDef>()
-        val uniqueMovies = movies.distinctBy { it.id }
-        if (uniqueMovies.isEmpty()) return list
 
-        list.add(RowDef.Studio("${baseId}::new", brand, uniqueMovies))
-
-        val ani = uniqueMovies.filter {
-            it.genre.contains("Animation", ignoreCase = true) ||
-                    it.genre.contains("Kids", ignoreCase = true) ||
-                    it.genre.contains("Family", ignoreCase = true) ||
-                    it.genre.contains("אנימציה")
-        }
-        if (ani.isNotEmpty()) {
-            list.add(RowDef.Regular("${baseId}::ani", _tr("Animation", "אנימציה"), ani))
-        }
-
-        val top = uniqueMovies.filter { it.rating > 0f }.sortedByDescending { it.rating }
-        if (top.isNotEmpty()) {
-            list.add(RowDef.Regular("${baseId}::top", _tr("Best of All Time", "הכי טוב בכל הזמנים"), top))
-        }
-        return list
-    }
 
     private suspend fun recalculateRows(currentState: HomeState) = withContext(Dispatchers.Default) {
         val trFunc = { en: String, he: String -> if (currentIsRtl) he else en }
@@ -303,77 +376,65 @@ class HomeViewModel : ViewModel() {
         val homeDisney    = mergeStudioContent(currentState.movieDisney, currentState.tvDisney)
         val homeParamount = mergeStudioContent(currentState.movieParamount, currentState.tvParamount)
         val homeHulu      = mergeStudioContent(currentState.movieHulu, currentState.tvHulu)
+        val homeSony      = mergeStudioContent(currentState.movieSony, currentState.tvSony)
 
         val amazonMovies  = currentState.movieAmazon.ifEmpty { currentState.tvAmazon }
         val amazonSeries  = currentState.tvAmazon.ifEmpty { currentState.movieAmazon }
 
         val newRows = buildList {
             when (currentState.selectedTab) {
-                "ראשי" -> {
+                "home" -> {
                     // 🔥 Continue Watching — always FIRST row when content exists
                     if (currentState.continueWatching.isNotEmpty()) add(RowDef.Regular("continueWatching", trFunc("▶  Continue Watching", "▶  המשך צפייה"), currentState.continueWatching))
-                    if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Movies", "סרטים פופולריים"), currentState.movieTrending.distinctBy { it.id }))
+                    if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Movies", "סרטים פופולריים"), currentState.movieTrending))
                     if (homeHbo.isNotEmpty()) add(RowDef.Studio("homeHBO", StudioBrand.HBO, homeHbo))
                     if (homeNetflix.isNotEmpty()) add(RowDef.Studio("homeNetflix", StudioBrand.NETFLIX, homeNetflix))
-                    if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
+                    if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Popular Shows", "סדרות פופולריות"), currentState.tvTrending))
                     if (homeAmazon.isNotEmpty()) add(RowDef.Studio("homeAmazon", StudioBrand.AMAZON, homeAmazon))
                     if (homeAppleTv.isNotEmpty()) add(RowDef.Studio("homeAppleTv", StudioBrand.APPLE_TV, homeAppleTv))
                     if (homeDisney.isNotEmpty()) add(RowDef.Studio("homeDisney", StudioBrand.DISNEY, homeDisney))
                     if (homeParamount.isNotEmpty()) add(RowDef.Studio("homeParamount", StudioBrand.PARAMOUNT, homeParamount))
                     if (homeHulu.isNotEmpty()) add(RowDef.Studio("homeHulu", StudioBrand.HULU, homeHulu))
-                    if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",trFunc("New in Theaters", "בקולנוע"), currentState.moviePremieres.distinctBy { it.id }))
+                    if (homeSony.isNotEmpty()) add(RowDef.Studio("homeSony", StudioBrand.SONY, homeSony))
+                    if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres",trFunc("New in Theaters", "בקולנוע"), currentState.moviePremieres))
                 }
-                "סרטים" -> {
+                "movies" -> {
                     add(RowDef.StudioRibbon)
                     if (filter != null) {
-                        val amzId = if (currentState.movieAmazon.isNotEmpty()) "movieAmazon" else "tvAmazon"
-                        when (filter) {
-                            "HBO"       -> addAll(generateStudioRows("movieHBO", StudioBrand.HBO, currentState.movieHBO, trFunc))
-                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonMovies, trFunc))
-                            "PARAMOUNT" -> addAll(generateStudioRows("movieParamount", StudioBrand.PARAMOUNT, currentState.movieParamount, trFunc))
-                            "HULU"      -> addAll(generateStudioRows("movieHulu", StudioBrand.HULU, currentState.movieHulu, trFunc))
-                            "NETFLIX"   -> addAll(generateStudioRows("movieNetflix", StudioBrand.NETFLIX, currentState.movieNetflix, trFunc))
-                            "APPLE_TV"  -> addAll(generateStudioRows("movieAppleTV", StudioBrand.APPLE_TV, currentState.movieAppleTV, trFunc))
-                            "DISNEY"    -> addAll(generateStudioRows("movieDisney", StudioBrand.DISNEY, currentState.movieDisney, trFunc))
+                        currentState.activeStudioCategories.forEach { cat ->
+                            add(RowDef.Regular(cat.id, trFunc(cat.titleEn, cat.titleHe), cat.movies))
                         }
                     } else {
-                        if (currentState.movieAction.isNotEmpty()) add(RowDef.Regular("movieAction", trFunc("Action & Adventure", "פעולה והרפתקאות"), currentState.movieAction.distinctBy { it.id }))
-                        if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Now", "פופולרי עכשיו"), currentState.movieTrending.distinctBy { it.id }))
-                        if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", trFunc("In Theaters", "בקולנוע"), currentState.moviePremieres.distinctBy { it.id }))
-                        if (currentState.movieAnimation.isNotEmpty()) add(RowDef.Regular("movieAnimation", trFunc("Animations", "אנימציה"), currentState.movieAnimation.distinctBy { it.id }))
+                        if (currentState.movieAction.isNotEmpty()) add(RowDef.Regular("movieAction", trFunc("Action & Adventure", "פעולה והרפתקאות"), currentState.movieAction))
+                        if (currentState.movieTrending.isNotEmpty()) add(RowDef.Regular("movieTrending", trFunc("Trending Now", "פופולרי עכשיו"), currentState.movieTrending))
+                        if (currentState.moviePremieres.isNotEmpty()) add(RowDef.Regular("moviePremieres", trFunc("In Theaters", "בקולנוע"), currentState.moviePremieres))
+                        if (currentState.movieAnimation.isNotEmpty()) add(RowDef.Regular("movieAnimation", trFunc("Animations", "אנימציה"), currentState.movieAnimation))
                     }
                 }
-                "סדרות" -> {
+                "series" -> {
                     add(RowDef.StudioRibbon)
                     if (filter != null) {
-                        val amzId = if (currentState.tvAmazon.isNotEmpty()) "tvAmazon" else "movieAmazon"
-                        when (filter) {
-                            "HBO"       -> addAll(generateStudioRows("tvHBO", StudioBrand.HBO, currentState.tvHBO, trFunc))
-                            "AMAZON"    -> addAll(generateStudioRows(amzId, StudioBrand.AMAZON, amazonSeries, trFunc))
-                            "PARAMOUNT" -> addAll(generateStudioRows("tvParamount", StudioBrand.PARAMOUNT, currentState.tvParamount, trFunc))
-                            "HULU"      -> addAll(generateStudioRows("tvHulu", StudioBrand.HULU, currentState.tvHulu, trFunc))
-                            "NETFLIX"   -> addAll(generateStudioRows("tvNetflix", StudioBrand.NETFLIX, currentState.tvNetflix, trFunc))
-                            "APPLE_TV"  -> addAll(generateStudioRows("tvAppleTV", StudioBrand.APPLE_TV, currentState.tvAppleTV, trFunc))
-                            "DISNEY"    -> addAll(generateStudioRows("tvDisney", StudioBrand.DISNEY, currentState.tvDisney, trFunc))
+                        currentState.activeStudioCategories.forEach { cat ->
+                            add(RowDef.Regular(cat.id, trFunc(cat.titleEn, cat.titleHe), cat.movies))
                         }
                     } else {
-                        if (currentState.tvDrama.isNotEmpty()) add(RowDef.Regular("tvDrama", trFunc("Drama", "דרמה"), currentState.tvDrama.distinctBy { it.id }))
-                        if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Trending Shows", "סדרות פופולריות"), currentState.tvTrending.distinctBy { it.id }))
-                        if (currentState.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", trFunc("New Episodes", "פרקים חדשים"), currentState.tvPremieres.distinctBy { it.id }))
-                        if (currentState.tvAnimation.isNotEmpty()) add(RowDef.Regular("tvAnimation", trFunc("Animations", "אנימציה"), currentState.tvAnimation.distinctBy { it.id }))
+                        if (currentState.tvDrama.isNotEmpty()) add(RowDef.Regular("tvDrama", trFunc("Drama", "דרמה"), currentState.tvDrama))
+                        if (currentState.tvTrending.isNotEmpty()) add(RowDef.Regular("tvTrending", trFunc("Trending Shows", "סדרות פופולריות"), currentState.tvTrending))
+                        if (currentState.tvPremieres.isNotEmpty()) add(RowDef.Regular("tvPremieres", trFunc("New Episodes", "פרקים חדשים"), currentState.tvPremieres))
+                        if (currentState.tvAnimation.isNotEmpty()) add(RowDef.Regular("tvAnimation", trFunc("Animations", "אנימציה"), currentState.tvAnimation))
                     }
                 }
                 "Fuzer" -> {
                     val newContent = (currentState.fuzerMovies + currentState.fuzerSeries).sortedByDescending { it.id }.distinctBy { it.id }
                     if (newContent.isNotEmpty()) add(RowDef.Regular("fuzer_new", trFunc("🆕 New Content", "🆕 תוכן חדש"), newContent))
-                    if (currentState.fuzerMovies.isNotEmpty()) add(RowDef.Regular("fuzer_m", trFunc("🎬 Movies", "🎬 סרטים"), currentState.fuzerMovies.distinctBy { it.id }))
-                    if (currentState.fuzerMoviesHD.isNotEmpty()) add(RowDef.Regular("fuzer_mhd", trFunc("🎬 Movies HD", "🎬 סרטים HD"), currentState.fuzerMoviesHD.distinctBy { it.id }))
-                    if (currentState.fuzerMovies4K.isNotEmpty()) add(RowDef.Regular("fuzer_m4k", trFunc("✨ Movies 4K", "✨ סרטים 4K"), currentState.fuzerMovies4K.distinctBy { it.id }))
-                    if (currentState.fuzerDubbedMovies.isNotEmpty()) add(RowDef.Regular("fuzer_dm", trFunc("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), currentState.fuzerDubbedMovies.distinctBy { it.id }))
-                    if (currentState.fuzerSeries.isNotEmpty()) add(RowDef.Regular("fuzer_tv", trFunc("📺 TV Shows", "📺 סדרות"), currentState.fuzerSeries.distinctBy { it.id }))
-                    if (currentState.fuzerSeriesHD.isNotEmpty()) add(RowDef.Regular("fuzer_shd", trFunc("📺 TV Shows HD", "📺 סדרות HD"), currentState.fuzerSeriesHD.distinctBy { it.id }))
-                    if (currentState.fuzerSeries4K.isNotEmpty()) add(RowDef.Regular("fuzer_s4k", trFunc("✨ TV Shows 4K", "✨ סדרות 4K"), currentState.fuzerSeries4K.distinctBy { it.id }))
-                    if (currentState.fuzerDubbedSeries.isNotEmpty()) add(RowDef.Regular("fuzer_ds", trFunc("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), currentState.fuzerDubbedSeries.distinctBy { it.id }))
+                    if (currentState.fuzerMovies.isNotEmpty()) add(RowDef.Regular("fuzer_m", trFunc("🎬 Movies", "🎬 סרטים"), currentState.fuzerMovies))
+                    if (currentState.fuzerMoviesHD.isNotEmpty()) add(RowDef.Regular("fuzer_mhd", trFunc("🎬 Movies HD", "🎬 סרטים HD"), currentState.fuzerMoviesHD))
+                    if (currentState.fuzerMovies4K.isNotEmpty()) add(RowDef.Regular("fuzer_m4k", trFunc("✨ Movies 4K", "✨ סרטים 4K"), currentState.fuzerMovies4K))
+                    if (currentState.fuzerDubbedMovies.isNotEmpty()) add(RowDef.Regular("fuzer_dm", trFunc("🎤 Dubbed Movies", "🎤 סרטים מדובבים"), currentState.fuzerDubbedMovies))
+                    if (currentState.fuzerSeries.isNotEmpty()) add(RowDef.Regular("fuzer_tv", trFunc("📺 TV Shows", "📺 סדרות"), currentState.fuzerSeries))
+                    if (currentState.fuzerSeriesHD.isNotEmpty()) add(RowDef.Regular("fuzer_shd", trFunc("📺 TV Shows HD", "📺 סדרות HD"), currentState.fuzerSeriesHD))
+                    if (currentState.fuzerSeries4K.isNotEmpty()) add(RowDef.Regular("fuzer_s4k", trFunc("✨ TV Shows 4K", "✨ סדרות 4K"), currentState.fuzerSeries4K))
+                    if (currentState.fuzerDubbedSeries.isNotEmpty()) add(RowDef.Regular("fuzer_ds", trFunc("🎤 Dubbed Shows", "🎤 סדרות מדובבות"), currentState.fuzerDubbedSeries))
                 }
             }
         }
@@ -393,35 +454,74 @@ class HomeViewModel : ViewModel() {
                 var url    = ""
                 var mt     = ""
 
-                when (id) {
-                    "movieTrending"  -> { url = "$BASE/trending/movie/week?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
-                    "moviePremieres" -> { url = "$BASE/movie/now_playing?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
-                    "movieAnimation" -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieAction"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieDrama"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieScifi"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieTopRated"  -> { url = "$BASE/movie/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
-                    "movieNetflix"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieAppleTV"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieDisney"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieHBO"       -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieAmazon"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieParamount" -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "movieHulu"      -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
-                    "tvTrending"     -> { url = "$BASE/trending/tv/week?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvPremieres"    -> { url = "$BASE/tv/on_the_air?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvAnimation"    -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvDrama"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvCrime"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvScifi"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvTopRated"     -> { url = "$BASE/tv/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
-                    "tvNetflix"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvAppleTV"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvDisney"       -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvHBO"          -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvAmazon"       -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvParamount"    -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
-                    "tvHulu"         -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                if (id.startsWith("studio_")) {
+                    val parts = id.split("_")
+                    if (parts.size == 4) {
+                        val studioName = parts[1]
+                        val genreKey = parts[2]
+                        val type = parts[3]
+                        
+                        mt = if (type == "m") "movie" else "tv"
+                        val prefix = if (type == "m") "discover/movie" else "discover/tv"
+                        
+                        val studioFilter = when (studioName) {
+                            "HBO"       -> if (mt == "movie") "with_watch_providers=1899|384&watch_region=$region" else "with_networks=49|3186"
+                            "AMAZON"    -> if (mt == "movie") "with_watch_providers=119&watch_region=$region" else "with_networks=1024"
+                            "PARAMOUNT" -> if (mt == "movie") "with_companies=4" else "with_networks=4330|67"
+                            "HULU"      -> if (mt == "movie") "with_watch_providers=15&watch_region=$region" else "with_networks=453"
+                            "NETFLIX"   -> if (mt == "movie") "with_watch_providers=8&watch_region=$region" else "with_networks=213"
+                            "APPLE_TV"  -> if (mt == "movie") "with_watch_providers=350&watch_region=$region" else "with_networks=2552"
+                            "DISNEY"    -> if (mt == "movie") "with_companies=2|3|420" else "with_networks=2739"
+                            "SONY"      -> "with_companies=5|34|559"
+                            else        -> ""
+                        }
+                        
+                        val genreFilter = when (genreKey) {
+                            "action" -> "with_genres=28|10759"
+                            "ani"    -> "with_genres=16"
+                            "comedy" -> "with_genres=35"
+                            "drama"  -> "with_genres=18"
+                            "scifi"  -> "with_genres=878|14|10765"
+                            "crime"  -> "with_genres=80|9648"
+                            else     -> "" // "top"
+                        }
+                        
+                        val baseQ = "$BASE/$prefix?api_key=$k&language=en-US&$studioFilter&sort_by=popularity.desc&page=$nextPage"
+                        url = if (genreFilter.isNotEmpty()) "$baseQ&$genreFilter" else baseQ
+                    }
+                } else {
+                    when (id) {
+                        "movieTrending"  -> { url = "$BASE/trending/movie/week?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
+                        "moviePremieres" -> { url = "$BASE/movie/now_playing?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
+                        "movieAnimation" -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieAction"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=28&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieDrama"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieScifi"     -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_genres=878&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieTopRated"  -> { url = "$BASE/movie/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "movie" }
+                        "movieNetflix"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=8&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieAppleTV"   -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=350&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieDisney"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=2|3|420&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieHBO"       -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=1899|384&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieAmazon"    -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=119&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieParamount" -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=4&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieHulu"      -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_watch_providers=15&watch_region=$region&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "movieSony"      -> { url = "$BASE/discover/movie?api_key=$k&language=en-US&with_companies=5|34|559&sort_by=popularity.desc&page=$nextPage"; mt = "movie" }
+                        "tvTrending"     -> { url = "$BASE/trending/tv/week?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                        "tvPremieres"    -> { url = "$BASE/tv/on_the_air?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                        "tvAnimation"    -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=16&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvDrama"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=18&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvCrime"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=80&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvScifi"        -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_genres=10765&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvTopRated"     -> { url = "$BASE/tv/top_rated?api_key=$k&language=en-US&page=$nextPage"; mt = "tv" }
+                        "tvNetflix"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=213&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvAppleTV"      -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2552&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvDisney"       -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvHBO"          -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=49|3186&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvAmazon"       -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvParamount"    -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvHulu"         -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                        "tvSony"         -> { url = "$BASE/discover/tv?api_key=$k&language=en-US&with_companies=5|34|559&sort_by=popularity.desc&page=$nextPage"; mt = "tv" }
+                    }
                 }
 
                 if (url.isNotEmpty()) {
@@ -429,6 +529,12 @@ class HomeViewModel : ViewModel() {
                     if (newItems.isEmpty()) { loadingSet.remove(id); return@launch }  // Stop pagination on empty
                     pageMap[id] = nextPage
                     _state.update { s ->
+                    if (id.startsWith("studio_")) {
+                        val updatedCategories = s.activeStudioCategories.map { cat ->
+                            if (cat.id == id) cat.copy(movies = (cat.movies + newItems).distinctBy { it.id }) else cat
+                        }
+                        s.copy(activeStudioCategories = updatedCategories)
+                    } else {
                         when (id) {
                             "movieTrending"  -> s.copy(movieTrending  = s.movieTrending  + newItems)
                             "moviePremieres" -> s.copy(moviePremieres = s.moviePremieres + newItems)
@@ -444,6 +550,7 @@ class HomeViewModel : ViewModel() {
                             "movieAmazon"    -> s.copy(movieAmazon    = s.movieAmazon    + newItems)
                             "movieParamount" -> s.copy(movieParamount = s.movieParamount + newItems)
                             "movieHulu"      -> s.copy(movieHulu      = s.movieHulu      + newItems)
+                            "movieSony"      -> s.copy(movieSony      = s.movieSony      + newItems)
                             "tvTrending"     -> s.copy(tvTrending     = s.tvTrending     + newItems)
                             "tvPremieres"    -> s.copy(tvPremieres    = s.tvPremieres    + newItems)
                             "tvAnimation"    -> s.copy(tvAnimation    = s.tvAnimation    + newItems)
@@ -458,8 +565,10 @@ class HomeViewModel : ViewModel() {
                             "tvAmazon"       -> s.copy(tvAmazon       = s.tvAmazon       + newItems)
                             "tvParamount"    -> s.copy(tvParamount    = s.tvParamount    + newItems)
                             "tvHulu"         -> s.copy(tvHulu         = s.tvHulu         + newItems)
+                            "tvSony"         -> s.copy(tvSony         = s.tvSony         + newItems)
                             else -> s
                         }
+                    }
                     }
                 }
             } finally {
@@ -493,30 +602,27 @@ class HomeViewModel : ViewModel() {
                 val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
                 val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
                 val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
+                val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
+                val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
 
                 val mHd = moviesHdDef.await()
                 val sHd = seriesHdDef.await()
                 val m4k = movies4kDef.await()
                 val s4k = series4kDef.await()
+                val dmRes = dubbedMoviesDef.await()
+                val dsRes = dubbedSeriesDef.await()
 
+                // ⚡ Single batched update instead of 2 separate updates
                 _state.update { s -> s.copy(
                     fuzerMoviesHD = mHd,
                     fuzerSeriesHD = sHd,
                     fuzerMovies4K = m4k,
-                    fuzerSeries4K = s4k
-                )}
-
-                val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
-                val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
-
-                val dmRes = dubbedMoviesDef.await()
-                val dsRes = dubbedSeriesDef.await()
-
-                _state.update { s -> s.copy(
+                    fuzerSeries4K = s4k,
                     fuzerDubbedMovies = dmRes,
                     fuzerDubbedSeries = dsRes
                 )}
 
+            } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }
             }
@@ -552,6 +658,7 @@ class HomeViewModel : ViewModel() {
                     loadWave2Batched(k, region, batchSize = 6, delayMs = 50)
                 }
 
+            } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 _state.update { it.copy(isLoading = false, error = "Network error: ${e.message}") }
             }
@@ -581,7 +688,9 @@ class HomeViewModel : ViewModel() {
             Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=2739&sort_by=popularity.desc") { s, v -> s.copy(tvDisney = v) },
             Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=1024&sort_by=popularity.desc") { s, v -> s.copy(tvAmazon = v) },
             Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=4330|67&sort_by=popularity.desc") { s, v -> s.copy(tvParamount = v) },
-            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc") { s, v -> s.copy(tvHulu = v) }
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_networks=453&sort_by=popularity.desc") { s, v -> s.copy(tvHulu = v) },
+            Pair("$BASE/discover/movie?api_key=$k&language=en-US&with_companies=5|34|559&sort_by=popularity.desc") { s, v -> s.copy(movieSony = v) },
+            Pair("$BASE/discover/tv?api_key=$k&language=en-US&with_companies=5|34|559&sort_by=popularity.desc") { s, v -> s.copy(tvSony = v) }
         )
 
         requests.chunked(batchSize).forEach { batch ->

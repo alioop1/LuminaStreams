@@ -17,8 +17,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
-import java.net.HttpURLConnection
-import java.net.URL
+import com.luminastreams.tv.core.TrustedHttpClient
+import okhttp3.Request
+import java.util.concurrent.TimeUnit
 
 data class StremioSubtitle(val url: String, val lang: String, val source: String)
 
@@ -32,6 +33,10 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
 
     private val subtitleScraper  = SubtitleScraper()
     private val ktuvitDirect     = KtuvitDirectClient(app)
+    private val subtitleClient   = TrustedHttpClient.builder()
+        .connectTimeout(10, TimeUnit.SECONDS)
+        .readTimeout(10, TimeUnit.SECONDS)
+        .build()
 
     private val _state = MutableStateFlow(PlayerUiState())
     val state: StateFlow<PlayerUiState> = _state.asStateFlow()
@@ -52,7 +57,7 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(videoUrl = videoUrl, isSubtitlesLoading = true) }
 
         if (imdbId.isNotEmpty()) {
-            viewModelScope.launch {
+            viewModelScope.launch(Dispatchers.IO) {
                 val subs = fetchAllSubtitles(imdbId, season, episode)
                 _state.update {
                     it.copy(
@@ -165,17 +170,17 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         sourceName: String
     ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
         val subtitles = mutableListOf<StremioSubtitle>()
-        var conn: HttpURLConnection? = null
         try {
-            conn = URL(urlString).openConnection() as HttpURLConnection
-            conn.requestMethod = "GET"
-            conn.setRequestProperty("User-Agent", "Stremio/4.4.168")
-            conn.setRequestProperty("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
-            conn.connectTimeout = 10_000
-            conn.readTimeout    = 10_000
-            if (conn.responseCode in 200..299) {
-                val response = conn.inputStream.bufferedReader().use { it.readText() }
-                val jsonObject = JSONObject(response)
+            val request = Request.Builder()
+                .url(urlString)
+                .header("User-Agent", "Stremio/4.4.168")
+                .header("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
+                .build()
+            val response = subtitleClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val responseStr = response.body?.string() ?: ""
+                response.close()
+                val jsonObject = JSONObject(responseStr)
                 if (jsonObject.has("subtitles")) {
                     val subsArray = jsonObject.getJSONArray("subtitles")
                     for (i in 0 until subsArray.length()) {
@@ -187,10 +192,10 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                         if (subUrl.isNotEmpty()) subtitles.add(StremioSubtitle(subUrl, lang, sourceName))
                     }
                 }
+            } else {
+                response.close()
             }
         } catch (_: Exception) {
-        } finally {
-            conn?.disconnect()
         }
         subtitles
     }

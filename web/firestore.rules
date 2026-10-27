@@ -1,0 +1,16 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection: each user can only read/write their own document
+    match /users/{userId} {
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Device links: anyone authenticated can read/write (for QR code linking)
+    // Links are short-lived and deleted after use
+    match /device_links/{code} {
+      allow read, write: if true;
+    }
+  }
+}

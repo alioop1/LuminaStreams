@@ -5,29 +5,20 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.Hd
-import androidx.compose.material.icons.filled.Subtitles
-import androidx.compose.material.icons.filled.SurroundSound
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.BookmarkBorder
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.drawBehind
-import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.Shadow
+import androidx.compose.ui.layout.ContentScale as ContentScaleImport
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.font.FontWeight
@@ -43,81 +34,60 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.core.tr
 
-// ─────────────────────────────────────────────────────────────────────
-// ⚡ OPTION 4 — CLEAN VERTICAL SPLIT · Ultra Premium
-//    Full backdrop on one side, SMOOTH horizontal fade to black,
-//    NO diagonal lines. Content on pure black side.
-//    Static layout — zero jumps between movies.
-// ─────────────────────────────────────────────────────────────────────
-
-private val CYAN        = Color(0xFF00E5FF)
-private val CYAN_DIM    = Color(0xFF0091EA)
-private val AMBER       = Color(0xFFFFB300)
-private val GLASS_BG    = Color(0x14FFFFFF)
-
-// ─────────────────────────────────────────────────────────────────────
-// BACKDROP LAYER — Full-screen image + smooth horizontal fade
-// ─────────────────────────────────────────────────────────────────────
+private val TMDB_WIDTH_REGEX = Regex("/w\\d+/")
 
 @Composable
 fun BackdropLayer(hero: Movie?) {
     val ctx = LocalContext.current
     val heroUrl = (hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl)
-        ?.replace("/w780/", "/original/")
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-
-    val dm = ctx.resources.displayMetrics
-    val screenW = dm.widthPixels
-    val screenH = dm.heightPixels
+        ?.replace(TMDB_WIDTH_REGEX, "/original/")
 
     Box(Modifier.fillMaxSize().background(BG)) {
-        // 1. Full-screen backdrop image
         if (!heroUrl.isNullOrBlank()) {
-            AsyncImage(
-                model = ImageRequest.Builder(ctx)
-                    .data(heroUrl)
-                    .size(screenW, screenH)
+            val heroRequest = remember(heroUrl) {
+                ImageRequest.Builder(ctx).data(heroUrl)
                     .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
-                    .build(),
+                    .build()
+            }
+            AsyncImage(
+                model = heroRequest,
                 contentDescription = null,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScaleImport.Crop,
                 alignment = Alignment.TopCenter,
                 modifier = Modifier.fillMaxSize()
             )
         }
 
-        // 2. 10% dark overlay over the entire image instead of horizontal fade
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val w = size.width
             val h = size.height
+            
+            val isRtl = layoutDirection == LayoutDirection.Rtl
 
-            // 10% shadow over the whole thing
-            drawRect(color = Color(0x1A000000))
+            // Horizontal shadow behind text (Right side for RTL, Left side for LTR)
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = if (isRtl) listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))
+                             else listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent),
+                    startX = if (isRtl) size.width * 0.3f else 0f,
+                    endX = if (isRtl) size.width else size.width * 0.7f
+                )
+            )
 
-            // Bottom fade — smooth transition to poster rows
+            // Vertical vignette at the bottom
             drawRect(
                 brush = Brush.verticalGradient(
-                    colors = listOf(Color.Transparent, BG.copy(alpha = 0.7f), BG),
-                    startY = h * 0.55f,
+                    colors = listOf(
+                        Color.Transparent, 
+                        Color.Black.copy(alpha = 0.4f), 
+                        Color.Black.copy(alpha = 0.85f)
+                    ),
+                    startY = h * 0.4f,
                     endY = h
                 )
             )
         }
-
-        // 3. Top vignette (navbar readability)
-        Box(
-            Modifier.fillMaxSize()
-                .background(Brush.verticalGradient(
-                    0.0f to Color(0x66000000),
-                    0.15f to Color.Transparent
-                ))
-        )
     }
 }
-
-// ─────────────────────────────────────────────────────────────────────
-// HERO OVERLAY — Static layout, zero jumps between movies
-// ─────────────────────────────────────────────────────────────────────
 
 @Composable
 fun HeroOverlay(
@@ -126,60 +96,54 @@ fun HeroOverlay(
     modifier: Modifier = Modifier,
     logoUrl: String? = null,
     runtime: Int? = null,
-    cast: List<String> = emptyList(),
+    cast: List<CastMember> = emptyList(),
     localizedOverview: String? = null,
     localizedGenre: String? = null
 ) {
-    val isRtl = LocalLayoutDirection.current == LayoutDirection.Rtl
     val ctx = LocalContext.current
-    // Compose natively handles RTL! 
-    // Start = Right in RTL, Left in LTR. End = Left in RTL, Right in LTR.
     val align = Alignment.Start
-    val textAlign = TextAlign.Start
 
-    // Static outer container — FIXED SIZE, never changes between movies
     Box(
         modifier = modifier
-            .fillMaxWidth(0.44f)  // Increased width to give more room
+            .fillMaxWidth(0.55f)
             .fillMaxHeight()
-            .padding(bottom = 32.dp, start = 48.dp, end = 48.dp), // Move up and add side padding
+            // We use padding to perfectly place the text at the bottom
+            .padding(bottom = 32.dp, start = 56.dp, end = 56.dp),
         contentAlignment = Alignment.BottomStart
     ) {
-        // Crossfade for smooth transitions without layout jumps
         Crossfade(
             targetState = hero,
             animationSpec = tween(400),
             label = "hero_cross"
         ) { m ->
             if (m != null) {
-                // Inner column with FIXED spacer heights
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
                     horizontalAlignment = align
                 ) {
-                    // ── 1. MOVIE LOGO or styled title — fixed height zone ──
+                    // Title or Logo
                     Box(
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 130.dp),
-                        contentAlignment = Alignment.CenterStart
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 60.dp, max = 150.dp),
+                        contentAlignment = Alignment.BottomStart
                     ) {
                         if (!logoUrl.isNullOrBlank()) {
+                            val logoRequest = remember(logoUrl) {
+                                ImageRequest.Builder(ctx).data(logoUrl).crossfade(300).build()
+                            }
                             AsyncImage(
-                                model = ImageRequest.Builder(ctx)
-                                    .data(logoUrl)
-                                    .crossfade(300)
-                                    .build(),
+                                model = logoRequest,
                                 contentDescription = m.title,
-                                contentScale = ContentScale.Fit,
+                                contentScale = ContentScaleImport.Fit,
                                 modifier = Modifier
-                                    .heightIn(max = 120.dp)
-                                    .widthIn(max = 440.dp)
+                                    .heightIn(max = 140.dp)
+                                    .widthIn(max = 480.dp)
                             )
                         } else if (!isEnriching) {
                             val tsz = when {
-                                m.title.length > 26 -> 28.sp
-                                m.title.length > 16 -> 36.sp
-                                else -> 44.sp
+                                m.title.length > 26 -> 36.sp
+                                m.title.length > 16 -> 48.sp
+                                else -> 64.sp
                             }
                             Text(
                                 text = m.title,
@@ -190,169 +154,236 @@ fun HeroOverlay(
                                 letterSpacing = (-0.5).sp,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis,
-                                textAlign = textAlign
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(color = Color.Black, blurRadius = 16f, offset = Offset(0f, 4f))
+                                )
                             )
                         }
                     }
 
-                    // ── Decorative cyan horizontal line ──
-                    Box(
-                        modifier = Modifier
-                            .width(60.dp)
-                            .height(2.dp)
-                            .background(
-                                Brush.horizontalGradient(
-                                    colors = listOf(CYAN, CYAN.copy(alpha = 0.1f))
-                                ),
-                                RoundedCornerShape(1.dp)
-                            )
-                            .align(align)
-                    )
-
-                    // ── FLOATING METADATA AREA (No Background Frame) ──
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp)
-                            .padding(top = 16.dp, bottom = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        horizontalAlignment = align
+                    // Clean Cinematic Metadata Row
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // ── 2. AUTHENTIC METADATA TAGS ──
+                        @Composable
+                        fun Separator() {
+                            Text(
+                                text = "|",
+                                color = Color.White.copy(alpha = 0.5f),
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Light,
+                                modifier = Modifier.padding(horizontal = 4.dp)
+                            )
+                        }
+
+                        var needsSeparator = false
+
+                        // Rating
+                        if (m.rating > 0f) {
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("★", color = Color.White, fontSize = 14.sp)
+                                Text(
+                                    text = "%.1f".format(m.rating), 
+                                    color = Color.White.copy(alpha = 0.9f), 
+                                    fontSize = 15.sp, 
+                                    fontWeight = FontWeight.Bold,
+                                    style = androidx.compose.ui.text.TextStyle(
+                                        shadow = Shadow(color = Color.Black, blurRadius = 8f)
+                                    )
+                                )
+                            }
+                            needsSeparator = true
+                        }
+                        
+                        // Runtime
+                        val runtimeStr = if (runtime != null && runtime > 0) {
+                            val h = runtime / 60
+                            val min = runtime % 60
+                            if (h > 0) "${h}${tr("h", "שע")} ${min}${tr("m", "ד")}" else "${min}${tr("m", "ד")}"
+                        } else null
+
+                        if (runtimeStr != null) {
+                            if (needsSeparator) Separator()
+                            Text(
+                                text = runtimeStr, 
+                                color = Color.White.copy(alpha = 0.85f), 
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(color = Color.Black, blurRadius = 8f)
+                                )
+                            )
+                            needsSeparator = true
+                        }
+
+                        // Year
+                        if (m.year > 0) {
+                            if (needsSeparator) Separator()
+                            Text(
+                                text = m.year.toString(), 
+                                color = Color.White.copy(alpha = 0.85f), 
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(color = Color.Black, blurRadius = 8f)
+                                )
+                            )
+                            needsSeparator = true
+                        }
+
+                        // Age Rating
+                        if (needsSeparator) Separator()
+                        Text(
+                            text = "16+", 
+                            color = Color.White.copy(alpha = 0.85f), 
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = Shadow(color = Color.Black, blurRadius = 8f)
+                            )
+                        )
+                        needsSeparator = true
+
+                        // Genre
+                        val genreText = localizedGenre ?: m.genre
+                        if (genreText.isNotBlank()) {
+                            if (needsSeparator) Separator()
+                            Text(
+                                text = (genreText.split(",", "·", "•", "/", "|").firstOrNull()?.trim() ?: genreText).uppercase(), 
+                                color = Color.White.copy(alpha = 0.85f), 
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Medium,
+                                letterSpacing = 0.5.sp,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(color = Color.Black, blurRadius = 8f)
+                                )
+                            )
+                        }
+                    }
+
+                    // Synopsis with HBO Max Style Dynamic Gradient Accent Line
+                    val synopsisText = localizedOverview ?: m.overview
+                    if (synopsisText.isNotBlank()) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Min), // Forces the Row to be exactly as tall as the text
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            // Dynamic Gradient Accent Line
+                            Box(
+                                modifier = Modifier
+                                    .width(4.dp)
+                                    .fillMaxHeight() // Stretches exactly to the intrinsic height of the text
+                                    .clip(RoundedCornerShape(2.dp))
+                                    .background(
+                                        Brush.verticalGradient(
+                                            colors = listOf(
+                                                Color(0xFF00E5FF), // Cyan
+                                                Color(0xFFD500F9), // Purple/Magenta
+                                                Color(0xFFFF3D00)  // Deep Orange
+                                            )
+                                        )
+                                    )
+                            )
+                            
+                            // Text
+                            Text(
+                                text = synopsisText,
+                                color = Color.White.copy(alpha = 0.95f), // Highly readable
+                                fontSize = 16.sp,
+                                lineHeight = 24.sp,
+                                fontWeight = FontWeight.Normal,
+                                maxLines = 4, // Expanded to 4 lines to fit complex synopses
+                                overflow = TextOverflow.Ellipsis,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(
+                                        color = Color.Black.copy(alpha = 0.9f), 
+                                        blurRadius = 16f, 
+                                        offset = Offset(0f, 4f)
+                                    ),
+                                    textDirection = androidx.compose.ui.text.style.TextDirection.Content
+                                )
+                            )
+                        }
+                    }
+
+                    // Credits
+                    if (cast.isNotEmpty()) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.padding(vertical = 4.dp)
+                            horizontalArrangement = Arrangement.spacedBy(16.dp)
                         ) {
-                            if (m.rating > 0f) {
-                                // IMDB Style Rating
-                                Text("TMDB", color = Color(0xFF01B4E4), fontSize = 11.sp, fontWeight = FontWeight.Black)
-                                Text(
-                                    text = "%.1f".format(m.rating),
-                                    color = AMBER,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
+                            // Prefix
+                            Text(
+                                text = tr("Starring:", "בכיכובם של:"),
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold,
+                                style = androidx.compose.ui.text.TextStyle(
+                                    shadow = Shadow(color = Color.Black.copy(alpha = 0.8f), blurRadius = 8f)
                                 )
-                            }
+                            )
                             
-                            // Year
-                            Text(m.year.toString(), color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                            
-                            // Age Rating
-                            Box(
-                                modifier = Modifier
-                                    .border(1.dp, Color.White.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 1.dp)
+                            // Actors with photos
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("16+", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            // Quality Badges (Authentic from TMDB/IMDB logic)
-                            if (m.is4K) {
-                                Box(
-                                    modifier = Modifier
-                                        .border(1.dp, Color.White, RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                                ) {
-                                    Text("4K", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                                }
-                            }
-
-                            if (m.resolutionBadge.isNotBlank() && m.resolutionBadge != "1080p") {
-                                Box(
-                                    modifier = Modifier
-                                        .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                                        .padding(horizontal = 4.dp, vertical = 1.dp)
-                                ) {
-                                    Text(m.resolutionBadge.uppercase(), color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            // HDR Badge (Authentic if available)
-                            Box(
-                                modifier = Modifier
-                                    .border(1.dp, Color.White.copy(alpha = 0.6f), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 4.dp, vertical = 1.dp)
-                            ) {
-                                Text("HDR", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Black)
-                            }
-                        }
-
-                        // ── 3. GENRE ──
-                        Text(
-                            text = localizedGenre ?: m.genre,
-                            color = Color.White.copy(alpha = 0.6f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-
-                        // ── 4. PREMIUM GLASS SYNOPSIS BOX ──
-                        val synopsisText = localizedOverview ?: m.overview
-                        if (synopsisText.isNotBlank()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(Color.Black.copy(alpha = 0.35f), RoundedCornerShape(16.dp))
-                                    .drawBehind {
-                                        // Glowing top border effect
-                                        val strokeWidth = 1.dp.toPx()
-                                        val gradient = Brush.horizontalGradient(
-                                            colors = listOf(Color.Transparent, Color.White.copy(alpha = 0.5f), Color.White, Color.White.copy(alpha = 0.5f), Color.Transparent)
-                                        )
-                                        drawLine(
-                                            brush = gradient,
-                                            start = Offset(0f, 0f),
-                                            end = Offset(size.width, 0f),
-                                            strokeWidth = strokeWidth
+                                cast.take(4).forEach { actor ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        if (!actor.profileUrl.isNullOrBlank()) {
+                                            val actorRequest = remember(actor.profileUrl) {
+                                                ImageRequest.Builder(ctx).data(actor.profileUrl).crossfade(true).build()
+                                            }
+                                            AsyncImage(
+                                                model = actorRequest,
+                                                contentDescription = actor.name,
+                                                contentScale = ContentScaleImport.Crop,
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .background(Color.Gray.copy(alpha = 0.3f), CircleShape)
+                                                    .clip(CircleShape)
+                                            )
+                                        } else {
+                                            // Fallback Icon
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(40.dp)
+                                                    .background(Color.White.copy(alpha = 0.15f), CircleShape),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Person,
+                                                    contentDescription = null,
+                                                    tint = Color.White.copy(alpha = 0.7f),
+                                                    modifier = Modifier.size(24.dp)
+                                                )
+                                            }
+                                        }
+                                        
+                                        Text(
+                                            text = actor.name,
+                                            color = Color.White.copy(alpha = 0.85f),
+                                            fontSize = 15.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            style = androidx.compose.ui.text.TextStyle(
+                                                shadow = Shadow(color = Color.Black.copy(alpha = 0.8f), blurRadius = 8f)
+                                            )
                                         )
                                     }
-                                    .padding(20.dp)
-                            ) {
-                                Text(
-                                    text = synopsisText,
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    fontSize = 15.sp,
-                                    lineHeight = 22.sp,
-                                    maxLines = 4,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                }
                             }
                         }
-
-                        Spacer(Modifier.height(16.dp))
                     }
                 }
             }
         }
     }
 }
-
-// ── Premium Feature Badge ──
-@Composable
-private fun FeatureBadge(icon: ImageVector, label: String) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .background(Color(0x12FFFFFF), RoundedCornerShape(6.dp))
-            .border(0.5.dp, Color(0x20FFFFFF), RoundedCornerShape(6.dp))
-            .padding(horizontal = 8.dp, vertical = 4.dp)
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = CYAN.copy(alpha = 0.7f),
-            modifier = Modifier.size(14.dp)
-        )
-        Text(
-            text = label,
-            color = Color(0x88FFFFFF),
-            fontSize = 10.sp,
-            fontWeight = FontWeight.Medium
-        )
-    }
-}
-
-@Composable
-fun MetaDot() = Text("  ·  ", color = DIM3, fontSize = 14.sp)

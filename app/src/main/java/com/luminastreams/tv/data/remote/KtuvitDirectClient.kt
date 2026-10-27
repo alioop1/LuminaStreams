@@ -50,16 +50,25 @@ class KtuvitDirectClient(private val context: Context) {
         try {
             val body = """{"request":{"Email":"$email","Password":"${md5Base64(password)}"}}"""
             val conn = openPost(LOGIN_URL, body, cookie = null)
-            if (conn.responseCode !in 200..299) return@withContext false
-            val setCookieHeader = conn.getHeaderField("Set-Cookie") ?: return@withContext false
+            if (conn.responseCode !in 200..299) {
+                clearCookie()
+                return@withContext false
+            }
+            val setCookieHeader = conn.getHeaderField("Set-Cookie") ?: run { clearCookie(); return@withContext false }
             val loginCookie = setCookieHeader.split(";").firstOrNull { it.trim().startsWith("Login=") }
-                ?.trim()?.removePrefix("Login=") ?: return@withContext false
-            if (loginCookie.isBlank()) return@withContext false
+                ?.trim()?.removePrefix("Login=") ?: run { clearCookie(); return@withContext false }
+            if (loginCookie.isBlank()) { clearCookie(); return@withContext false }
             saveCookie(loginCookie)
             true
         } catch (e: Exception) {
-            e.printStackTrace(); false
+            e.printStackTrace(); clearCookie(); false
         }
+    }
+
+    private fun clearCookie() {
+        cookie = null
+        context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
+            .edit { remove("cookie"); remove("cookie_time") }
     }
 
     suspend fun getKtuvitId(

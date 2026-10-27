@@ -1,0 +1,58 @@
+name: Build Native iOS IPA (SwiftUI)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - 'ios-native/**'
+      - '.github/workflows/build-ios.yml'
+
+jobs:
+  build-native-ipa:
+    name: Compile SwiftUI Native iOS App
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Ensure XcodeGen is installed
+        run: |
+          if ! command -v xcodegen &> /dev/null; then
+            brew install xcodegen
+          fi
+
+      - name: Generate Xcode Project from project.yml
+        working-directory: ios-native
+        run: xcodegen generate
+
+      - name: Build Native iOS Archive (Unsigned)
+        run: |
+          xcodebuild -project ios-native/LuminaStreams.xcodeproj \
+            -scheme LuminaStreams \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/LuminaStreams.xcarchive \
+            archive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package .app into LuminaStreams.ipa
+        run: |
+          mkdir -p build/Payload
+          cp -R build/LuminaStreams.xcarchive/Products/Applications/LuminaStreams.app build/Payload/LuminaStreams.app
+          cd build
+          zip -qr LuminaStreams.ipa Payload
+          ls -lh LuminaStreams.ipa
+
+      - name: Upload Native IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LuminaStreams-Native-iOS-IPA
+          path: build/LuminaStreams.ipa
+          retention-days: 30

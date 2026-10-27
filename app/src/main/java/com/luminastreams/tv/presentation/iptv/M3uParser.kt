@@ -1,12 +1,13 @@
 package com.luminastreams.tv.presentation.iptv
 
 import android.util.Log
+import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.data.local.iptv.ChannelEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import java.io.InputStreamReader
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.TimeUnit
 
 object M3uParser {
     private const val TAG = "M3uParser"
@@ -19,14 +20,20 @@ object M3uParser {
     ) = withContext(Dispatchers.IO) {
 
         Log.d(TAG, "Starting M3U Download: $url")
-        val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 20_000
-            readTimeout = 60_000
-            setRequestProperty("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
-        }
+        val client = TrustedHttpClient.builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .header("User-Agent", "VLC/3.0.18 LibVLC/3.0.18")
+            .build()
+
+        val response = client.newCall(request).execute()
 
         try {
-            if (conn.responseCode !in 200..299) throw Exception("HTTP Error: ${conn.responseCode}")
+            if (!response.isSuccessful) throw Exception("HTTP Error: ${response.code}")
 
             val batch = mutableListOf<ChannelEntity>()
             var currentInfo: Map<String, String>? = null
@@ -35,7 +42,7 @@ object M3uParser {
 
             val attrRegex = Regex("""([a-zA-Z0-9_\-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s,]+))""")
 
-            InputStreamReader(conn.inputStream, Charsets.UTF_8).useLines { lines ->
+            InputStreamReader(response.body.byteStream(), Charsets.UTF_8).useLines { lines ->
                 lines.forEach { rawLine ->
                     val line = rawLine.trim()
                     if (line.isEmpty()) return@forEach
@@ -103,7 +110,7 @@ object M3uParser {
             Log.d(TAG, "M3U Parsing completed. Total channels: ${channelNumber - 1}")
 
         } finally {
-            conn.disconnect()
+            response.close()
         }
     }
 }

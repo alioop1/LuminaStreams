@@ -1,6 +1,7 @@
 package com.luminastreams.tv.domain.usecase
 
 import android.content.Context
+import android.util.Log
 import androidx.core.content.edit
 import com.google.gson.annotations.SerializedName
 import com.luminastreams.tv.data.api.RealDebridApi
@@ -39,6 +40,15 @@ interface RealDebridAuthApi {
         @Field("code") code: String,
         @Field("grant_type") grantType: String = "http://oauth.net/grant_type/device/1.0"
     ): TokenResponse
+
+    @FormUrlEncoded
+    @POST("oauth/v2/token")
+    suspend fun refreshToken(
+        @Field("client_id") clientId: String,
+        @Field("client_secret") clientSecret: String,
+        @Field("code") code: String,
+        @Field("grant_type") grantType: String = "http://oauth.net/grant_type/device/1.0"
+    ): retrofit2.Response<TokenResponse>
 }
 
 // ── Auth DTOs ──────────────────────────────────────────────────────────────
@@ -104,8 +114,12 @@ class RealDebridAuthManager(private val context: Context) {
             }
 
             val tokenResponse = api.getToken(clientIdToUse, clientSecretToUse, codeResponse.device_code)
-            context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).edit {
+            context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).edit(commit = true) {
                 putString("rd_api_token", tokenResponse.access_token)
+                putString("rd_refresh_token", tokenResponse.refresh_token)
+                putString("rd_client_id", clientIdToUse)
+                putString("rd_client_secret", clientSecretToUse)
+                putLong("rd_last_refresh", System.currentTimeMillis())
             }
             emit(AuthResult.Success)
         } catch (_: Exception) {
@@ -115,9 +129,13 @@ class RealDebridAuthManager(private val context: Context) {
 }
 
 // ── RealDebridManager ──────────────────────────────────────────────────────
-class RealDebridManager {
+class RealDebridManager(private val context: Context) {
 
-    private val okHttpClient = TrustedHttpClient.builder().build()
+    private val okHttpClient = TrustedHttpClient.builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .retryOnConnectionFailure(false) // ⚡ Disabled to prevent double-sending refresh tokens on timeout
+        .build()
 
     private val api = Retrofit.Builder()
         .baseUrl("https://api.real-debrid.com/rest/1.0/")
@@ -125,6 +143,79 @@ class RealDebridManager {
         .addConverterFactory(GsonConverterFactory.create())
         .build()
         .create(RealDebridApi::class.java)
+
+    suspend fun refreshAccessToken(): String? = withContext(Dispatchers.IO) {
+        val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+        val clientId = prefs.getString("rd_client_id", "") ?: ""
+        val clientSecret = prefs.getString("rd_client_secret", "") ?: ""
+        val refreshToken = prefs.getString("rd_refresh_token", "") ?: ""
+
+        if (clientId.isBlank() || clientSecret.isBlank() || refreshToken.isBlank()) return@withContext null
+
+        val consecutiveFailures = prefs.getInt("rd_consecutive_failures", 0)
+
+        try {
+            var reqBody = okhttp3.FormBody.Builder()
+                .add("client_id", clientId)
+                .add("client_secret", clientSecret)
+                .add("code", refreshToken)
+                .add("grant_type", "http://oauth.net/grant_type/device/1.0")
+                .build()
+
+            var request = okhttp3.Request.Builder()
+                .url("https://api.real-debrid.com/oauth/v2/token")
+                .post(reqBody)
+                .build()
+
+            var response = okHttpClient.newCall(request).execute()
+
+            response.use { resp ->
+                if (resp.isSuccessful) {
+                    val json = JSONObject(resp.body.string())
+                    val newAccessToken = json.optString("access_token")
+                    val newRefreshToken = json.optString("refresh_token")
+
+                    if (newAccessToken.isNotBlank()) {
+                        val editor = prefs.edit()
+                        editor.putString("rd_api_token", newAccessToken)
+                        if (newRefreshToken.isNotBlank()) editor.putString("rd_refresh_token", newRefreshToken)
+                        editor.putLong("rd_last_refresh", System.currentTimeMillis())
+                        editor.putInt("rd_consecutive_failures", 0) // ✅ Reset failure counter on success
+                        editor.commit() // ⚡ Must be synchronous to prevent race conditions on app kill
+                        Log.d("RDManager", "✅ Token refreshed successfully")
+                        return@withContext newAccessToken
+                    }
+                } else if (resp.code == 400 || resp.code == 401 || resp.code == 403) {
+                    val bodyStr = resp.body.string()
+                    if (bodyStr.contains("bad_client") || bodyStr.contains("bad_token") || bodyStr.contains("invalid_grant")) {
+                        val newFailCount = consecutiveFailures + 1
+                        Log.w("RDManager", "⚠️ Token refresh rejected (HTTP ${resp.code}, failure $newFailCount/3): $bodyStr")
+
+                        if (newFailCount >= 3) {
+                            // 3+ consecutive failures — credentials are truly dead, wipe them
+                            Log.e("RDManager", "🔴 Wiping RD credentials after $newFailCount consecutive failures")
+                            prefs.edit().apply {
+                                remove("rd_api_token")
+                                remove("rd_refresh_token")
+                                remove("rd_client_id")
+                                remove("rd_client_secret")
+                                remove("rd_last_refresh")
+                                remove("rd_consecutive_failures")
+                            }.commit() // ⚡ Synchronous wipe
+                        } else {
+                            // Not at threshold yet — keep credentials alive for retry
+                            Log.w("RDManager", "⚠️ Keeping credentials alive ($newFailCount/3) — will retry next cycle")
+                            prefs.edit()
+                                .putInt("rd_consecutive_failures", newFailCount)
+                                .commit()
+                        }
+                        return@withContext null
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        null
+    }
 
     // 1. טיפול במגנטים (Torrentio וכדומה)
     @Suppress("unused") // Public API — used by callers that don't need torrent tracking
@@ -143,16 +234,25 @@ class RealDebridManager {
         withContext(Dispatchers.IO) {
             try {
                 if (apiToken.isBlank()) throw Exception("טוקן Real-Debrid חסר או לא מוגדר בהגדרות!")
-                val authHeader = "Bearer $apiToken"
+                var authHeader = "Bearer $apiToken"
 
-                val addResponse = try {
+                var addResponse = try {
                     api.addMagnet(authHeader, magnetUri)
                 } catch (e: retrofit2.HttpException) {
                     val errorBody = e.response()?.errorBody()?.string() ?: ""
-                    if (errorBody.contains("2004") || errorBody.contains("2000")) {
+                    if (e.code() == 401 || e.code() == 403 || errorBody.contains("bad_token", true)) {
+                        val newToken = RealDebridTokenKeeper.forceRefreshNow()
+                        if (newToken != null) {
+                            authHeader = "Bearer $newToken"
+                            api.addMagnet(authHeader, magnetUri) // Retry
+                        } else {
+                            throw Exception("החיבור ל-Real Debrid התנתק או פג תוקף. אנא התחבר מחדש במסך ההגדרות.")
+                        }
+                    } else if (errorBody.contains("2004") || errorBody.contains("2000")) {
                         throw Exception("RD_CONFLICT")
+                    } else {
+                        throw e
                     }
-                    throw e
                 }
 
                 val torrentId = addResponse.id
@@ -163,7 +263,7 @@ class RealDebridManager {
                     it.path.endsWith(".mkv", true) || it.path.endsWith(".mp4", true) || it.path.endsWith(".avi", true)
                 }
                 if (videoFiles.isEmpty()) throw Exception("לא נמצאו קבצי וידאו בטורנט")
-                val mainVideoFile = videoFiles.maxByOrNull { it.bytes }!!
+                val mainVideoFile = videoFiles.maxBy { it.bytes }
 
                 // Only select files if status requires it (avoid re-selecting on already active torrents)
                 if (torrentInfo.status != "downloaded") {
@@ -205,20 +305,32 @@ class RealDebridManager {
             val mediaType = "application/x-bittorrent".toMediaTypeOrNull()
             val reqBody = torrentBytes.toRequestBody(mediaType, 0, torrentBytes.size)
 
-            val request = Request.Builder()
+            var request = Request.Builder()
                 .url("https://api.real-debrid.com/rest/1.0/torrents/addTorrent")
                 .header("Authorization", "Bearer $apiToken")
                 .put(reqBody)
                 .build()
 
-            val response = okHttpClient.newCall(request).execute()
+            var response = okHttpClient.newCall(request).execute()
+            var responseBodyString = response.body.string().ifBlank { "{}" }
 
-            // ⚡ FIX: Removed redundant safe call and added clean fallback
-            val responseBodyString = response.body.string().ifBlank { "{}" }
+            var authHeader = "Bearer $apiToken"
 
             // תפיסה חכמה של ניתוק ממשתמש
             if (response.code == 401 || response.code == 403 || responseBodyString.contains("bad_token", true)) {
-                throw Exception("החיבור ל-Real Debrid התנתק או פג תוקף. אנא התחבר מחדש במסך ההגדרות.")
+                val newToken = RealDebridTokenKeeper.forceRefreshNow()
+                if (newToken != null) {
+                    authHeader = "Bearer $newToken"
+                    request = Request.Builder()
+                        .url("https://api.real-debrid.com/rest/1.0/torrents/addTorrent")
+                        .header("Authorization", authHeader)
+                        .put(reqBody)
+                        .build()
+                    response = okHttpClient.newCall(request).execute()
+                    responseBodyString = response.body.string().ifBlank { "{}" }
+                } else {
+                    throw Exception("החיבור ל-Real Debrid התנתק או פג תוקף. אנא התחבר מחדש במסך ההגדרות.")
+                }
             }
 
             if (!response.isSuccessful) {
@@ -236,7 +348,6 @@ class RealDebridManager {
             }
             onTorrentAdded(torrentId)
 
-            val authHeader = "Bearer $apiToken"
             val torrentInfo = api.getTorrentInfo(authHeader, torrentId)
 
             val videoFiles = torrentInfo.files.filter {

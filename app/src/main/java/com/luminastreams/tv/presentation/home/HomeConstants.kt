@@ -2,7 +2,6 @@
 package com.luminastreams.tv.presentation.home
 
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -55,7 +54,4 @@ class HomeFocusState(initialRow: Int = 0) {
     var currentRowIndex by mutableIntStateOf(initialRow)
     var heroMovie       by mutableStateOf<Movie?>(null)
     var focusTrigger    by mutableIntStateOf(0)
-    companion object {
-        val Saver: Saver<HomeFocusState, Int> = Saver(save = { it.currentRowIndex }, restore = { HomeFocusState(it) })
-    }
 }

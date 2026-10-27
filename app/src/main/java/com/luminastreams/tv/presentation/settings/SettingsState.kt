@@ -46,16 +46,22 @@ data class SettingsState(
     val yellowSubtitles: Boolean = false,
     val subtitleFontScale: String = "medium",
     val saveSearchHistory: Boolean = true,
-    val subtitleCacheOnly: Boolean = false,
 
     // ── System & Performance ──────────────────────────────────────────────────
     val liteUiMode: Boolean = false,
     val reduceMotion: Boolean = false,
     val preAllocateBuffer: Boolean = false,
+    val maxResolution: String = "Unlimited",
+    val maxFileSize: String = "Unlimited",
 
     // ── Status & Info ─────────────────────────────────────────────────────────
     val cacheSizeStr: String = "Calculating...",
     val searchHistoryStatus: String = "Clear",
     val appVersion: String = "1.0.0-Lumina",
-    val deviceTier: String = ""
+    val deviceTier: String = "",
+
+    // ── Cloud Sync ────────────────────────────────────────────────────────────
+    val syncStatus: String = "",
+    val isSyncing: Boolean = false,
+    val userEmail: String? = null
 )

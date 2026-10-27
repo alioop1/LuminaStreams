@@ -150,7 +150,7 @@ private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 private val RES_GRAY     = Color(0xFF424242)
 private val POPUP_BG     = Color(0xE6141414)
 
-enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO }
+enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO, SPEED }
 
 @Composable
 fun PremiumLoadingOverlay(
@@ -206,9 +206,9 @@ fun PremiumLoadingOverlay(
     }
 }
 
-private fun applyAfrForContent(activity: Activity, contentFps: Float) {
-    val win     = activity.window ?: return
-    val display = win.decorView.display ?: return
+private fun applyAfrForContent(activity: Activity, contentFps: Float): Float? {
+    val win     = activity.window ?: return null
+    val display = win.decorView.display ?: return null
     val current = display.mode
     val targetFps = when {
         contentFps in 23.9f..24.1f -> 24f
@@ -220,9 +220,10 @@ private fun applyAfrForContent(activity: Activity, contentFps: Float) {
         else -> contentFps
     }
     val sameRes = display.supportedModes.filter { it.physicalWidth == current.physicalWidth && it.physicalHeight == current.physicalHeight }
-    val best = sameRes.minByOrNull { abs(it.refreshRate - targetFps) } ?: display.supportedModes.minByOrNull { abs(it.refreshRate - targetFps) } ?: return
-    if (best.modeId == current.modeId) return
+    val best = sameRes.minByOrNull { kotlin.math.abs(it.refreshRate - targetFps) } ?: display.supportedModes.minByOrNull { kotlin.math.abs(it.refreshRate - targetFps) } ?: return null
+    if (best.modeId == current.modeId) return null
     win.attributes = win.attributes.also { a -> a.preferredDisplayModeId = best.modeId }
+    return best.refreshRate
 }
 
 private fun restoreDisplayMode(activity: Activity) {
@@ -418,6 +419,7 @@ fun PlayerScreen(
     imdbId:         String,
     title:          String = "",
     backdropUrl:    String = "",
+    posterUrl:      String = "",
     logoUrl:        String = "",
     fullId:         String = "",
     onNavigateBack: () -> Unit,
@@ -434,6 +436,8 @@ fun PlayerScreen(
     val isDolbyAtmos     by exo.isDolbyAtmos.collectAsState()
     val contentFps       by exo.contentFrameRate.collectAsState()
 
+    var afrBannerText     by remember { mutableStateOf<String?>(null) }
+
     val afrEnabled = remember {
         context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getBoolean("afr", false)
     }
@@ -443,9 +447,10 @@ fun PlayerScreen(
     var surfaceReady      by remember { mutableStateOf(false) }
     var prepared          by remember { mutableStateOf(false) }
     var showControls      by remember { mutableStateOf(true) }
-    var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
-    var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
     var pendingSubIndex   by remember { mutableStateOf<Int?>(null) }
+    var activeMenu        by remember { mutableStateOf(ActiveMenu.NONE) }
+    var playbackSpeed     by remember { mutableFloatStateOf(1.0f) }
+    var selectedWebSubUrl by remember { mutableStateOf<String?>(null) }
     var subtitleApplied   by remember { mutableStateOf(false) }
     var hasStartedPlaying by remember { mutableStateOf(false) }
     var decodeRetryCount  by remember { mutableIntStateOf(0) }
@@ -474,6 +479,7 @@ fun PlayerScreen(
     var nextEpCardDismissed  by remember { mutableStateOf(false) }
 
     val progressManager = remember { WatchProgressManager(context) }
+    val watchNextManager = remember { com.luminastreams.tv.data.tv.WatchNextManager(context) }
     val progressKey = remember(imdbId, season, episode) {
         when {
             imdbId.isBlank() -> ""
@@ -516,11 +522,10 @@ fun PlayerScreen(
 
             if (savedPosition > 30_000L) {
                 // Don't play yet — wait for resume dialog.
-                // ⚡ FIX: Pass savedPosition to prepareStream so ExoPlayer
-                // starts buffering from the correct position, not from 0.
-                exo.player.playWhenReady = false
+                // prepareStream() sets playWhenReady=true internally,
+                // so we MUST override it AFTER the call.
                 exo.prepareStream(videoUrl, startPositionMs = savedPosition)
-                exo.pause()
+                exo.player.playWhenReady = false
             } else {
                 // No saved position — play immediately from start
                 exo.prepareStream(videoUrl)
@@ -534,7 +539,12 @@ fun PlayerScreen(
     LaunchedEffect(contentFps) {
         if (!afrEnabled || contentFps <= 0f) return@LaunchedEffect
         val activity = context.findActivity() ?: return@LaunchedEffect
-        applyAfrForContent(activity, contentFps)
+        val appliedFps = applyAfrForContent(activity, contentFps)
+        if (appliedFps != null) {
+            afrBannerText = "🎬 הותאם קצב רענון מסך: ${appliedFps.toInt()}Hz"
+            delay(4000)
+            afrBannerText = null
+        }
     }
 
     DisposableEffect(Unit) {
@@ -562,11 +572,19 @@ fun PlayerScreen(
             if (tickCount % 5 == 0) {
                 if (pos > 10_000L && progressKey.isNotEmpty()) {
                     launch(Dispatchers.IO) {
-                        if (pos.toFloat() / dur.toFloat() < 0.95f) {
-                            progressManager.save(progressKey, pos, dur)
+                        val tmdbId = fullId.ifBlank { null }
+                        val json = if (pos.toFloat() / dur.toFloat() < 0.95f) {
+                            progressManager.save(progressKey, pos, dur, tmdbId = tmdbId)
                         } else {
-                            progressManager.save(progressKey, dur, dur)
+                            progressManager.save(progressKey, dur, dur, tmdbId = tmdbId)
                         }
+                        if (json != null) {
+                            (context.applicationContext as? com.luminastreams.tv.core.LuminaApp)?.syncManager?.pushProgress(progressKey, json)
+                        }
+                        
+                        // Push to Android TV Leanback Channels
+                        watchNextManager.updateWatchNext(imdbId, title, title, posterUrl, pos, dur)
+                        
                         // Save IMDB→TMDB bridge for "Continue Watching" matching
                         if (imdbId.isNotBlank() && fullId.isNotBlank()) {
                             context.getSharedPreferences("lumina_id_bridge", Context.MODE_PRIVATE)
@@ -585,7 +603,7 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(isPlaying) { if (isPlaying) hasStartedPlaying = true }
+    LaunchedEffect(isPlaying) { if (isPlaying && !hasStartedPlaying) hasStartedPlaying = true }
 
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
@@ -604,6 +622,14 @@ fun PlayerScreen(
         if (!prepared || subtitleApplied) return@LaunchedEffect
         val subs = state.availableSubtitles
         if (idx >= subs.size) return@LaunchedEffect
+
+        // ⚡ FIX: Do NOT apply subtitles while resume dialog is showing!
+        // applySubtitle() calls setMediaItem(item, currentPosition) — but currentPosition is 0
+        // when playWhenReady=false (player hasn't started yet), which DESTROYS the saved position.
+        // Wait until the user has made their resume choice.
+        while (showResumeDialog || (!resumeHandled && savedPosition > 30_000L)) {
+            delay(300)
+        }
 
         repeat(60) {
             if (exo.player.currentMediaItem != null) return@repeat
@@ -703,6 +729,27 @@ fun PlayerScreen(
             selectedAspectRatio = selectedAspectRatio,
             onSurfaceReady = { surfaceReady = it }
         )
+
+        AnimatedVisibility(
+            visible = afrBannerText != null,
+            enter = fadeIn() + slideInVertically(initialOffsetY = { -it }),
+            exit = fadeOut() + slideOutVertically(targetOffsetY = { -it }),
+            modifier = Modifier.align(Alignment.TopCenter).padding(top = 48.dp).zIndex(200f)
+        ) {
+            Box(
+                Modifier
+                    .background(Color(0xCC000000), RoundedCornerShape(12.dp))
+                    .border(1.dp, Color(0x33FFFFFF), RoundedCornerShape(12.dp))
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = afrBannerText ?: "",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 16.sp
+                )
+            }
+        }
 
         AnimatedVisibility(
             visible = !hasStartedPlaying && error == null,
@@ -809,14 +856,28 @@ fun PlayerScreen(
                         }
                     ) {
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; exo.seekTo(savedPosition); exo.player.playWhenReady = true; exo.play() },
+                            onClick  = {
+                                showResumeDialog = false
+                                resumeHandled = true
+                                // Use prepareStream() so _lastStreamUrl, _autoRetryCount,
+                                // and the stall watchdog are all properly initialized.
+                                exo.prepareStream(videoUrl, startPositionMs = savedPosition)
+                            },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = RED, focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
                             modifier = Modifier.weight(1f).height(52.dp).focusRequester(resumeFR)
                         ) { Box(Modifier.fillMaxSize(), Alignment.Center) { Text(tr("▶ Continue", "▶ המשך"), fontWeight = FontWeight.Bold, fontSize = 15.sp, textAlign = TextAlign.Center) } }
                         Surface(
-                            onClick  = { showResumeDialog = false; resumeHandled = true; progressManager.remove(progressKey); exo.seekTo(0); exo.player.playWhenReady = true; exo.play() },
+                            onClick  = { 
+                                showResumeDialog = false
+                                resumeHandled = true
+                                progressManager.deleteProgress(progressKey)
+                                (context.applicationContext as? com.luminastreams.tv.core.LuminaApp)?.syncManager?.pushProgress(progressKey, "")
+                                exo.seekTo(0)
+                                exo.player.playWhenReady = true
+                                exo.play() 
+                            },
                             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                             colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2A2A38), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
                             scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
@@ -839,11 +900,22 @@ fun PlayerScreen(
             LaunchedEffect(error, decodeRetryCount) {
                 if (isDecodeError && decodeRetryCount == 0) {
                     // First decode error — auto-retry silently
+                    // ⚡ IMPORTANT: Do NOT call prepareStream() — it resets subtitles & Dolby flags!
+                    // Instead, do a minimal stop + re-prepare that preserves all player state.
                     decodeRetryCount++
                     val currentPos = exo.player.currentPosition.coerceAtLeast(0L)
+                    val currentItem = exo.player.currentMediaItem
                     exo.clearError()
-                    delay(300)
-                    exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                    delay(500)
+                    if (currentItem != null) {
+                        exo.player.stop()
+                        exo.player.setMediaItem(currentItem, currentPos)
+                        exo.player.prepare()
+                        exo.player.playWhenReady = true
+                    } else {
+                        // Fallback: no media item means we must re-prepare from scratch
+                        exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                    }
                     return@LaunchedEffect
                 }
                 delay(100); runCatching { if (canRetry) retryFR.requestFocus() else errorFR.requestFocus() }
@@ -857,16 +929,25 @@ fun PlayerScreen(
                         Icon(Icons.Default.Warning, null, tint = RED, modifier = Modifier.size(40.dp))
                     }
                     Text(tr("Playback Error", "שגיאת נגן"), color = WHITE, fontSize = 28.sp, fontWeight = FontWeight.Black, textAlign = TextAlign.Center)
-                    Text(error!!, color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
+                    Text(error.orEmpty(), color = DIM, fontSize = 16.sp, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 560.dp))
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         if (canRetry) {
                             Surface(
                                 onClick = {
+                                    // ⚡ IMPORTANT: Do NOT call prepareStream() — it resets subtitles & Dolby flags!
                                     decodeRetryCount++
                                     val currentPos = exo.player.currentPosition.coerceAtLeast(0L)
+                                    val currentItem = exo.player.currentMediaItem
                                     exo.clearError()
-                                    exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                                    if (currentItem != null) {
+                                        exo.player.stop()
+                                        exo.player.setMediaItem(currentItem, currentPos)
+                                        exo.player.prepare()
+                                        exo.player.playWhenReady = true
+                                    } else {
+                                        exo.prepareStream(videoUrl, startPositionMs = currentPos)
+                                    }
                                 },
                                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
                                 colors = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2563EB), focusedContainerColor = WHITE, contentColor = WHITE, focusedContentColor = Color.Black),
@@ -935,7 +1016,13 @@ fun PlayerScreen(
                             subtitleApplied = true; pendingSubIndex = null; activeMenu = ActiveMenu.NONE
                         },
                         onApplyAspectRatio = { mode -> selectedAspectRatio = mode; activeMenu = ActiveMenu.NONE },
-                        onClose = { activeMenu = ActiveMenu.NONE }
+                        onClose = { activeMenu = ActiveMenu.NONE },
+                        currentSpeed = playbackSpeed,
+                        onApplySpeed = { speed ->
+                            playbackSpeed = speed
+                            exo.player.playbackParameters = androidx.media3.common.PlaybackParameters(speed)
+                            activeMenu = ActiveMenu.NONE
+                        }
                     )
                 }
 
@@ -964,6 +1051,7 @@ fun PlayerScreen(
                                 focusRequester = playPauseFR,
                                 onClick = { if (isPlaying) exo.pause() else exo.play() }
                             )
+                            PlayerIconButton(icon = Icons.Default.FastForward, onClick = { exo.player.seekTo(exo.player.currentPosition + 85_000L) })
                             PlayerIconButton(icon = Icons.Default.Close, onClick = { exo.pause(); onNavigateBack() })
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -980,6 +1068,9 @@ fun PlayerScreen(
                             }
                             PlayerIconButton(Icons.Default.AspectRatio, isActive = activeMenu == ActiveMenu.ASPECT_RATIO) {
                                 activeMenu = if (activeMenu == ActiveMenu.ASPECT_RATIO) ActiveMenu.NONE else ActiveMenu.ASPECT_RATIO
+                            }
+                            PlayerIconButton(Icons.Default.Speed, isActive = activeMenu == ActiveMenu.SPEED) {
+                                activeMenu = if (activeMenu == ActiveMenu.SPEED) ActiveMenu.NONE else ActiveMenu.SPEED
                             }
                         }
                     }
@@ -1025,7 +1116,8 @@ fun PlayerPopupMenu(
     activeMenu: ActiveMenu, exo: ExoPlayerWrapper, state: PlayerUiState,
     selectedWebSubUrl: String?, selectedAspectRatio: AspectRatioMode,
     sideMenuFR: FocusRequester, onApplySubtitle: (String) -> Unit,
-    onApplyAspectRatio: (AspectRatioMode) -> Unit, onClose: () -> Unit
+    onApplyAspectRatio: (AspectRatioMode) -> Unit, onClose: () -> Unit,
+    currentSpeed: Float, onApplySpeed: (Float) -> Unit
 ) {
     val currentTracks by exo.currentTracks.collectAsState()
     LaunchedEffect(activeMenu) { delay(50); runCatching { sideMenuFR.requestFocus() } }
@@ -1086,6 +1178,19 @@ fun PlayerPopupMenu(
                             title = modeLabel, subtitle = mode.description, isSelected = mode == selectedAspectRatio,
                             modifier = Modifier.then(if (index == 0) Modifier.focusRequester(sideMenuFR) else Modifier),
                             onClick = { onApplyAspectRatio(mode) }
+                        )
+                    }
+                }
+            }
+            ActiveMenu.SPEED -> Column {
+                Text(tr("Playback Speed", "מהירות ניגון"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 12.dp, start = 8.dp))
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.focusGroup()) {
+                    val speeds = listOf(0.75f, 1.0f, 1.25f, 1.5f, 2.0f)
+                    itemsIndexed(speeds) { index, speed ->
+                        TrackItemCard(
+                            title = "${speed}x", subtitle = if (speed == 1.0f) tr("Normal", "רגיל") else "", isSelected = speed == currentSpeed,
+                            modifier = Modifier.then(if (index == 0) Modifier.focusRequester(sideMenuFR) else Modifier),
+                            onClick = { onApplySpeed(speed) }
                         )
                     }
                 }
@@ -1218,6 +1323,38 @@ fun PlayerProgressControls(
             delay(400)
             exoWrapper.seekTo(pos)
             pendingSeekPosition = null
+        }
+    }
+
+    // ── Smart Seeking Overlay ──
+    AnimatedVisibility(
+        visible = pendingSeekPosition != null,
+        enter = fadeIn(tween(150)),
+        exit = fadeOut(tween(300)),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        val diff = (pendingSeekPosition ?: currentPosition) - currentPosition
+        val diffSeconds = diff / 1000
+        val sign = if (diffSeconds > 0) "+" else ""
+        
+        Box(Modifier.fillMaxSize(), Alignment.Center) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.background(Color.Black.copy(0.6f), RoundedCornerShape(16.dp)).padding(24.dp)
+            ) {
+                Text(
+                    text = "$sign${diffSeconds}s",
+                    color = Color.White,
+                    fontSize = 48.sp,
+                    fontWeight = FontWeight.Black
+                )
+                Text(
+                    text = formatTime(pendingSeekPosition ?: currentPosition),
+                    color = Color.LightGray,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 

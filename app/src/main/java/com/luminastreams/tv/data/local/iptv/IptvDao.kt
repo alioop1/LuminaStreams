@@ -19,6 +19,9 @@ interface IptvDao {
     @Query("UPDATE playlists SET isActive = 0")
     suspend fun deactivateAllPlaylists()
 
+    @Query("DELETE FROM playlists WHERE id = :playlistId")
+    suspend fun deletePlaylist(playlistId: String)
+
     // --- Channels ---
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertChannels(channels: List<ChannelEntity>)

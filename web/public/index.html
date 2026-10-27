@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LuminaStreams | התחברות</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+    <!-- Background Effects -->
+    <div class="bg-glow"></div>
+    <div class="bg-blur"></div>
+
+    <div class="auth-container">
+        <!-- Logo Area -->
+        <div class="logo-area">
+            <div class="logo-icon">LS</div>
+            <h1>Lumina<span>Streams</span></h1>
+            <p>התחבר לחשבון שלך כדי לסנכרן אוטומטית עם הטלוויזיה</p>
+        </div>
+
+        <!-- Auth Form -->
+        <div class="auth-card" id="authCard">
+            <!-- Tabs -->
+            <div class="tabs">
+                <button class="tab-btn active" id="tabLogin">התחברות</button>
+                <button class="tab-btn" id="tabRegister">הרשמה</button>
+            </div>
+
+            <!-- Error/Success Banner -->
+            <div class="message-banner" id="messageBanner"></div>
+
+            <form id="authForm">
+                <div class="input-group">
+                    <label for="email">דואר אלקטרוני</label>
+                    <input type="email" id="email" placeholder="הכנס כתובת דוא״ל" required autocomplete="email">
+                </div>
+
+                <div class="input-group">
+                    <label for="password">סיסמה</label>
+                    <input type="password" id="password" placeholder="הכנס סיסמה" required autocomplete="current-password">
+                </div>
+
+                <div class="input-group" id="confirmPassGroup" style="display: none;">
+                    <label for="confirmPassword">אימות סיסמה</label>
+                    <input type="password" id="confirmPassword" placeholder="הכנס סיסמה שוב">
+                </div>
+
+                <button type="submit" class="submit-btn" id="submitBtn">
+                    <span id="btnText">התחבר עכשיו</span>
+                    <span class="loader" id="btnLoader" style="display: none;"></span>
+                </button>
+            </form>
+            
+            <div class="footer-links">
+                <a href="#" id="forgotPassword">שכחת סיסמה?</a>
+            </div>
+        </div>
+
+        <!-- Success State (Hidden by default) -->
+        <div class="success-card" id="successCard" style="display: none;">
+            <div class="check-icon">✓</div>
+            <h2>התחברת בהצלחה!</h2>
+            <p>אתה מחובר כעת בתור <strong id="userEmailDisplay"></strong>.</p>
+            
+            <!-- Device Linking Section -->
+            <div class="link-section" id="linkSection" style="display: none;">
+                <div class="link-divider"></div>
+                <h3>🔗 חיבור טלוויזיה</h3>
+                <p class="link-desc">הכנס את הקוד שמוצג במסך הטלוויזיה והסיסמה שלך:</p>
+                <div class="link-input-row">
+                    <input type="text" id="linkCodeInput" placeholder="XXXXXX" maxlength="6" class="link-code-input" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="link-input-row" style="margin-top: 12px;">
+                    <input type="password" id="linkPasswordInput" placeholder="הסיסמה שלך" class="link-password-input" autocomplete="current-password">
+                    <button id="linkBtn" class="link-btn">קשר מכשיר</button>
+                </div>
+                <div class="link-status" id="linkStatus"></div>
+            </div>
+
+            <button class="submit-btn logout-btn" id="logoutBtn">התנתק</button>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module" src="/app.js"></script>
+</body>
+</html>

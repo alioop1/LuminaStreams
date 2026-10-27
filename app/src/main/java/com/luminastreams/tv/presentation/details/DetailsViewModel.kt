@@ -1,6 +1,7 @@
 package com.luminastreams.tv.presentation.details
 
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.luminastreams.tv.core.Constants
@@ -20,6 +21,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.cancellation.CancellationException
 import org.json.JSONObject
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -48,15 +50,20 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private val _state = MutableStateFlow(DetailsScreenState())
     val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
 
-    private val rdManager = RealDebridManager()
+    private val rdManager = RealDebridManager(appContext)
 
     // OPTIMIZATION: Switched to the fast SQLite Room Repository
     private val watchlistRepository = (appContext as LuminaApp).watchlistRepository
-    private val progressManager  = WatchProgressManager(appContext)
+    private val progressManager  = (appContext as LuminaApp).watchProgressManager
+    private val syncManager = (appContext as LuminaApp).syncManager
 
-    private val isHebrew: Boolean get() = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
+    private val isHebrew: Boolean = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
 
-    private val okHttpClient = TrustedHttpClient.builder().build()
+    private val okHttpClient = TrustedHttpClient.builder()
+        .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder().baseUrl("https://torrentio.strem.fun/").client(okHttpClient).addConverterFactory(GsonConverterFactory.create()).build().create(DynamicTorrentioApi::class.java)
 
     private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
@@ -68,9 +75,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         private val activeTorrentIds = CopyOnWriteArrayList<String>()
     }
 
-    private fun getRdToken(): String = appContext.getSharedPreferences(Constants.PREFS_SETTINGS, Context.MODE_PRIVATE).getString(Constants.KEY_RD_TOKEN, "")?.trim() ?: ""
-    private fun backdropUrl(path: String?): String = Constants.backdropUrl(path)
-    private fun posterUrl(path: String?): String = Constants.posterUrl(path)
+    private fun getRdToken(): String = com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.getValidToken() ?: ""
+    private fun backdropUrl(path: String?): String = if (path.isNullOrBlank() || path == "null") "" else "${Constants.IMAGE_ORIGINAL}$path"
+    private fun posterUrl(path: String?): String = if (path.isNullOrBlank() || path == "null") "" else "${Constants.IMAGE_ORIGINAL}$path"
 
     override fun onCleared() {
         super.onCleared()
@@ -127,8 +134,33 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             is DetailsEvent.RefreshProgress       -> refreshProgress()
             is DetailsEvent.MarkEpisodeWatched    -> markEpisodeWatched(event.season, event.episode)
             is DetailsEvent.MarkEpisodeUnwatched  -> markEpisodeUnwatched(event.season, event.episode)
+            is DetailsEvent.MarkSeasonWatched     -> markSeasonWatched(event.season)
+            is DetailsEvent.MarkSeasonUnwatched   -> markSeasonUnwatched(event.season)
             is DetailsEvent.MarkMovieWatched    -> markMovieWatched()
             is DetailsEvent.MarkMovieUnwatched  -> markMovieUnwatched()
+            is DetailsEvent.SelectActor           -> handleSelectActor(event.actorId)
+            is DetailsEvent.DismissActorPopup     -> _state.update { it.copy(showActorPopup = false, selectedActorDetails = null) }
+            is DetailsEvent.SetStreamSortMode     -> applyStreamSort(event.mode)
+            is DetailsEvent.ToggleTrackerFilter    -> toggleTrackerFilter(event.tracker)
+            is DetailsEvent.ToggleLanguageFilter   -> toggleLanguageFilter(event.language)
+            is DetailsEvent.SetCachedOnly          -> setCachedOnly(event.enabled)
+            is DetailsEvent.SetDvOnly              -> setDvOnly(event.enabled)
+            is DetailsEvent.SetQualityFilter       -> setQualityFilter(event.quality)
+            is DetailsEvent.ClearAllFilters        -> clearAllFilters()
+        }
+    }
+
+    private fun handleSelectActor(actorId: String) {
+        _state.update { it.copy(showActorPopup = true, isLoadingActor = true, selectedActorDetails = null) }
+        viewModelScope.launch(Dispatchers.IO) {
+            repository.getPersonDetails(actorId).fold(
+                onSuccess = { dto ->
+                    _state.update { it.copy(isLoadingActor = false, selectedActorDetails = dto) }
+                },
+                onFailure = { e ->
+                    _state.update { it.copy(isLoadingActor = false) }
+                }
+            )
         }
     }
 
@@ -149,7 +181,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     playFuzerDirect(decodedId)
                     return@launch
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is CancellationException) throw e }
 
             val type   = fullId.substringBefore("_")
             val realId = fullId.substringAfter("_")
@@ -186,7 +218,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 onFailure = { e ->
                     if (e.message == "RD_CONFLICT" && retryCount < 3) {
                         viewModelScope.launch(Dispatchers.IO) {
-                            cleanupActiveTorrents(token)
+                            val currentToken = getRdToken()
+                            cleanupActiveTorrents(currentToken)
                             delay(1000)
                             playFuzerDirect(torrentUrl, retryCount + 1)
                         }
@@ -228,8 +261,27 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val directorItems    = if (directorId != null) fetchActorWorksViaHttp(directorId) else emptyList()
                 val qualityHint      = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
                 val movieProg        = progressManager.getMovie(scrapeId)
-                val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
+                val deviceLang = if (isHebrew) "he" else "en"
+                val logoPath = dto.images?.logos?.firstOrNull { it.lang == deviceLang }?.filePath
+                    ?: dto.images?.logos?.firstOrNull { it.lang == "en" }?.filePath
+                    ?: dto.images?.logos?.firstOrNull { it.lang == null }?.filePath
                 val fullLogoUrl      = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
+
+                var rottenTomatoes: String? = null
+                var metacritic: String? = null
+                var finalImdbRating = dto.voteAverage.toDouble()
+                if (scrapeId.startsWith("tt")) {
+                    repository.getOmdbDetails(scrapeId).onSuccess { omdbDto ->
+                        omdbDto.ratings?.forEach { rating ->
+                            if (rating.source == "Rotten Tomatoes") rottenTomatoes = rating.value.replace("%", "")
+                            if (rating.source == "Metacritic") metacritic = rating.value.substringBefore("/")
+                            if (rating.source == "Internet Movie Database") {
+                                val parsed = rating.value.substringBefore("/").toDoubleOrNull()
+                                if (parsed != null) finalImdbRating = parsed
+                            }
+                        }
+                    }
+                }
 
                 _state.update {
                     it.copy(
@@ -238,13 +290,15 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         contentProgress   = movieProg?.fraction,
                         contentIsFinished = movieProg?.isFinished ?: false,
                         mediaInfo = MediaDetailsInfo(
-                            id = "movie_${dto.id}", imdbId = scrapeId, title = dto.title, overview = dto.overview ?: "",
+                            id = "movie_${dto.id}", imdbId = scrapeId, title = dto.title, overview = dto.overview.takeIf { !it.isNullOrBlank() } ?: (if (isHebrew) "אין תקציר זמין לכותר זה." else "No synopsis available for this title."),
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = false, releaseDate = dto.releaseDate?.take(4) ?: "", runtimeMinutes = dto.runtime ?: 0,
-                            tmdbRating = dto.voteAverage.toDouble(), imdbRating = dto.voteAverage.toDouble(), ageRating = "R",
+                            tmdbRating = dto.voteAverage.toDouble(), imdbRating = finalImdbRating, ageRating = "R",
                             studios = studios, genres = genres, director = directorFullName, cast = castList,
                             trailerUrl = trailerUrl, isFavorite = isSaved, collectionName = collectionName,
-                            collectionItems = collectionItems, directorName = directorFullName, directorItems = directorItems
+                            collectionItems = collectionItems, directorName = directorFullName, directorItems = directorItems,
+                            rottenTomatoesScore = rottenTomatoes, metacriticScore = metacritic,
+                            reviews = dto.reviews?.results?.mapNotNull { r -> if (r.content.isNotBlank() && r.author.isNotBlank()) Review(r.author, r.content, r.authorDetails?.rating) else null } ?: emptyList()
                         )
                     )
                 }
@@ -271,9 +325,28 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val trailerUrl       = fetchRealTrailer(scrapeId, "series")
                 val isSaved          = watchlistRepository.isInWatchlist("tv_$id")
                 val directorItems    = if (creatorId != null) fetchActorWorksViaHttp(creatorId) else emptyList()
-                val logoPath         = dto.images?.logos?.firstOrNull { it.lang == "en" || it.lang == null }?.filePath
+                val deviceLang = if (isHebrew) "he" else "en"
+                val logoPath = dto.images?.logos?.firstOrNull { it.lang == deviceLang }?.filePath
+                    ?: dto.images?.logos?.firstOrNull { it.lang == "en" }?.filePath
+                    ?: dto.images?.logos?.firstOrNull { it.lang == null }?.filePath
                 val fullLogoUrl      = if (logoPath != null) "https://image.tmdb.org/t/p/original$logoPath" else ""
                 val latestEp         = progressManager.getLatestEpisodeProgress(scrapeId)
+
+                var rottenTomatoes: String? = null
+                var metacritic: String? = null
+                var finalImdbRating = dto.voteAverage.toDouble()
+                if (scrapeId.startsWith("tt")) {
+                    repository.getOmdbDetails(scrapeId).onSuccess { omdbDto ->
+                        omdbDto.ratings?.forEach { rating ->
+                            if (rating.source == "Rotten Tomatoes") rottenTomatoes = rating.value.replace("%", "")
+                            if (rating.source == "Metacritic") metacritic = rating.value.substringBefore("/")
+                            if (rating.source == "Internet Movie Database") {
+                                val parsed = rating.value.substringBefore("/").toDoubleOrNull()
+                                if (parsed != null) finalImdbRating = parsed
+                            }
+                        }
+                    }
+                }
 
                 _state.update {
                     it.copy(
@@ -284,12 +357,14 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         lastWatchedSeason  = latestEp?.first,
                         lastWatchedEpisode = latestEp?.second,
                         mediaInfo = MediaDetailsInfo(
-                            id = "tv_${dto.id}", imdbId = scrapeId, title = dto.name, overview = dto.overview ?: "",
+                            id = "tv_${dto.id}", imdbId = scrapeId, title = dto.name, overview = dto.overview.takeIf { !it.isNullOrBlank() } ?: (if (isHebrew) "אין תקציר זמין לכותר זה." else "No synopsis available for this title."),
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = true, releaseDate = dto.firstAirDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(),
-                            imdbRating = dto.voteAverage.toDouble(), ageRating = "TV-MA", studios = studios, genres = genres,
+                            imdbRating = finalImdbRating, ageRating = "TV-MA", studios = studios, genres = genres,
                             director = creatorFullName ?: "", cast = castList, totalSeasons = dto.numberOfSeasons,
-                            trailerUrl = trailerUrl, isFavorite = isSaved, directorName = creatorFullName, directorItems = directorItems
+                            trailerUrl = trailerUrl, isFavorite = isSaved, directorName = creatorFullName, directorItems = directorItems,
+                            rottenTomatoesScore = rottenTomatoes, metacriticScore = metacritic,
+                            reviews = dto.reviews?.results?.mapNotNull { r -> if (r.content.isNotBlank() && r.author.isNotBlank()) Review(r.author, r.content, r.authorDetails?.rating) else null } ?: emptyList()
                         )
                     )
                 }
@@ -302,16 +377,24 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private suspend fun fetchRealTrailer(imdbId: String, type: String): String? =
         withContext(Dispatchers.IO) {
             withTimeoutOrNull(1_500) {
+                var conn: HttpURLConnection? = null
                 try {
-                    val conn = (URL("https://v3-cinemeta.strem.io/meta/$type/$imdbId.json").openConnection() as HttpURLConnection).apply {
+                    conn = (URL("https://v3-cinemeta.strem.io/meta/$type/$imdbId.json").openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"; connectTimeout = 1_000; readTimeout = 1_000
                     }
                     if (conn.responseCode == 200) {
                         val id = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
                             .optJSONObject("meta")?.optString("trailer", "")
-                        if (!id.isNullOrEmpty()) return@withTimeoutOrNull id
+                        if (!id.isNullOrEmpty()) {
+                            return@withTimeoutOrNull if (id.contains("v=")) id.substringAfter("v=").substringBefore("&")
+                                else if (id.contains("youtu.be/")) id.substringAfter("youtu.be/").substringBefore("?")
+                                else id
+                        }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) { if (e is CancellationException) throw e }
+                finally {
+                    conn?.disconnect()
+                }
                 null
             }
         }
@@ -320,11 +403,24 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         viewModelScope.launch(Dispatchers.IO) {
             _state.update { it.copy(isEpisodesLoading = true, selectedSeason = seasonNum) }
             val imdbId = _state.value.mediaInfo.imdbId
-            val real   = fetchCinemetaEpisodes(imdbId, seasonNum)
-            val episodes = if (real.isNotEmpty()) real else {
-                (1..10).map { ep -> Episode(id = "s${seasonNum}e$ep", episodeNumber = ep, seasonNumber = seasonNum,
+            val tmdbId = _state.value.mediaInfo.id.removePrefix("tv_")
+
+            // Try TMDB first (gives localized episode names + high-res stills)
+            var episodes = if (tmdbId.isNotBlank() && tmdbId.all { it.isDigit() }) {
+                fetchTmdbEpisodes(tmdbId, seasonNum, imdbId)
+            } else emptyList()
+
+            // Fallback to Cinemeta (English names from IMDB)
+            if (episodes.isEmpty()) {
+                episodes = fetchCinemetaEpisodes(imdbId, seasonNum)
+            }
+
+            // Last resort: generic numbered episodes
+            if (episodes.isEmpty()) {
+                episodes = (1..10).map { ep -> Episode(id = "s${seasonNum}e$ep", episodeNumber = ep, seasonNumber = seasonNum,
                     title = "Episode $ep", overview = "", stillUrl = _state.value.mediaInfo.backdropUrl, progress = 0f) }
             }
+
             _state.update { it.copy(isEpisodesLoading = false, episodes = episodes) }
 
             appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
@@ -334,12 +430,95 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         }
     }
 
+    /** Fetch episode details from TMDB's /tv/{id}/season/{num} endpoint — returns localized names & stills */
+    private suspend fun fetchTmdbEpisodes(tmdbId: String, seasonNum: Int, imdbId: String): List<Episode> =
+        withContext(Dispatchers.IO) {
+            val list = mutableListOf<Episode>()
+            val lang = if (isHebrew) "he" else "en-US"
+            withTimeoutOrNull(4_000) {
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL("https://api.themoviedb.org/3/tv/$tmdbId/season/$seasonNum?api_key=${Constants.TMDB_API_KEY}&language=$lang").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"; connectTimeout = 3_000; readTimeout = 3_000
+                    }
+                    if (conn.responseCode == 200) {
+                        val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                        val episodesArr = json.optJSONArray("episodes")
+                        episodesArr?.let { arr ->
+                            for (i in 0 until arr.length()) {
+                                val e = arr.getJSONObject(i)
+                                val epNum = e.optInt("episode_number", 0)
+                                if (epNum <= 0) continue
+                                val title = e.optString("name", "").ifBlank { "Episode $epNum" }
+                                val overview = e.optString("overview", "")
+                                val stillPath = e.optString("still_path", "")
+                                val stillUrl = if (stillPath.isNotBlank() && stillPath != "null") "https://image.tmdb.org/t/p/original$stillPath" else ""
+
+                                list += Episode(
+                                    id = "s${seasonNum}e$epNum",
+                                    episodeNumber = epNum,
+                                    seasonNumber = seasonNum,
+                                    title = title,
+                                    overview = overview,
+                                    stillUrl = stillUrl,
+                                    progress = 0f
+                                )
+                            }
+                        }
+
+                        // If Hebrew returned empty/generic names, try English fallback for titles
+                        if (lang == "he" && list.isNotEmpty()) {
+                            val hasRealNames = list.any { it.title != "Episode ${it.episodeNumber}" && it.title.isNotBlank() }
+                            if (!hasRealNames) {
+                                // Re-fetch in English
+                                val enList = mutableListOf<Episode>()
+                                var enConn: HttpURLConnection? = null
+                                try {
+                                    enConn = (URL("https://api.themoviedb.org/3/tv/$tmdbId/season/$seasonNum?api_key=${Constants.TMDB_API_KEY}&language=en-US").openConnection() as HttpURLConnection).apply {
+                                        requestMethod = "GET"; connectTimeout = 2_000; readTimeout = 2_000
+                                    }
+                                    if (enConn.responseCode == 200) {
+                                        val enJson = JSONObject(enConn.inputStream.bufferedReader().use { it.readText() })
+                                        val enArr = enJson.optJSONArray("episodes")
+                                        enArr?.let { ea ->
+                                            for (i in 0 until ea.length()) {
+                                                val e = ea.getJSONObject(i)
+                                                val epNum = e.optInt("episode_number", 0)
+                                                if (epNum <= 0) continue
+                                                enList += Episode(
+                                                    id = "s${seasonNum}e$epNum", episodeNumber = epNum, seasonNumber = seasonNum,
+                                                    title = e.optString("name", "Episode $epNum"),
+                                                    overview = e.optString("overview", ""),
+                                                    stillUrl = list.find { it.episodeNumber == epNum }?.stillUrl ?: "",
+                                                    progress = 0f
+                                                )
+                                            }
+                                        }
+                                    }
+                                } catch (_: Exception) {} finally { enConn?.disconnect() }
+                                if (enList.isNotEmpty()) {
+                                    list.clear()
+                                    list.addAll(enList)
+                                }
+                            }
+                        }
+                    }
+                } catch (e: Exception) { if (e is CancellationException) throw e }
+                finally { conn?.disconnect() }
+            }
+            list.map { ep ->
+                val prog = progressManager.getEpisode(imdbId, ep.seasonNumber, ep.episodeNumber)
+                ep.copy(progress = prog?.fraction ?: 0f, hasWatched = prog?.isFinished ?: false)
+            }.sortedBy { it.episodeNumber }
+        }
+
     private suspend fun fetchCinemetaEpisodes(imdbId: String, targetSeason: Int): List<Episode> =
         withContext(Dispatchers.IO) {
             val list = mutableListOf<Episode>()
             withTimeoutOrNull(2_000) {
+                var conn: HttpURLConnection? = null
                 try {
-                    val conn = (URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json").openConnection() as HttpURLConnection).apply {
+                    conn = (URL("https://v3-cinemeta.strem.io/meta/series/$imdbId.json").openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"; connectTimeout = 1_500; readTimeout = 1_500
                     }
                     if (conn.responseCode == 200) {
@@ -357,7 +536,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             }
                         }
                     }
-                } catch (_: Exception) {}
+                } catch (e: Exception) { if (e is CancellationException) throw e }
+                finally {
+                    conn?.disconnect()
+                }
             }
             list.map { ep ->
                 val prog = progressManager.getEpisode(imdbId, ep.seasonNumber, ep.episodeNumber)
@@ -377,7 +559,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     val imdb = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optString("imdb_id", "")
                     if (imdb.startsWith("tt")) return@withContext imdb
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is CancellationException) throw e }
             id
         }
     }
@@ -385,6 +567,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?) {
         cancelActiveScraping()
         val token = getRdToken()
+        Log.d("ScrapeDebug", "🔍 Token present: ${token.isNotEmpty()}, length: ${token.length}, first5: ${token.take(5)}")
         if (token.isEmpty()) {
             _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נדרש חשבון Real-Debrid. אנא התחבר בהגדרות." else "Real-Debrid account required. Please connect in Settings.")) }
             return
@@ -395,13 +578,12 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             val actualScrapeId = resolveImdbId(scrapeId, if (queryType == "series") "tv" else "movie")
             val queryId      = (if (season != null && episode != null) "$actualScrapeId:$season:$episode" else actualScrapeId).trim()
             val cacheKey     = queryId
+            Log.d("ScrapeDebug", "🔍 scrapeId=$scrapeId → actualScrapeId=$actualScrapeId, queryType=$queryType, queryId=$queryId")
 
             if (season != null && episode != null) {
                 appContext.getSharedPreferences("player_context", Context.MODE_PRIVATE).edit {
                     putInt("current_season", season)
                     putInt("current_episode", episode)
-                    putInt("total_episodes_in_season", _state.value.episodes.size)
-                    putInt("total_seasons", _state.value.mediaInfo.totalSeasons)
                 }
             } else {
                 // Movie — clear season/episode to prevent stale series data
@@ -417,12 +599,33 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             }
 
             try {
-                val response = dynamicTorrentio.getStreamsDynamic("https://torrentio.strem.fun/realdebrid=$token/stream/$queryType/$queryId.json")
-                if (!response.isSuccessful || response.body()?.streams.isNullOrEmpty()) {
+                var currentToken = token
+                val url = "https://torrentio.strem.fun/realdebrid=$currentToken/stream/$queryType/$queryId.json"
+                Log.d("ScrapeDebug", "🌐 Calling Torrentio: $url")
+                var response = dynamicTorrentio.getStreamsDynamic(url)
+                var responseBody = response.body()
+                Log.d("ScrapeDebug", "📡 Response: code=${response.code()}, streams=${responseBody?.streams?.size ?: "null"}")
+
+                // ⚡ AUTO-RETRY: If Torrentio returns failure or empty (likely expired token),
+                // force-refresh the token and retry once with the new one
+                if (!response.isSuccessful || responseBody?.streams.isNullOrEmpty()) {
+                    Log.d("ScrapeDebug", "⚠️ First attempt failed, trying token refresh...")
+                    val refreshedToken = com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
+                    Log.d("ScrapeDebug", "🔄 Refreshed token: ${refreshedToken != null}, same=${refreshedToken == currentToken}")
+                    if (refreshedToken != null && refreshedToken != currentToken) {
+                        currentToken = refreshedToken
+                        response = dynamicTorrentio.getStreamsDynamic("https://torrentio.strem.fun/realdebrid=$currentToken/stream/$queryType/$queryId.json")
+                        responseBody = response.body()
+                        Log.d("ScrapeDebug", "📡 Retry response: code=${response.code()}, streams=${responseBody?.streams?.size ?: "null"}")
+                    }
+                }
+
+                if (!response.isSuccessful || responseBody?.streams.isNullOrEmpty()) {
+                    Log.e("ScrapeDebug", "❌ No sources found! code=${response.code()}, body=${response.errorBody()?.string()?.take(200)}")
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות עבור תוכן זה." else "No sources found for this content.")) }
                     return@launch
                 }
-                val mapped = response.body()!!.streams!!.mapIndexedNotNull { idx, s ->
+                val mapped = responseBody.streams.orEmpty().mapIndexedNotNull { idx, s ->
                     val titleSafe = s.title ?: return@mapIndexedNotNull null
                     val nameSafe  = s.name ?: "Unknown"
                     val upper     = titleSafe.uppercase()
@@ -430,10 +633,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         val v = it.groupValues[1].toDoubleOrNull() ?: 0.0
                         if (it.groupValues[2] == "GB") (v * 1_073_741_824).toLong() else (v * 1_048_576).toLong()
                     } ?: 0L
+                    val tracker = TrackerParser.extractTracker(nameSafe)
+                    val audioLangs = AudioLanguage.detectFromTitle(titleSafe + " " + nameSafe)
                     AdvancedStreamSource(id = "str_$idx", releaseGroup = nameSafe.replace("\n", " "),
                         filename = titleSafe.substringBefore("\n"), infoHash = s.infoHash, directUrl = s.url,
                         sizeBytes = sizeBytes, isCachedRd = nameSafe.contains("RD+"),
-                        quality = StreamQuality.fromString(upper), videoCodec = VideoCodec.fromString(upper))
+                        quality = StreamQuality.fromString(upper), videoCodec = VideoCodec.fromString(upper), rawTitle = titleSafe,
+                        trackerName = tracker, audioLanguages = audioLangs)
                 }.sortedByDescending { it.sortScore }
                     .let { list ->
                         val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
@@ -447,15 +653,34 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         } else list
                     }.let { list ->
                         val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-                        when (prefs.getString("max_quality", "4K") ?: "4K") {
+                        
+                        // 1. Filter by Resolution
+                        val filteredByRes = when (prefs.getString("max_resolution", "Unlimited") ?: "Unlimited") {
                             "1080p" -> list.filter { it.quality != StreamQuality.UHD_4K }
-                            "720p"  -> list.filter { it.quality.priority <= 6 }
+                            "720p"  -> list.filter { it.quality != StreamQuality.UHD_4K && it.quality != StreamQuality.FHD_1080P }
                             else    -> list
                         }
+                        
+                        // 2. Filter by File Size
+                        val maxBytes: Long? = when (prefs.getString("max_file_size", "Unlimited") ?: "Unlimited") {
+                            "20GB" -> 20L * 1024 * 1024 * 1024
+                            "10GB" -> 10L * 1024 * 1024 * 1024
+                            "5GB"  -> 5L * 1024 * 1024 * 1024
+                            else -> null
+                        }
+                        
+                        if (maxBytes != null) {
+                            filteredByRes.filter { it.sizeBytes <= maxBytes }
+                        } else {
+                            filteredByRes
+                        }
                     }
-                streamCache[cacheKey] = mapped
-                if (mapped.isEmpty()) _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות התואמים להגדרות האיכות שלך." else "No sources matching your quality settings.")) }
-                else _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }
+                if (mapped.isEmpty()) {
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות התואמים להגדרות האיכות שלך." else "No sources matching your quality settings.")) }
+                } else {
+                    streamCache[cacheKey] = mapped
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }
+                }
             } catch (e: Exception) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאה: " else "Error: ") + e.message)) }
             }
@@ -468,6 +693,120 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) }
     }
 
+    // ── Stream Sort & Filter ──────────────────────────────────────────────────
+    private fun applyStreamSort(mode: StreamSortMode) {
+        _state.update { it.copy(streamSortMode = mode) }
+        refilterStreams()
+    }
+
+    private fun toggleTrackerFilter(tracker: String) {
+        _state.update { s ->
+            val current = s.trackerFilters
+            val updated = if (tracker in current) current - tracker else current + tracker
+            s.copy(trackerFilters = updated)
+        }
+        refilterStreams()
+    }
+
+    private fun toggleLanguageFilter(language: AudioLanguage) {
+        _state.update { s ->
+            val current = s.languageFilters
+            val updated = if (language in current) current - language else current + language
+            s.copy(languageFilters = updated)
+        }
+        refilterStreams()
+    }
+
+    private fun setCachedOnly(enabled: Boolean) {
+        _state.update { it.copy(showCachedOnly = enabled) }
+        refilterStreams()
+    }
+
+    private fun setDvOnly(enabled: Boolean) {
+        _state.update { it.copy(showDvOnly = enabled) }
+        refilterStreams()
+    }
+
+    private fun setQualityFilter(quality: StreamQuality?) {
+        _state.update { it.copy(qualityFilter = quality) }
+        refilterStreams()
+    }
+
+    private fun clearAllFilters() {
+        _state.update { it.copy(
+            streamSortMode = StreamSortMode.DEFAULT,
+            trackerFilters = emptySet(),
+            languageFilters = emptySet(),
+            showCachedOnly = false,
+            showDvOnly = false,
+            qualityFilter = null
+        ) }
+        refilterStreams()
+    }
+
+    private fun refilterStreams() {
+        val s = _state.value
+        val cacheKey = streamCache.keys.firstOrNull()
+        val allStreams = if (cacheKey != null) streamCache[cacheKey] ?: emptyList() else s.availableStreams
+
+        var filtered = allStreams.toList()
+
+        // Apply tracker filter
+        if (s.trackerFilters.isNotEmpty()) {
+            filtered = filtered.filter { it.trackerName in s.trackerFilters }
+        }
+
+        // Apply language filter
+        if (s.languageFilters.isNotEmpty()) {
+            filtered = filtered.filter { stream ->
+                stream.audioLanguages.any { it in s.languageFilters }
+            }
+        }
+
+        // Apply cached-only filter
+        if (s.showCachedOnly) {
+            filtered = filtered.filter { it.isCachedRd }
+        }
+
+        // Apply Dolby Vision filter
+        if (s.showDvOnly) {
+            filtered = filtered.filter { it.filename.contains("dv", ignoreCase = true) || it.filename.contains("dovi", ignoreCase = true) }
+        }
+
+        // Apply quality filter
+        if (s.qualityFilter != null) {
+            filtered = filtered.filter { it.quality == s.qualityFilter }
+        }
+
+        // Apply sort
+        val sorted = when (s.streamSortMode) {
+            StreamSortMode.DEFAULT -> filtered.sortedByDescending { it.sortScore }
+            StreamSortMode.BY_TRACKER -> filtered.sortedWith(
+                compareBy<AdvancedStreamSource> { it.trackerName.lowercase() }
+                    .thenByDescending { it.sortScore }
+            )
+            StreamSortMode.BY_LANGUAGE -> {
+                val prefLang = appContext.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
+                    .getString("preferred_audio_lang", "original") ?: "original"
+                val targetLang = when (prefLang) {
+                    "he" -> AudioLanguage.HEBREW
+                    "en" -> AudioLanguage.ENGLISH
+                    "ru" -> AudioLanguage.RUSSIAN
+                    else -> null
+                }
+                if (targetLang != null) {
+                    val preferred = filtered.filter { it.audioLanguages.contains(targetLang) }
+                    val rest = filtered.filter { !it.audioLanguages.contains(targetLang) }
+                    preferred.sortedByDescending { it.sortScore } + rest.sortedByDescending { it.sortScore }
+                } else {
+                    filtered.sortedByDescending { it.sortScore }
+                }
+            }
+        }
+
+        _state.update { it.copy(availableStreams = sorted) }
+    }
+
     /** Delete a torrent from RD account to prevent 2000/2004 conflicts */
     private suspend fun deleteRdTorrent(torrentId: String, token: String) {
         withContext(Dispatchers.IO) {
@@ -478,7 +817,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     .delete()
                     .build()
                 okHttpClient.newCall(request).execute().close()
-            } catch (_: Exception) { /* best-effort cleanup */ }
+            } catch (e: Exception) { if (e is CancellationException) throw e /* best-effort cleanup */ }
         }
     }
 
@@ -514,7 +853,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     } else {
                         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                     }
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                 }
             }
@@ -523,6 +863,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         if (stream.infoHash.isNullOrBlank()) return
 
         resolveJob = viewModelScope.launch(Dispatchers.IO) {
+            // ⚡ Force-refresh token before resolving to guarantee freshness
+            com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
             val token = getRdToken()
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
 
@@ -541,9 +883,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     onFailure = { e ->
                         val msg = e.message ?: ""
                         if (msg == "RD_CONFLICT" || msg.contains("2000") || msg.contains("2004")) {
-                            cleanupActiveTorrents(token)
+                            val currentToken = getRdToken()
+                            cleanupActiveTorrents(currentToken)
                             delay(1200)
-                            val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
+                            val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, currentToken) { torrentId ->
                                 activeTorrentIds.add(torrentId)
                             }
                             retry.fold(
@@ -603,7 +946,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         viewModelScope.launch(Dispatchers.IO) {
             // Save as 100% watched (position = duration)
             val key = progressManager.episodeKey(imdbId, season, episode)
-            progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L)
+            val tmdbId = _state.value.mediaInfo.id
+            val json = progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L, tmdbId = tmdbId)
+            if (json != null) syncManager.pushProgress(key, json)
             // Refresh episode list in UI
             val eps = _state.value.episodes.map { ep ->
                 if (ep.seasonNumber == season && ep.episodeNumber == episode)
@@ -619,7 +964,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         if (imdbId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             val key = progressManager.episodeKey(imdbId, season, episode)
-            progressManager.remove(key)
+            progressManager.deleteProgress(key)
+            syncManager.pushProgress(key, "") // Empty means removed/reset
             // Refresh episode list in UI
             val eps = _state.value.episodes.map { ep ->
                 if (ep.seasonNumber == season && ep.episodeNumber == episode)
@@ -630,12 +976,55 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         }
     }
 
+    private fun markSeasonWatched(season: Int) {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val seasonEps = _state.value.episodes.filter { it.seasonNumber == season }
+            val updates = mutableMapOf<String, String>()
+            val tmdbId = _state.value.mediaInfo.id
+            seasonEps.forEach { ep ->
+                val key = progressManager.episodeKey(imdbId, season, ep.episodeNumber)
+                val json = progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L, tmdbId = tmdbId)
+                if (json != null) updates[key] = json
+            }
+            if (updates.isNotEmpty()) syncManager.pushMultipleProgress(updates)
+            
+            val eps = _state.value.episodes.map { ep ->
+                if (ep.seasonNumber == season) ep.copy(progress = 1f, hasWatched = true) else ep
+            }
+            _state.update { it.copy(episodes = eps) }
+        }
+    }
+
+    private fun markSeasonUnwatched(season: Int) {
+        val imdbId = _state.value.mediaInfo.imdbId
+        if (imdbId.isBlank()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            val seasonEps = _state.value.episodes.filter { it.seasonNumber == season }
+            val updates = mutableMapOf<String, String>()
+            seasonEps.forEach { ep ->
+                val key = progressManager.episodeKey(imdbId, season, ep.episodeNumber)
+                progressManager.deleteProgress(key)
+                updates[key] = ""
+            }
+            if (updates.isNotEmpty()) syncManager.pushMultipleProgress(updates)
+            
+            val eps = _state.value.episodes.map { ep ->
+                if (ep.seasonNumber == season) ep.copy(progress = 0f, hasWatched = false) else ep
+            }
+            _state.update { it.copy(episodes = eps) }
+        }
+    }
+
     private fun markMovieWatched() {
         val imdbId = _state.value.mediaInfo.imdbId
         if (imdbId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             val key = progressManager.movieKey(imdbId)
-            progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L)
+            val tmdbId = _state.value.mediaInfo.id
+            val json = progressManager.save(key, positionMs = 1_000_000L, durationMs = 1_000_000L, tmdbId = tmdbId)
+            if (json != null) syncManager.pushProgress(key, json)
             _state.update { it.copy(contentProgress = 1f, contentIsFinished = true) }
         }
     }
@@ -645,7 +1034,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         if (imdbId.isBlank()) return
         viewModelScope.launch(Dispatchers.IO) {
             val key = progressManager.movieKey(imdbId)
-            progressManager.remove(key)
+            progressManager.deleteProgress(key)
+            syncManager.pushProgress(key, "")
             _state.update { it.copy(contentProgress = 0f, contentIsFinished = false) }
         }
     }
@@ -659,6 +1049,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         // OPTIMIZATION: Push database writing to background thread
         viewModelScope.launch(Dispatchers.IO) {
             val isNowAdded = watchlistRepository.toggleWatchlist(movie)
+            syncManager.pushFavorites()
             _state.update { it.copy(mediaInfo = info.copy(isFavorite = isNowAdded)) }
         }
     }
@@ -666,8 +1057,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private suspend fun fetchCollectionViaHttp(collectionId: Int): List<Recommendation> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Recommendation>()
         withTimeoutOrNull(2000) {
+            var conn: HttpURLConnection? = null
             try {
-                val conn = URL("https://api.themoviedb.org/3/collection/$collectionId?api_key=${Constants.TMDB_API_KEY}&language=en-US").openConnection() as HttpURLConnection
+                conn = URL("https://api.themoviedb.org/3/collection/$collectionId?api_key=${Constants.TMDB_API_KEY}&language=en-US").openConnection() as HttpURLConnection
                 if (conn.apply { requestMethod = "GET" }.responseCode == 200) {
                     val parts = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("parts")
                     if (parts != null) {
@@ -681,7 +1073,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         }
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is CancellationException) throw e }
+            finally {
+                conn?.disconnect()
+            }
         }
         list.distinctBy { it.id }
     }
@@ -689,8 +1084,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private suspend fun fetchActorWorksViaHttp(personId: Int): List<Recommendation> = withContext(Dispatchers.IO) {
         val list = mutableListOf<Recommendation>()
         withTimeoutOrNull(2000) {
+            var conn: HttpURLConnection? = null
             try {
-                val conn = URL("https://api.themoviedb.org/3/person/$personId/combined_credits?api_key=${Constants.TMDB_API_KEY}&language=en-US").openConnection() as HttpURLConnection
+                conn = URL("https://api.themoviedb.org/3/person/$personId/combined_credits?api_key=${Constants.TMDB_API_KEY}&language=en-US").openConnection() as HttpURLConnection
                 if (conn.apply { requestMethod = "GET" }.responseCode == 200) {
                     val cast = JSONObject(conn.inputStream.bufferedReader().use { it.readText() }).optJSONArray("cast")
                     if (cast != null) {
@@ -708,7 +1104,10 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                         list.addAll(tempList.distinctBy { it.first.id }.sortedByDescending { it.second }.take(15).map { it.first })
                     }
                 }
-            } catch (_: Exception) {}
+            } catch (e: Exception) { if (e is CancellationException) throw e }
+            finally {
+                conn?.disconnect()
+            }
         }
         list
     }

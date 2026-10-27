@@ -15,6 +15,7 @@ interface MediaRepository {
     suspend fun getMovieDetails(id: String): Result<Movie>
     suspend fun getMovieFullDetails(id: String): Result<TmdbMovieDetailsDto>
     suspend fun getTvFullDetails(id: String): Result<TmdbTvDetailsDto>
+    suspend fun getPersonDetails(id: String): Result<com.luminastreams.tv.data.api.TmdbPersonDetailsDto>
     suspend fun getSimilarMedia(id: String, type: String): Result<List<Movie>>
     suspend fun discoverMedia(
         type: String,
@@ -38,4 +39,6 @@ interface MediaRepository {
         sortBy: String = "popularity.desc",
         page: Int = 1
     ): Result<List<SearchResult>>
+
+    suspend fun getOmdbDetails(imdbId: String): Result<com.luminastreams.tv.data.api.OmdbResponseDto>
 }

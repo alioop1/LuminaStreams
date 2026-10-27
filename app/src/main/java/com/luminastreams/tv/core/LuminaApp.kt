@@ -14,14 +14,16 @@ import coil.memory.MemoryCache
 import coil.decode.ImageDecoderDecoder
 import coil.decode.GifDecoder
 import com.luminastreams.tv.data.local.LuminaDatabase
-import com.luminastreams.tv.data.repository.IptvRepository
-import com.luminastreams.tv.data.repository.MediaRepositoryImpl
-import com.luminastreams.tv.data.repository.WatchlistRepository
-import com.luminastreams.tv.domain.repository.MediaRepository
-import okhttp3.OkHttpClient
+import com.luminastreams.tv.data.local.WatchProgressManager
+import com.luminastreams.tv.data.repository.*
+import com.luminastreams.tv.domain.repository.*
+import com.luminastreams.tv.data.sync.SyncManager
 import java.util.concurrent.TimeUnit
 
 class LuminaApp : Application() {
+    lateinit var settingsRepository: SettingsRepository
+        private set
+
     lateinit var repository: MediaRepository
         private set
 
@@ -32,6 +34,18 @@ class LuminaApp : Application() {
         private set
 
     lateinit var watchlistRepository: WatchlistRepository
+        private set
+
+    lateinit var authRepository: AuthRepository
+        private set
+
+    lateinit var syncRepository: UserSyncRepository
+        private set
+
+    lateinit var syncManager: SyncManager
+        private set
+
+    lateinit var watchProgressManager: WatchProgressManager
         private set
 
     override fun onCreate() {
@@ -47,6 +61,7 @@ class LuminaApp : Application() {
 
         setupCoil()
 
+        settingsRepository = SettingsRepository(this)
         repository = MediaRepositoryImpl(this)
 
         database = Room.databaseBuilder(
@@ -59,6 +74,24 @@ class LuminaApp : Application() {
 
         iptvRepository = IptvRepository(database.iptvDao())
         watchlistRepository = WatchlistRepository(database.watchlistDao())
+        authRepository = FirebaseAuthRepository()
+        syncRepository = FirestoreSyncRepository()
+        watchProgressManager = WatchProgressManager(this)
+
+        syncManager = SyncManager(
+            authRepository,
+            syncRepository,
+            watchlistRepository,
+            watchProgressManager,
+            this
+        )
+
+        // Trigger a background real-time sync listener on app launch if the user is already logged in
+        syncManager.startRealtimeSync()
+
+        // ⚡ Start proactive Real-Debrid token refresh loop (every 8 minutes)
+        // This prevents token expiry (~10 min) from ever disrupting playback or scraping
+        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.start(this)
 
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
             registerLowMemoryCallbacks()
@@ -69,23 +102,23 @@ class LuminaApp : Application() {
         val maxHeap = Runtime.getRuntime().maxMemory()
 
         val memoryCachePercent = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> 0.08
-            DeviceProfile.Tier.MID  -> 0.06
-            DeviceProfile.Tier.LOW  -> 0.04
+            DeviceProfile.Tier.HIGH -> 0.15
+            DeviceProfile.Tier.MID  -> 0.10
+            DeviceProfile.Tier.LOW  -> 0.05
         }
         val memoryCacheBytes = (maxHeap * memoryCachePercent).toLong()
-            .coerceIn(32 * 1024 * 1024L, 512 * 1024 * 1024L)
+            .coerceIn(16 * 1024 * 1024L, 128 * 1024 * 1024L) // Max 128MB for TV
 
         val diskCacheBytes = when (DeviceProfile.tier) {
-            DeviceProfile.Tier.HIGH -> 1024 * 1024 * 1024L
-            DeviceProfile.Tier.MID  ->  512 * 1024 * 1024L
-            DeviceProfile.Tier.LOW  ->  256 * 1024 * 1024L
+            DeviceProfile.Tier.HIGH -> 512 * 1024 * 1024L
+            DeviceProfile.Tier.MID  -> 256 * 1024 * 1024L
+            DeviceProfile.Tier.LOW  -> 128 * 1024 * 1024L
         }
 
         val connectTimeout = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 20L else 12L
         val readTimeout    = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 30L else 20L
 
-        val okhttp = OkHttpClient.Builder()
+        val okhttp = TrustedHttpClient.builder()
             .connectTimeout(connectTimeout, TimeUnit.SECONDS)
             .readTimeout(readTimeout, TimeUnit.SECONDS)
             .dispatcher(okhttp3.Dispatcher().also { d ->
@@ -99,9 +132,6 @@ class LuminaApp : Application() {
                 )
             )
             .build()
-
-        // FIX: Hardware bitmaps ENABLED for all tiers to keep UI thread clean
-        val bitmapConfig = Bitmap.Config.HARDWARE
 
         val imageLoader = ImageLoader.Builder(this)
             .components {
@@ -125,7 +155,6 @@ class LuminaApp : Application() {
             .okHttpClient(okhttp)
             .crossfade(DeviceProfile.tier != DeviceProfile.Tier.LOW)
             .respectCacheHeaders(false)
-            .bitmapConfig(bitmapConfig)
             .build()
 
         Coil.setImageLoader(imageLoader)

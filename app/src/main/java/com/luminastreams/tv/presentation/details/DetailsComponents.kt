@@ -1,6 +1,30 @@
-@file:OptIn(ExperimentalTvMaterial3Api::class)
+@file:OptIn(ExperimentalTvMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class, androidx.compose.ui.ExperimentalComposeUiApi::class)
 
 package com.luminastreams.tv.presentation.details
+
+import androidx.compose.foundation.focusable
+import kotlinx.coroutines.delay
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.runtime.*
+import androidx.compose.ui.focus.*
+import androidx.compose.ui.draw.*
+import androidx.compose.animation.core.*
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.unit.LayoutDirection
+import com.luminastreams.tv.core.tr
+
+import com.luminastreams.tv.core.Constants
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.lazy.itemsIndexed
+import com.luminastreams.tv.ui.components.LoadingIndicator
+import androidx.activity.compose.BackHandler
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 
 import android.content.Context
 import android.content.Intent
@@ -8,6 +32,11 @@ import android.net.Uri
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -29,17 +58,28 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import androidx.core.net.toUri
 import androidx.tv.material3.*
 import coil.compose.AsyncImage
 
 
-// 🎨 COMPONENT PALETTE
-private val ColorGlassBento = Color(0x33FFFFFF)
-private val ColorTextMain = Color(0xFFFFFFFF)
-private val ColorAccentIsland = Color(0xFFE50914)
+// ðŸŽ¨ COMPONENT PALETTE
+val ColorGlassBento = Color(0x33FFFFFF)
+val ColorTextMain = Color(0xFFFFFFFF)
+val ColorAccentIsland = Color(0xFFE50914)
+val ColorGoldMain = Color(0xFFFFD700)
+val ColorGoldLight = Color(0xFFFFF0A0)
 
-// ─── UTILITY ───
+/** Upgrade any TMDB image URL to `/original/` quality. */
+fun String.toOriginalTmdb(): String =
+    replace("/w45/", "/original/").replace("/w92/", "/original/")
+        .replace("/w154/", "/original/").replace("/w185/", "/original/")
+        .replace("/w300/", "/original/").replace("/w342/", "/original/")
+        .replace("/w500/", "/original/").replace("/w780/", "/original/")
+        .replace("/w1280/", "/original/")
+
+// â”€â”€â”€ UTILITY â”€â”€â”€
 fun launchNativeTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle: String) {
     val appCtx = context.applicationContext
     if (!trailerIdOrUrl.isNullOrBlank()) {
@@ -55,94 +95,336 @@ fun launchNativeTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle
     } catch (_: Exception) {}
 }
 
-// ─── 🎬 DYNAMIC SOURCE POSTER CARD (DELICATE ZOOM & ZERO LAG) ───
+// ─── 🎬 DYNAMIC SOURCE ROW (REPLACED CUBE WITH PILL FOR CINEMATIC EPISODE LOOK) ───
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun DetailedSourceCube(stream: AdvancedStreamSource, logoUrl: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun DetailedSourceRow(stream: AdvancedStreamSource, logoUrl: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+
+    val infiniteTransition = rememberInfiniteTransition()
+    val shimmerX by infiniteTransition.animateFloat(
+        initialValue = -1000f,
+        targetValue = 3000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(2000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        )
+    )
+    val playScale by infiniteTransition.animateFloat(
+        initialValue = 1f,
+        targetValue = 1.15f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        )
+    )
+    
     val searchString = (stream.filename + " " + stream.releaseGroup).uppercase().replace(".", " ")
     val is4k = stream.quality.name.contains("4K") || searchString.contains("2160P")
+    val is1080 = stream.quality.name.contains("1080") || searchString.contains("1080P")
     val isHdr = searchString.contains(" HDR") || searchString.contains("HDR10")
     val isDv = searchString.contains(" DV ") || searchString.contains(" DOVI ") || searchString.contains("DOLBY VISION")
     val isAtmos = searchString.contains("ATMOS")
     val isCached = stream.isCachedRd
+
+    val rawTitle = stream.rawTitle
+    val seeders = Regex("👤\\s*(\\d+)").find(rawTitle)?.groupValues?.get(1) ?: "0"
+    val leechers = Regex("🏃\\s*(\\d+)").find(rawTitle)?.groupValues?.get(1) ?: "0"
+    val seedersFallback = Regex("S\\s*(\\d+)").find(rawTitle)?.groupValues?.get(1)
+    val finalSeeders = if (seeders == "0" && seedersFallback != null) seedersFallback else seeders
+
+    val subtitlesMatch = Regex("⚙️\\s*([^\\n]+)").find(rawTitle)
+    val subtitles = subtitlesMatch?.groupValues?.get(1)?.trim() ?: ""
+
+    val audioChannels = if (isAtmos) "ATMOS" else if (searchString.contains("7.1")) "7.1" else if (searchString.contains("5.1")) "5.1" else "STEREO"
+    val videoQualityText = if (is4k) "4K" else if (is1080) "1080p" else "HD"
+
+    // Tracker badge color
+    val trackerColor = Color(TrackerParser.trackerColor(stream.trackerName))
+    
     Surface(
         onClick = onClick,
-        modifier = modifier.width(260.dp).height(150.dp),
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color(0xFF141417),
-            focusedContainerColor = Color(0xFF141417)
+            containerColor = Color.Transparent,
+            focusedContainerColor = Color.Transparent
         ),
-        // ⚡ The PS5 Thick Glowing Border
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = Color.White.copy(0.3f), elevation = 24.dp)
+        ),
         border = ClickableSurfaceDefaults.border(
-            focusedBorder = Border(BorderStroke(3.dp, Color.White)),
-            border = Border.None
+            focusedBorder = Border(BorderStroke(4.dp, Color.White)),
+            border = Border(BorderStroke(1.dp, Color.White.copy(0.05f)))
         ),
-        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(elevationColor = Color.White.copy(0.3f), elevation = 24.dp))
+        modifier = modifier
+            .fillMaxWidth()
+            .height(100.dp)
+            .onFocusChanged { isFocused = it.isFocused }
     ) {
-        Box(Modifier.fillMaxSize()) {
-
-            // 1. Subtle radial glow in the background
-            Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color.White.copy(0.05f), Color.Transparent), radius = 300f)))
-
-            // 2. 🎬 LOGO (Moved to Center so it sits beautifully under the top tags)
+        Box(modifier = Modifier.fillMaxSize()) {
+            // Glassmorphic Gradient Background
             Box(
-                Modifier.align(Alignment.Center).padding(bottom = 24.dp).height(48.dp).fillMaxWidth(0.8f),
-                contentAlignment = Alignment.Center
+                Modifier.fillMaxSize()
+                    .background(
+                        Brush.horizontalGradient(
+                            listOf(
+                                if(isFocused) Color.White.copy(0.12f) else Color.White.copy(0.04f),
+                                if(isFocused) Color.White.copy(0.06f) else Color.Transparent
+                            )
+                        )
+                    )
+            )
+
+            // Animated shimmer sweep when focused
+            if (isFocused) {
+                Box(Modifier.fillMaxSize().background(
+                    Brush.linearGradient(
+                        colors = listOf(Color.Transparent, Color.White.copy(0.15f), Color.Transparent),
+                        start = Offset(shimmerX, 0f),
+                        end = Offset(shimmerX + 400f, 400f)
+                    )
+                ))
+            }
+
+            Row(
+                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // 1. Logo Section (Left)
                 if (logoUrl.isNotBlank()) {
-                    AsyncImage(model = logoUrl, contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+                    Box(
+                        modifier = Modifier
+                            .width(240.dp)
+                            .fillMaxHeight(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = logoUrl,
+                            contentDescription = null,
+                            contentScale = ContentScale.Fit,
+                            modifier = Modifier.fillMaxSize().alpha(if (isFocused) 1f else 0.6f)
+                        )
+                    }
+                    Spacer(Modifier.width(16.dp))
+                    // Subtle Divider
+                    Box(Modifier.width(1.dp).height(40.dp).background(Color.White.copy(0.1f)))
+                    Spacer(Modifier.width(16.dp))
                 }
-            }
 
-            // 3. 🏷️ PREMIUM TAGS (Top Right - Drawn AFTER the logo so they float on top)
-            Row(Modifier.align(Alignment.TopEnd).padding(12.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (is4k) PremiumTag("4K", Color(0xFF00E5FF)) else PremiumTag("HD", Color.White)
-                if (isHdr) PremiumTag("HDR", Color(0xFFFF9500))
-                if (isDv) PremiumTag("DV", Color(0xFFE50914))
-                if (isAtmos) PremiumTag("ATMOS", Color(0xFF0A84FF))
-                if (isCached) PremiumTag("RD+", Color(0xFF32D74B))
-            }
+                // 2. Main Title, Tracker Badge, and Subtitle Info
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Column(modifier = Modifier.weight(1.2f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        // Tracker Name Badge
+                        Box(
+                            modifier = Modifier
+                                .background(trackerColor.copy(if(isFocused) 0.25f else 0.15f), RoundedCornerShape(50))
+                                .border(1.dp, trackerColor.copy(if(isFocused) 0.8f else 0.5f), RoundedCornerShape(50))
+                                .padding(horizontal = 10.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = stream.trackerName.uppercase(),
+                                color = trackerColor,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.5.sp,
+                                maxLines = 1
+                            )
+                        }
+                        Text(
+                            text = stream.releaseGroup.ifEmpty { "UNKNOWN" }.uppercase(),
+                            color = if (isFocused) Color.White else Color.White.copy(0.9f),
+                            fontSize = 24.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        // Embedded Quality Badge
+                        Box(
+                            modifier = Modifier
+                                .background(Color.White.copy(if(isFocused) 0.2f else 0.1f), RoundedCornerShape(50))
+                                .border(1.dp, Color.White.copy(0.2f), RoundedCornerShape(50))
+                                .padding(horizontal = 10.dp, vertical = 3.dp)
+                        ) {
+                            Text(
+                                text = videoQualityText,
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = stream.filename,
+                            color = Color.White.copy(if(isFocused) 0.9f else 0.5f),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Medium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
+                }
+                }
 
-            // 4. 📝 BOTTOM METADATA TEXT
-            Column(Modifier.align(Alignment.BottomStart).fillMaxWidth().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)))).padding(16.dp)) {
-                Text(
-                    text = stream.releaseGroup.ifEmpty { "UNKNOWN GROUP" }.uppercase(),
-                    color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Black,
-                    letterSpacing = 1.sp, maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = stream.filename.substringBefore("\n").trim(),
-                    color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Medium,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = if (stream.sizeGb >= 1.0) "%.1f GB".format(stream.sizeGb) else "%.0f MB".format(stream.sizeBytes / 1048576.0),
-                    color = Color.White.copy(0.4f), fontSize = 10.sp, fontWeight = FontWeight.Bold
-                )
+                Spacer(Modifier.width(12.dp))
+
+                // 3. Technical Tags (Audio Languages, HDR, Audio, Subs)
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Row(
+                    modifier = Modifier.weight(0.8f),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Audio Language badges — only show RUS, ENG, HEB
+                    stream.audioLanguages.filter { it == AudioLanguage.RUSSIAN || it == AudioLanguage.ENGLISH || it == AudioLanguage.HEBREW }.take(3).forEach { lang ->
+                        val langColor = when (lang) {
+                            AudioLanguage.RUSSIAN    -> Color(0xFF5C7CFA)
+                            AudioLanguage.ENGLISH    -> Color(0xFF69DB7C)
+                            AudioLanguage.HEBREW     -> Color(0xFF748FFC)
+                            AudioLanguage.UKRAINIAN  -> Color(0xFFFFD43B)
+                            AudioLanguage.SPANISH    -> Color(0xFFFF922B)
+                            AudioLanguage.FRENCH     -> Color(0xFF66D9E8)
+                            AudioLanguage.GERMAN     -> Color(0xFFFFA94D)
+                            AudioLanguage.ITALIAN    -> Color(0xFF63E6BE)
+                            AudioLanguage.JAPANESE   -> Color(0xFFFF8787)
+                            AudioLanguage.KOREAN     -> Color(0xFFE599F7)
+                            AudioLanguage.ARABIC     -> Color(0xFF99E9F2)
+                            AudioLanguage.TURKISH    -> Color(0xFFFF6B6B)
+                            AudioLanguage.HINDI      -> Color(0xFFFFEC99)
+                            AudioLanguage.PORTUGUESE -> Color(0xFF8CE99A)
+                            AudioLanguage.MULTI      -> Color(0xFFDA77F2)
+                            else -> Color.White
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .background(
+                                    Brush.linearGradient(listOf(langColor.copy(if (isFocused) 0.25f else 0.15f), langColor.copy(0.05f))),
+                                    RoundedCornerShape(50)
+                                )
+                                .border(1.dp, langColor.copy(if (isFocused) 0.6f else 0.35f), RoundedCornerShape(50))
+                                .padding(start = 4.dp, end = 10.dp, top = 4.dp, bottom = 4.dp)
+                        ) {
+                            // Country code circle
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .background(langColor.copy(if (isFocused) 0.6f else 0.4f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = lang.flag,
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 0.sp
+                                )
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = lang.displayName,
+                                color = if (isFocused) langColor else langColor.copy(0.85f),
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                letterSpacing = 0.3.sp,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                    if (isHdr) PremiumTag("HDR", if (isFocused) Color(0xFFFFA000) else Color(0xFFFF9500), isFocused)
+                    if (isDv) PremiumTag("DV", if (isFocused) Color(0xFFFF3B30) else Color(0xFFE50914), isFocused)
+                    PremiumTag(audioChannels, if (isFocused) Color(0xFF32ADE6) else Color(0xFF0A84FF), isFocused)
+                }
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                // 4. File Size & Network Health
+                CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = if (stream.sizeGb >= 1.0) "%.1f GB".format(stream.sizeGb) else "%.0f MB".format(stream.sizeBytes / 1048576.0),
+                        color = if (isFocused) Color.White else Color.White.copy(0.8f),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    // Sleek Seed/Leech capsule
+                    Row(
+                        modifier = Modifier
+                            .background(Color.Black.copy(0.3f), RoundedCornerShape(8.dp))
+                            .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("▲ $finalSeeders", color = Color(0xFF32D74B), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                        Box(Modifier.width(1.dp).height(12.dp).background(Color.White.copy(0.2f)))
+                        Text("▼ $leechers", color = Color(0xFFFF3B30), fontSize = 18.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                }
+                }
+                
+                Spacer(Modifier.width(16.dp))
+                
+                // 5. Play Button
+                Box(
+                    modifier = Modifier
+                        .scale(if (isFocused) playScale else 1f)
+                        .size(40.dp)
+                        .background(
+                            brush = if(isFocused) Brush.linearGradient(listOf(Color.White, Color.LightGray)) else Brush.linearGradient(listOf(Color.White.copy(0.1f), Color.White.copy(0.05f))),
+                            shape = CircleShape
+                        )
+                        .border(1.dp, if(isFocused) Color.White else Color.White.copy(0.2f), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = "Play",
+                        tint = if (isFocused) Color.Black else Color.White.copy(0.8f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
     }
 }
 
-// Ultra-sharp, minimal tag design
 @Composable
-fun PremiumTag(text: String, color: Color) {
-    Box(modifier = Modifier.background(color.copy(0.15f), RoundedCornerShape(4.dp)).border(1.dp, color.copy(0.5f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)) {
-        Text(text = text, color = color, fontSize = 9.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+fun PremiumTag(text: String, color: Color, isFocused: Boolean = false) {
+    Box(
+        modifier = Modifier
+            .background(
+                Brush.linearGradient(
+                    listOf(color.copy(if (isFocused) 0.35f else 0.15f), color.copy(if (isFocused) 0.1f else 0.05f))
+                ),
+                RoundedCornerShape(50)
+            )
+            .border(
+                1.dp,
+                Brush.linearGradient(
+                    listOf(color.copy(if (isFocused) 0.9f else 0.6f), color.copy(if (isFocused) 0.4f else 0.2f))
+                ),
+                RoundedCornerShape(50)
+            )
+            .padding(horizontal = 12.dp, vertical = 4.dp)
+    ) {
+        Text(text = text, color = if(isFocused) Color.White else color.copy(0.95f), fontSize = 18.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
     }
 }
-
-// ─── MAIN SCREEN BENTO COMPONENTS ───
 
 @Composable
 fun BentoCard(title: String, value: String, isWide: Boolean = false) {
     Box(Modifier.width(if(isWide) 220.dp else 140.dp).fillMaxHeight().clip(RoundedCornerShape(24.dp)).background(ColorGlassBento).padding(16.dp)) {
         Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(title, color = Color.White.copy(0.6f), fontSize = 12.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+            Text(title, color = Color.White.copy(0.6f), fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
             Spacer(Modifier.height(8.dp))
             Text(value, color = ColorTextMain, fontSize = 22.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -193,7 +475,7 @@ fun EpisodeCardOptimized(
     Surface(
         onClick = onClick,
         shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1f),
         border = ClickableSurfaceDefaults.border(
             border = Border.None,
             focusedBorder = Border(BorderStroke(2.dp, Color.White))
@@ -207,7 +489,7 @@ fun EpisodeCardOptimized(
     ) {
         Box(Modifier.fillMaxSize().clip(RoundedCornerShape(20.dp))) {
             AsyncImage(
-                model = episode.stillUrl.ifBlank { fallback },
+                model = episode.stillUrl.toOriginalTmdb().ifBlank { fallback },
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize().then(
@@ -216,7 +498,7 @@ fun EpisodeCardOptimized(
             )
             Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.9f)), startY = 100f)))
 
-            // ✅ Watched badge — top-right green checkmark
+            // âœ… Watched badge â€” top-right green checkmark
             if (episode.hasWatched) {
                 Box(
                     modifier = Modifier
@@ -227,12 +509,12 @@ fun EpisodeCardOptimized(
                         .border(2.dp, Color.White.copy(0.3f), RoundedCornerShape(50)),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                    Text("✓", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Black)
                 }
             }
 
             Column(Modifier.align(Alignment.BottomStart).padding(20.dp)) {
-                Text("E${episode.episodeNumber} • ${episode.title}", color = ColorTextMain, fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                Text("E${episode.episodeNumber} • ${episode.title}", color = ColorTextMain, fontSize = 20.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             }
             // Progress bar
             if (episode.progress > 0f) {
@@ -297,7 +579,7 @@ fun SeasonPill(seasonNumber: Int, isSelected: Boolean, modifier: Modifier = Modi
 @Composable
 fun InfoChip(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(label.uppercase(), color = Color.White.copy(0.4f), fontSize = 10.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+        Text(label.uppercase(), color = Color.White.copy(0.4f), fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
         Spacer(Modifier.height(6.dp))
         Text(value, color = ColorTextMain, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
@@ -330,12 +612,787 @@ fun RecommendationCard(rec: Recommendation, modifier: Modifier = Modifier, onCli
             Text(
                 rec.title,
                 color = ColorTextMain,
-                fontSize = 13.sp,
+                fontSize = 15.sp,
                 fontWeight = FontWeight.Bold,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.align(Alignment.BottomStart).padding(12.dp)
             )
         }
+    }
+}
+@Composable
+fun EpisodeDetailsModal(
+    episode: Episode,
+    imdbId: String,
+    onPlay: (Int, Int) -> Unit,
+    onMarkWatched: (Int, Int, Boolean) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val epPlayFR = remember { FocusRequester() }
+    LaunchedEffect(episode) { delay(200); runCatching { epPlayFR.requestFocus() } }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(0.82f))
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyUp && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    onDismiss()
+                    true
+                } else false
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Box(
+            modifier = Modifier.width(640.dp).clip(RoundedCornerShape(24.dp))
+        ) {
+            if (episode.stillUrl.isNotBlank()) {
+                AsyncImage(
+                    model = episode.stillUrl.toOriginalTmdb(), contentDescription = null,
+                    contentScale = ContentScale.Crop, modifier = Modifier.matchParentSize().alpha(0.35f).blur(28.dp)
+                )
+            }
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color(0xFF0D0D12).copy(0.55f), Color(0xFF0D0D12).copy(0.92f)))))
+            Box(Modifier.matchParentSize().border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp)))
+
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (episode.stillUrl.isNotBlank()) {
+                    Box(modifier = Modifier.fillMaxWidth().height(200.dp).clip(RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp))) {
+                        AsyncImage(model = episode.stillUrl.toOriginalTmdb(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+                        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color(0xFF0D0D12).copy(0.9f)), startY = 80f)))
+                        Column(modifier = Modifier.align(Alignment.BottomStart).padding(20.dp)) {
+                            Text("${tr("Season", "עונה")} ${episode.seasonNumber}  •  ${tr("Episode", "פרק")} ${episode.episodeNumber}", color = ColorGoldMain, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                            Text(episode.title, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (episode.progress > 0f && !episode.hasWatched) {
+                            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(Color.White.copy(0.2f))) {
+                                Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(Brush.horizontalGradient(listOf(ColorGoldMain, ColorGoldLight))))
+                            }
+                        }
+                    }
+                } else {
+                    Column(Modifier.padding(28.dp, 28.dp, 28.dp, 8.dp)) {
+                        Text("${tr("Season", "עונה")} ${episode.seasonNumber}  •  ${tr("Episode", "פרק")} ${episode.episodeNumber}", color = ColorGoldMain, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
+                        Text(episode.title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    }
+                }
+
+                if (episode.overview.isNotBlank()) {
+                    Text(
+                        text = episode.overview, color = Color.White.copy(0.65f), fontSize = 17.sp,
+                        lineHeight = 22.sp, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp)
+                    )
+                }
+
+                Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Surface(
+                        onClick = { onPlay(episode.seasonNumber, episode.episodeNumber) },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(containerColor = ColorAccentIsland, contentColor = ColorTextMain, focusedContainerColor = ColorTextMain, focusedContentColor = Color.Black),
+                        scale = ClickableSurfaceDefaults.scale(1.05f),
+                        modifier = Modifier.fillMaxWidth().height(60.dp).focusRequester(epPlayFR)
+                    ) {
+                        Row(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            Icon(Icons.Default.PlayArrow, null, Modifier.size(26.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text(tr("Play Episode", "הפעל פרק"), fontWeight = FontWeight.Black, fontSize = 19.sp)
+                        }
+                    }
+                    Surface(
+                        onClick = { onMarkWatched(episode.seasonNumber, episode.episodeNumber, !episode.hasWatched) },
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Color.White.copy(0.08f), contentColor = ColorTextMain,
+                            focusedContainerColor = if (episode.hasWatched) Color(0xFF32D74B) else Color.White.copy(0.18f),
+                            focusedContentColor = if (episode.hasWatched) Color.White else ColorTextMain
+                        ),
+                        scale = ClickableSurfaceDefaults.scale(1.05f),
+                        modifier = Modifier.fillMaxWidth().height(52.dp)
+                    ) {
+                        Row(Modifier.fillMaxSize().padding(horizontal = 28.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+                            Icon(if (episode.hasWatched) Icons.Default.VisibilityOff else Icons.Default.Visibility, null, Modifier.size(22.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Text(if (episode.hasWatched) tr("Mark as Unwatched", "סמן כלא נצפה") else tr("Mark as Watched", "סמן כנצפה"), fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                        }
+                    }
+                    Surface(
+                        onClick = onDismiss,
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor = Color.Transparent, contentColor = Color.White.copy(0.45f),
+                            focusedContainerColor = Color.White.copy(0.08f), focusedContentColor = ColorTextMain
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(44.dp)
+                    ) {
+                        Box(Modifier.fillMaxSize(), Alignment.Center) {
+                            Text(tr("Cancel", "ביטול"), fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+@Composable
+fun PrestigeTitle(title: String) {
+    Text(
+        text = title,
+        color = ColorTextMain,
+        fontSize = 64.sp,
+        fontWeight = FontWeight.Black,
+        lineHeight = 72.sp,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+        style = androidx.compose.ui.text.TextStyle(
+            shadow = androidx.compose.ui.graphics.Shadow(
+                color = Color.Black.copy(0.6f),
+                offset = androidx.compose.ui.geometry.Offset(0f, 8f),
+                blurRadius = 16f
+            )
+        )
+    )
+}
+
+@Composable
+fun LuxuryRatingDial(score: Float, maxScore: Float = 10f, dialColor: Color = ColorGoldMain, size: androidx.compose.ui.unit.Dp = 42.dp, label: String = "IMDb") {
+    if (score == 0f) return
+    val progress = score / maxScore
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.size(size)) {
+            androidx.compose.material3.CircularProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxSize(),
+                color = dialColor,
+                trackColor = Color.White.copy(0.1f),
+                strokeWidth = 3.dp
+            )
+            Text(String.format("%.1f", score), color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+fun PrestigeButton(icon: ImageVector, text: String, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.White.copy(0.15f),
+            contentColor = ColorTextMain,
+            focusedContainerColor = Color.White.copy(0.3f),
+            focusedContentColor = ColorGoldMain
+        ),
+        scale = ClickableSurfaceDefaults.scale(1.05f),
+        modifier = modifier.height(56.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 24.dp).fillMaxHeight(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
+            Icon(icon, null, Modifier.size(24.dp))
+            Spacer(Modifier.width(12.dp))
+            Text(text, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+        }
+    }
+}
+
+@Composable
+fun PrestigeCastCircle(actor: CastMember, modifier: Modifier = Modifier, onClick: () -> Unit = {}, onFocus: () -> Unit) {
+    var isFocused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(CircleShape),
+        scale = ClickableSurfaceDefaults.scale(1.15f),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        glow = ClickableSurfaceDefaults.glow(focusedGlow = Glow(elevationColor = ColorGoldMain.copy(0.5f), elevation = 16.dp)),
+        modifier = modifier.size(90.dp).onFocusChanged { isFocused = it.isFocused; if (it.isFocused) onFocus() }
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(model = actor.imageUrl, contentDescription = actor.name, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize().clip(CircleShape))
+        }
+    }
+}
+
+@Composable
+fun PrestigeEpisodeItem(
+    episode: Episode,
+    fallback: String,
+    modifier: Modifier = Modifier,
+    onFocusChanged: (Boolean) -> Unit,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Surface(
+        onClick = onClick,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+        scale = ClickableSurfaceDefaults.scale(1.05f),
+        colors = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.Transparent),
+        modifier = modifier.width(220.dp).height(124.dp).onFocusChanged { isFocused = it.isFocused; onFocusChanged(it.isFocused) }
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = episode.stillUrl.toOriginalTmdb().takeIf { it.isNotBlank() } ?: fallback,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp))
+            )
+            Box(Modifier.matchParentSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(0.8f)), startY = 50f)))
+            if (isFocused) {
+                Box(Modifier.matchParentSize().border(2.dp, ColorGoldMain, RoundedCornerShape(12.dp)))
+            }
+            
+            Column(Modifier.align(Alignment.BottomStart).padding(12.dp)) {
+                Text(episode.title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(" ", color = ColorGoldMain, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+            
+            if (episode.progress > 0f && !episode.hasWatched) {
+                Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(3.dp).background(Color.White.copy(0.2f))) {
+                    Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(ColorGoldMain))
+                }
+            }
+            
+            if (episode.hasWatched) {
+                Box(Modifier.align(Alignment.TopEnd).padding(8.dp).size(20.dp).background(Color(0xFF32D74B), CircleShape), contentAlignment = Alignment.Center) {
+                    Text("✓", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Black)
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// ███  SEASON EPISODES POPUP — Premium Cinematic Full-Screen Overlay  ███
+// ═══════════════════════════════════════════════════════════════════════
+
+@Composable
+fun SeasonEpisodesPopup(
+    seasonNumber: Int,
+    episodes: List<Episode>,
+    isLoading: Boolean,
+    backdropUrl: String,
+    onEpisodeClick: (Episode) -> Unit,
+    onPlayEpisode: (Episode) -> Unit,
+    onMarkSeasonWatched: () -> Unit,
+    onMarkSeasonUnwatched: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val firstEpFR = remember { FocusRequester() }
+    var focusedEpisode by remember { mutableStateOf<Episode?>(null) }
+    val displayEpisode = focusedEpisode ?: episodes.firstOrNull()
+    val allWatched = remember(episodes) { episodes.isNotEmpty() && episodes.all { it.hasWatched } }
+
+    // Auto-focus first episode when popup opens with a robust retry mechanism
+    LaunchedEffect(seasonNumber, episodes, isLoading) {
+        if (episodes.isNotEmpty() && !isLoading) {
+            var attempts = 0
+            while (attempts < 10) { // Try for up to 1 second
+                delay(100)
+                try {
+                    firstEpFR.requestFocus()
+                    break // Success!
+                } catch (e: Exception) {
+                    attempts++
+                }
+            }
+        }
+    }
+
+    // ── Full-Screen Overlay ──
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(0.4f)) // Let the vibrant popup stand out
+            .zIndex(90f)
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyUp && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    onDismiss()
+                    true
+                } else false
+            }
+    ) {
+        // ── Vibrant Aurora Cinematic Backdrop ──
+        val bgUrl = (displayEpisode?.stillUrl?.toOriginalTmdb())?.takeIf { it.isNotBlank() } ?: backdropUrl
+        androidx.compose.animation.Crossfade(
+            targetState = bgUrl,
+            animationSpec = androidx.compose.animation.core.tween(1000),
+            label = "ep_bg"
+        ) { url ->
+            AsyncImage(
+                model = url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().alpha(1f).blur(80.dp) // Massive vibrant aurora effect
+            )
+        }
+
+        // Sleek Sapphire Glass Overlay (highly transparent to let colors bleed through)
+        Box(Modifier.fillMaxSize().background(Brush.verticalGradient(
+            colors = listOf(
+                Color(0xFF070B19).copy(0.5f), // Very translucent top
+                Color(0xFF0B1021).copy(0.65f), // Rich sapphire middle
+                Color(0xFF03050A).copy(0.9f)  // Darker bottom for deep contrast
+            )
+        )))
+
+        Row(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 36.dp),
+            horizontalArrangement = Arrangement.spacedBy(32.dp)
+        ) {
+            // ═══ RIGHT PANEL (RTL): Massive Preview in Glass Card ═══
+            Column(
+                modifier = Modifier.weight(0.65f).fillMaxHeight()
+                    .background(Color.White.copy(0.03f), RoundedCornerShape(32.dp))
+                    .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(32.dp))
+                    .padding(40.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                displayEpisode?.let { ep ->
+                    androidx.compose.animation.Crossfade(
+                        targetState = ep,
+                        animationSpec = androidx.compose.animation.core.tween(400),
+                        label = "ep_preview"
+                    ) { previewEp ->
+                        Column {
+                            // Massive Episode Image
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .aspectRatio(16f / 9f)
+                                    .clip(RoundedCornerShape(24.dp))
+                                    .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(24.dp))
+                            ) {
+                                if (previewEp.stillUrl.isNotBlank()) {
+                                    AsyncImage(
+                                        model = previewEp.stillUrl.toOriginalTmdb(),
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } else {
+                                    Box(Modifier.fillMaxSize().background(Color(0xFF1A1C29)))
+                                }
+                                
+                                // Progress Bar Overlay
+                                if (previewEp.progress > 0f) {
+                                    Box(
+                                        Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(6.dp)
+                                            .background(Color.Black.copy(0.6f))
+                                    ) {
+                                        Box(
+                                            Modifier.fillMaxWidth(previewEp.progress).fillMaxHeight()
+                                                .background(Brush.horizontalGradient(listOf(ColorGoldMain, ColorGoldLight)))
+                                        )
+                                    }
+                                }
+                            }
+                            
+                            Spacer(Modifier.height(32.dp))
+                            
+                            // Typography-driven Info
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "${tr("EPISODE", "פרק")} ${previewEp.episodeNumber}",
+                                    color = ColorGoldMain,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 2.sp
+                                )
+                                if (previewEp.hasWatched) {
+                                    Spacer(Modifier.width(16.dp))
+                                    Box(
+                                        Modifier.background(ColorGoldMain.copy(0.2f), RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                                    ) {
+                                        Text(tr("WATCHED", "נצפה"), color = ColorGoldMain, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                            
+                            Spacer(Modifier.height(12.dp))
+                            
+                            Text(
+                                text = previewEp.title,
+                                color = Color.White,
+                                fontSize = 46.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                lineHeight = 52.sp
+                            )
+                            
+                            if (previewEp.overview.isNotBlank()) {
+                                Spacer(Modifier.height(16.dp))
+                                Text(
+                                    text = previewEp.overview,
+                                    color = Color.White.copy(0.65f),
+                                    fontSize = 20.sp,
+                                    lineHeight = 32.sp,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = FontWeight.Light
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ═══ LEFT PANEL (RTL): Text-Driven Minimalist List ═══
+            Column(
+                modifier = Modifier.weight(0.35f).fillMaxHeight()
+                    .background(Color.White.copy(0.03f), RoundedCornerShape(32.dp))
+                    .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(32.dp))
+                    .padding(32.dp)
+            ) {
+                // Header
+                Text(
+                    text = "${tr("SEASON", "עונה")} $seasonNumber",
+                    color = Color.White.copy(0.5f),
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Light,
+                    letterSpacing = 4.sp
+                )
+                Spacer(Modifier.height(24.dp))
+                
+                if (isLoading) {
+                    Box(Modifier.fillMaxSize(), Alignment.Center) {
+                        com.luminastreams.tv.ui.components.LoadingIndicator()
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize()
+                            .focusGroup()
+                            .focusRestorer { firstEpFR },
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp)
+                    ) {
+                        items(episodes.size, key = { episodes[it].id }) { idx ->
+                            val ep = episodes[idx]
+                            SeasonEpisodeTextRow(
+                                episode = ep,
+                                modifier = if (idx == 0) Modifier.focusRequester(firstEpFR) else Modifier,
+                                onFocused = { focusedEpisode = ep },
+                                onPlay = { onPlayEpisode(ep) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ═══ Minimalist Text-Driven Episode Row ═══
+@Composable
+private fun SeasonEpisodeTextRow(
+    episode: Episode,
+    modifier: Modifier = Modifier,
+    onFocused: () -> Unit,
+    onPlay: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    
+    Surface(
+        onClick = onPlay,
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)), // Perfect pill shape for smooth glow
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        colors = ClickableSurfaceDefaults.colors(
+            containerColor = Color.Transparent,
+            focusedContainerColor = ColorGoldMain,
+        ),
+        glow = ClickableSurfaceDefaults.glow(
+            focusedGlow = Glow(elevationColor = ColorGoldMain.copy(0.3f), elevation = 16.dp)
+        ),
+        modifier = modifier
+            .fillMaxWidth()
+            .onFocusChanged {
+                isFocused = it.isFocused
+                if (it.isFocused) onFocused()
+            }
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // Episode Number Badge
+            Text(
+                text = episode.episodeNumber.toString().padStart(2, '0'),
+                color = if (isFocused) Color.Black else Color.White.copy(0.3f),
+                fontSize = 24.sp,
+                fontWeight = FontWeight.Black
+            )
+            
+            Spacer(Modifier.width(20.dp))
+            
+            // Title
+            Text(
+                text = episode.title,
+                color = if (isFocused) Color.Black else Color.White.copy(0.9f),
+                fontSize = 20.sp,
+                fontWeight = if (isFocused) FontWeight.Black else FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            
+            // Play Icon or Watched Check
+            if (isFocused) {
+                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(28.dp))
+            } else if (episode.hasWatched) {
+                Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF32D74B), modifier = Modifier.size(24.dp))
+            }
+        }
+    }
+}
+
+data class ActorCreditItem(val year: Int, val title: String, val isSeries: Boolean, val backdropPath: String?, val id: Int)
+
+@Composable
+fun ActorDetailsPopup(
+    actorDetails: com.luminastreams.tv.data.api.TmdbPersonDetailsDto?,
+    isLoading: Boolean,
+    onDismiss: () -> Unit,
+    onMediaClick: (String) -> Unit = {}
+) {
+    val focusRequester = remember { FocusRequester() }
+
+    LaunchedEffect(isLoading, actorDetails) {
+        if (!isLoading) {
+            kotlinx.coroutines.delay(200)
+            runCatching { focusRequester.requestFocus() }
+        }
+    }
+
+    BackHandler { onDismiss() }
+
+    // Dim the background behind the modal
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(0.65f))
+            .zIndex(100f)
+            .clickable(remember { MutableInteractionSource() }, indication = null) { onDismiss() }
+            .onPreviewKeyEvent { ev ->
+                if (ev.type == KeyEventType.KeyUp && (ev.key == Key.Back || ev.key == Key.Escape)) {
+                    onDismiss()
+                    true
+                } else false
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (isLoading) {
+            LoadingIndicator()
+            return@Box
+        }
+
+        actorDetails?.let { actor ->
+            // Modal Container - Sleek and floating
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.85f)
+                    .fillMaxHeight(0.88f)
+                    .background(Color(0xFF0F0F13).copy(0.95f), RoundedCornerShape(32.dp))
+                    .border(1.dp, Color.White.copy(0.08f), RoundedCornerShape(32.dp))
+                    .clickable(remember { MutableInteractionSource() }, indication = null) {} // Prevent dismiss when clicking inside
+            ) {
+                // Subtle glowing background from the actor's profile picture
+                actor.profilePath?.let { path ->
+                    AsyncImage(
+                        model = "${Constants.IMAGE_ORIGINAL}$path",
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().alpha(0.08f).blur(80.dp).clip(RoundedCornerShape(32.dp))
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(48.dp),
+                    horizontalArrangement = Arrangement.spacedBy(48.dp)
+                ) {
+                    // RTL Right: Portrait (Fixed size to prevent it from looking gigantic)
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .aspectRatio(2f / 3f)
+                            .shadow(24.dp, RoundedCornerShape(24.dp))
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xFF1A1A24))
+                    ) {
+                        actor.profilePath?.let { path ->
+                            AsyncImage(
+                                model = "${Constants.IMAGE_ORIGINAL}$path",
+                                contentDescription = actor.name,
+                                contentScale = ContentScale.Crop,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        } ?: Box(Modifier.fillMaxSize(), Alignment.Center) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.White.copy(0.2f))
+                        }
+                    }
+
+                    // RTL Left: Info and Gallery
+                    Column(
+                        modifier = Modifier.weight(1f).fillMaxHeight()
+                    ) {
+                        // Header: Name and Badges
+                        Column {
+                            Text(
+                                text = actor.name,
+                                color = Color.White,
+                                fontSize = 56.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = (-1).sp
+                            )
+
+                            Spacer(Modifier.height(16.dp))
+
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                actor.birthday?.takeIf { it.isNotBlank() }?.let { bday ->
+                                    ActorBadgeOptimized(text = bday)
+                                }
+                                actor.placeOfBirth?.takeIf { it.isNotBlank() }?.let { place ->
+                                    ActorBadgeOptimized(text = place)
+                                }
+                                actor.deathday?.takeIf { it.isNotBlank() }?.let { dday ->
+                                    ActorBadgeOptimized(text = "Died: $dday", isDeath = true)
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(32.dp))
+
+                        // Biography
+                        val bioText = actor.biography ?: ""
+                        if (bioText.isNotBlank()) {
+                            Text(
+                                text = bioText,
+                                color = Color.White.copy(0.7f),
+                                fontSize = 18.sp,
+                                lineHeight = 28.sp,
+                                maxLines = 4,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = FontWeight.Normal
+                            )
+                        }
+
+                        Spacer(Modifier.height(24.dp))
+
+                        // Filmography List Grouped by Year
+                        val credits = actor.combinedCredits?.cast ?: emptyList()
+                        val parsedCredits = remember(credits) {
+                            credits.mapNotNull { dto ->
+                                val title = dto.title ?: dto.name ?: return@mapNotNull null
+                                val dateStr = dto.releaseDate ?: dto.firstAirDate ?: ""
+                                val year = dateStr.take(4).toIntOrNull() ?: 0
+                                val isSeries = dto.mediaType == "tv" || dto.firstAirDate != null
+                                ActorCreditItem(year, title, isSeries, dto.backdropPath ?: dto.posterPath, dto.id)
+                            }.sortedByDescending { it.year }.distinctBy { it.title }
+                        }
+                        
+                        val groupedByYear = remember(parsedCredits) {
+                            parsedCredits.groupBy { it.year }
+                        }
+
+                        if (groupedByYear.isNotEmpty()) {
+                            Text(
+                                text = tr("Filmography", "פילמוגרפיה"), 
+                                color = Color.White, 
+                                fontSize = 20.sp, 
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(Modifier.height(12.dp))
+                            
+                            LazyColumn(
+                                modifier = Modifier.focusGroup().focusRestorer { focusRequester }.fillMaxWidth().weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp),
+                                contentPadding = PaddingValues(end = 32.dp, bottom = 24.dp)
+                            ) {
+                                groupedByYear.forEach { (year, yearItems) ->
+                                    item {
+                                        val yearStr = if (year == 0) tr("Upcoming", "בקרוב") else year.toString()
+                                        Text(
+                                            text = yearStr,
+                                            color = ColorGoldMain,
+                                            fontSize = 20.sp,
+                                            fontWeight = FontWeight.Black,
+                                            modifier = Modifier.padding(top = 16.dp, bottom = 8.dp, start = 8.dp)
+                                        )
+                                    }
+                                    itemsIndexed(yearItems) { idx, credit ->
+                                        Surface(
+                                            onClick = {
+                                                val type = if (credit.isSeries) "tv" else "movie"
+                                                onMediaClick("${type}_${credit.id}")
+                                            },
+                                            scale = ClickableSurfaceDefaults.scale(focusedScale = 1.02f),
+                                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
+                                            colors = ClickableSurfaceDefaults.colors(
+                                                containerColor = Color.Transparent,
+                                                focusedContainerColor = Color.White.copy(0.1f)
+                                            ),
+                                            modifier = Modifier.fillMaxWidth()
+                                                .then(if (year == groupedByYear.keys.first() && idx == 0) Modifier.focusRequester(focusRequester) else Modifier)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp, horizontal = 12.dp)
+                                            ) {
+                                                Box(Modifier.size(6.dp).background(if (credit.isSeries) ColorGoldMain else Color.White.copy(0.4f), CircleShape))
+                                                Spacer(Modifier.width(16.dp))
+                                                Text(
+                                                    text = credit.title,
+                                                    color = Color.White,
+                                                    fontSize = 18.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis,
+                                                    modifier = Modifier.weight(1f, fill = false)
+                                                )
+                                                Spacer(Modifier.width(12.dp))
+                                                
+                                                if (credit.isSeries) {
+                                                    Box(
+                                                        modifier = Modifier.background(Color.White.copy(0.1f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(tr("Series", "סדרה"), color = Color.White.copy(0.7f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                    }
+                                                } else {
+                                                    Box(
+                                                        modifier = Modifier.background(Color.White.copy(0.05f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 2.dp)
+                                                    ) {
+                                                        Text(tr("Movie", "סרט"), color = Color.White.copy(0.4f), fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            Box(Modifier.size(1.dp).focusRequester(focusRequester).focusable())
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActorBadgeOptimized(text: String, isDeath: Boolean = false) {
+    Box(
+        modifier = Modifier
+            .background(if (isDeath) Color(0xFFFF3B30).copy(0.15f) else Color.White.copy(0.08f), RoundedCornerShape(8.dp))
+            .border(1.dp, if (isDeath) Color(0xFFFF3B30).copy(0.3f) else Color.White.copy(0.15f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 12.dp, vertical = 6.dp)
+    ) {
+        Text(
+            text = text, 
+            color = if (isDeath) Color(0xFFFF3B30) else Color.White.copy(0.85f), 
+            fontSize = 15.sp, 
+            fontWeight = FontWeight.SemiBold
+        )
     }
 }

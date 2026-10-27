@@ -2,7 +2,7 @@ package com.luminastreams.tv.presentation.home
 
 import com.luminastreams.tv.domain.model.Movie
 
-enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY, HBO, AMAZON, PARAMOUNT, HULU }
+enum class StudioBrand { NETFLIX, APPLE_TV, DISNEY, HBO, AMAZON, PARAMOUNT, HULU, SONY }
 
 sealed class RowDef {
     abstract val id: String
@@ -11,10 +11,14 @@ sealed class RowDef {
     object StudioRibbon : RowDef() { override val id = "ribbon" }
 }
 
+data class StudioCategory(val id: String, val titleEn: String, val titleHe: String, val movies: List<Movie>)
+
+data class CastMember(val name: String, val profileUrl: String?)
+
 data class HomeState(
     val isLoading:            Boolean      = true,
     val error:                String?      = null,
-    val selectedTab:          String       = "ראשי",
+    val selectedTab:          String       = "home",
     val selectedStudioFilter: String?      = null,
     // ── Continue Watching ──────────────────────────────────────────────────
     val continueWatching: List<Movie> = emptyList(),
@@ -33,6 +37,7 @@ data class HomeState(
     val movieAmazon:    List<Movie>  = emptyList(),
     val movieParamount: List<Movie>  = emptyList(),
     val movieHulu:      List<Movie>  = emptyList(),
+    val movieSony:      List<Movie>  = emptyList(),
     // ── TV Shows ────────────────────────────────────────────────────────────
     val tvTrending:     List<Movie>  = emptyList(),
     val tvPremieres:    List<Movie>  = emptyList(),
@@ -48,6 +53,7 @@ data class HomeState(
     val tvAmazon:       List<Movie>  = emptyList(),
     val tvParamount:    List<Movie>  = emptyList(),
     val tvHulu:         List<Movie>  = emptyList(),
+    val tvSony:         List<Movie>  = emptyList(),
     // ── Fuzer ───────────────────────────────────────────────────────────────
     val fuzerItems:           List<Movie>  = emptyList(),
     val fuzerMovies:          List<Movie>  = emptyList(),
@@ -68,10 +74,14 @@ data class HomeState(
     val selectedGenreName: String       = "",
     val discoveryResults:  List<Movie>  = emptyList(),
     val focusedItem:       Movie?       = null,
+    // ── Dynamic Studio Categories ───────────────────────────────────────────
+    val isStudioLoading:        Boolean                = false,
+    val activeStudioCategories: List<StudioCategory>   = emptyList(),
+    val activeStudioError:      String?                = null,
     // ── Hero Enrichment (fetched on hero change) ─────────────────────────
     val heroLogoUrl:       String?      = null,
     val heroRuntime:       Int?         = null,
-    val heroCast:          List<String> = emptyList(),
+    val heroCast:          List<CastMember> = emptyList(),
     val heroOverview:      String?      = null,   // localized synopsis (Hebrew/English)
     val heroGenre:         String?      = null,   // localized genre names
     val heroEnrichedId:    String?      = null   // prevents duplicate API calls

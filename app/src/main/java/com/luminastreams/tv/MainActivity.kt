@@ -20,6 +20,9 @@ import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -59,25 +62,37 @@ import com.luminastreams.tv.presentation.iptv.IptvScreen
 import com.luminastreams.tv.presentation.iptv.IptvViewModel
 import com.luminastreams.tv.presentation.player.IptvPlayerScreen
 import com.luminastreams.tv.presentation.player.PlayerScreen
+import com.luminastreams.tv.presentation.player.PlayerViewModel
 import com.luminastreams.tv.presentation.search.SearchScreen
 import com.luminastreams.tv.presentation.search.SearchViewModel
 import com.luminastreams.tv.presentation.settings.SettingsScreen
 import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
+import com.luminastreams.tv.presentation.auth.*
 import com.luminastreams.tv.ui.theme.LuminaTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
 
-private const val FORCED_DENSITY_DPI = 190
+private const val FORCED_DENSITY_DPI = 180
 
 class MainActivity : ComponentActivity() {
 
 
 
     override fun attachBaseContext(newBase: Context) {
+        // WSA (Windows Subsystem for Android) uses a different display pipeline.
+        // Forcing 180 DPI collapses the Column weights to ~0px on WSA, causing
+        // the entire content area (hero + rows) to be invisible.
+        // Confirmed from logcat: Build.HARDWARE = "windows_x86_64" on WSA.
+        val hw = Build.HARDWARE.lowercase()
+        val isWsa = hw.contains("windows")
+                || Build.MANUFACTURER.contains("Microsoft", ignoreCase = true)
+                || Build.MODEL.contains("Subsystem", ignoreCase = true)
+                || Build.BRAND.contains("Windows", ignoreCase = true)
+
         val dm = newBase.resources.displayMetrics
-        if (dm.densityDpi != FORCED_DENSITY_DPI) {
+        if (!isWsa && dm.densityDpi != FORCED_DENSITY_DPI) {
             val config = Configuration(newBase.resources.configuration)
             config.densityDpi = FORCED_DENSITY_DPI
             val scaled = newBase.createConfigurationContext(config)
@@ -109,12 +124,22 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
     }
+
+    override fun onResume() {
+        super.onResume()
+        // ⚡ Force immediate token refresh via the centralized TokenKeeper
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
+            } catch (_: Exception) {}
+        }
+    }
 }
 
 @Composable
 fun LuminaAppShell() {
     val context = LocalContext.current
-    val prefs = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+    val prefs = remember { context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE) }
 
     var appLang by remember { mutableStateOf(prefs.getString("app_lang", "he") ?: "he") }
 
@@ -126,6 +151,21 @@ fun LuminaAppShell() {
         }
         prefs.registerOnSharedPreferenceChangeListener(listener)
         onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
+
+    // ⚡ Listen for Real-Debrid credential wipe events and alert the user immediately
+    LaunchedEffect(Unit) {
+        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.authEvents.collect { event ->
+            when (event) {
+                is com.luminastreams.tv.domain.usecase.RdAuthEvent.CredentialsWiped -> {
+                    android.widget.Toast.makeText(
+                        context,
+                        "⚠ Real-Debrid התנתק — יש להתחבר מחדש בהגדרות",
+                        android.widget.Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
     }
 
     val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
@@ -243,18 +283,24 @@ fun AppNavHostContainer(
             val imdbId      = back.arguments?.getString("imdbId") ?: "_"
             val title       = URLDecoder.decode(back.arguments?.getString("title") ?: "", "UTF-8")
             val backdropUrl = URLDecoder.decode(back.arguments?.getString("backdropUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
+            val posterUrl   = URLDecoder.decode(back.arguments?.getString("posterUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
             val logoUrl     = URLDecoder.decode(back.arguments?.getString("logoUrl") ?: "", "UTF-8").let { if (it == "none") "" else it }
             val playerFullId = URLDecoder.decode(back.arguments?.getString("fullId") ?: "", "UTF-8")
 
             if (videoUrl.isNotBlank()) {
+                val vm: PlayerViewModel = viewModel(
+                    factory = ViewModelProvider.AndroidViewModelFactory.getInstance(application)
+                )
                 PlayerScreen(
                     videoUrl       = videoUrl,
                     imdbId         = if (imdbId == "_") "" else imdbId,
                     title          = title,
                     backdropUrl    = backdropUrl,
+                    posterUrl      = posterUrl,
                     logoUrl        = logoUrl,
                     fullId         = playerFullId,
-                    onNavigateBack = { navController.popBackStack() }
+                    onNavigateBack = { navController.popBackStack() },
+                    viewModel      = vm
                 )
             }
         }
@@ -357,6 +403,24 @@ fun AppNavHostContainer(
                 initialChannelUrl = streamUrl,
                 viewModel = vm,
                 onBackPressed = { navController.popBackStack() }
+            )
+        }
+
+        composable("auth") {
+            val app = LocalContext.current.applicationContext as com.luminastreams.tv.core.LuminaApp
+            val vm: AuthViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                        @Suppress("UNCHECKED_CAST")
+                        return AuthViewModel(app.authRepository, app.syncManager) as T
+                    }
+                }
+            )
+            val state = vm.state.collectAsStateWithLifecycle().value
+            AuthScreen(
+                state = state,
+                onEvent = vm::onEvent,
+                onSuccess = { navController.popBackStack() }
             )
         }
     }

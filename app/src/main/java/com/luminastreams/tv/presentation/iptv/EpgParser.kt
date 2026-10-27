@@ -3,17 +3,18 @@ package com.luminastreams.tv.presentation.iptv
 
 import android.util.Log
 import android.util.Xml
+import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.data.local.iptv.EpgProgramEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.xmlpull.v1.XmlPullParser
 import java.io.InputStream
-import java.net.HttpURLConnection
-import java.net.URL
 import java.text.SimpleDateFormat
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
-import kotlinx.coroutines.CancellationException
 
 object EpgParser {
     private const val TAG = "EpgParser"
@@ -30,35 +31,25 @@ object EpgParser {
     ) = withContext(Dispatchers.IO) {
 
         Log.d(TAG, "Starting EPG Download: $epgUrl")
-        var currentUrl = epgUrl
-        var conn: HttpURLConnection? = null
-        var redirects = 0
+        val client = TrustedHttpClient.builder()
+            .connectTimeout(20, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .followRedirects(true)
+            .build()
 
-        while (redirects < 5) {
-            conn = URL(currentUrl).openConnection() as HttpURLConnection
-            conn.connectTimeout = 20_000
-            conn.readTimeout = 60_000
-            conn.instanceFollowRedirects = false
+        val request = Request.Builder()
+            .url(epgUrl)
+            .header("User-Agent", "VLC/3.0.0")
+            .header("Accept-Encoding", "gzip")
+            .build()
 
-            conn.setRequestProperty("User-Agent", "VLC/3.0.0")
-            conn.setRequestProperty("Accept-Encoding", "gzip")
-
-            val status = conn.responseCode
-            if (status in 300..399) {
-                currentUrl = conn.getHeaderField("Location") ?: currentUrl
-                conn.disconnect()
-                redirects++
-            } else {
-                break
-            }
-        }
-
+        val response = client.newCall(request).execute()
         var inputStream: InputStream? = null
 
         try {
-            if (conn!!.responseCode !in 200..299) return@withContext
+            if (!response.isSuccessful) return@withContext
 
-            var baseStream = conn.inputStream
+            var baseStream: InputStream = response.body.byteStream()
             if (!baseStream.markSupported()) baseStream = baseStream.buffered()
             baseStream.mark(2)
             val b1 = baseStream.read()
@@ -180,7 +171,7 @@ object EpgParser {
             Log.e(TAG, "Critical Error parsing EPG", e)
         } finally {
             try { inputStream?.close() } catch (_: Exception) {}
-            conn?.disconnect()
+            response.close()
         }
     }
 

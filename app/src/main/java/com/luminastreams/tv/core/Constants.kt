@@ -10,6 +10,10 @@ object Constants {
     const val TMDB_API_KEY  = "9ab4a284f0c028007b78925852196b79"
     const val TMDB_BASE_URL = "https://api.themoviedb.org/3/"
 
+    // ── OMDB ─────────────────────────────────────────────────────────────────
+    const val OMDB_API_KEY  = "e61dc86b"
+    const val OMDB_BASE_URL = "https://www.omdbapi.com/"
+
     // ── Image base URLs ───────────────────────────────────────────────────────
     const val IMAGE_W300     = "https://image.tmdb.org/t/p/w300"
     const val IMAGE_W342     = "https://image.tmdb.org/t/p/w342"
