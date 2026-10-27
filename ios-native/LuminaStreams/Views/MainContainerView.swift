@@ -54,65 +54,26 @@ struct MainContainerView: View {
     private let clockTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        GeometryReader { proxy in
-            let isLandscape = proxy.size.width > proxy.size.height
-            let isPad = UIDevice.current.userInterfaceIdiom == .pad
+        NavigationStack {
+            ZStack {
+                LuminaTheme.blackBg.ignoresSafeArea()
 
-            NavigationStack {
-                ZStack(alignment: .top) {
-                    LuminaTheme.blackBg.ignoresSafeArea()
-
-                    // Main Content Area
-                    Group {
-                        switch activeSection {
-                        case .home:
-                            HomeView(
-                                viewModel: homeVM,
-                                tabMode: "home",
-                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                            )
-                        case .movies:
-                            HomeView(
-                                viewModel: homeVM,
-                                tabMode: "movies",
-                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                            )
-                        case .series:
-                            HomeView(
-                                viewModel: homeVM,
-                                tabMode: "series",
-                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                            )
-                        case .fuzer:
-                            FuzerView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                        case .iptv:
-                            IptvView()
-                        case .debrid:
-                            DebridCloudView()
-                        case .watchlist:
-                            WatchlistView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                        case .search:
-                            SearchView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                        case .settings:
-                            SettingsView()
-                        }
+                // Content View wrapped cleanly with safeAreaInset for the top bar
+                contentView
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        ps5TopBar
                     }
-                    .padding(.top, isLandscape ? 64 : (isPad ? 74 : 100))
-
-                    // Safe PS5 Top Bar with Dynamic Island Avoidance
-                    ps5TopBar(isLandscape: isLandscape, isPad: isPad)
-                }
-                .navigationDestination(
-                    isPresented: Binding(
-                        get: { selectedMediaId != nil },
-                        set: { if !$0 { selectedMediaId = nil } }
-                    )
-                ) {
-                    if let mediaId = selectedMediaId {
-                        DetailsView(fullId: mediaId, onNavigateMedia: { newId in
-                            selectedMediaId = newId
-                        })
-                    }
+            }
+            .navigationDestination(
+                isPresented: Binding(
+                    get: { selectedMediaId != nil },
+                    set: { if !$0 { selectedMediaId = nil } }
+                )
+            ) {
+                if let mediaId = selectedMediaId {
+                    DetailsView(fullId: mediaId, onNavigateMedia: { newId in
+                        selectedMediaId = newId
+                    })
                 }
             }
         }
@@ -120,45 +81,79 @@ struct MainContainerView: View {
         .onReceive(clockTimer) { _ in updateClock() }
     }
 
-    // ── Safe PS5 Top Bar (Clean Dynamic Island Clearance & No Text Wrap) ────
+    // ── Active Content View ─────────────────────────────────────────────────
     @ViewBuilder
-    private func ps5TopBar(isLandscape: Bool, isPad: Bool) -> some View {
-        VStack(spacing: 0) {
-            if isLandscape || isPad {
-                // Horizontal Single-Row Layout (Landscape / iPad)
-                HStack(spacing: 14) {
+    private var contentView: some View {
+        switch activeSection {
+        case .home:
+            HomeView(
+                viewModel: homeVM,
+                tabMode: "home",
+                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+            )
+        case .movies:
+            HomeView(
+                viewModel: homeVM,
+                tabMode: "movies",
+                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+            )
+        case .series:
+            HomeView(
+                viewModel: homeVM,
+                tabMode: "series",
+                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+            )
+        case .fuzer:
+            FuzerView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+        case .iptv:
+            IptvView()
+        case .debrid:
+            DebridCloudView()
+        case .watchlist:
+            WatchlistView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+        case .search:
+            SearchView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+        case .settings:
+            SettingsView()
+        }
+    }
+
+    // ── PS5 Top Bar with Pure Native Safe-Area Placement ────────────────────
+    private var ps5TopBar: some View {
+        ViewThatFits(in: .horizontal) {
+            // Option 1: Horizontal Layout (Landscape or iPad)
+            HStack(spacing: 12) {
+                brandLogoView
+                Spacer(minLength: 8)
+                actionButtonsScrollView
+                Spacer(minLength: 8)
+                liveClockView
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+
+            // Option 2: 2-Row Layout (iPhone Portrait)
+            VStack(spacing: 8) {
+                HStack {
                     brandLogoView
-                    Spacer(minLength: 12)
-                    actionButtonsScrollView
-                    Spacer(minLength: 12)
+                    Spacer()
                     liveClockView
                 }
-                .padding(.horizontal, isLandscape ? 48 : 24)
-                .padding(.vertical, 8)
-            } else {
-                // 2-Row Vertical Layout (iPhone Portrait - Clears Dynamic Island & Prevents Cramping)
-                VStack(spacing: 8) {
-                    HStack {
-                        brandLogoView
-                        Spacer()
-                        liveClockView
-                    }
-                    .padding(.horizontal, 16)
+                .padding(.horizontal, 16)
 
-                    actionButtonsScrollView
-                        .padding(.horizontal, 10)
-                }
-                .padding(.top, 4)
-                .padding(.bottom, 8)
+                actionButtonsScrollView
+                    .padding(.horizontal, 8)
             }
-
-            Divider().background(Color.white.opacity(0.08))
+            .padding(.top, 4)
+            .padding(.bottom, 8)
         }
         .background(
             LuminaTheme.blackBg.opacity(0.96)
                 .background(.ultraThinMaterial)
-                .ignoresSafeArea(edges: .top)
         )
+        .overlay(alignment: .bottom) {
+            Divider().background(Color.white.opacity(0.08))
+        }
     }
 
     private var brandLogoView: some View {
