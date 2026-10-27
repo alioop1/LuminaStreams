@@ -45,15 +45,13 @@ jobs:
             CODE_SIGN_IDENTITY="" \
             DEVELOPMENT_TEAM="" 2>&1 | tee build_output.log
 
-      - name: Show build error log on failure
-        if: failure()
-        run: |
-          if [ -f build_output.log ]; then
-            echo "=== XCODEBUILD ERROR LOG (LAST 100 LINES) ==="
-            tail -n 100 build_output.log
-            echo "=== ERRORS AND WARNINGS ==="
-            grep -E "error:|warning:" build_output.log || true
-          fi
+      - name: Upload Build Log Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Xcodebuild-Log
+          path: build_output.log
+          retention-days: 5
 
       - name: Package .app into LuminaStreams.ipa
         run: |
