@@ -33,6 +33,7 @@ jobs:
 
       - name: Build Native iOS Archive (Unsigned)
         run: |
+          set -o pipefail
           xcodebuild -project ios-native/LuminaStreams.xcodeproj \
             -scheme LuminaStreams \
             -configuration Release \
@@ -42,7 +43,17 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" 2>&1 | tee build_output.log
+
+      - name: Show build error log on failure
+        if: failure()
+        run: |
+          if [ -f build_output.log ]; then
+            echo "=== XCODEBUILD ERROR LOG (LAST 100 LINES) ==="
+            tail -n 100 build_output.log
+            echo "=== ERRORS AND WARNINGS ==="
+            grep -E "error:|warning:" build_output.log || true
+          fi
 
       - name: Package .app into LuminaStreams.ipa
         run: |
