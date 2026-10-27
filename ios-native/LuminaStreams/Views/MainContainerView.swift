@@ -98,10 +98,17 @@ struct MainContainerView: View {
                 // ── PS5 Top Navigation Bar (Matches HomeNavigation.kt) ──────
                 ps5TopBar
             }
-            .navigationDestination(item: $selectedMediaId) { mediaId in
-                DetailsView(fullId: mediaId, onNavigateMedia: { newId in
-                    selectedMediaId = newId
-                })
+            .navigationDestination(
+                isPresented: Binding(
+                    get: { selectedMediaId != nil },
+                    set: { if !$0 { selectedMediaId = nil } }
+                )
+            ) {
+                if let mediaId = selectedMediaId {
+                    DetailsView(fullId: mediaId, onNavigateMedia: { newId in
+                        selectedMediaId = newId
+                    })
+                }
             }
         }
         .onAppear { updateClock() }

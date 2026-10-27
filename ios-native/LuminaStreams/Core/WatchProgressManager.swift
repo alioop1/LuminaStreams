@@ -91,7 +91,7 @@ final class WatchProgressManager: ObservableObject {
         persist()
     }
 
-    func getProgress(key: String) -> WatchProgressEntry? {
+    func getProgress(_ key: String) -> WatchProgressEntry? {
         entries[key]
     }
 
