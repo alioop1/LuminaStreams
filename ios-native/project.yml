@@ -3,7 +3,8 @@ options:
   bundleIdPrefix: com.luminastreams
   deploymentTarget:
     iOS: "16.0"
-  xcodeVersion: "15.0"
+  xcodeVersion: "14.3"
+  objectVersion: 56
   generateEmptyDirectories: true
 
 settings:

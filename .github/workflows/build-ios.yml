@@ -27,7 +27,9 @@ jobs:
 
       - name: Generate Xcode Project from project.yml
         working-directory: ios-native
-        run: xcodegen generate
+        run: |
+          xcodegen generate
+          sed -i '' 's/objectVersion = 77;/objectVersion = 56;/g' LuminaStreams.xcodeproj/project.pbxproj
 
       - name: Build Native iOS Archive (Unsigned)
         run: |
