@@ -170,8 +170,8 @@ struct HomeView: View {
 
                     Text("|").foregroundColor(.white.opacity(0.25))
 
-                    if let year = hero.year, !year.isEmpty {
-                        Text(year).font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
+                    if hero.year > 0 {
+                        Text("\(hero.year)").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
                         Text("|").foregroundColor(.white.opacity(0.25))
                     }
 
