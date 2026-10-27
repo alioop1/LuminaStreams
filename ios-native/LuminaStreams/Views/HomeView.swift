@@ -5,6 +5,11 @@ struct HomeView: View {
     let tabMode: String // "home", "movies", "series"
     let onSelectMedia: (Movie) -> Void
     @EnvironmentObject var settings: SettingsManager
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
 
     private let heroTimer = Timer.publish(every: 8, on: .main, in: .common).autoconnect()
 
@@ -17,21 +22,18 @@ struct HomeView: View {
     }
 
     var body: some View {
-        GeometryReader { proxy in
-            let isLandscape = proxy.size.width > proxy.size.height
+        ScrollView(.vertical, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 20) {
+                
+                // ── 1. Hero Spotlight (1:1 Android TV BackdropLayer & HeroOverlay) ───
+                if viewModel.selectedStudio == nil {
+                    heroSection(isLandscape: isLandscape)
+                }
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 20) {
-                    
-                    // ── 1. Hero Spotlight (1:1 Android TV BackdropLayer & HeroOverlay) ───
-                    if !viewModel.heroItems.isEmpty && viewModel.selectedStudio == nil {
-                        heroSection(isLandscape: isLandscape)
-                    }
-
-                    // ── 2. Studio Filter Bar (Android TV StudioRibbonRow) ────────────────
-                    if tabMode == "movies" || tabMode == "series" || tabMode == "home" {
-                        studioRibbonBar
-                    }
+                // ── 2. Studio Filter Bar (Android TV StudioRibbonRow) ────────────────
+                if tabMode == "movies" || tabMode == "series" || tabMode == "home" {
+                    studioRibbonBar
+                }
 
                     // ── 3. Content Rows ──────────────────────────────────────────────────
                     if viewModel.isLoading {
@@ -75,7 +77,6 @@ struct HomeView: View {
                     Spacer(minLength: 40)
                 }
             }
-        }
         .refreshable {
             await viewModel.loadAllContent()
         }
@@ -90,9 +91,10 @@ struct HomeView: View {
     // ── 1:1 Hero Banner with Directional RTL Gradients, Accent Line, and Cast Avatars ───
     @ViewBuilder
     private func heroSection(isLandscape: Bool) -> some View {
-        let hero = viewModel.heroItems[min(viewModel.heroIndex, max(0, viewModel.heroItems.count - 1))]
+        if !viewModel.heroItems.isEmpty {
+            let hero = viewModel.heroItems[min(viewModel.heroIndex, max(0, viewModel.heroItems.count - 1))]
 
-        ZStack(alignment: .bottomLeading) {
+            ZStack(alignment: .bottomLeading) {
             // Backdrop Image
             AsyncImage(url: URL(string: hero.backdropUrl.isEmpty ? hero.posterUrl : hero.backdropUrl)) { phase in
                 switch phase {
@@ -218,7 +220,8 @@ struct HomeView: View {
                         .padding(.vertical, 9)
                         .background(Color.white)
                         .clipShape(Capsule())
-                        .shadow(color: Color.white.opacity(0.35), radius: 8)
+                        .contentShape(Capsule())
+                        .shadow(color: Color.black.opacity(0.3), radius: 4, x: 0, y: 2)
                     }
 
                     // Carousel Dots
@@ -237,7 +240,36 @@ struct HomeView: View {
             .padding(.horizontal, 16)
             .padding(.bottom, 12)
         }
+    } else {
+        // Stable placeholder so studio ribbon and content never jump!
+        ZStack(alignment: .bottomLeading) {
+            Rectangle()
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0x14/255, green: 0x14/255, blue: 0x18/255),
+                            Color(red: 0x06/255, green: 0x06/255, blue: 0x08/255)
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
+                )
+                .frame(height: isLandscape ? 240 : 340)
+
+            VStack(alignment: .leading, spacing: 8) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.white.opacity(0.08))
+                    .frame(width: 180, height: 22)
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(Color.white.opacity(0.05))
+                    .frame(width: 120, height: 14)
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 24)
+        }
+        .frame(height: isLandscape ? 240 : 340)
     }
+}
 
     // ── Studio Ribbon Bar (TMDB High-Res Logos with Brand Gradients) ───────
     private var studioRibbonBar: some View {
@@ -269,12 +301,12 @@ struct HomeView: View {
                             .background(
                                 LinearGradient(colors: [LuminaTheme.hexColor(0x050A14), LuminaTheme.hexColor(0x152238)], startPoint: .topLeading, endPoint: .bottomTrailing)
                             )
-                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 12)
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
                                     .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: isSelected ? 2 : 1)
                             )
-                            .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
+                            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     .buttonStyle(.plain)
                 }
@@ -301,12 +333,12 @@ struct HomeView: View {
                 }
             }
             .frame(width: 110, height: 50)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: isSelected ? 2 : 1)
             )
-            .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .buttonStyle(.plain)
     }

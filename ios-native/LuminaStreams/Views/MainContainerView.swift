@@ -47,9 +47,19 @@ struct MainContainerView: View {
     @EnvironmentObject var watchProgress: WatchProgressManager
     @StateObject private var homeVM = HomeViewModel()
 
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
     @State private var activeSection: LuminaSection = .home
     @State private var selectedMediaId: String? = nil
     @State private var currentTimeString: String = ""
+
+    private var isLandscape: Bool {
+        verticalSizeClass == .compact
+    }
+
+    private var isWideScreen: Bool {
+        UIDevice.current.userInterfaceIdiom == .pad || isLandscape
+    }
 
     private let clockTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -64,6 +74,8 @@ struct MainContainerView: View {
                         ps5TopBar
                     }
             }
+            .toolbar(.hidden, for: .navigationBar)
+            .navigationBarHidden(true)
             .navigationDestination(
                 isPresented: Binding(
                     get: { selectedMediaId != nil },
@@ -120,36 +132,39 @@ struct MainContainerView: View {
 
     // ── PS5 Top Bar with Pure Native Safe-Area Placement ────────────────────
     private var ps5TopBar: some View {
-        ViewThatFits(in: .horizontal) {
-            // Option 1: Horizontal Layout (Landscape or iPad)
-            HStack(spacing: 12) {
-                brandLogoView
-                Spacer(minLength: 8)
-                actionButtonsScrollView
-                Spacer(minLength: 8)
-                liveClockView
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-
-            // Option 2: 2-Row Layout (iPhone Portrait)
-            VStack(spacing: 8) {
-                HStack {
+        Group {
+            if isWideScreen {
+                // Horizontal Single-Row Layout (Landscape or iPad)
+                HStack(spacing: 12) {
                     brandLogoView
-                    Spacer()
+                    Spacer(minLength: 8)
+                    actionButtonsScrollView
+                    Spacer(minLength: 8)
                     liveClockView
                 }
                 .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+            } else {
+                // 2-Row Layout (iPhone Portrait) - 100% deterministic & immediate
+                VStack(spacing: 6) {
+                    HStack {
+                        brandLogoView
+                        Spacer()
+                        liveClockView
+                    }
+                    .padding(.horizontal, 16)
 
-                actionButtonsScrollView
-                    .padding(.horizontal, 8)
+                    actionButtonsScrollView
+                        .padding(.horizontal, 8)
+                }
+                .padding(.top, 4)
+                .padding(.bottom, 6)
             }
-            .padding(.top, 4)
-            .padding(.bottom, 8)
         }
         .background(
             LuminaTheme.blackBg.opacity(0.96)
                 .background(.ultraThinMaterial)
+                .ignoresSafeArea(edges: .top)
         )
         .overlay(alignment: .bottom) {
             Divider().background(Color.white.opacity(0.08))
@@ -201,18 +216,18 @@ struct MainContainerView: View {
                                     Circle()
                                         .stroke(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
                                 )
-                                .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
 
                             Image(systemName: section.icon)
                                 .font(.system(size: 15, weight: .semibold))
                                 .foregroundColor(isSelected ? .black : .white)
                         }
+                        .contentShape(Circle())
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(.horizontal, 4)
-            .padding(.vertical, 2)
+            .padding(.vertical, 4)
         }
     }
 
