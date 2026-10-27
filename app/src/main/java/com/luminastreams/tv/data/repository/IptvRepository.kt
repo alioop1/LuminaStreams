@@ -23,6 +23,8 @@ class IptvRepository(val dao: IptvDao) {
         dao.insertPlaylist(PlaylistEntity(playlistId, name, url, epgUrl, true, System.currentTimeMillis()))
         dao.clearChannels(playlistId)
 
+        // Stream each parsed batch straight into Room — never hold the whole playlist
+        // in memory (IPTV playlists can be 10k–100k channels → OutOfMemoryError on TV boxes).
         M3uParser.parseStreaming(playlistId, url) { batch ->
             dao.insertChannels(batch)
         }

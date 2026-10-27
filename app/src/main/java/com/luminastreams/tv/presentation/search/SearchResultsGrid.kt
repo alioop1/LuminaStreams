@@ -150,7 +150,6 @@ fun YearGroupedResults(
                     contentPadding = PaddingValues(horizontal = 48.dp),
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     modifier = Modifier.fillMaxWidth()
-                        .focusRestorer { rowFirstFR }
                 ) {
                     itemsIndexed(items, key = { _, r -> "${groupIdx}_${r.id}" }) { idx, result ->
                         MediaSearchCard(
@@ -193,7 +192,7 @@ fun SearchResultsGrid(
         verticalArrangement = Arrangement.spacedBy(18.dp),
         modifier = Modifier.fillMaxSize()
     ) {
-        itemsIndexed(results, key = { _, r -> r.id }) { idx, result ->
+        itemsIndexed(results, key = { idx, r -> "${r.id}_$idx" }) { idx, result ->
             MediaSearchCard(
                 result = result,
                 isFuzer = isFuzer,

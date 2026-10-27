@@ -20,7 +20,14 @@ object EpgParser {
     private const val TAG = "EpgParser"
     // SimpleDateFormat is NOT thread-safe — use ThreadLocal for coroutine IO dispatcher
     private val dateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyyMMddHHmmss Z", Locale.ENGLISH) }
-    private val fallbackDateFormat = ThreadLocal.withInitial { SimpleDateFormat("yyyyMMddHHmmss", Locale.ENGLISH) }
+    // Fallback format (no timezone in the source string). XMLTV convention is UTC when
+    // no offset is present — parsing in the device timezone would shift every program
+    // by the local UTC offset (e.g. Israel EPG times off by 2-3 hours).
+    private val fallbackDateFormat = ThreadLocal.withInitial {
+        SimpleDateFormat("yyyyMMddHHmmss", Locale.ENGLISH).apply {
+            timeZone = java.util.TimeZone.getTimeZone("UTC")
+        }
+    }
     private const val EPG_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000L // 7 Days
 
     suspend fun parseStreaming(
@@ -63,7 +70,10 @@ object EpgParser {
             }
 
             val parser = Xml.newPullParser()
-            parser.setInput(inputStream, "UTF-8")
+            // Passing null lets the parser honour the encoding declared in the XML
+            // header (windows-1255, iso-8859-8 for some Hebrew EPG providers, etc.),
+            // instead of always forcing UTF-8 and getting mojibake.
+            parser.setInput(inputStream, null)
 
             var eventType = parser.eventType
             val batch = mutableListOf<EpgProgramEntity>()
@@ -77,8 +87,8 @@ object EpgParser {
             var currentProgChannelId = ""
             var title = ""
             var desc = ""
-            var start = 0L
-            var stop = 0L
+            var start: Long? = null
+            var stop: Long? = null
 
             while (eventType != XmlPullParser.END_DOCUMENT) {
                 when (eventType) {
@@ -122,7 +132,7 @@ object EpgParser {
                             isInsideChannel = false
                             currentChannelId = ""
                         } else if (parser.name == "programme" && currentProgChannelId.isNotEmpty()) {
-                            if (stop > System.currentTimeMillis() - EPG_LOOKBACK_MS) {
+                            if (start != null && stop != null && stop!! > System.currentTimeMillis() - EPG_LOOKBACK_MS) {
                                 val mappedName = channelNamesMap[currentProgChannelId] ?: currentProgChannelId
 
                                 batch.add(
@@ -130,8 +140,8 @@ object EpgParser {
                                         channelId = mappedName,
                                         title = title.trim(),
                                         description = desc.trim(),
-                                        startTime = start,
-                                        endTime = stop,
+                                        startTime = start!!,
+                                        endTime = stop!!,
                                         posterUrl = "",
                                         category = ""
                                     )
@@ -175,15 +185,15 @@ object EpgParser {
         }
     }
 
-    private fun parseTime(timeStr: String?): Long {
-        if (timeStr.isNullOrBlank()) return 0L
+    internal fun parseTime(timeStr: String?): Long? {
+        if (timeStr.isNullOrBlank()) return null
         return try {
-            dateFormat.get()!!.parse(timeStr.trim())?.time ?: 0L
+            dateFormat.get()!!.parse(timeStr.trim())?.time
         } catch (e: Exception) {
             try {
-                fallbackDateFormat.get()!!.parse(timeStr.trim().take(14))?.time ?: 0L
+                fallbackDateFormat.get()!!.parse(timeStr.trim().take(14))?.time
             } catch (e2: Exception) {
-                0L
+                null
             }
         }
     }

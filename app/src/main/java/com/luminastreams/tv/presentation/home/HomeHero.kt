@@ -34,58 +34,123 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.core.DeviceProfile
 import com.luminastreams.tv.core.tr
 
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.material.icons.filled.PlayArrow
+import com.luminastreams.tv.presentation.details.BackgroundTrailerView
+import kotlinx.coroutines.delay
+
 private val TMDB_WIDTH_REGEX = Regex("/w\\d+/")
 
 @Composable
-fun BackdropLayer(hero: Movie?) {
+fun BackdropLayer(
+    hero: Movie?,
+    trailerKey: String? = null,
+    isNavFocused: Boolean = false,
+    onTrailerPlayingChanged: ((Boolean) -> Unit)? = null
+) {
     val ctx = LocalContext.current
     val heroUrl = (hero?.backdropUrl?.takeIf { it.isNotBlank() } ?: hero?.posterUrl)
         ?.replace(TMDB_WIDTH_REGEX, "/original/")
 
+    var isTrailerActive by remember(hero?.id) { mutableStateOf(false) }
+
+    // Start trailer ONLY if user stands on this card for >= 3.5s (smart debounce)
+    LaunchedEffect(hero?.id, trailerKey, isNavFocused) {
+        isTrailerActive = false
+        if (!trailerKey.isNullOrBlank() && !isNavFocused) {
+            val dwellTimeMs = if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 4000L else 3500L
+            delay(dwellTimeMs)
+            isTrailerActive = true
+        }
+    }
+
+    LaunchedEffect(isTrailerActive) {
+        onTrailerPlayingChanged?.invoke(isTrailerActive)
+    }
+
+    val backdropAlpha by animateFloatAsState(
+        targetValue = if (isTrailerActive) 0f else 1f,
+        animationSpec = tween(durationMillis = 1200),
+        label = "home_backdrop_alpha"
+    )
+
     Box(Modifier.fillMaxSize().background(BG)) {
-        if (!heroUrl.isNullOrBlank()) {
-            val heroRequest = remember(heroUrl) {
-                ImageRequest.Builder(ctx).data(heroUrl)
-                    .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
-                    .build()
+        // 1. Live Trailer Layer (Plays in background behind hero)
+        if (isTrailerActive && !trailerKey.isNullOrBlank() && !isNavFocused) {
+            key(trailerKey) {
+                BackgroundTrailerView(
+                    videoId = trailerKey,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .focusProperties { canFocus = false }
+                )
             }
-            AsyncImage(
-                model = heroRequest,
-                contentDescription = null,
-                contentScale = ContentScaleImport.Crop,
-                alignment = Alignment.TopCenter,
-                modifier = Modifier.fillMaxSize()
-            )
         }
 
+        // 2. High-res Backdrop Image (Smoothly fades out over 1.2s when trailer starts)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .alpha(backdropAlpha)
+        ) {
+            if (!heroUrl.isNullOrBlank()) {
+                val heroRequest = remember(heroUrl) {
+                    ImageRequest.Builder(ctx).data(heroUrl)
+                        .crossfade(if (DeviceProfile.tier == DeviceProfile.Tier.LOW) 0 else 500)
+                        .build()
+                }
+                AsyncImage(
+                    model = heroRequest,
+                    contentDescription = null,
+                    contentScale = ContentScaleImport.Crop,
+                    alignment = Alignment.TopCenter,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        }
+
+        // 3. Cinematic Gradients (Ensures Hebrew/RTL text & bottom card rows are ALWAYS 100% crisp)
         Canvas(modifier = Modifier.fillMaxSize()) {
             val h = size.height
-            
             val isRtl = layoutDirection == LayoutDirection.Rtl
 
             // Horizontal shadow behind text (Right side for RTL, Left side for LTR)
             drawRect(
                 brush = Brush.horizontalGradient(
-                    colors = if (isRtl) listOf(Color.Transparent, Color.Black.copy(alpha = 0.6f))
-                             else listOf(Color.Black.copy(alpha = 0.6f), Color.Transparent),
-                    startX = if (isRtl) size.width * 0.3f else 0f,
-                    endX = if (isRtl) size.width else size.width * 0.7f
+                    colors = if (isRtl) listOf(Color.Transparent, Color(0x33060608), Color(0xCC060608), Color(0xF5060608))
+                             else listOf(Color(0xF5060608), Color(0xCC060608), Color(0x33060608), Color.Transparent),
+                    startX = if (isRtl) size.width * 0.25f else 0f,
+                    endX = if (isRtl) size.width else size.width * 0.75f
                 )
             )
 
-            // Vertical vignette at the bottom
+            // Vertical vignette at the bottom (protects cards from video background)
             drawRect(
                 brush = Brush.verticalGradient(
                     colors = listOf(
                         Color.Transparent, 
-                        Color.Black.copy(alpha = 0.4f), 
-                        Color.Black.copy(alpha = 0.85f)
+                        Color.Black.copy(alpha = 0.35f), 
+                        Color.Black.copy(alpha = 0.85f),
+                        Color(0xFF060608)
                     ),
-                    startY = h * 0.4f,
+                    startY = h * 0.35f,
                     endY = h
                 )
             )
         }
+
+        // 4. Subtle Top Bar Vignette
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(110.dp)
+                .background(
+                    Brush.verticalGradient(
+                        listOf(Color.Black.copy(alpha = 0.75f), Color.Transparent)
+                    )
+                )
+        )
     }
 }
 
@@ -98,7 +163,8 @@ fun HeroOverlay(
     runtime: Int? = null,
     cast: List<CastMember> = emptyList(),
     localizedOverview: String? = null,
-    localizedGenre: String? = null
+    localizedGenre: String? = null,
+    isTrailerPlaying: Boolean = false
 ) {
     val ctx = LocalContext.current
     val align = Alignment.Start
@@ -179,8 +245,36 @@ fun HeroOverlay(
 
                         var needsSeparator = false
 
+                        // Trailer Active Badge
+                        if (isTrailerPlaying) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFFE50914))
+                                    .padding(horizontal = 7.dp, vertical = 2.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Text(
+                                    text = tr("TRAILER", "טריילר"),
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                            needsSeparator = true
+                        }
+
                         // Rating
                         if (m.rating > 0f) {
+                            if (needsSeparator) Separator()
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("★", color = Color.White, fontSize = 14.sp)
                                 Text(

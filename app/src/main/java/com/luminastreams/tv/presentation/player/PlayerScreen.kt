@@ -9,6 +9,7 @@ package com.luminastreams.tv.presentation.player
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
@@ -22,6 +23,7 @@ import androidx.compose.animation.core.tween
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
@@ -63,6 +65,7 @@ import androidx.core.content.edit
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.media3.common.C
 import androidx.media3.common.Format
+import androidx.media3.common.Player
 import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.CaptionStyleCompat
@@ -150,7 +153,7 @@ private val ATMOS_PURPLE = Color(0xFF7B2FBE)
 private val RES_GRAY     = Color(0xFF424242)
 private val POPUP_BG     = Color(0xE6141414)
 
-enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO, SPEED }
+enum class ActiveMenu { NONE, AUDIO, EMBEDDED_SUBS, WEB_SUBS, ASPECT_RATIO, SPEED, SYNC }
 
 @Composable
 fun PremiumLoadingOverlay(
@@ -253,16 +256,21 @@ fun VideoPlayerSurface(
             val surfaceView = android.view.SurfaceView(ctx).apply {
                 layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 keepScreenOn = true
-                addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-                    override fun onViewAttachedToWindow(v: android.view.View) {
-                        exo.player.setVideoSurfaceView(this@apply)
+                holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                    override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                        android.util.Log.d("LuminaSurface", "surfaceCreated: surface=${holder.surface}")
                         onSurfaceReady(true)
                     }
-                    override fun onViewDetachedFromWindow(v: android.view.View) {
+                    override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {}
+                    override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                        android.util.Log.d("LuminaSurface", "surfaceDestroyed")
                         onSurfaceReady(false)
-                        exo.player.clearVideoSurfaceView(this@apply)
                     }
                 })
+            }
+            exo.player.setVideoSurfaceView(surfaceView)
+            if (surfaceView.holder.surface?.isValid == true) {
+                onSurfaceReady(true)
             }
 
             val subtitleView = SubtitleView(ctx).apply {
@@ -430,6 +438,8 @@ fun PlayerScreen(
     val state            by viewModel.state.collectAsState()
     val exo              = remember { ExoPlayerWrapper(context) }
     val isPlaying        by exo.isPlaying.collectAsState()
+    val playbackState    by exo.playbackState.collectAsState()
+    val hasRenderedFirstFrame by exo.hasRenderedFirstFrame.collectAsState()
     val error            by exo.playerError.collectAsState()
     val currentTracks    by exo.currentTracks.collectAsState()
     val isDolbyVision    by exo.isDolbyVision.collectAsState()
@@ -439,7 +449,7 @@ fun PlayerScreen(
     var afrBannerText     by remember { mutableStateOf<String?>(null) }
 
     val afrEnabled = remember {
-        context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getBoolean("afr", false)
+        (context.applicationContext as com.luminastreams.tv.core.LuminaApp).settingsRepository.current().autoFrameRate
     }
 
     var selectedAspectRatio by remember { mutableStateOf(AspectRatioMode.NORMAL) }
@@ -516,9 +526,79 @@ fun PlayerScreen(
 
     LaunchedEffect(videoUrl, imdbId) { viewModel.loadMedia(videoUrl, imdbId, season, episode) }
 
-    LaunchedEffect(surfaceReady) {
-        if (surfaceReady && !prepared) {
+    // ── Subtitle sync: restore the per-title saved offset, and remember when the
+    //    current subtitle appeared so "sync to what I hear" can compute a delta. ──
+    val subtitleSyncKey = remember(imdbId, title) {
+        when {
+            imdbId.isNotBlank() -> "sub_$imdbId"
+            title.isNotBlank()  -> "sub_${title.lowercase().filter { it.isLetterOrDigit() }}"
+            else -> ""
+        }
+    }
+    LaunchedEffect(subtitleSyncKey) { SubtitleOffsetManager.restoreFor(context, subtitleSyncKey) }
+
+    val subtitleCues by exo.currentCues.collectAsState()
+    var lastCueShownAtMs by remember { mutableLongStateOf(0L) }
+    LaunchedEffect(subtitleCues) {
+        if (subtitleCues.any { !it.text.isNullOrBlank() }) lastCueShownAtMs = exo.player.currentPosition
+    }
+
+    // Apply a new offset and persist it for this title.
+    val applySubtitleOffset: (Long) -> Unit = { ms ->
+        SubtitleOffsetManager.setOffset(ms)
+        SubtitleOffsetManager.persist(context)
+    }
+    // "The audio for the subtitle on screen is happening now" — shift so they line up.
+    val syncSubtitleToDialogue: () -> Unit = {
+        if (lastCueShownAtMs > 0L) {
+            val delta = exo.player.currentPosition - lastCueShownAtMs
+            val snapped = (SubtitleOffsetManager.getOffset() + delta) / 50 * 50
+            applySubtitleOffset(snapped)
+        }
+    }
+
+    val applyWebSubtitleSafe: (String) -> Unit = { rawUrl ->
+        scope.launch(Dispatchers.IO) {
+            val localUrl = try {
+                if (rawUrl.startsWith("file://")) {
+                    rawUrl
+                } else {
+                    val client = okhttp3.OkHttpClient.Builder()
+                        .connectTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .readTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                        .build()
+                    val req = okhttp3.Request.Builder()
+                        .url(rawUrl)
+                        .header("User-Agent", "Mozilla/5.0")
+                        .build()
+                    client.newCall(req).execute().use { resp ->
+                        if (resp.isSuccessful) {
+                            val bytes = resp.body?.bytes()
+                            if (bytes != null && bytes.isNotEmpty()) {
+                                val ext = if (rawUrl.contains(".vtt", ignoreCase = true)) "vtt" else "srt"
+                                val subFile = java.io.File(context.cacheDir, "sub_${System.currentTimeMillis()}.$ext")
+                                subFile.writeBytes(bytes)
+                                "file://${subFile.absolutePath}"
+                            } else rawUrl
+                        } else rawUrl
+                    }
+                }
+            } catch (_: Exception) {
+                rawUrl
+            }
+            withContext(Dispatchers.Main) {
+                exo.applySubtitle(localUrl)
+                selectedWebSubUrl = rawUrl
+                subtitleApplied = true
+                pendingSubIndex = null
+            }
+        }
+    }
+
+    LaunchedEffect(videoUrl) {
+        if (videoUrl.isNotBlank() && !prepared) {
             prepared = true
+            android.util.Log.d("LuminaPlayer", "🎬 Preparing stream: $videoUrl (savedPosition=$savedPosition)")
 
             if (savedPosition > 30_000L) {
                 // Don't play yet — wait for resume dialog.
@@ -603,11 +683,16 @@ fun PlayerScreen(
         }
     }
 
-    LaunchedEffect(isPlaying) { if (isPlaying && !hasStartedPlaying) hasStartedPlaying = true }
+    LaunchedEffect(isPlaying, playbackState, hasRenderedFirstFrame) {
+        if ((isPlaying || playbackState == androidx.media3.common.Player.STATE_READY || hasRenderedFirstFrame) && !hasStartedPlaying) {
+            android.util.Log.d("LuminaPlayer", "🎉 hasStartedPlaying set to TRUE (isPlaying=$isPlaying, state=$playbackState, firstFrame=$hasRenderedFirstFrame)")
+            hasStartedPlaying = true
+        }
+    }
 
     LaunchedEffect(state.availableSubtitles) {
         if (state.availableSubtitles.isEmpty() || subtitleApplied) return@LaunchedEffect
-        val defLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("def_subs", "Hebrew") ?: "Hebrew"
+        val defLang = (context.applicationContext as com.luminastreams.tv.core.LuminaApp).settingsRepository.current().defaultSubtitles
         if (defLang == "None") return@LaunchedEffect
         val langCode = if (defLang == "Hebrew") "heb" else "eng"
         val idx = state.availableSubtitles.indexOfFirst { it.lang.contains(langCode, ignoreCase = true) }
@@ -624,36 +709,27 @@ fun PlayerScreen(
         if (idx >= subs.size) return@LaunchedEffect
 
         // ⚡ FIX: Do NOT apply subtitles while resume dialog is showing!
-        // applySubtitle() calls setMediaItem(item, currentPosition) — but currentPosition is 0
-        // when playWhenReady=false (player hasn't started yet), which DESTROYS the saved position.
         // Wait until the user has made their resume choice.
         while (showResumeDialog || (!resumeHandled && savedPosition > 30_000L)) {
             delay(300)
         }
 
-        repeat(60) {
-            if (exo.player.currentMediaItem != null) return@repeat
+        // ⚡ FIX: Wait until player is ACTUALLY READY or PLAYING before applying subtitles!
+        // Calling applySubtitle() resets the media item and codec. Doing this while the hardware
+        // codec is initializing causes a deadlock in Nvidia's HAL binder (error 1003).
+        var readyWaitCount = 0
+        while ((exo.player.playbackState != Player.STATE_READY && !isPlaying) && readyWaitCount < 60) {
             delay(300)
+            readyWaitCount++
         }
+        if (exo.player.playbackState != Player.STATE_READY && !isPlaying) return@LaunchedEffect
 
-        if (exo.player.currentMediaItem == null) return@LaunchedEffect
-        val langCode = if (context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("def_subs", "Hebrew") == "Hebrew") "heb" else "eng"
-
+        val langCode = if ((context.applicationContext as com.luminastreams.tv.core.LuminaApp).settingsRepository.current().defaultSubtitles == "Hebrew") "heb" else "eng"
         val bestSub = subs.firstOrNull { it.lang.contains(langCode, ignoreCase = true) }
 
         if (bestSub != null) {
-            delay(1500)
-            exo.applySubtitle(bestSub.url)
-
-            repeat(12) {
-                if (exo.subtitleApplied.value) return@repeat
-                delay(200)
-            }
-
-            if (exo.subtitleApplied.value) {
-                subtitleApplied   = true
-                selectedWebSubUrl = bestSub.url
-            }
+            delay(1000)
+            applyWebSubtitleSafe(bestSub.url)
         }
     }
 
@@ -681,6 +757,15 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Transparent)
+            .clickable(
+                interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                indication = null
+            ) {
+                if (activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
+                    showControls = !showControls
+                    if (showControls) resetHideControlsTimeout()
+                }
+            }
             .focusTarget()
             .onPreviewKeyEvent { event ->
                 if (event.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
@@ -694,7 +779,18 @@ fun PlayerScreen(
                 val isRepeat = event.nativeKeyEvent.repeatCount > 0
 
                 when (event.nativeKeyEvent.keyCode) {
-                    KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_ESCAPE -> false
+                    KeyEvent.KEYCODE_BACK -> false
+                    KeyEvent.KEYCODE_ESCAPE -> {
+                        if (isRepeat) return@onKeyEvent true
+                        when {
+                            showResumeDialog              -> showResumeDialog = false
+                            showNextEpisodeCard           -> { showNextEpisodeCard = false; nextEpCardDismissed = true }
+                            activeMenu != ActiveMenu.NONE -> activeMenu = ActiveMenu.NONE
+                            showControls                  -> showControls = false
+                            else                          -> { exo.pause(); onNavigateBack() }
+                        }
+                        true
+                    }
                     KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
                         if (isRepeat) return@onKeyEvent true
                         if (activeMenu == ActiveMenu.NONE && !showResumeDialog && !showNextEpisodeCard) {
@@ -709,7 +805,7 @@ fun PlayerScreen(
                             showControls = true; true
                         } else false
                     }
-                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE, KeyEvent.KEYCODE_SPACE -> {
                         if (isRepeat) return@onKeyEvent true
                         if (isPlaying) exo.pause() else exo.play()
                         showControls = true; true
@@ -1012,8 +1108,8 @@ fun PlayerScreen(
                         activeMenu = activeMenu, exo = exo, state = state,
                         selectedWebSubUrl = selectedWebSubUrl, selectedAspectRatio = selectedAspectRatio, sideMenuFR = sideMenuFR,
                         onApplySubtitle = { url ->
-                            exo.applySubtitle(url); selectedWebSubUrl = url
-                            subtitleApplied = true; pendingSubIndex = null; activeMenu = ActiveMenu.NONE
+                            applyWebSubtitleSafe(url)
+                            activeMenu = ActiveMenu.NONE
                         },
                         onApplyAspectRatio = { mode -> selectedAspectRatio = mode; activeMenu = ActiveMenu.NONE },
                         onClose = { activeMenu = ActiveMenu.NONE },
@@ -1022,7 +1118,9 @@ fun PlayerScreen(
                             playbackSpeed = speed
                             exo.player.playbackParameters = androidx.media3.common.PlaybackParameters(speed)
                             activeMenu = ActiveMenu.NONE
-                        }
+                        },
+                        onApplySubtitleOffset = applySubtitleOffset,
+                        onSyncSubtitleToDialogue = syncSubtitleToDialogue
                     )
                 }
 
@@ -1072,6 +1170,9 @@ fun PlayerScreen(
                             PlayerIconButton(Icons.Default.Speed, isActive = activeMenu == ActiveMenu.SPEED) {
                                 activeMenu = if (activeMenu == ActiveMenu.SPEED) ActiveMenu.NONE else ActiveMenu.SPEED
                             }
+                            PlayerIconButton(Icons.Default.AvTimer, isActive = activeMenu == ActiveMenu.SYNC) {
+                                activeMenu = if (activeMenu == ActiveMenu.SYNC) ActiveMenu.NONE else ActiveMenu.SYNC
+                            }
                         }
                     }
                 }
@@ -1117,7 +1218,9 @@ fun PlayerPopupMenu(
     selectedWebSubUrl: String?, selectedAspectRatio: AspectRatioMode,
     sideMenuFR: FocusRequester, onApplySubtitle: (String) -> Unit,
     onApplyAspectRatio: (AspectRatioMode) -> Unit, onClose: () -> Unit,
-    currentSpeed: Float, onApplySpeed: (Float) -> Unit
+    currentSpeed: Float, onApplySpeed: (Float) -> Unit,
+    onApplySubtitleOffset: (Long) -> Unit = { SubtitleOffsetManager.setOffset(it) },
+    onSyncSubtitleToDialogue: () -> Unit = {}
 ) {
     val currentTracks by exo.currentTracks.collectAsState()
     LaunchedEffect(activeMenu) { delay(50); runCatching { sideMenuFR.requestFocus() } }
@@ -1191,6 +1294,45 @@ fun PlayerPopupMenu(
                             title = "${speed}x", subtitle = if (speed == 1.0f) tr("Normal", "רגיל") else "", isSelected = speed == currentSpeed,
                             modifier = Modifier.then(if (index == 0) Modifier.focusRequester(sideMenuFR) else Modifier),
                             onClick = { onApplySpeed(speed) }
+                        )
+                    }
+                }
+            }
+            ActiveMenu.SYNC -> Column {
+                Text(tr("Subtitle Sync", "סנכרון כתוביות"), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 4.dp, start = 8.dp))
+                val currentOffset = SubtitleOffsetManager.offsetMs.collectAsState().value
+                Text(
+                    text = (if (currentOffset > 0) "+" else "") + "${currentOffset}ms",
+                    color = if (currentOffset == 0L) Color.White.copy(0.5f) else Color(0xFFE2B258),
+                    fontSize = 13.sp, modifier = Modifier.padding(bottom = 10.dp, start = 8.dp)
+                )
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.focusGroup()) {
+                    // "Tap when you hear the line" — nudges the offset so the subtitle now
+                    // on screen lines up with the audio the user is hearing right now.
+                    item {
+                        TrackItemCard(
+                            title = tr("Sync to what I hear", "סנכרן למה שאני שומע"),
+                            subtitle = tr("Press when the audio matches the subtitle on screen", "לחץ כשהדיאלוג תואם לכתובית"),
+                            isSelected = false,
+                            modifier = Modifier.focusRequester(sideMenuFR),
+                            onClick = { onSyncSubtitleToDialogue() }
+                        )
+                    }
+                    item {
+                        TrackItemCard(
+                            title = tr("Reset to 0", "אפס"), subtitle = "", isSelected = currentOffset == 0L,
+                            onClick = { onApplySubtitleOffset(0L) }
+                        )
+                    }
+                    val steps = listOf(-1000L, -500L, -250L, -100L, 100L, 250L, 500L, 1000L)
+                    items(steps.size) { i ->
+                        val step = steps[i]
+                        val sign = if (step > 0) "+" else ""
+                        TrackItemCard(
+                            title = "$sign${step}ms",
+                            subtitle = if (step > 0) tr("delay subtitles", "השהה כתוביות") else tr("advance subtitles", "הקדם כתוביות"),
+                            isSelected = false,
+                            onClick = { onApplySubtitleOffset(currentOffset + step) }
                         )
                     }
                 }

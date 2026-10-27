@@ -21,12 +21,20 @@ object FuzerEngine {
     private const val BASE     = "https://www.fuzer.xyz"
 
     private val cookieJar = object : CookieJar {
-        private val store = HashMap<String, MutableList<Cookie>>()
+        // OkHttp's dispatcher pool can invoke save/load concurrently from different
+        // threads. HashMap + MutableList is not thread-safe → ConcurrentModificationException.
+        private val store = java.util.concurrent.ConcurrentHashMap<String, MutableList<Cookie>>()
         override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-            val list = store.getOrPut(url.host) { mutableListOf() }
-            cookies.forEach { c -> list.removeAll { it.name == c.name }; list.add(c) }
+            val list = store.getOrPut(url.host) { java.util.Collections.synchronizedList(mutableListOf()) }
+            synchronized(list) {
+                cookies.forEach { c -> list.removeAll { it.name == c.name }; list.add(c) }
+            }
         }
-        override fun loadForRequest(url: HttpUrl): List<Cookie> = store[url.host] ?: emptyList()
+        override fun loadForRequest(url: HttpUrl): List<Cookie> {
+            val list = store[url.host] ?: return emptyList()
+            // Return a defensive copy — callers iterate without the synchronized block.
+            return synchronized(list) { list.toList() }
+        }
     }
 
     private val client = TrustedHttpClient.builder()
@@ -220,17 +228,33 @@ object FuzerEngine {
                     .replace(Regex("\\s+"), " ").trim()
                 if (clean.length < 2) clean = rawTitle.take(60)
 
+                // Extract network stats: size, seeders (מעלים), leechers (מורידים)
+                val tds = row.children().filter { it.tagName().equals("td", ignoreCase = true) }
+                val size = tds.getOrNull(3)?.text()?.trim() ?: ""
+                val seedersTxt = tds.getOrNull(5)?.text()?.replace(",", "")?.trim() ?: ""
+                val seeders = seedersTxt.toIntOrNull()
+                    ?: row.select("td.r22").firstOrNull()?.text()?.replace(",", "")?.trim()?.toIntOrNull()
+                    ?: 0
+                val leechersTxt = tds.getOrNull(6)?.text()?.replace(",", "")?.trim() ?: ""
+                val leechers = leechersTxt.toIntOrNull()
+                    ?: row.select("td.r23").firstOrNull()?.text()?.replace(",", "")?.trim()?.toIntOrNull()
+                    ?: 0
+                val imdbRating = Regex("IMDB:\\s*([0-9.]+)").find(row.text())?.groupValues?.get(1)?.toFloatOrNull() ?: 0f
+
                 movies.add(Movie(
                     id              = threadUrl,
                     title           = clean,
                     backdropUrl     = posterUrl,
                     posterUrl       = posterUrl,
                     overview        = rawTitle,
-                    rating          = 0f,
+                    rating          = imdbRating,
                     genre           = quality,
                     mediaType       = if (seasonRegex.matcher(rawTitle).find() || rawTitle.contains("\u05e2\u05d5\u05e0\u05d4", true)) "tv" else "movie",
                     resolutionBadge = quality,
-                    is4K            = quality == "4K"
+                    is4K            = quality == "4K",
+                    seeders         = seeders,
+                    leechers        = leechers,
+                    size            = size
                 ))
             } catch (_: Exception) { continue }
         }

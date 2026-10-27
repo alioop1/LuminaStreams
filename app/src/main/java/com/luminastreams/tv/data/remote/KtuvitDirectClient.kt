@@ -48,7 +48,11 @@ class KtuvitDirectClient(private val context: Context) {
 
     suspend fun login(email: String, password: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val body = """{"request":{"Email":"$email","Password":"${md5Base64(password)}"}}"""
+            val loginReq = JSONObject().apply {
+                put("Email", email)
+                put("Password", md5Base64(password))
+            }
+            val body = JSONObject().put("request", loginReq).toString()
             val conn = openPost(LOGIN_URL, body, cookie = null)
             if (conn.responseCode !in 200..299) {
                 clearCookie()
@@ -81,8 +85,23 @@ class KtuvitDirectClient(private val context: Context) {
         try {
             val searchType = if (isSeries) "1" else "0"
             val yearStr    = year?.toString() ?: ""
-            val safeName   = name.replace("\"", "")
-            val body = """{"request":{"FilmName":"$safeName","Actors":[],"Studios":null,"Directors":[],"Genres":[],"Countries":[],"Languages":[],"Year":"$yearStr","Rating":[],"Page":1,"SearchType":"$searchType","WithSubsOnly":false}}"""
+            // Use JSONObject to build the payload — string interpolation broke
+            // whenever the movie name contained newlines / backslashes / control chars.
+            val request = JSONObject().apply {
+                put("FilmName", name)
+                put("Actors", org.json.JSONArray())
+                put("Studios", JSONObject.NULL)
+                put("Directors", org.json.JSONArray())
+                put("Genres", org.json.JSONArray())
+                put("Countries", org.json.JSONArray())
+                put("Languages", org.json.JSONArray())
+                put("Year", yearStr)
+                put("Rating", org.json.JSONArray())
+                put("Page", 1)
+                put("SearchType", searchType)
+                put("WithSubsOnly", false)
+            }
+            val body = JSONObject().put("request", request).toString()
             conn = openPost(SEARCH, body, cookie)
             if (conn.responseCode !in 200..299) return@withContext null
             val json  = conn.inputStream.bufferedReader().readText()
@@ -92,7 +111,12 @@ class KtuvitDirectClient(private val context: Context) {
                 val f = films.getJSONObject(i)
                 if (imdbId != null) {
                     val fImdb = f.optString("ImdbID")
-                    if (fImdb.isNotEmpty() && imdbId.contains(fImdb)) return@withContext f.optString("ID")
+                    // Use exact-equality (after trim) rather than contains(), which
+                    // matched any tt-id whose prefix appeared in the query (e.g. "tt1"
+                    // would match "tt1234567") and returned the wrong subtitles.
+                    if (fImdb.isNotEmpty() && fImdb.trim().equals(imdbId.trim(), ignoreCase = true)) {
+                        return@withContext f.optString("ID")
+                    }
                 }
             }
             if (films.length() > 0) films.getJSONObject(0).optString("ID").ifEmpty { null } else null
@@ -155,7 +179,14 @@ class KtuvitDirectClient(private val context: Context) {
         var reqConn: HttpURLConnection? = null
         var dlConn: HttpURLConnection? = null
         try {
-            val reqBody = """{"request":{"FilmID":"$ktuvitTitleId","SubtitleID":"$subId","FontSize":0,"FontColor":"","PredefinedLayout":-1}}"""
+            val reqObj = JSONObject().apply {
+                put("FilmID", ktuvitTitleId)
+                put("SubtitleID", subId)
+                put("FontSize", 0)
+                put("FontColor", "")
+                put("PredefinedLayout", -1)
+            }
+            val reqBody = JSONObject().put("request", reqObj).toString()
             reqConn = openPost(REQ_DL, reqBody, cookie)
             if (reqConn.responseCode !in 200..299) return@withContext null
             val identifier = JSONObject(reqConn.inputStream.bufferedReader().readText())

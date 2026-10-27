@@ -1,56 +1,28 @@
 @echo off
-setlocal enabledelayedexpansion
-title LuminaStreams - Sideload IPA to iPhone via EmLoad
+chcp 65001 >nul
+title LuminaStreams iOS - Sideloading Helper
+color 0B
 
-echo ========================================================
-echo    LuminaStreams - Install IPA to iPhone via EmLoad
-echo ========================================================
+echo ===============================================================
+echo   LuminaStreams iOS - 1:1 Pixel-Perfect Native IPA
+echo ===============================================================
+echo.
+echo הוראות התקנה לאייפון:
+echo 1. ברגע שהבנייה ב-GitHub Actions מסתיימת:
+echo    https://github.com/alioop1/LuminaStreams/actions
+echo.
+echo 2. הורד את הקובץ: LuminaStreams-Native-iOS-IPA
+echo 3. חלץ את LuminaStreams.ipa אל: F:\Sideloadly\LuminaStreams.ipa
+echo    (או אל C:\Users\TechPC\Documents\LuminaStreams\LuminaStreams.ipa)
+echo.
+echo 4. Sideloadly ייפתח כעת אוטומטית להתקנה קלה!
+echo ===============================================================
 echo.
 
-set "EMLOAD_DIR=F:\EmLoad"
-set "EMLOAD_BAT=%EMLOAD_DIR%\emload.bat"
-
-if not exist "%EMLOAD_BAT%" (
-    echo [ERROR] EmLoad not found at %EMLOAD_DIR%
-    pause
-    exit /b 1
+if exist "F:\Sideloadly\sideloadly.exe" (
+    start "" "F:\Sideloadly\sideloadly.exe"
+) else (
+    echo Sideloadly לא נמצא ב-F:\Sideloadly
 )
 
-set "IPA_PATH=%~1"
-
-if "%IPA_PATH%"=="" (
-    if exist "%USERPROFILE%\Downloads\LuminaStreams.ipa" (
-        set "IPA_PATH=%USERPROFILE%\Downloads\LuminaStreams.ipa"
-    ) else if exist "%USERPROFILE%\Downloads\LuminaStreams-Native-iOS-IPA\LuminaStreams.ipa" (
-        set "IPA_PATH=%USERPROFILE%\Downloads\LuminaStreams-Native-iOS-IPA\LuminaStreams.ipa"
-    ) else if exist "%~dp0LuminaStreams.ipa" (
-        set "IPA_PATH=%~dp0LuminaStreams.ipa"
-    ) else if exist "%EMLOAD_DIR%\LuminaStreams.ipa" (
-        set "IPA_PATH=%EMLOAD_DIR%\LuminaStreams.ipa"
-    )
-)
-
-if "%IPA_PATH%"=="" (
-    echo Drag and drop LuminaStreams.ipa onto this file, or place it in Downloads.
-    echo.
-    set /p "IPA_PATH=Or paste the full path to LuminaStreams.ipa here: "
-)
-
-set IPA_PATH=%IPA_PATH:"=%
-
-if not exist "%IPA_PATH%" (
-    echo [ERROR] File not found: "%IPA_PATH%"
-    pause
-    exit /b 1
-)
-
-echo.
-echo Found IPA: "%IPA_PATH%"
-echo Starting signing and installation to connected iPhone...
-echo.
-
-call "%EMLOAD_BAT%" sideload "%IPA_PATH%"
-
-echo.
-echo Process finished.
 pause

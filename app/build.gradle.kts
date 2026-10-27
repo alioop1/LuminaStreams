@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.compose.compiler)
@@ -5,22 +7,35 @@ plugins {
     alias(libs.plugins.google.services)
 }
 
+// Secrets live in the (git-ignored) local.properties, not in source. The literal
+// fallback keeps a fresh checkout building; override it by adding
+// `AD_DEFAULT_TOKEN=...` to local.properties.
+val localProperties = Properties().apply {
+    val f = rootProject.file("local.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val adDefaultToken: String =
+    localProperties.getProperty("AD_DEFAULT_TOKEN") ?: "GkRRCMwdGBSvjzWqnNP8"
+
 android {
     namespace = "com.luminastreams.tv"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.luminastreams.tv"
         minSdk = 26
         //noinspection EditedTargetSdkVersion
-        targetSdk = 37
+        targetSdk = 36
         versionCode = 1
         versionName = "1.0.0-Lumina"
         vectorDrawables.useSupportLibrary = true
+
+        buildConfigField("String", "AD_DEFAULT_TOKEN", "\"$adDefaultToken\"")
     }
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     signingConfigs {
@@ -78,6 +93,10 @@ android {
         abortOnError = false
         checkReleaseBuilds = false
     }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 // FIX: These blocks now safely live OUTSIDE of the android {} block!
@@ -120,6 +139,7 @@ dependencies {
     implementation(libs.androidx.media3.datasource.okhttp)
     implementation(libs.androidx.media3.common)
     implementation(libs.androidx.media3.decoder)
+    implementation(libs.jellyfin.media3.ffmpeg)
 
     implementation(libs.coil.compose)
     implementation(libs.androidx.palette.ktx)

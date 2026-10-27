@@ -65,7 +65,9 @@ fun AuthScreen(
 
     LaunchedEffect(Unit) {
         delay(300)
-        emailFR.requestFocus()
+        // requestFocus can throw IllegalStateException if the FocusRequester is
+        // no longer attached (e.g. the screen recomposed away during the delay).
+        runCatching { emailFR.requestFocus() }
     }
 
     Box(
@@ -371,7 +373,7 @@ private fun LoggedInView(email: String, onLogout: () -> Unit) {
 
     LaunchedEffect(Unit) {
         delay(300)
-        logoutFR.requestFocus()
+        runCatching { logoutFR.requestFocus() }
     }
 
     Column(

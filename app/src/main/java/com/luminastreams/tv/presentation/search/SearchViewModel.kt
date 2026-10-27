@@ -100,7 +100,7 @@ data class SearchState(
             r = r.filter { it.qualityTag.equals(qStr, ignoreCase = true) }
         }
 
-        if (filters.dubbedOnly)
+        if (filters.dubbedOnly && source == SearchSource.FUZER)
             r = r.filter { it.title.contains("מדובב", ignoreCase = true) }
 
         r = when (filters.sortBy) {
@@ -155,7 +155,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private val _state      = MutableStateFlow(SearchState())
     val state: StateFlow<SearchState> = _state.asStateFlow()
 
-    private val queryFlow     = MutableStateFlow("")
     private val historyPrefs  = application.getSharedPreferences("lumina_search_history", Context.MODE_PRIVATE)
 
     private val popularTerms = listOf(
@@ -167,11 +166,10 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private var discoveryJob: Job? = null
 
-    private val settingsPrefs = application.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+    private val app = application as com.luminastreams.tv.core.LuminaApp
 
     init {
         viewModelScope.launch(Dispatchers.IO) { loadHistory() }
-        observeQuery()
         loadDiscovery()
 
         // ⚡ Pre-compute activeResults on IO whenever result-affecting fields change
@@ -197,19 +195,19 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun handleSourceChange(src: SearchSource) {
         _state.update { it.copy(source = src) }
-        if (src == SearchSource.FUZER) {
-            val q = _state.value.query
-            if (q.isNotBlank()) viewModelScope.launch { runFuzerSearch(q) }
-        }
     }
+
+    private var searchJob: Job? = null
 
     private fun handleQueryUpdate(newQuery: String) {
         _state.update {
             it.copy(
                 query = newQuery,
+                fuzerError = null,
                 autocompleteSuggestions = buildSuggestions(newQuery)
             )
         }
+        searchJob?.cancel()
         if (newQuery.isBlank()) {
             _state.update { it.copy(
                 tmdbResults  = emptyList(),
@@ -218,7 +216,15 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             ) }
             return
         }
-        queryFlow.value = newQuery
+        
+        searchJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(300)
+            saveToHistory(newQuery)
+            supervisorScope {
+                launch { runTmdbSearch(newQuery) }
+                launch { runFuzerSearch(newQuery) }
+            }
+        }
     }
 
     private fun buildSuggestions(q: String): List<String> {
@@ -226,22 +232,6 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
         val hist    = _state.value.searchHistory.filter { it.contains(q, ignoreCase = true) }
         val popular = popularTerms.filter { it.contains(q, ignoreCase = true) }
         return (hist + popular).distinct().take(6)
-    }
-
-    private fun observeQuery() {
-        viewModelScope.launch(Dispatchers.IO) {
-            queryFlow
-                .debounce(380)
-                .distinctUntilChanged()
-                .filter { it.isNotBlank() }
-                .collectLatest { q ->
-                    saveToHistory(q)
-                    coroutineScope {
-                        launch { runTmdbSearch(q) }
-                        launch { runFuzerSearch(q) }
-                    }
-                }
-        }
     }
 
     private suspend fun runTmdbSearch(query: String) {
@@ -274,10 +264,37 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     private suspend fun runFuzerSearch(query: String) {
         _state.update { it.copy(isFuzerLoading = true, fuzerError = null) }
         try {
-            val raw: List<com.luminastreams.tv.domain.model.Movie> =
+            var raw: List<com.luminastreams.tv.domain.model.Movie> =
                 withContext(Dispatchers.IO) {
                     FuzerEngine.search(query).getOrElse { emptyList() }
                 }
+
+            // Smart bilingual fallback: if 0 results, try alternate language title from TMDB
+            if (raw.isEmpty()) {
+                var waited = 0
+                while (_state.value.isTmdbLoading && waited < 600) {
+                    delay(100)
+                    waited += 100
+                }
+                val isHe = query.any { it in '\u0590'..'\u05FF' }
+                val fallbackTitle = _state.value.tmdbResults.firstOrNull { r ->
+                    if (isHe) {
+                        r.title.isNotBlank() && r.title.none { it in '\u0590'..'\u05FF' }
+                    } else {
+                        r.title.any { it in '\u0590'..'\u05FF' }
+                    }
+                }?.title
+
+                if (!fallbackTitle.isNullOrBlank() && !fallbackTitle.equals(query, ignoreCase = true)) {
+                    val fallbackRaw = withContext(Dispatchers.IO) {
+                        FuzerEngine.search(fallbackTitle).getOrElse { emptyList() }
+                    }
+                    if (fallbackRaw.isNotEmpty()) {
+                        raw = fallbackRaw
+                    }
+                }
+            }
+
             val mapped = raw.map { m ->
                 val qTag = when {
                     m.title.contains("4K",    ignoreCase = true) ||
@@ -295,15 +312,21 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
                     rating      = m.rating,
                     releaseYear = if (m.year > 0) m.year.toString() else "",
                     qualityTag  = qTag,
-                    genre       = m.genre
+                    genre       = m.genre,
+                    seeders     = m.seeders,
+                    leechers    = m.leechers,
+                    size        = m.size
                 )
             }
-            _state.update { it.copy(fuzerResults = mapped, isFuzerLoading = false) }
+            _state.update { it.copy(fuzerResults = mapped, isFuzerLoading = false, fuzerError = null) }
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            val msg = e.message ?: ""
+            if (msg.contains("cancel", ignoreCase = true)) return
             _state.update { it.copy(
                 fuzerResults   = emptyList(),
                 isFuzerLoading = false,
-                fuzerError     = e.message?.take(80) ?: "Unknown error"
+                fuzerError     = msg.take(80).ifBlank { "Unknown error" }
             ) }
         }
     }
@@ -458,9 +481,9 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
             return when (name.lowercase()) {
                 "action" -> 10759; "adventure" -> 10759; "animation", "anime" -> 16; "comedy" -> 35
                 "crime" -> 80; "documentary" -> 99; "drama" -> 18; "family" -> 10751
-                "fantasy" -> 10765; "horror" -> null; "mystery" -> 9648
-                "romance" -> null; "sci-fi", "science fiction" -> 10765
-                "thriller" -> null; "war" -> 10768; "western" -> 37; else -> null
+                "fantasy" -> 10765; "horror" -> 9648; "mystery" -> 9648
+                "romance" -> 18; "sci-fi", "science fiction" -> 10765
+                "thriller" -> 80; "war" -> 10768; "western" -> 37; else -> null
             }
         }
         // Movie genre IDs
@@ -474,7 +497,7 @@ class SearchViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun saveToHistory(q: String) {
-        if (!settingsPrefs.getBoolean("save_history", true)) return
+        if (!app.settingsRepository.current().saveSearchHistory) return
         val h = (listOf(q) + _state.value.searchHistory).distinct().take(8)
         historyPrefs.edit { putString("history_items", h.joinToString("||")) }
         _state.update { it.copy(searchHistory = h) }

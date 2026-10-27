@@ -17,7 +17,10 @@ data class Movie(
     val genreIds: List<Int> = emptyList(),
     val is4K: Boolean = false,
     val resolutionBadge: String = "1080p",
-    val progress: Float? = null
+    val progress: Float? = null,
+    val seeders: Int = 0,
+    val leechers: Int = 0,
+    val size: String = ""
 )
 
 // ── SearchResult ──────────────────────────────────────────────────────────
@@ -41,7 +44,10 @@ data class SearchResult(
     val dominantColor: String? = null,
     // Search & filter support
     val genre: String = "",
-    val qualityTag: String = ""   // "4K", "FHD", "HD", or ""
+    val qualityTag: String = "",   // "4K", "FHD", "HD", or ""
+    val seeders: Int = 0,
+    val leechers: Int = 0,
+    val size: String = ""
 )
 
 // ── StreamSource ──────────────────────────────────────────────────────────

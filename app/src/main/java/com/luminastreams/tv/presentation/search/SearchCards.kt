@@ -119,7 +119,7 @@ fun MediaSearchCard(
                 )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     if (result.rating > 0f) {
                         Text(
@@ -129,14 +129,39 @@ fun MediaSearchCard(
                             fontWeight = FontWeight.Bold
                         )
                     }
-                    Text(
-                        if (isFuzer) "Fuzer"
-                        else if (result.type == MediaType.TV_SHOW) "TV Show"
-                        else "Movie",
-                        color = DIM.copy(0.6f),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    if (isFuzer && (result.seeders > 0 || result.leechers > 0 || result.size.isNotBlank())) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("▲", color = Color(0xFF32D74B), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                            Text("${result.seeders}", color = Color(0xFF32D74B), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("▼", color = Color(0xFFFF3B30), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                            Text("${result.leechers}", color = Color(0xFFFF3B30), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (result.size.isNotBlank()) {
+                            Text(
+                                result.size,
+                                color = WHITE.copy(0.7f),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
+                    } else {
+                        Text(
+                            if (isFuzer) "Fuzer"
+                            else if (result.type == MediaType.TV_SHOW) "TV Show"
+                            else "Movie",
+                            color = DIM.copy(0.6f),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
             }
         }

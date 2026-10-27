@@ -15,6 +15,8 @@ interface MediaRepository {
     suspend fun getMovieDetails(id: String): Result<Movie>
     suspend fun getMovieFullDetails(id: String): Result<TmdbMovieDetailsDto>
     suspend fun getTvFullDetails(id: String): Result<TmdbTvDetailsDto>
+    suspend fun getMovieImages(id: String): Result<com.luminastreams.tv.data.api.ImagesDto>
+    suspend fun getTvImages(id: String): Result<com.luminastreams.tv.data.api.ImagesDto>
     suspend fun getPersonDetails(id: String): Result<com.luminastreams.tv.data.api.TmdbPersonDetailsDto>
     suspend fun getSimilarMedia(id: String, type: String): Result<List<Movie>>
     suspend fun discoverMedia(

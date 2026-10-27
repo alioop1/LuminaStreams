@@ -34,12 +34,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -69,16 +72,26 @@ import com.luminastreams.tv.presentation.settings.SettingsScreen
 import com.luminastreams.tv.presentation.settings.SettingsViewModel
 import com.luminastreams.tv.presentation.watchlist.WatchlistScreen
 import com.luminastreams.tv.presentation.watchlist.WatchlistViewModel
+import com.luminastreams.tv.presentation.debrid.DebridCloudScreen
+import com.luminastreams.tv.presentation.debrid.DebridCloudViewModel
 import com.luminastreams.tv.presentation.auth.*
 import com.luminastreams.tv.ui.theme.LuminaTheme
 import java.net.URLDecoder
 import java.net.URLEncoder
-
 private const val FORCED_DENSITY_DPI = 180
 
 class MainActivity : ComponentActivity() {
 
+    var onUserInteractionListener: (() -> Boolean)? = null
 
+    override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+        if (event.action == android.view.KeyEvent.ACTION_DOWN) {
+            if (onUserInteractionListener?.invoke() == true) {
+                return true
+            }
+        }
+        return super.dispatchKeyEvent(event)
+    }
 
     override fun attachBaseContext(newBase: Context) {
         // WSA (Windows Subsystem for Android) uses a different display pipeline.
@@ -127,61 +140,91 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        // ⚡ Force immediate token refresh via the centralized TokenKeeper
-        lifecycleScope.launch(Dispatchers.IO) {
-            try {
-                com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
-            } catch (_: Exception) {}
-        }
     }
 }
 
 @Composable
 fun LuminaAppShell() {
     val context = LocalContext.current
-    val prefs = remember { context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE) }
-
-    var appLang by remember { mutableStateOf(prefs.getString("app_lang", "he") ?: "he") }
-
-    DisposableEffect(Unit) {
-        val listener = SharedPreferences.OnSharedPreferenceChangeListener { sharedPrefs, key ->
-            if (key == "app_lang") {
-                appLang = sharedPrefs.getString("app_lang", "he") ?: "he"
-            }
-        }
-        prefs.registerOnSharedPreferenceChangeListener(listener)
-        onDispose { prefs.unregisterOnSharedPreferenceChangeListener(listener) }
-    }
-
-    // ⚡ Listen for Real-Debrid credential wipe events and alert the user immediately
-    LaunchedEffect(Unit) {
-        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.authEvents.collect { event ->
-            when (event) {
-                is com.luminastreams.tv.domain.usecase.RdAuthEvent.CredentialsWiped -> {
-                    android.widget.Toast.makeText(
-                        context,
-                        "⚠ Real-Debrid התנתק — יש להתחבר מחדש בהגדרות",
-                        android.widget.Toast.LENGTH_LONG
-                    ).show()
-                }
-            }
-        }
-    }
+    val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
+    val settingsSnap by app.settingsRepository.settingsFlow.collectAsStateWithLifecycle()
+    val appLang = settingsSnap.appLanguage
 
     val layoutDir = if (appLang == "he") LayoutDirection.Rtl else LayoutDirection.Ltr
 
     val navController = rememberNavController()
 
-    val repository: MediaRepository = remember { MediaRepositoryImpl(context) }
+    // Reuse the singleton repository built once in LuminaApp.onCreate() instead of
+    // constructing a fresh MediaRepositoryImpl here — which would spin up a second
+    // OkHttp connection pool and risk holding onto the Activity context.
+    val repository: MediaRepository = app.repository
     val homeViewModel: HomeViewModel = viewModel()
+
+    var showScreensaver by remember { mutableStateOf(false) }
+    var lastInteractionTime by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+
+    val activity = context as? MainActivity
+    DisposableEffect(activity, showScreensaver) {
+        if (activity != null) {
+            activity.onUserInteractionListener = {
+                lastInteractionTime = System.currentTimeMillis()
+                if (showScreensaver) {
+                    showScreensaver = false
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+        onDispose {
+            if (activity != null) {
+                activity.onUserInteractionListener = null
+            }
+        }
+    }
+
+    LaunchedEffect(lastInteractionTime, currentRoute) {
+        if (currentRoute?.startsWith("player") == true || currentRoute?.startsWith("iptv_player") == true) {
+            showScreensaver = false
+        } else {
+            kotlinx.coroutines.delay(300_000L)
+            showScreensaver = true
+        }
+    }
+
+    val screensaverViewModel: com.luminastreams.tv.presentation.screensaver.ScreensaverViewModel = viewModel(
+        factory = object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                com.luminastreams.tv.presentation.screensaver.ScreensaverViewModel(repository) as T
+        }
+    )
 
     CompositionLocalProvider(LocalLayoutDirection provides layoutDir) {
         Box(
             Modifier
                 .fillMaxSize()
                 .background(Color.Black)
+                .onPreviewKeyEvent {
+                    lastInteractionTime = System.currentTimeMillis()
+                    if (showScreensaver) {
+                        showScreensaver = false
+                        return@onPreviewKeyEvent true
+                    }
+                    false
+                }
         ) {
             AppNavHostContainer(navController, homeViewModel, repository)
+
+            androidx.compose.animation.AnimatedVisibility(
+                visible = showScreensaver,
+                enter = fadeIn(animationSpec = tween(1000)),
+                exit = fadeOut(animationSpec = tween(500))
+            ) {
+                com.luminastreams.tv.presentation.screensaver.ScreensaverScreen(screensaverViewModel)
+            }
         }
     }
 }
@@ -229,7 +272,7 @@ fun AppNavHostContainer(
             route     = "details?fullId={fullId}",
             arguments = listOf(navArgument("fullId") { type = NavType.StringType; defaultValue = "" })
         ) { backStackEntry ->
-            val fullId = backStackEntry.arguments?.getString("fullId") ?: ""
+            val fullId = URLDecoder.decode(backStackEntry.arguments?.getString("fullId") ?: "", "UTF-8")
             if (fullId.isBlank()) return@composable
 
             val detailsViewModel: DetailsViewModel = viewModel(
@@ -350,10 +393,36 @@ fun AppNavHostContainer(
             }
         }
 
+        composable("debrid") {
+            val vm: DebridCloudViewModel = viewModel(
+                factory = object : ViewModelProvider.Factory {
+                    @Suppress("UNCHECKED_CAST")
+                    override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                        DebridCloudViewModel(repository, application) as T
+                }
+            )
+            val state by vm.state.collectAsStateWithLifecycle()
+            Box(Modifier.fillMaxSize().background(Color(0xFF060608))) {
+                DebridCloudScreen(
+                    state = state,
+                    onEvent = vm::onEvent,
+                    onNavigateBack = { navController.popBackStack() },
+                    onNavigateToAuth = { navController.navigate("auth") },
+                    onPlayDirectUrl = { videoUrl, title, backdrop, poster ->
+                        val safeUrl      = URLEncoder.encode(videoUrl, "UTF-8")
+                        val safeTitle    = URLEncoder.encode(title, "UTF-8")
+                        val safeBackdrop = URLEncoder.encode(backdrop.ifBlank { "none" }, "UTF-8")
+                        val safePoster   = URLEncoder.encode(poster.ifBlank { "none" }, "UTF-8")
+                        navController.navigate("player?videoUrl=$safeUrl&imdbId=_&title=$safeTitle&backdropUrl=$safeBackdrop&posterUrl=$safePoster&logoUrl=none&fullId=_")
+                    }
+                )
+            }
+        }
+
         composable("iptv") {
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val activity = context as ComponentActivity
+            val activity = context.findActivity()!!
 
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
@@ -387,7 +456,7 @@ fun AppNavHostContainer(
 
             val context = LocalContext.current
             val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
-            val activity = context as ComponentActivity
+            val activity = context.findActivity()!!
 
             val vm: IptvViewModel = viewModel(
                 viewModelStoreOwner = activity,
@@ -424,4 +493,13 @@ fun AppNavHostContainer(
             )
         }
     }
+}
+
+fun Context.findActivity(): ComponentActivity? {
+    var ctx = this
+    while (ctx is android.content.ContextWrapper) {
+        if (ctx is ComponentActivity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
 }

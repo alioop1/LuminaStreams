@@ -187,7 +187,14 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
             state.error != null -> { HomeError(state.error) { viewModel.retry() }; return@Box }
         }
 
-        BackdropLayer(focusState.heroMovie)
+        var isTrailerPlaying by remember { mutableStateOf(false) }
+
+        BackdropLayer(
+            hero = focusState.heroMovie,
+            trailerKey = state.heroTrailerKey.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
+            isNavFocused = focusState.isNavFocused,
+            onTrailerPlayingChanged = { isTrailerPlaying = it }
+        )
 
         Column(Modifier.fillMaxSize()) {
 
@@ -202,6 +209,7 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                 onSeries = { viewModel.selectTab("series") },
                 onHome = { viewModel.selectTab("home") },
                 onFuzer = { viewModel.selectTab("Fuzer") },
+                onDebrid = { navController.navigate("debrid") },
                 onProfileClick = { navController.navigate("auth") },
                 selectedTab = state.selectedTab
             )
@@ -220,7 +228,8 @@ fun HomeScreen(state: HomeState, viewModel: HomeViewModel, navController: NavCon
                     runtime = state.heroRuntime.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
                     cast = state.heroCast.takeIf { state.heroEnrichedId == focusState.heroMovie?.id } ?: emptyList(),
                     localizedOverview = state.heroOverview.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
-                    localizedGenre = state.heroGenre.takeIf { state.heroEnrichedId == focusState.heroMovie?.id }
+                    localizedGenre = state.heroGenre.takeIf { state.heroEnrichedId == focusState.heroMovie?.id },
+                    isTrailerPlaying = isTrailerPlaying
                 )
             }
 

@@ -224,18 +224,34 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
         }
     }
 
+    // Lifecycle observer is tied to the lifecycleOwner (safe to re-register on change).
     DisposableEffect(lifecycleOwner) {
         val lifecycleObserver = LifecycleEventObserver { _, event ->
             when (event) { Lifecycle.Event.ON_PAUSE -> exoPlayer.pause(); Lifecycle.Event.ON_RESUME -> exoPlayer.play(); else -> {} }
         }
+        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(lifecycleObserver) }
+    }
+
+    // Player listener + release are tied to the player instance itself (keyed on Unit
+    // so release() is only invoked when this composable actually leaves composition,
+    // not when the lifecycleOwner changes underneath a still-remembered player).
+    DisposableEffect(Unit) {
         val playerListener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                // BehindLiveWindowException — auto-recover by seeking to live edge
+                // BehindLiveWindowException — auto-recover by seeking to live edge.
+                // Cap retries so a permanently broken stream doesn't spin the CPU forever.
                 if (isBehindLiveWindow(error)) {
-                    exoPlayer.seekToDefaultPosition()
-                    exoPlayer.prepare()
-                    exoPlayer.playWhenReady = true
-                    return
+                    if (retryCount < 5) {
+                        retryCount++
+                        exoPlayer.seekToDefaultPosition()
+                        exoPlayer.prepare()
+                        exoPlayer.playWhenReady = true
+                        return
+                    } else {
+                        playerError = "Stream fell too far behind live edge"
+                        return
+                    }
                 }
 
                 // PlaylistStuckException — HLS stream went stale, auto-retry up to 3 times
@@ -272,8 +288,7 @@ fun IptvPlayerScreen(initialChannelUrl: String, viewModel: IptvViewModel, onBack
             }
         }
         exoPlayer.addListener(playerListener)
-        lifecycleOwner.lifecycle.addObserver(lifecycleObserver)
-        onDispose { exoPlayer.removeListener(playerListener); lifecycleOwner.lifecycle.removeObserver(lifecycleObserver); exoPlayer.release() }
+        onDispose { exoPlayer.removeListener(playerListener); exoPlayer.release() }
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {

@@ -25,7 +25,12 @@ class FirestoreSyncRepository : UserSyncRepository {
     override suspend fun getFavorites(userId: String): Result<List<String>> {
         return try {
             val doc = db.collection("users").document(userId).get().await()
-            val list = doc.get("favorites") as? List<String> ?: emptyList()
+            // Unchecked `as? List<String>` still passes for List<Any> because of
+            // JVM erasure, then throws ClassCastException lazily on first read.
+            // filterIsInstance validates each element up front.
+            val list = (doc.get("favorites") as? List<*>)
+                ?.filterIsInstance<String>()
+                ?: emptyList()
             Result.success(list)
         } catch (e: Exception) {
             Log.e(TAG, "getFavorites failed", e)

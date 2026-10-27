@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -24,10 +25,15 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import com.luminastreams.tv.core.TrustedHttpClient
 import okhttp3.Request
+import org.json.JSONArray
 import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
 class HomeViewModel : ViewModel() {
@@ -181,7 +187,56 @@ class HomeViewModel : ViewModel() {
     }
 
     // ── Hero Enrichment ───────────────────────────────────────────────
-    // Fetches logo, cast, and runtime for the currently displayed hero movie.
+    private val trailerCache = ConcurrentHashMap<String, String>()
+
+    private fun extractTrailerKey(videosArray: JSONArray?): String? {
+        if (videosArray == null || videosArray.length() == 0) return null
+        var bestKey: String? = null
+        var backupKey: String? = null
+        for (i in 0 until videosArray.length()) {
+            val v = videosArray.optJSONObject(i) ?: continue
+            val site = v.optString("site", "")
+            if (!site.equals("YouTube", ignoreCase = true)) continue
+            val key = v.optString("key", "")
+            if (key.isBlank()) continue
+            val type = v.optString("type", "")
+            val official = v.optBoolean("official", false)
+            if (type.equals("Trailer", ignoreCase = true)) {
+                if (official) return key
+                if (bestKey == null) bestKey = key
+            } else if (type.equals("Teaser", ignoreCase = true)) {
+                if (backupKey == null) backupKey = key
+            } else if (backupKey == null) {
+                backupKey = key
+            }
+        }
+        return bestKey ?: backupKey
+    }
+
+    private suspend fun fetchCinemetaTrailer(imdbId: String, type: String): String? =
+        withContext(Dispatchers.IO) {
+            withTimeoutOrNull(1500) {
+                var conn: HttpURLConnection? = null
+                try {
+                    conn = (URL("https://v3-cinemeta.strem.io/meta/$type/$imdbId.json").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "GET"; connectTimeout = 1000; readTimeout = 1000
+                    }
+                    if (conn.responseCode == 200) {
+                        val id = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
+                            .optJSONObject("meta")?.optString("trailer", "")
+                        if (!id.isNullOrEmpty()) {
+                            return@withTimeoutOrNull if (id.contains("v=")) id.substringAfter("v=").substringBefore("&")
+                            else if (id.contains("youtu.be/")) id.substringAfter("youtu.be/").substringBefore("?")
+                            else id
+                        }
+                    }
+                } catch (e: Exception) { if (e is CancellationException) throw e }
+                finally { conn?.disconnect() }
+                null
+            }
+        }
+
+    // Fetches logo, cast, runtime, and trailer for the currently displayed hero movie.
     // Single lightweight API call, debounced by heroEnrichedId.
     private var heroEnrichJob: Job? = null
 
@@ -195,7 +250,7 @@ class HomeViewModel : ViewModel() {
                 val numericId = movieId.substringAfter("_").takeIf { it.isNotBlank() } ?: movieId
                 val type = if (movie.mediaType == "tv") "tv" else "movie"
                 val lang = if (currentIsRtl) "he-IL" else "en-US"
-                val url = "https://api.themoviedb.org/3/$type/$numericId?api_key=${Constants.TMDB_API_KEY}&language=$lang&append_to_response=credits,images&include_image_language=en,null"
+                val url = "https://api.themoviedb.org/3/$type/$numericId?api_key=${Constants.TMDB_API_KEY}&language=$lang&append_to_response=credits,images,videos&include_image_language=en,null&include_video_language=he,en,null"
 
                 val response = http.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) { response.close(); return@launch }
@@ -253,6 +308,38 @@ class HomeViewModel : ViewModel() {
                 }
                 val genreStr = genreNames.joinToString(" · ").takeIf { it.isNotBlank() }
 
+                // Extract trailer key (YouTube ID)
+                var trailerKey = trailerCache[movieId]
+                if (trailerKey == null) {
+                    trailerKey = extractTrailerKey(json.optJSONObject("videos")?.optJSONArray("results"))
+
+                    // Fallback to TMDB videos query without language filter if missing
+                    if (trailerKey == null && numericId.all { it.isDigit() }) {
+                        try {
+                            val fbUrl = "https://api.themoviedb.org/3/$type/$numericId/videos?api_key=${Constants.TMDB_API_KEY}"
+                            val fbResp = http.newCall(Request.Builder().url(fbUrl).build()).execute()
+                            if (fbResp.isSuccessful) {
+                                val fbJson = JSONObject(fbResp.body.string())
+                                fbResp.close()
+                                trailerKey = extractTrailerKey(fbJson.optJSONArray("results"))
+                            } else {
+                                fbResp.close()
+                            }
+                        } catch (_: Exception) {}
+                    }
+
+                    // Fallback to Cinemeta if IMDB id
+                    if (trailerKey == null && (movieId.contains("tt") || numericId.contains("tt"))) {
+                        val imdbId = if (movieId.startsWith("tt")) movieId else numericId.substringAfter("tt_")
+                        val cleanImdb = if (imdbId.startsWith("tt")) imdbId else "tt$imdbId"
+                        trailerKey = fetchCinemetaTrailer(cleanImdb, if (movie.mediaType == "tv") "series" else "movie")
+                    }
+
+                    if (trailerKey != null) {
+                        trailerCache[movieId] = trailerKey
+                    }
+                }
+
                 _state.update {
                     it.copy(
                         heroLogoUrl = logoUrl,
@@ -260,6 +347,7 @@ class HomeViewModel : ViewModel() {
                         heroCast = castMembers,
                         heroOverview = overview,
                         heroGenre = genreStr,
+                        heroTrailerKey = trailerKey,
                         heroEnrichedId = movieId
                     )
                 }
@@ -438,28 +526,88 @@ class HomeViewModel : ViewModel() {
                 }
             }
         }
-        _uiRows.value = newRows
+        val deduplicatedRows = buildList {
+            val seenIds = mutableSetOf<String>()
+            for (row in newRows) {
+                when (row) {
+                    is RowDef.Regular -> {
+                        if (row.id == "continueWatching") {
+                            // Don't deduplicate Continue Watching
+                            add(row)
+                        } else {
+                            val uniqueMovies = row.movies.distinctBy { it.id }.filter { it.id !in seenIds }
+                            seenIds.addAll(uniqueMovies.map { it.id })
+                            if (uniqueMovies.isNotEmpty()) {
+                                add(row.copy(movies = uniqueMovies))
+                            }
+                        }
+                    }
+                    is RowDef.Studio -> {
+                        val uniqueMovies = row.movies.distinctBy { it.id }.filter { it.id !in seenIds }
+                        seenIds.addAll(uniqueMovies.map { it.id })
+                        if (uniqueMovies.isNotEmpty()) {
+                            add(row.copy(movies = uniqueMovies))
+                        }
+                    }
+                    is RowDef.StudioRibbon -> add(row)
+                }
+            }
+        }
+        _uiRows.value = deduplicatedRows
     }
 
     fun loadMore(id: String) {
-        if (id == "ribbon" || id.startsWith("fuzer") || loadingSet.contains(id)) return
+        if (id == "ribbon" || id == "fuzer_new" || loadingSet.contains(id)) return
         val nextPage = (pageMap[id] ?: 1) + 1
-        if (nextPage > 20) return  // TMDB practical limit
+        if (nextPage > 50) return  // TMDB/Fuzer practical limit
         loadingSet.add(id)
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                if (id.startsWith("fuzer_")) {
+                    val catId = when (id) {
+                        "fuzer_m"   -> com.luminastreams.tv.presentation.home.FuzerCats.MOVIES
+                        "fuzer_tv"  -> com.luminastreams.tv.presentation.home.FuzerCats.SERIES
+                        "fuzer_mhd" -> com.luminastreams.tv.presentation.home.FuzerCats.MOVIES_HD
+                        "fuzer_shd" -> com.luminastreams.tv.presentation.home.FuzerCats.SERIES_HD
+                        "fuzer_m4k" -> com.luminastreams.tv.presentation.home.FuzerCats.MOVIES_4K
+                        "fuzer_s4k" -> com.luminastreams.tv.presentation.home.FuzerCats.SERIES_4K
+                        "fuzer_dm"  -> com.luminastreams.tv.presentation.home.FuzerCats.DUBBED_MOVIES
+                        "fuzer_ds"  -> com.luminastreams.tv.presentation.home.FuzerCats.DUBBED_SERIES
+                        else -> 0
+                    }
+                    if (catId != 0) {
+                        val newItems = com.luminastreams.tv.data.remote.FuzerEngine.getCategoryPage(catId, nextPage).getOrElse { emptyList() }
+                        if (newItems.isEmpty()) { loadingSet.remove(id); return@launch }
+                        pageMap[id] = nextPage
+                        _state.update { s ->
+                            when (id) {
+                                "fuzer_m"   -> s.copy(fuzerMovies       = (s.fuzerMovies       + newItems).distinctBy { it.id })
+                                "fuzer_tv"  -> s.copy(fuzerSeries       = (s.fuzerSeries       + newItems).distinctBy { it.id })
+                                "fuzer_mhd" -> s.copy(fuzerMoviesHD     = (s.fuzerMoviesHD     + newItems).distinctBy { it.id })
+                                "fuzer_shd" -> s.copy(fuzerSeriesHD     = (s.fuzerSeriesHD     + newItems).distinctBy { it.id })
+                                "fuzer_m4k" -> s.copy(fuzerMovies4K     = (s.fuzerMovies4K     + newItems).distinctBy { it.id })
+                                "fuzer_s4k" -> s.copy(fuzerSeries4K     = (s.fuzerSeries4K     + newItems).distinctBy { it.id })
+                                "fuzer_dm"  -> s.copy(fuzerDubbedMovies = (s.fuzerDubbedMovies + newItems).distinctBy { it.id })
+                                "fuzer_ds"  -> s.copy(fuzerDubbedSeries = (s.fuzerDubbedSeries + newItems).distinctBy { it.id })
+                                else -> s
+                            }
+                        }
+                    }
+                    return@launch
+                }
+
                 val k      = Constants.TMDB_API_KEY
                 val region = "US"
                 var url    = ""
                 var mt     = ""
 
                 if (id.startsWith("studio_")) {
-                    val parts = id.split("_")
-                    if (parts.size == 4) {
-                        val studioName = parts[1]
-                        val genreKey = parts[2]
-                        val type = parts[3]
+                    val match = Regex("^studio_(.*)_([^_]+)_([a-zA-Z0-9]+)$").find(id)
+                    if (match != null) {
+                        val studioName = match.groupValues[1]
+                        val genreKey = match.groupValues[2]
+                        val type = match.groupValues[3]
                         
                         mt = if (type == "m") "movie" else "tv"
                         val prefix = if (type == "m") "discover/movie" else "discover/tv"
@@ -536,36 +684,36 @@ class HomeViewModel : ViewModel() {
                         s.copy(activeStudioCategories = updatedCategories)
                     } else {
                         when (id) {
-                            "movieTrending"  -> s.copy(movieTrending  = s.movieTrending  + newItems)
-                            "moviePremieres" -> s.copy(moviePremieres = s.moviePremieres + newItems)
-                            "movieAnimation" -> s.copy(movieAnimation = s.movieAnimation + newItems)
-                            "movieAction"    -> s.copy(movieAction    = s.movieAction    + newItems)
-                            "movieDrama"     -> s.copy(movieDrama     = s.movieDrama     + newItems)
-                            "movieScifi"     -> s.copy(movieScifi     = s.movieScifi     + newItems)
-                            "movieTopRated"  -> s.copy(movieTopRated  = s.movieTopRated  + newItems)
-                            "movieNetflix"   -> s.copy(movieNetflix   = s.movieNetflix   + newItems)
-                            "movieAppleTV"   -> s.copy(movieAppleTV   = s.movieAppleTV   + newItems)
-                            "movieDisney"    -> s.copy(movieDisney    = s.movieDisney    + newItems)
-                            "movieHBO"       -> s.copy(movieHBO       = s.movieHBO       + newItems)
-                            "movieAmazon"    -> s.copy(movieAmazon    = s.movieAmazon    + newItems)
-                            "movieParamount" -> s.copy(movieParamount = s.movieParamount + newItems)
-                            "movieHulu"      -> s.copy(movieHulu      = s.movieHulu      + newItems)
-                            "movieSony"      -> s.copy(movieSony      = s.movieSony      + newItems)
-                            "tvTrending"     -> s.copy(tvTrending     = s.tvTrending     + newItems)
-                            "tvPremieres"    -> s.copy(tvPremieres    = s.tvPremieres    + newItems)
-                            "tvAnimation"    -> s.copy(tvAnimation    = s.tvAnimation    + newItems)
-                            "tvDrama"        -> s.copy(tvDrama        = s.tvDrama        + newItems)
-                            "tvCrime"        -> s.copy(tvCrime        = s.tvCrime        + newItems)
-                            "tvScifi"        -> s.copy(tvScifi        = s.tvScifi        + newItems)
-                            "tvTopRated"     -> s.copy(tvTopRated     = s.tvTopRated     + newItems)
-                            "tvNetflix"      -> s.copy(tvNetflix      = s.tvNetflix      + newItems)
-                            "tvAppleTV"      -> s.copy(tvAppleTV      = s.tvAppleTV      + newItems)
-                            "tvDisney"       -> s.copy(tvDisney       = s.tvDisney       + newItems)
-                            "tvHBO"          -> s.copy(tvHBO          = s.tvHBO          + newItems)
-                            "tvAmazon"       -> s.copy(tvAmazon       = s.tvAmazon       + newItems)
-                            "tvParamount"    -> s.copy(tvParamount    = s.tvParamount    + newItems)
-                            "tvHulu"         -> s.copy(tvHulu         = s.tvHulu         + newItems)
-                            "tvSony"         -> s.copy(tvSony         = s.tvSony         + newItems)
+                            "movieTrending"  -> s.copy(movieTrending  = (s.movieTrending  + newItems).distinctBy { it.id })
+                            "moviePremieres" -> s.copy(moviePremieres = (s.moviePremieres + newItems).distinctBy { it.id })
+                            "movieAnimation" -> s.copy(movieAnimation = (s.movieAnimation + newItems).distinctBy { it.id })
+                            "movieAction"    -> s.copy(movieAction    = (s.movieAction + newItems).distinctBy { it.id })
+                            "movieDrama"     -> s.copy(movieDrama     = (s.movieDrama + newItems).distinctBy { it.id })
+                            "movieScifi"     -> s.copy(movieScifi     = (s.movieScifi + newItems).distinctBy { it.id })
+                            "movieTopRated"  -> s.copy(movieTopRated  = (s.movieTopRated + newItems).distinctBy { it.id })
+                            "movieNetflix"   -> s.copy(movieNetflix   = (s.movieNetflix + newItems).distinctBy { it.id })
+                            "movieAppleTV"   -> s.copy(movieAppleTV   = (s.movieAppleTV + newItems).distinctBy { it.id })
+                            "movieDisney"    -> s.copy(movieDisney    = (s.movieDisney + newItems).distinctBy { it.id })
+                            "movieHBO"       -> s.copy(movieHBO       = (s.movieHBO + newItems).distinctBy { it.id })
+                            "movieAmazon"    -> s.copy(movieAmazon    = (s.movieAmazon + newItems).distinctBy { it.id })
+                            "movieParamount" -> s.copy(movieParamount = (s.movieParamount + newItems).distinctBy { it.id })
+                            "movieHulu"      -> s.copy(movieHulu      = (s.movieHulu + newItems).distinctBy { it.id })
+                            "movieSony"      -> s.copy(movieSony      = (s.movieSony + newItems).distinctBy { it.id })
+                            "tvTrending"     -> s.copy(tvTrending     = (s.tvTrending + newItems).distinctBy { it.id })
+                            "tvPremieres"    -> s.copy(tvPremieres    = (s.tvPremieres + newItems).distinctBy { it.id })
+                            "tvAnimation"    -> s.copy(tvAnimation    = (s.tvAnimation + newItems).distinctBy { it.id })
+                            "tvDrama"        -> s.copy(tvDrama        = (s.tvDrama + newItems).distinctBy { it.id })
+                            "tvCrime"        -> s.copy(tvCrime        = (s.tvCrime + newItems).distinctBy { it.id })
+                            "tvScifi"        -> s.copy(tvScifi        = (s.tvScifi + newItems).distinctBy { it.id })
+                            "tvTopRated"     -> s.copy(tvTopRated     = (s.tvTopRated + newItems).distinctBy { it.id })
+                            "tvNetflix"      -> s.copy(tvNetflix      = (s.tvNetflix + newItems).distinctBy { it.id })
+                            "tvAppleTV"      -> s.copy(tvAppleTV      = (s.tvAppleTV + newItems).distinctBy { it.id })
+                            "tvDisney"       -> s.copy(tvDisney       = (s.tvDisney + newItems).distinctBy { it.id })
+                            "tvHBO"          -> s.copy(tvHBO          = (s.tvHBO + newItems).distinctBy { it.id })
+                            "tvAmazon"       -> s.copy(tvAmazon       = (s.tvAmazon + newItems).distinctBy { it.id })
+                            "tvParamount"    -> s.copy(tvParamount    = (s.tvParamount + newItems).distinctBy { it.id })
+                            "tvHulu"         -> s.copy(tvHulu         = (s.tvHulu + newItems).distinctBy { it.id })
+                            "tvSony"         -> s.copy(tvSony         = (s.tvSony + newItems).distinctBy { it.id })
                             else -> s
                         }
                     }
@@ -585,43 +733,44 @@ class HomeViewModel : ViewModel() {
             }
 
             try {
-                val moviesR = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
-                val seriesR = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
+                supervisorScope {
+                    val moviesR = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES, 1).getOrElse { emptyList() } }
+                    val seriesR = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES, 1).getOrElse { emptyList() } }
 
-                val mRes = moviesR.await()
-                val sRes = seriesR.await()
+                    val mRes = moviesR.await()
+                    val sRes = seriesR.await()
 
-                _state.update { s -> s.copy(
-                    fuzerIsLoading = false,
-                    fuzerItems     = mRes + sRes,
-                    fuzerMovies    = mRes,
-                    fuzerSeries    = sRes
-                )}
+                    _state.update { s -> s.copy(
+                        fuzerIsLoading = false,
+                        fuzerItems     = mRes + sRes,
+                        fuzerMovies    = mRes,
+                        fuzerSeries    = sRes
+                    )}
 
-                val moviesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() } }
-                val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
-                val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
-                val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
-                val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
-                val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
+                    val moviesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_HD, 1).getOrElse { emptyList() } }
+                    val seriesHdDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_HD, 1).getOrElse { emptyList() } }
+                    val movies4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.MOVIES_4K, 1).getOrElse { emptyList() } }
+                    val series4kDef = async { FuzerEngine.getCategoryPage(FuzerCats.SERIES_4K, 1).getOrElse { emptyList() } }
+                    val dubbedMoviesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_MOVIES, 1).getOrElse { emptyList() } }
+                    val dubbedSeriesDef = async { FuzerEngine.getCategoryPage(FuzerCats.DUBBED_SERIES, 1).getOrElse { emptyList() } }
 
-                val mHd = moviesHdDef.await()
-                val sHd = seriesHdDef.await()
-                val m4k = movies4kDef.await()
-                val s4k = series4kDef.await()
-                val dmRes = dubbedMoviesDef.await()
-                val dsRes = dubbedSeriesDef.await()
+                    val mHd = moviesHdDef.await()
+                    val sHd = seriesHdDef.await()
+                    val m4k = movies4kDef.await()
+                    val s4k = series4kDef.await()
+                    val dmRes = dubbedMoviesDef.await()
+                    val dsRes = dubbedSeriesDef.await()
 
-                // ⚡ Single batched update instead of 2 separate updates
-                _state.update { s -> s.copy(
-                    fuzerMoviesHD = mHd,
-                    fuzerSeriesHD = sHd,
-                    fuzerMovies4K = m4k,
-                    fuzerSeries4K = s4k,
-                    fuzerDubbedMovies = dmRes,
-                    fuzerDubbedSeries = dsRes
-                )}
-
+                    // ⚡ Single batched update instead of 2 separate updates
+                    _state.update { s -> s.copy(
+                        fuzerMoviesHD = mHd,
+                        fuzerSeriesHD = sHd,
+                        fuzerMovies4K = m4k,
+                        fuzerSeries4K = s4k,
+                        fuzerDubbedMovies = dmRes,
+                        fuzerDubbedSeries = dsRes
+                    )}
+                }
             } catch (e: CancellationException) { throw e
             } catch (e: Exception) {
                 _state.update { it.copy(fuzerIsLoading = false, fuzerError = "שגיאת טעינה: ${e.message}") }

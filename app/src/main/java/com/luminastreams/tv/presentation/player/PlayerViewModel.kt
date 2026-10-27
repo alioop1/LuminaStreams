@@ -26,7 +26,8 @@ data class StremioSubtitle(val url: String, val lang: String, val source: String
 data class PlayerUiState(
     val videoUrl: String? = null,
     val isSubtitlesLoading: Boolean = false,
-    val availableSubtitles: List<StremioSubtitle> = emptyList()
+    val availableSubtitles: List<StremioSubtitle> = emptyList(),
+    val error: String? = null
 )
 
 class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
@@ -43,17 +44,26 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
 
     override fun onCleared() {
         super.onCleared()
-        // Clean up cached subtitle files from previous sessions
-        try {
-            app.cacheDir.listFiles()?.forEach { file ->
-                if (file.name.startsWith("subtitle_") || file.name.startsWith("ktuvit_")) {
-                    file.delete()
+        // Clean up cached subtitle files from previous sessions.
+        // File IO on the main thread (onCleared runs on the main thread) can trigger
+        // ANRs on TVs with slow storage — push to a background thread.
+        val cacheDir = app.cacheDir
+        Thread({
+            try {
+                cacheDir.listFiles()?.forEach { file ->
+                    if (file.name.startsWith("subtitle_") || file.name.startsWith("ktuvit_")) {
+                        file.delete()
+                    }
                 }
-            }
-        } catch (_: Exception) {}
+            } catch (_: Exception) {}
+        }, "PlayerViewModel-cache-cleanup").apply { isDaemon = true }.start()
     }
 
     fun loadMedia(videoUrl: String, imdbId: String, season: Int? = null, episode: Int? = null) {
+        if (videoUrl.isBlank() || videoUrl == "null") {
+            _state.update { it.copy(error = "Failed to resolve stream URL") }
+            return
+        }
         _state.update { it.copy(videoUrl = videoUrl, isSubtitlesLoading = true) }
 
         if (imdbId.isNotEmpty()) {
@@ -125,9 +135,9 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
         episode: Int?
     ): List<StremioSubtitle> = withContext(Dispatchers.IO) {
         try {
-            val prefs   = app.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-            val email   = prefs.getString("ktuvit_email",    "") ?: ""
-            val pass    = prefs.getString("ktuvit_password",  "") ?: ""
+            val appInst = app as com.luminastreams.tv.core.LuminaApp
+            val email   = appInst.settingsRepository.current().ktuvitEmail
+            val pass    = appInst.settingsRepository.current().ktuvitPassword
 
             if (email.isBlank() || pass.isBlank()) return@withContext emptyList()
 
@@ -176,24 +186,24 @@ class PlayerViewModel(private val app: Application) : AndroidViewModel(app) {
                 .header("User-Agent", "Stremio/4.4.168")
                 .header("Accept-Language", "he,he-IL,hebrew;q=0.9,en;q=0.8")
                 .build()
-            val response = subtitleClient.newCall(request).execute()
-            if (response.isSuccessful) {
-                val responseStr = response.body?.string() ?: ""
-                response.close()
-                val jsonObject = JSONObject(responseStr)
-                if (jsonObject.has("subtitles")) {
-                    val subsArray = jsonObject.getJSONArray("subtitles")
-                    for (i in 0 until subsArray.length()) {
-                        val subObj = subsArray.getJSONObject(i)
-                        val subUrl = subObj.optString("url", "")
-                        var lang   = subObj.optString("lang", "Unknown")
-                        if ((lang == "Unknown" || lang.isEmpty()) &&
-                            (sourceName == "Wizdom" || sourceName == "Ktuvit")) lang = "heb"
-                        if (subUrl.isNotEmpty()) subtitles.add(StremioSubtitle(subUrl, lang, sourceName))
+            // Wrap in use{} — if JSONObject() throws on malformed JSON, the response
+            // (and its underlying socket) would otherwise leak back to the pool.
+            subtitleClient.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val responseStr = response.body?.string() ?: ""
+                    val jsonObject = JSONObject(responseStr)
+                    if (jsonObject.has("subtitles")) {
+                        val subsArray = jsonObject.getJSONArray("subtitles")
+                        for (i in 0 until subsArray.length()) {
+                            val subObj = subsArray.getJSONObject(i)
+                            val subUrl = subObj.optString("url", "")
+                            var lang   = subObj.optString("lang", "Unknown")
+                            if ((lang == "Unknown" || lang.isEmpty()) &&
+                                (sourceName == "Wizdom" || sourceName == "Ktuvit")) lang = "heb"
+                            if (subUrl.isNotEmpty()) subtitles.add(StremioSubtitle(subUrl, lang, sourceName))
+                        }
                     }
                 }
-            } else {
-                response.close()
             }
         } catch (_: Exception) {
         }

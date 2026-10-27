@@ -18,8 +18,13 @@ object LocalWebServer {
     private var serverSocket: ServerSocket? = null
     private var isRunning = false
 
-    // תיקון #7 — replay=1 מבטיח שהאירוע לא יאבד אם ה-ViewModel עוד לא מאזין
-    private val _playlistFlow = MutableSharedFlow<IncomingPlaylist>(replay = 1)
+    // תיקון #7 — replay=1 מבטיח שהאירוע לא יאבד אם ה-ViewModel עוד לא מאזין.
+    // תיקון #6 (מניעת דריסה כפולה) מסתמך על replayCache שלמטה, ולכן חובה replay=1.
+    private val _playlistFlow = MutableSharedFlow<IncomingPlaylist>(
+        replay = 1,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
     val playlistFlow = _playlistFlow.asSharedFlow()
 
     suspend fun start(port: Int = 8080) = withContext(Dispatchers.IO) {
@@ -66,9 +71,20 @@ object LocalWebServer {
             if (requestLine.startsWith("GET")) {
                 serveHtml(out)
             } else if (requestLine.startsWith("POST")) {
-                val bodyChars = CharArray(contentLength)
-                reader.read(bodyChars, 0, contentLength)
-                val params = String(bodyChars).split("&").associate {
+                // Hard cap on body size to prevent OOM from malicious Content-Length
+                // (e.g. "Content-Length: 2000000000" would allocate ~4 GB via CharArray).
+                val MAX_BODY_BYTES = 64 * 1024
+                val safeLength = contentLength.coerceIn(0, MAX_BODY_BYTES)
+                val bodyChars = CharArray(safeLength)
+                // BufferedReader.read may return fewer chars than requested; loop until
+                // we fill the buffer or hit EOF.
+                var totalRead = 0
+                while (totalRead < safeLength) {
+                    val n = reader.read(bodyChars, totalRead, safeLength - totalRead)
+                    if (n <= 0) break
+                    totalRead += n
+                }
+                val params = String(bodyChars, 0, totalRead).split("&").associate {
                     val parts = it.split("=")
                     URLDecoder.decode(parts[0], "UTF-8") to
                             URLDecoder.decode(parts.getOrNull(1) ?: "", "UTF-8")
@@ -88,6 +104,8 @@ object LocalWebServer {
                 }
                 serveSuccess(out)
             }
+        } catch (e: Exception) {
+            e.printStackTrace()
         } finally {
             try { socket.close() } catch (_: Exception) {}
         }

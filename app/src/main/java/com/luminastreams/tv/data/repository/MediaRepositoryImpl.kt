@@ -11,6 +11,7 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.model.SearchResult
 import com.luminastreams.tv.domain.model.MediaType
 import com.luminastreams.tv.domain.repository.MediaRepository
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -44,10 +45,10 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         .create(com.luminastreams.tv.data.api.OmdbApi::class.java)
 
     private val tmdbLang: String get() {
-        val prefsLang = context.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-            .getString("app_lang", "")
+        val app = context.applicationContext as com.luminastreams.tv.core.LuminaApp
+        val lang = app.settingsRepository.current().appLanguage
         val deviceLang = java.util.Locale.getDefault().language
-        return if (prefsLang == "he" || deviceLang == "he" || deviceLang == "iw") "he" else "en-US"
+        return if (lang == "he" || deviceLang == "he" || deviceLang == "iw") "he" else "en-US"
     }
 
     private val tierBadge: String get() = when (DeviceProfile.tier) {
@@ -75,12 +76,13 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         return SearchResult(
             id          = "${actualType}_${id}",
             title       = title ?: name ?: "Unknown",
-            posterUrl   = posterPath?.let { if (it.isNotBlank() && it != "null") "$base/w342$it" else "" } ?: "",
-            backdropUrl = backdropPath?.let { if (it.isNotBlank() && it != "null") "$base/w780$it" else "" } ?: "",
+            posterUrl   = posterPath?.let { if (it.isNotBlank() && it != "null") "$base/w500$it" else "" } ?: "",
+            backdropUrl = backdropPath?.let { if (it.isNotBlank() && it != "null") "$base/original$it" else "" } ?: "",
             type        = if (actualType == "tv") MediaType.TV_SHOW else MediaType.MOVIE,
             rating      = voteAverage,
             releaseYear = (if (actualType == "tv") firstAirDate else releaseDate)?.take(4) ?: "",
-            genre       = genreIds?.mapNotNull { tmdbGenreName(it).ifBlank { null } }?.joinToString(", ") ?: ""
+            genre       = genreIds?.mapNotNull { tmdbGenreName(it).ifBlank { null } }?.joinToString(", ") ?: "",
+            overview    = overview ?: ""
         )
     }
 
@@ -114,6 +116,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .distinctBy { it.id }
 
             Result.success(movies)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -137,6 +141,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .distinctBy { it.id }
 
             Result.success(results)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -151,6 +157,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .filter { it.posterPath != null }
                 .map { it.toSearchResult(it.mediaType ?: "movie") }
             Result.success(results)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -173,6 +181,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
 
                 Result.success(results)
             }
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -207,6 +217,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                     .take(20)
 
                 Result.success(results)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -220,6 +232,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         withContext(Dispatchers.IO) {
             try {
                 Result.success(api.getMovieDetails(id, Constants.TMDB_API_KEY, language = tmdbLang))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -229,6 +243,30 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         withContext(Dispatchers.IO) {
             try {
                 Result.success(api.getTvDetails(id, Constants.TMDB_API_KEY, language = tmdbLang))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    override suspend fun getMovieImages(id: String): Result<com.luminastreams.tv.data.api.ImagesDto> =
+        withContext(Dispatchers.IO) {
+            try {
+                Result.success(api.getMovieImages(id, Constants.TMDB_API_KEY))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }
+        }
+
+    override suspend fun getTvImages(id: String): Result<com.luminastreams.tv.data.api.ImagesDto> =
+        withContext(Dispatchers.IO) {
+            try {
+                Result.success(api.getTvImages(id, Constants.TMDB_API_KEY))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -238,6 +276,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
         withContext(Dispatchers.IO) {
             try {
                 Result.success(api.getPersonDetails(id, Constants.TMDB_API_KEY, language = tmdbLang))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }
@@ -264,6 +304,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .filter { it.posterPath != null }
                 .map { it.toMovie(type) }
             Result.success(items)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -317,6 +359,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                 .distinctBy { it.id }
 
             Result.success(mapped)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -329,6 +373,8 @@ class MediaRepositoryImpl(private val context: Context) : MediaRepository {
                     return@withContext Result.failure(Exception("Invalid IMDb ID"))
                 }
                 Result.success(omdbApi.getTitleDetails(imdbId = imdbId))
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 Result.failure(e)
             }

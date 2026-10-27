@@ -62,6 +62,7 @@ fun Ps5TopNav(
     onSeries: () -> Unit,
     onHome: () -> Unit,
     onFuzer: () -> Unit,
+    onDebrid: () -> Unit,
     onProfileClick: () -> Unit,
     selectedTab: String
 ) {
@@ -123,6 +124,7 @@ fun Ps5TopNav(
             NavIconButton(Icons.Default.LiveTv, selectedTab == "series", null, onSeries)
             NavIconButton(Icons.Default.AutoAwesome, selectedTab == "Fuzer", null, onFuzer)
             NavIconButton(Icons.Default.Tv, false, null, onIptv)
+            NavIconButton(Icons.Default.Cloud, false, null, onDebrid)
             NavIconButton(Icons.Default.Favorite, false, null, onWatchlist)
             NavIconButton(Icons.Default.Settings, false, null, onSettings)
             NavIconButton(Icons.Default.AccountCircle, false, null, onProfileClick)

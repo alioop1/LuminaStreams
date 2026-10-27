@@ -6,27 +6,32 @@ import android.util.Log
 import androidx.tvprovider.media.tv.WatchNextProgram
 import androidx.tvprovider.media.tv.TvContractCompat
 import com.luminastreams.tv.domain.model.Movie
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 class WatchNextManager(private val context: Context) {
 
     private val TAG = "WatchNextManager"
 
-    fun updateWatchNext(id: String, title: String, overview: String, posterUrl: String?, progressMs: Long, durationMs: Long) {
-        try {
-            // Android TV only allows writing to Watch Next if the app has the right permissions and is running on TV.
-            if (!isTvDevice()) return
+    suspend fun updateWatchNext(id: String, title: String, overview: String, posterUrl: String?, progressMs: Long, durationMs: Long) {
+        withContext(Dispatchers.IO) {
+            try {
+                // Android TV only allows writing to Watch Next if the app has the right permissions and is running on TV.
+                if (!isTvDevice()) return@withContext
 
-            val contentId = id
-            val existingProgram = findProgramById(contentId)
+                if (durationMs <= 0L) return@withContext
 
-            // If progress is very small (less than 1 minute) or very close to the end (95%), remove it.
-            val progressPercent = if (durationMs > 0) (progressMs.toFloat() / durationMs.toFloat()) else 0f
-            if (progressPercent < 0.05f || progressPercent > 0.95f) {
-                if (existingProgram != null) {
-                    removeProgram(existingProgram.id)
+                val contentId = id
+                val existingProgram = findProgramById(contentId)
+
+                // If progress is very small (less than 1 minute) or very close to the end (95%), remove it.
+                val progressPercent = if (durationMs > 0) (progressMs.toFloat() / durationMs.toFloat()) else 0f
+                if (progressPercent < 0.05f || progressPercent > 0.95f) {
+                    if (existingProgram != null) {
+                        removeProgram(existingProgram.id)
+                    }
+                    return@withContext
                 }
-                return
-            }
 
             // Create or update the Watch Next Program
             val builder = if (existingProgram != null) {
@@ -66,7 +71,8 @@ class WatchNextManager(private val context: Context) {
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to update Watch Next", e)
+                Log.e(TAG, "Failed to update Watch Next", e)
+            }
         }
     }
 
@@ -82,7 +88,7 @@ class WatchNextManager(private val context: Context) {
             if (it.moveToFirst()) {
                 do {
                     val program = WatchNextProgram.fromCursor(it)
-                    if (program.intentUri?.toString()?.endsWith(contentId) == true) {
+                    if (program.intentUri?.toString()?.endsWith("/$contentId") == true) {
                         return program
                     }
                 } while (it.moveToNext())

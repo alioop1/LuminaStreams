@@ -11,6 +11,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -30,6 +31,10 @@ class SyncManager(
 ) {
     private val TAG = "SyncManager"
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // @Volatile: this flag is read from Firestore snapshot listeners (main/IO)
+    // and written from push/pull coroutines on Dispatchers.IO. Without @Volatile
+    // stale reads can cause feedback loops (push → snapshot → pull → merge → push).
+    @Volatile
     private var isSyncingFromCloud = false
     private var syncJob: Job? = null
 
@@ -260,7 +265,7 @@ class SyncManager(
     fun startRealtimeSync() {
         syncJob?.cancel()
         syncJob = scope.launch {
-            authRepository.currentUser.collect { user ->
+            authRepository.currentUser.collectLatest { user ->
                 if (user != null) {
                     Log.d(TAG, "startRealtimeSync: user ${user.id} — performing initial pull")
                     // Initial pull to guarantee data is loaded

@@ -26,9 +26,17 @@ class AuthViewModel(
     private val db = FirebaseFirestore.getInstance()
 
     init {
+        checkExistingSession()
+    }
+
+    private fun checkExistingSession() {
         viewModelScope.launch {
-            repository.currentUser.collect { user ->
-                _state.update { it.copy(loggedInEmail = user?.email) }
+            try {
+                repository.currentUser.collect { user ->
+                    _state.update { it.copy(loggedInEmail = user?.email) }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
             }
         }
     }
@@ -52,13 +60,18 @@ class AuthViewModel(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
-            val result = repository.login(email, pass)
-            if (result.isSuccess) {
-                syncManager.startRealtimeSync()
-                _state.update { it.copy(isLoading = false, isSuccess = true) }
-            } else {
-                _state.update { it.copy(isLoading = false, error = translateFirebaseError(result.exceptionOrNull())) }
+            try {
+                _state.update { it.copy(isLoading = true, error = null) }
+                val result = repository.login(email, pass)
+                if (result.isSuccess) {
+                    syncManager.startRealtimeSync()
+                    _state.update { it.copy(isLoading = false, isSuccess = true) }
+                } else {
+                    _state.update { it.copy(isLoading = false, error = translateFirebaseError(result.exceptionOrNull())) }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _state.update { it.copy(isLoading = false, error = translateFirebaseError(e)) }
             }
         }
     }
@@ -77,13 +90,18 @@ class AuthViewModel(
             return
         }
         viewModelScope.launch {
-            _state.update { it.copy(isLoading = true, error = null) }
-            val result = repository.register(email, pass)
-            if (result.isSuccess) {
-                syncManager.startRealtimeSync()
-                _state.update { it.copy(isLoading = false, isSuccess = true) }
-            } else {
-                _state.update { it.copy(isLoading = false, error = translateFirebaseError(result.exceptionOrNull())) }
+            try {
+                _state.update { it.copy(isLoading = true, error = null) }
+                val result = repository.register(email, pass)
+                if (result.isSuccess) {
+                    syncManager.startRealtimeSync()
+                    _state.update { it.copy(isLoading = false, isSuccess = true) }
+                } else {
+                    _state.update { it.copy(isLoading = false, error = translateFirebaseError(result.exceptionOrNull())) }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                _state.update { it.copy(isLoading = false, error = translateFirebaseError(e)) }
             }
         }
     }
@@ -157,6 +175,7 @@ class AuthViewModel(
                 runCatching { linkDoc.delete().await() }
 
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
                 Log.e(TAG, "Device linking failed", e)
                 _state.update { it.copy(isLinking = false, deviceLinkCode = null, error = "שגיאה בחיבור: ${e.message}") }
             }

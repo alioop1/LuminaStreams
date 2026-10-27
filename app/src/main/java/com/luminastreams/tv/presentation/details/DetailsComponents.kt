@@ -29,6 +29,7 @@ import androidx.compose.ui.input.key.type
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.content.ActivityNotFoundException
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -84,11 +85,13 @@ fun launchNativeTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle
     val appCtx = context.applicationContext
     if (!trailerIdOrUrl.isNullOrBlank()) {
         val ytAppIntent = Intent(Intent.ACTION_VIEW, "vnd.youtube:$trailerIdOrUrl".toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (appCtx.packageManager.resolveActivity(ytAppIntent, 0) != null) {
-            try { appCtx.startActivity(ytAppIntent); return } catch (_: Exception) {}
-        }
         val watchUrl = if (trailerIdOrUrl.startsWith("http")) trailerIdOrUrl else "https://www.youtube.com/watch?v=$trailerIdOrUrl"
-        try { appCtx.startActivity(Intent(Intent.ACTION_VIEW, watchUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {}
+        try { 
+            appCtx.startActivity(ytAppIntent)
+            return 
+        } catch (e: ActivityNotFoundException) {
+            try { appCtx.startActivity(Intent(Intent.ACTION_VIEW, watchUrl.toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); return } catch (_: Exception) {}
+        } catch (_: Exception) {}
     }
     try {
         appCtx.startActivity(Intent(Intent.ACTION_VIEW, "https://www.youtube.com/results?search_query=${Uri.encode("$fallbackTitle official trailer")}".toUri()).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
@@ -98,7 +101,7 @@ fun launchNativeTrailer(context: Context, trailerIdOrUrl: String?, fallbackTitle
 // ─── 🎬 DYNAMIC SOURCE ROW (REPLACED CUBE WITH PILL FOR CINEMATIC EPISODE LOOK) ───
 @OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
-fun DetailedSourceRow(stream: AdvancedStreamSource, logoUrl: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun DetailedSourceRow(stream: AdvancedStreamSource, logoUrl: String, originalLanguageIso: String = "", modifier: Modifier = Modifier, onClick: () -> Unit) {
     var isFocused by remember { mutableStateOf(false) }
 
     val infiniteTransition = rememberInfiniteTransition()
@@ -281,8 +284,11 @@ fun DetailedSourceRow(stream: AdvancedStreamSource, logoUrl: String, modifier: M
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Audio Language badges — only show RUS, ENG, HEB
-                    stream.audioLanguages.filter { it == AudioLanguage.RUSSIAN || it == AudioLanguage.ENGLISH || it == AudioLanguage.HEBREW }.take(3).forEach { lang ->
+                    val originalLangEnum = remember(originalLanguageIso) { AudioLanguage.fromIso(originalLanguageIso) }
+                    // Audio Language badges — only show RUS, ENG, HEB, and Original Language
+                    stream.audioLanguages.filter { 
+                        it == AudioLanguage.RUSSIAN || it == AudioLanguage.ENGLISH || it == AudioLanguage.HEBREW || (originalLangEnum != null && it == originalLangEnum) 
+                    }.take(4).forEach { lang ->
                         val langColor = when (lang) {
                             AudioLanguage.RUSSIAN    -> Color(0xFF5C7CFA)
                             AudioLanguage.ENGLISH    -> Color(0xFF69DB7C)
@@ -939,7 +945,7 @@ fun SeasonEpisodesPopup(
         ) {
             // ═══ RIGHT PANEL (RTL): Massive Preview in Glass Card ═══
             Column(
-                modifier = Modifier.weight(0.65f).fillMaxHeight()
+                modifier = Modifier.weight(0.5f).fillMaxHeight()
                     .background(Color.White.copy(0.03f), RoundedCornerShape(32.dp))
                     .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(32.dp))
                     .padding(40.dp),
@@ -1036,9 +1042,9 @@ fun SeasonEpisodesPopup(
                 }
             }
 
-            // ═══ LEFT PANEL (RTL): Text-Driven Minimalist List ═══
+            // ═══ LEFT PANEL (RTL): Elegant Episode List ═══
             Column(
-                modifier = Modifier.weight(0.35f).fillMaxHeight()
+                modifier = Modifier.weight(0.5f).fillMaxHeight()
                     .background(Color.White.copy(0.03f), RoundedCornerShape(32.dp))
                     .border(1.dp, Color.White.copy(0.05f), RoundedCornerShape(32.dp))
                     .padding(32.dp)
@@ -1058,20 +1064,31 @@ fun SeasonEpisodesPopup(
                         com.luminastreams.tv.ui.components.LoadingIndicator()
                     }
                 } else {
+                    val ctx = androidx.compose.ui.platform.LocalContext.current
+                    val notAiredMsg = tr("This episode hasn't aired yet", "הפרק הזה עדיין לא שודר")
                     LazyColumn(
                         modifier = Modifier.fillMaxSize()
-                            .focusGroup()
-                            .focusRestorer { firstEpFR },
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        contentPadding = PaddingValues(vertical = 16.dp, horizontal = 8.dp)
+                            .focusGroup(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        contentPadding = PaddingValues(vertical = 10.dp, horizontal = 6.dp)
                     ) {
                         items(episodes.size, key = { episodes[it].id }) { idx ->
                             val ep = episodes[idx]
-                            SeasonEpisodeTextRow(
+                            SeasonEpisodeRow(
                                 episode = ep,
-                                modifier = if (idx == 0) Modifier.focusRequester(firstEpFR) else Modifier,
+                                // Per-row margin so the focus border + glow always have room
+                                // inside the list viewport, even for the first / last row.
+                                modifier = Modifier
+                                    .padding(vertical = 6.dp, horizontal = 6.dp)
+                                    .then(if (idx == 0) Modifier.focusRequester(firstEpFR) else Modifier),
                                 onFocused = { focusedEpisode = ep },
-                                onPlay = { onPlayEpisode(ep) }
+                                onPlay = {
+                                    if (ep.isUpcoming) {
+                                        android.widget.Toast.makeText(ctx, notAiredMsg, android.widget.Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        onPlayEpisode(ep)
+                                    }
+                                }
                             )
                         }
                     }
@@ -1081,64 +1098,127 @@ fun SeasonEpisodesPopup(
     }
 }
 
-// ═══ Minimalist Text-Driven Episode Row ═══
+// ═══ Premium Visual Episode Row ═══
 @Composable
-private fun SeasonEpisodeTextRow(
+private fun SeasonEpisodeRow(
     episode: Episode,
     modifier: Modifier = Modifier,
     onFocused: () -> Unit,
     onPlay: () -> Unit
 ) {
     var isFocused by remember { mutableStateOf(false) }
-    
+    val hebrew = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val upcoming = episode.isUpcoming
+
     Surface(
         onClick = onPlay,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)), // Perfect pill shape for smooth glow
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.05f),
+        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
+        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
         colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = ColorGoldMain,
+            containerColor = Color.White.copy(0.04f),
+            focusedContainerColor = Color.White.copy(if (upcoming) 0.06f else 0.14f),
         ),
         glow = ClickableSurfaceDefaults.glow(
-            focusedGlow = Glow(elevationColor = ColorGoldMain.copy(0.3f), elevation = 16.dp)
+            // Keep the glow small — a big elevation shadow gets clipped by the list's
+            // viewport on the first/last rows. The 2dp gold border is the real focus cue.
+            focusedGlow = Glow(elevationColor = ColorGoldMain.copy(0.25f), elevation = if (upcoming) 0.dp else 4.dp)
+        ),
+        border = ClickableSurfaceDefaults.border(
+            border = Border.None,
+            focusedBorder = Border(BorderStroke(2.dp, if (upcoming) Color(0xFFE2B258).copy(0.5f) else ColorGoldMain))
         ),
         modifier = modifier
             .fillMaxWidth()
+            .height(110.dp)
             .onFocusChanged {
                 isFocused = it.isFocused
                 if (it.isFocused) onFocused()
             }
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 20.dp),
+            modifier = Modifier.fillMaxSize().alpha(if (upcoming) 0.6f else 1f),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            // Episode Number Badge
-            Text(
-                text = episode.episodeNumber.toString().padStart(2, '0'),
-                color = if (isFocused) Color.Black else Color.White.copy(0.3f),
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Black
-            )
-            
-            Spacer(Modifier.width(20.dp))
-            
-            // Title
-            Text(
-                text = episode.title,
-                color = if (isFocused) Color.Black else Color.White.copy(0.9f),
-                fontSize = 20.sp,
-                fontWeight = if (isFocused) FontWeight.Black else FontWeight.Bold,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            
-            // Play Icon or Watched Check
-            if (isFocused) {
-                Icon(Icons.Default.PlayArrow, null, tint = Color.Black, modifier = Modifier.size(28.dp))
-            } else if (episode.hasWatched) {
-                Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF32D74B), modifier = Modifier.size(24.dp))
+            // Right Side Thumbnail (RTL)
+            Box(
+                modifier = Modifier
+                    .width(170.dp)
+                    .fillMaxHeight()
+                    .background(Color.Black.copy(0.3f))
+                    .clip(androidx.compose.foundation.shape.AbsoluteRoundedCornerShape(topRight = 16.dp, bottomRight = 16.dp))
+            ) {
+                if (episode.stillUrl.isNotBlank()) {
+                    AsyncImage(
+                        model = episode.stillUrl.toOriginalTmdb(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().alpha(if (upcoming) 0.35f else if (isFocused) 1f else 0.8f)
+                    )
+                }
+
+                // Progress Bar Overlay
+                if (episode.progress > 0f && !upcoming) {
+                    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(4.dp).background(Color.DarkGray)) {
+                        Box(Modifier.fillMaxWidth(episode.progress).fillMaxHeight().background(
+                            if (episode.hasWatched) Color(0xFF32D74B) else ColorAccentIsland
+                        ))
+                    }
+                }
+
+                // Play icon / Watched check / Upcoming clock overlaid on thumbnail
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(if (isFocused && !upcoming) 0.1f else 0.4f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        upcoming -> Icon(Icons.Default.Schedule, null, tint = Color(0xFFE2B258), modifier = Modifier.size(30.dp))
+                        isFocused -> Icon(Icons.Default.PlayArrow, null, tint = Color.White, modifier = Modifier.size(36.dp))
+                        episode.hasWatched -> Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF32D74B), modifier = Modifier.size(28.dp))
+                    }
+                }
+            }
+
+            // Left Side Info (RTL)
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 16.dp, end = 24.dp, top = 12.dp, bottom = 12.dp),
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "${episode.episodeNumber}. ${episode.title}",
+                    color = if (isFocused && !upcoming) Color.White else Color.White.copy(0.9f),
+                    fontSize = 18.sp,
+                    fontWeight = if (isFocused && !upcoming) FontWeight.Black else FontWeight.Bold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Spacer(Modifier.height(4.dp))
+
+                if (upcoming) {
+                    Box(
+                        Modifier
+                            .background(Color(0xFFE2B258).copy(0.18f), RoundedCornerShape(6.dp))
+                            .border(1.dp, Color(0xFFE2B258).copy(0.4f), RoundedCornerShape(6.dp))
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = "🗓  " + airsPillText(episode.airDateIso, hebrew).uppercase(),
+                            color = Color(0xFFE2B258),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Black,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                } else if (episode.overview.isNotBlank()) {
+                    Text(
+                        text = episode.overview,
+                        color = Color.White.copy(0.5f),
+                        fontSize = 14.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                        lineHeight = 18.sp
+                    )
+                }
             }
         }
     }
@@ -1305,7 +1385,7 @@ fun ActorDetailsPopup(
                             Spacer(Modifier.height(12.dp))
                             
                             LazyColumn(
-                                modifier = Modifier.focusGroup().focusRestorer { focusRequester }.fillMaxWidth().weight(1f),
+                                modifier = Modifier.focusGroup().fillMaxWidth().weight(1f),
                                 verticalArrangement = Arrangement.spacedBy(4.dp),
                                 contentPadding = PaddingValues(end = 32.dp, bottom = 24.dp)
                             ) {

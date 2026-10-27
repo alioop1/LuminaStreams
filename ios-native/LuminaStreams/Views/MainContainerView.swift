@@ -13,6 +13,20 @@ enum LuminaSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var icon: String {
+        switch self {
+        case .search:    return "magnifyingglass"
+        case .home:      return "house.fill"
+        case .movies:    return "film.fill"
+        case .series:    return "tv.fill"
+        case .iptv:      return "antenna.radiowaves.left.and.right"
+        case .fuzer:     return "sparkles"
+        case .debrid:    return "cloud.fill"
+        case .watchlist: return "heart.fill"
+        case .settings:  return "gearshape.fill"
+        }
+    }
+
     func title(isRTL: Bool) -> String {
         switch self {
         case .search:    return isRTL ? "חיפוש" : "Search"
@@ -84,7 +98,7 @@ struct MainContainerView: View {
                     }
                     .padding(.top, isLandscape ? 58 : 68)
 
-                    // PS5 Top Nav Bar with 100% Material Vector Icons
+                    // PS5 Top Nav Bar with High-Visibility Circular Glass Buttons
                     ps5TopBar(isLandscape: isLandscape)
                 }
                 .navigationDestination(
@@ -126,7 +140,7 @@ struct MainContainerView: View {
 
                 Spacer(minLength: 6)
 
-                // Circular PS5 Action Icons (Exact Material Icons)
+                // Circular PS5 Action Icons (Exact Android TV Placement)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(LuminaSection.allCases) { section in
@@ -146,12 +160,12 @@ struct MainContainerView: View {
                                         .frame(width: 36, height: 36)
                                         .overlay(
                                             Circle()
-                                                .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: 1)
+                                                .stroke(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
                                         )
                                         .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
 
-                                    iconFor(section: section)
-                                        .frame(width: 18, height: 18)
+                                    Image(systemName: section.icon)
+                                        .font(.system(size: 14, weight: .semibold))
                                         .foregroundColor(isSelected ? .black : .white)
                                 }
                             }
@@ -175,30 +189,6 @@ struct MainContainerView: View {
                     .background(.ultraThinMaterial)
             )
             Divider().background(Color.white.opacity(0.08))
-        }
-    }
-
-    @ViewBuilder
-    private func iconFor(section: LuminaSection) -> some View {
-        switch section {
-        case .search:
-            MaterialSearchIcon()
-        case .home:
-            MaterialHomeIcon()
-        case .movies:
-            MaterialMovieIcon()
-        case .series:
-            MaterialTvIcon()
-        case .iptv:
-            MaterialLiveTvIcon()
-        case .fuzer:
-            MaterialAutoAwesomeIcon()
-        case .debrid:
-            MaterialCloudIcon()
-        case .watchlist:
-            MaterialFavoriteIcon()
-        case .settings:
-            MaterialSettingsIcon()
         }
     }
 

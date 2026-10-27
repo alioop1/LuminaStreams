@@ -329,7 +329,7 @@ fun SearchScreen(
                     // Search results mode
                     when {
                         state.isLoading || state.isFuzerLoading -> ShimmerGrid()
-                        isFuzer && state.fuzerError != null -> FuzerError(state.fuzerError)
+                        isFuzer && state.fuzerError?.contains("cancel", ignoreCase = true) == false -> FuzerError(state.fuzerError)
                         results.isEmpty() -> EmptyStateMessage(tr("No results found", "לא נמצאו תוצאות"))
                         state.filters.isActive && state.query.isBlank() && !isFuzer -> {
                             // Category browsing: year-grouped rows
@@ -453,7 +453,10 @@ private fun CategoryGrid(
                 backdropUrl = genreBackdrops[cat.genre],
                 modifier = Modifier
                     .let { if (idx == 0) it.focusRequester(firstResultFR) else it }
-                    .focusProperties { up = if (hasChips) chipFR else navBarFR },
+                    .let { 
+                        if (idx < 5) it.focusProperties { up = if (hasChips) chipFR else navBarFR }
+                        else it
+                    },
                 onClick = { onClick(cat) }
             )
         }
@@ -526,4 +529,24 @@ private fun PremiumCategoryCard(
 }
 
 @Composable
-fun EmptyStateMessage(text: String) { Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) { Text(text, color = Color(0x66FFFFFF), fontSize = 20.sp) } }
+fun EmptyStateMessage(text: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Icon(
+                Icons.Default.SearchOff,
+                contentDescription = null,
+                modifier = Modifier.size(64.dp),
+                tint = Color.White.copy(alpha = 0.3f)
+            )
+            Text(
+                text = text,
+                color = Color.White.copy(alpha = 0.6f),
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}

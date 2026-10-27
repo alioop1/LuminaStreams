@@ -34,16 +34,14 @@ import kotlinx.coroutines.flow.asStateFlow
 class ExoPlayerWrapper(context: Context) {
 
     private val appContext = context.applicationContext
-    private val prefs      = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+    private val settingsSnap = (appContext as com.luminastreams.tv.core.LuminaApp).settingsRepository.current()
 
-    private val audioPassthrough  = prefs.getBoolean("audio_passthrough",
-        DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips)
-    private val hwAcceleration    = prefs.getBoolean("hw_accel",            true)
-    private val audioLangPref     = prefs.getString("preferred_audio_lang", "original") ?: "original"
-    private val skipEmbeddedSubs  = prefs.getBoolean("subtitle_cache_only", false)
+    private val audioPassthrough  = settingsSnap.audioPassthrough || DeviceProfile.isLg || DeviceProfile.isSony || DeviceProfile.isPhilips
+    private val hwAcceleration    = settingsSnap.hwAcceleration
+    private val audioLangPref     = settingsSnap.preferredAudioLang
 
-    val useYellowSubtitles: Boolean = prefs.getBoolean("yellow_subs", false)
-    val subtitleFontScale: Float = when (prefs.getString("subtitle_font_scale", "medium")) {
+    val useYellowSubtitles: Boolean = settingsSnap.yellowSubtitles
+    val subtitleFontScale: Float = when (settingsSnap.subtitleFontScale) {
         "small"  -> 0.75f
         "large"  -> 1.30f
         "xlarge" -> 1.60f
@@ -62,75 +60,58 @@ class ExoPlayerWrapper(context: Context) {
     private val _isDolbyAtmos = MutableStateFlow(false)
     val isDolbyAtmos: StateFlow<Boolean> = _isDolbyAtmos.asStateFlow()
 
-    private val preAllocateBuffer = prefs.getBoolean("pre_buffer", false)
+    private val preAllocateBuffer = settingsSnap.preAllocateBuffer
 
     private val loadControl: DefaultLoadControl = DefaultLoadControl.Builder()
         .setTargetBufferBytes(
             if (preAllocateBuffer) {
                 when {
-                    DeviceProfile.totalRamMb > 2500 -> 500 * 1024 * 1024 // 500MB for High-End (e.g. Shield Pro)
-                    DeviceProfile.totalRamMb > 1500 -> 250 * 1024 * 1024 // 250MB for Mid-End
-                    else -> 150 * 1024 * 1024 // 150MB for Low-End TVs
+                    DeviceProfile.totalRamMb > 2500 -> 200 * 1024 * 1024 // 200MB for High-End
+                    DeviceProfile.totalRamMb > 1500 -> 120 * 1024 * 1024 // 120MB for Mid-End
+                    else -> 80 * 1024 * 1024 // 80MB for Low-End TVs
                 }
             } else {
-                100 * 1024 * 1024 // 100MB Default
+                80 * 1024 * 1024 // 80MB Default
             }
         )
         .setBufferDurationsMs(
-            if (preAllocateBuffer && DeviceProfile.totalRamMb > 2500) 120_000 else 50_000,   // minBuffer
-            if (preAllocateBuffer && DeviceProfile.totalRamMb > 2500) 600_000 else if (preAllocateBuffer) 300_000 else 120_000,  // maxBuffer: up to 10 minutes for beast mode
-            2_500,    // bufferForPlayback
-            5_000     // bufferAfterRebuffer
+            30_000,   // minBuffer: 30s
+            60_000,   // maxBuffer: 60s
+            2_000,    // bufferForPlayback: 2s
+            4_000     // bufferAfterRebuffer: 4s
         )
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
 
-    private val renderersFactory = DefaultRenderersFactory(appContext).apply {
-        setExtensionRendererMode(
-            when {
-                !hwAcceleration -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.tier == DeviceProfile.Tier.LOW ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isXiaomi || DeviceProfile.isMeCool || DeviceProfile.isAmlogic ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.isLg   || DeviceProfile.isSony   || DeviceProfile.isPhilips ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON
-                DeviceProfile.isNvidia ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-                DeviceProfile.tier == DeviceProfile.Tier.HIGH ->
-                    DefaultRenderersFactory.EXTENSION_RENDERER_MODE_OFF
-                else -> DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER
-            }
-        )
+    private val renderersFactory = CustomRenderersFactory(appContext).apply {
+        // EXTENSION_RENDERER_MODE_ON enables software decoder extensions (FFmpeg for AC3/EAC3/DTS/TrueHD)
+        // when hardware/MediaCodec decoders are unavailable (e.g., Windows Subsystem for Android).
+        setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON)
         setEnableDecoderFallback(true)
-
-        // Safely map Dolby Vision Profile 7 to HEVC to prevent Android TV crashes
-        runCatching {
-            this::class.java.getMethod("setMapDV7ToHevc", Boolean::class.java).invoke(this, true)
-        }
     }
 
     val trackSelector = DefaultTrackSelector(appContext).apply {
         val builder = buildUponParameters()
             .setPreferredVideoMimeTypes(
-                MimeTypes.VIDEO_DOLBY_VISION, MimeTypes.VIDEO_H265,
+                MimeTypes.VIDEO_H265, MimeTypes.VIDEO_DOLBY_VISION,
                 MimeTypes.VIDEO_H264, MimeTypes.VIDEO_AV1
             )
             .setPreferredAudioMimeTypes(
                 MimeTypes.AUDIO_E_AC3_JOC, MimeTypes.AUDIO_E_AC3,
-                MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_AAC
+                MimeTypes.AUDIO_AC3, MimeTypes.AUDIO_DTS,
+                MimeTypes.AUDIO_DTS_HD, MimeTypes.AUDIO_TRUEHD,
+                MimeTypes.AUDIO_AAC
             )
-            // DISABLED hardware tunneling by default to prevent severe Android TV UI lag
-            .setTunnelingEnabled(prefs.getBoolean("tunneling_enabled", false))
+            // TUNNELING is always disabled to prevent severe Android TV UI lag
+            .setTunnelingEnabled(false)
             .setPreferredTextLanguages("iw", "heb", "he")
             .setPreferredTextRoleFlags(C.ROLE_FLAG_SUBTITLE)
             .setAllowAudioMixedMimeTypeAdaptiveness(true)
             .setAllowAudioMixedSampleRateAdaptiveness(true)
-            .let { b -> if (skipEmbeddedSubs) b.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true) else b }
 
         val params = when (audioLangPref) {
-            "he" -> builder.setPreferredAudioLanguages("heb", "iw", "he")
-            "en" -> builder.setPreferredAudioLanguages("eng", "en")
+            "he" -> builder.setPreferredAudioLanguages("he", "heb", "iw", "he-IL")
+            "en" -> builder.setPreferredAudioLanguages("en", "eng", "en-US", "en-GB", "en-CA")
             else -> builder
         }
         setParameters(params.build())
@@ -149,6 +130,18 @@ class ExoPlayerWrapper(context: Context) {
         .writeTimeout(0L, java.util.concurrent.TimeUnit.SECONDS)
         .connectionPool(okhttp3.ConnectionPool(5, 5, java.util.concurrent.TimeUnit.MINUTES))
         .retryOnConnectionFailure(true) // OkHttp-level retry on TCP reset / connection drop
+        .addInterceptor { chain ->
+            val req = chain.request()
+            android.util.Log.d("LuminaNet", ">>> ${req.method} ${req.url} [Range: ${req.header("Range")}]")
+            try {
+                val res = chain.proceed(req)
+                android.util.Log.d("LuminaNet", "<<< ${res.code} [Content-Length: ${res.header("Content-Length")}, Content-Range: ${res.header("Content-Range")}]")
+                res
+            } catch (e: Exception) {
+                android.util.Log.e("LuminaNet", "❌ HTTP Error for ${req.url}: ${e.message}", e)
+                throw e
+            }
+        }
         .build()
 
     private val httpDataSourceFactory = OkHttpDataSource.Factory(streamingClient)
@@ -216,6 +209,12 @@ class ExoPlayerWrapper(context: Context) {
     private val _currentCues     = MutableStateFlow<List<Cue>>(emptyList())
     val currentCues: StateFlow<List<Cue>> = _currentCues.asStateFlow()
 
+    private val _playbackState   = MutableStateFlow(Player.STATE_IDLE)
+    val playbackState: StateFlow<Int> = _playbackState.asStateFlow()
+
+    private val _hasRenderedFirstFrame = MutableStateFlow(false)
+    val hasRenderedFirstFrame: StateFlow<Boolean> = _hasRenderedFirstFrame.asStateFlow()
+
     init {
         player.addListener(object : Player.Listener {
             override fun onIsPlayingChanged(p: Boolean) { _isPlaying.value = p }
@@ -267,13 +266,24 @@ class ExoPlayerWrapper(context: Context) {
                 }
             }
 
+            override fun onRenderedFirstFrame() {
+                android.util.Log.d("LuminaPlayer", "🎬 onRenderedFirstFrame: First frame rendered successfully!")
+                _hasRenderedFirstFrame.value = true
+            }
+
             override fun onPlayerError(error: PlaybackException) {
+                android.util.Log.e("LuminaPlayer", "🚨 onPlayerError [${error.errorCodeName} / ${error.errorCode}]: ${error.message}", error)
+                error.cause?.let {
+                    android.util.Log.e("LuminaPlayer", "🚨 Caused by [${it.javaClass.name}]: ${it.message}", it)
+                }
+
                 val isRecoverable = error.errorCode in listOf(
                     PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
                     PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
                     PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+                    PlaybackException.ERROR_CODE_TIMEOUT,
                     PlaybackException.ERROR_CODE_IO_UNSPECIFIED
                 )
 
@@ -284,6 +294,7 @@ class ExoPlayerWrapper(context: Context) {
                     val wasPlayWhenReady = player.playWhenReady
                     val savedSubUrl = _lastSubtitleUrl
                     val streamUrl = _lastStreamUrl ?: return
+                    android.util.Log.d("LuminaPlayer", "🔄 Auto-reconnecting attempt $_autoRetryCount/$MAX_AUTO_RETRIES at pos=$resumePos")
                     player.stop()
                     player.clearMediaItems()
                     _playerError.value = null
@@ -301,7 +312,8 @@ class ExoPlayerWrapper(context: Context) {
                     PlaybackException.ERROR_CODE_DECODER_INIT_FAILED           -> "Decoder init failed."
                     PlaybackException.ERROR_CODE_DECODING_FAILED               -> "Decoding error."
                     PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED  -> "Network connection failed."
-                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT -> "Connection timed out."
+                    PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT,
+                    PlaybackException.ERROR_CODE_TIMEOUT                       -> "Connection timed out."
                     PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
                     PlaybackException.ERROR_CODE_PARSING_MANIFEST_MALFORMED,
                     PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED -> "Stream corrupted or invalid. Try another link."
@@ -314,6 +326,8 @@ class ExoPlayerWrapper(context: Context) {
             }
 
             override fun onPlaybackStateChanged(s: Int) {
+                _playbackState.value = s
+                android.util.Log.d("LuminaPlayer", "State changed -> $s (1=IDLE, 2=BUFFERING, 3=READY, 4=ENDED), playWhenReady=${player.playWhenReady}, isPlaying=${player.isPlaying}")
                 if (s == Player.STATE_ENDED) _isPlaying.value = false
                 // Reset auto-retry counter once playback is healthy again
                 if (s == Player.STATE_READY && _autoRetryCount > 0) _autoRetryCount = 0
@@ -329,9 +343,10 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     fun prepareStream(videoUrl: String, startPositionMs: Long = C.TIME_UNSET) {
-        _playerError.value      = null
-        _subtitleApplied.value  = false
-        _currentCues.value      = emptyList()
+        _playerError.value           = null
+        _subtitleApplied.value       = false
+        _hasRenderedFirstFrame.value = false
+        _currentCues.value           = emptyList()
         _contentFrameRate.value = 0f
         _videoAspectRatio.value = 0f
         _isDolbyVision.value    = false
@@ -468,7 +483,11 @@ class ExoPlayerWrapper(context: Context) {
         _isPlaying.value = false
     }
 
+    private var isReleased = false
+
     fun release() {
+        if (isReleased) return
+        isReleased = true
         stopStallWatchdog()
         try {
             player.stop()
@@ -487,10 +506,9 @@ class ExoPlayerWrapper(context: Context) {
     }
 
     // ── Stall Watchdog ──
-    // Detects when ExoPlayer is stuck in STATE_BUFFERING with no new data arriving.
-    // This catches the silent-hang case where the CDN keeps the TCP connection alive
-    // but stops sending bytes — ExoPlayer will wait forever (or until readTimeout).
-
+    // Detects when ExoPlayer is stuck in STATE_BUFFERING during active playback with no new data arriving.
+    // Catches the silent-hang case where the CDN drops the connection mid-stream.
+    // Note: Never kills the initial startup buffering phase.
     private fun startStallWatchdog() {
         stopStallWatchdog()
         _lastBufferedPosition = player.bufferedPosition
@@ -506,34 +524,39 @@ class ExoPlayerWrapper(context: Context) {
                     return
                 }
                 // Only count stall time if the player was already playing —
-                // don't kill the initial buffering phase on slow starts
+                // never kill the initial buffering phase on slow starts
                 val wasAlreadyPlaying = player.currentPosition > 5_000L
                 if (currentBuffered <= _lastBufferedPosition && wasAlreadyPlaying) {
                     _stallCheckCount++
                     if (_stallCheckCount >= STALL_MAX_CHECKS && _autoRetryCount < MAX_AUTO_RETRIES) {
-                        _autoRetryCount++
-                        val resumePos = player.currentPosition.coerceAtLeast(0L)
-                        val wasPlayWhenReady = player.playWhenReady
-                        val savedSubUrl = _lastSubtitleUrl
-                        val streamUrl = _lastStreamUrl ?: return
-                        player.stop()
-                        player.clearMediaItems()
-                        _playerError.value = null
-                        flushStaleConnections()
-                        stopStallWatchdog()
-                        val retryDelayMs = 1_500L + ((_autoRetryCount - 1).coerceAtMost(3) * 800L)
-                        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                            retryStream(streamUrl, resumePos, wasPlayWhenReady, savedSubUrl)
-                        }, retryDelayMs)
+                        android.util.Log.w("LuminaPlayer", "⚠️ Playback stall detected during active playback. Triggering reconnect...")
+                        triggerStallRetry()
                         return
                     }
-                } else {
+                } else if (currentBuffered > _lastBufferedPosition) {
                     _stallCheckCount = 0
                     _lastBufferedPosition = currentBuffered
                 }
                 handler.postDelayed(this, STALL_CHECK_INTERVAL_MS)
             }
         }, STALL_CHECK_INTERVAL_MS)
+    }
+
+    private fun triggerStallRetry() {
+        _autoRetryCount++
+        val resumePos = player.currentPosition.coerceAtLeast(0L)
+        val wasPlayWhenReady = player.playWhenReady
+        val savedSubUrl = _lastSubtitleUrl
+        val streamUrl = _lastStreamUrl ?: return
+        player.stop()
+        player.clearMediaItems()
+        _playerError.value = null
+        flushStaleConnections()
+        stopStallWatchdog()
+        val retryDelayMs = 1_500L + ((_autoRetryCount - 1).coerceAtMost(3) * 800L)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            retryStream(streamUrl, resumePos, wasPlayWhenReady, savedSubUrl)
+        }, retryDelayMs)
     }
 
     private fun stopStallWatchdog() {

@@ -115,8 +115,7 @@ fun IptvScreen(
     // Dynamic layout direction based on app language setting
     val context = LocalContext.current
     val appLang = remember {
-        context.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
-            .getString("app_lang", "he") ?: "he"
+        (context.applicationContext as com.luminastreams.tv.core.LuminaApp).settingsRepository.current().appLanguage
     }
     val isHeb = appLang == "he"
     val layoutDir = if (isHeb) LayoutDirection.Rtl else LayoutDirection.Ltr
@@ -216,7 +215,7 @@ fun IptvScreen(
                                 verticalArrangement = Arrangement.spacedBy(24.dp),
                                 modifier = Modifier.focusGroup()
                             ) {
-                                gridItems(channels, key = { it.id }) { channel ->
+                                gridItems(channels, key = { "${it.id}_${it.hashCode()}" }) { channel ->
                                     Ps5ChannelCard(
                                         channel = channel,
                                         isFavorite = channel.isFavorite,
@@ -397,7 +396,7 @@ fun EpgGuideScreen(channels: List<ChannelEntity>, viewModel: IptvViewModel, onPl
     val currentTime = System.currentTimeMillis()
 
     LazyColumn(modifier = modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(16.dp), contentPadding = PaddingValues(bottom = 64.dp)) {
-        itemsIndexed(channels.take(50), key = { _, it -> it.id }) { index, channel ->
+        itemsIndexed(channels.take(50), key = { idx, it -> "${it.id}_$idx" }) { index, channel ->
             var programs by remember { mutableStateOf<List<EpgProgramEntity>>(emptyList()) }
             LaunchedEffect(channel) {
                 delay(index * 30L)

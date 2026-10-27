@@ -107,7 +107,6 @@ fun ConsoleRowCycler(
                     .fillMaxHeight()
                     .focusProperties { enter = { activeCategoryFR } }
                     .focusGroup()
-                    .focusRestorer { activeCategoryFR }
                     .onPreviewKeyEvent { ev ->
                         if (ev.type == KeyEventType.KeyDown) {
                             if (ev.key == forwardKey) {
@@ -284,7 +283,7 @@ private fun LandscapeRowData(movies: List<Movie>, isActive: Boolean, firstItemFR
             .focusProperties { canFocus = isActive }
             .focusGroup()
     ) {
-        itemsIndexed(movies, key = { _, m -> m.id }, contentType = { _, _ -> "movie" }) { index, movie ->
+        itemsIndexed(movies, key = { index, m -> "${m.id}_$index" }, contentType = { _, _ -> "movie" }) { index, movie ->
             val mod = if (index == 0) Modifier.focusRequester(firstItemFR) else Modifier
             LandscapeCard(movie, mod, { 
                 onFocus(movie) 
@@ -315,7 +314,7 @@ private fun PortraitRowData(movies: List<Movie>, isActive: Boolean, firstItemFR:
             .focusProperties { canFocus = isActive }
             .focusGroup()
     ) {
-        itemsIndexed(movies, key = { _, m -> m.id }, contentType = { _, _ -> "movie" }) { index, movie ->
+        itemsIndexed(movies, key = { index, m -> "${m.id}_$index" }, contentType = { _, _ -> "movie" }) { index, movie ->
             val mod = if (index == 0) Modifier.focusRequester(firstItemFR) else Modifier
             PosterCard(movie, mod, PORT_W, PORT_H, { 
                 onFocus(movie) 

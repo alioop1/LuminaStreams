@@ -117,7 +117,32 @@ fun LandscapeCard(movie: Movie, modifier: Modifier = Modifier, onFocused: () -> 
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
+                if (movie.id.startsWith("http") && (movie.seeders > 0 || movie.leechers > 0 || movie.size.isNotBlank())) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("▲", color = Color(0xFF32D74B), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                            Text("${movie.seeders}", color = Color(0xFF32D74B), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text("▼", color = Color(0xFFFF3B30), fontSize = 10.sp, fontWeight = FontWeight.Black)
+                            Text("${movie.leechers}", color = Color(0xFFFF3B30), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                        if (movie.size.isNotBlank()) {
+                            Text(movie.size, color = WHITE.copy(0.7f), fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                } else {
+                    Text(if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"), color = DIM2, fontSize = 11.sp)
+                }
             }
             if (movie.rating > 0f) {
                 Box(
@@ -235,12 +260,43 @@ fun PosterCard(movie: Movie, modifier: Modifier = Modifier, cardW: Dp = PORT_W, 
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.width(cardW).graphicsLayer { alpha = if (isFocused) 1f else 0.7f }
         )
-        Text(
-            text = if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"),
-            color = WHITE,
-            fontSize = 10.sp,
-            modifier = Modifier.graphicsLayer { alpha = if (isFocused) 0.6f else 0.4f }
-        )
+        if (movie.id.startsWith("http") && (movie.seeders > 0 || movie.leechers > 0 || movie.size.isNotBlank())) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.graphicsLayer { alpha = if (isFocused) 1f else 0.85f }
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text("▲", color = Color(0xFF32D74B), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    Text("${movie.seeders}", color = Color(0xFF32D74B), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text("▼", color = Color(0xFFFF3B30), fontSize = 9.sp, fontWeight = FontWeight.Black)
+                    Text("${movie.leechers}", color = Color(0xFFFF3B30), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                }
+                if (movie.size.isNotBlank()) {
+                    Text(
+                        movie.size,
+                        color = WHITE.copy(0.7f),
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Normal
+                    )
+                }
+            }
+        } else {
+            Text(
+                text = if (movie.mediaType == "tv") tr("TV Show", "סדרה") else tr("Movie", "סרט"),
+                color = WHITE,
+                fontSize = 10.sp,
+                modifier = Modifier.graphicsLayer { alpha = if (isFocused) 0.6f else 0.4f }
+            )
+        }
     }
 }
 

@@ -60,6 +60,7 @@ data class TmdbMovieDetailsDto(
     @SerializedName("poster_path") val posterPath: String?,
     @SerializedName("vote_average") val voteAverage: Float,
     @SerializedName("release_date") val releaseDate: String?,
+    @SerializedName("original_language") val originalLanguage: String?,
     val runtime: Int?, val genres: List<GenreDto>?,
     @SerializedName("production_companies") val productionCompanies: List<ProductionCompanyDto>?,
     val credits: CreditsDto?, val external_ids: ExternalIdsDto?,
@@ -69,13 +70,26 @@ data class TmdbMovieDetailsDto(
     val videos: VideosDto?
 )
 
+data class TmdbEpisodeStubDto(
+    @SerializedName("air_date") val airDate: String?,
+    @SerializedName("episode_number") val episodeNumber: Int?,
+    @SerializedName("season_number") val seasonNumber: Int?,
+    val name: String?,
+    @SerializedName("still_path") val stillPath: String?
+)
+
 data class TmdbTvDetailsDto(
     val id: Int, val name: String, val overview: String?,
     @SerializedName("backdrop_path") val backdropPath: String?,
     @SerializedName("poster_path") val posterPath: String?,
     @SerializedName("vote_average") val voteAverage: Float,
     @SerializedName("first_air_date") val firstAirDate: String?,
+    @SerializedName("original_language") val originalLanguage: String?,
     val status: String?, @SerializedName("number_of_seasons") val numberOfSeasons: Int,
+    @SerializedName("number_of_episodes") val numberOfEpisodes: Int? = null,
+    @SerializedName("in_production") val inProduction: Boolean? = null,
+    @SerializedName("next_episode_to_air") val nextEpisodeToAir: TmdbEpisodeStubDto? = null,
+    @SerializedName("last_episode_to_air") val lastEpisodeToAir: TmdbEpisodeStubDto? = null,
     val genres: List<GenreDto>?, val networks: List<NetworkDto>?,
     val credits: CreditsDto?, val external_ids: ExternalIdsDto?,
     val images: ImagesDto?,
@@ -90,10 +104,6 @@ data class CreditsDto(val cast: List<CastDto>, val crew: List<CrewDto>?)
 data class CastDto(val id: Int, val name: String, val character: String, @SerializedName("profile_path") val profilePath: String?)
 data class CrewDto(val id: Int, val name: String, val job: String, val department: String)
 
-data class RdAddMagnetResponse(val id: String, val uri: String)
-data class RdTorrentInfoResponse(val id: String, val filename: String, val status: String, val progress: Double, val links: List<String>, val files: List<RdTorrentFile>)
-data class RdTorrentFile(val id: Int, val path: String, val bytes: Long, val selected: Int)
-data class RdUnrestrictResponse(val id: String, val filename: String, val mimeType: String, val filesize: Long, val link: String, val download: String)
 
 data class TmdbPersonDetailsDto(
     val id: Int,
@@ -114,6 +124,8 @@ interface TmdbApi {
     @GET("discover/tv") suspend fun discoverTv(@Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("with_genres") genres: String): TmdbResponse
     @GET("movie/{movie_id}") suspend fun getMovieDetails(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images,reviews", @Query("include_image_language") imageLangs: String = "he,en,null"): TmdbMovieDetailsDto
     @GET("tv/{tv_id}") suspend fun getTvDetails(@Path("tv_id") seriesId: String, @Query("api_key") apiKey: String, @Query("language") language: String = "en-US", @Query("append_to_response") append: String = "credits,videos,external_ids,images,reviews", @Query("include_image_language") imageLangs: String = "he,en,null"): TmdbTvDetailsDto
+    @GET("movie/{movie_id}/images") suspend fun getMovieImages(@Path("movie_id") movieId: String, @Query("api_key") apiKey: String = Constants.TMDB_API_KEY, @Query("include_image_language") imageLangs: String = "he,en,null"): ImagesDto
+    @GET("tv/{tv_id}/images") suspend fun getTvImages(@Path("tv_id") tvId: String, @Query("api_key") apiKey: String = Constants.TMDB_API_KEY, @Query("include_image_language") imageLangs: String = "he,en,null"): ImagesDto
     @GET("discover/{type}") suspend fun discoverMedia(
         @Path("type") type: String,
         @Query("with_genres") genreId: String? = null,
@@ -149,9 +161,56 @@ interface TmdbApi {
     ): TmdbPersonDetailsDto
 }
 
-interface RealDebridApi {
-    @FormUrlEncoded @POST("torrents/addMagnet") suspend fun addMagnet(@Header("Authorization") auth: String, @Field("magnet") magnet: String): RdAddMagnetResponse
-    @GET("torrents/info/{id}") suspend fun getTorrentInfo(@Header("Authorization") auth: String, @Path("id") torrentId: String): RdTorrentInfoResponse
-    @FormUrlEncoded @POST("torrents/selectFiles/{id}") suspend fun selectFiles(@Header("Authorization") auth: String, @Path("id") torrentId: String, @Field("files") files: String)
-    @FormUrlEncoded @POST("unrestrict/link") suspend fun unrestrictLink(@Header("Authorization") auth: String, @Field("link") hosterLink: String): RdUnrestrictResponse
+interface AllDebridApi {
+    @GET("v4/ping")
+    suspend fun ping(): retrofit2.Response<Any>
+
+    @GET("v4/user?agent=LuminaStreams")
+    suspend fun getUserInfo(@Header("Authorization") auth: String): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4/pin/get?agent=LuminaStreams")
+    suspend fun getPin(): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4/pin/check?agent=LuminaStreams")
+    suspend fun checkPin(
+        @Query("check") check: String,
+        @Query("pin") pin: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @FormUrlEncoded
+    @POST("v4/magnet/upload?agent=LuminaStreams")
+    suspend fun uploadMagnet(
+        @Header("Authorization") auth: String,
+        @Field("magnets[]") magnets: List<String>
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4.1/magnet/status?agent=LuminaStreams")
+    suspend fun getAllMagnets(
+        @Header("Authorization") auth: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4.1/magnet/status?agent=LuminaStreams")
+    suspend fun getMagnetStatus(
+        @Header("Authorization") auth: String,
+        @Query("id") id: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4/magnet/files?agent=LuminaStreams")
+    suspend fun getMagnetFiles(
+        @Header("Authorization") auth: String,
+        @Query("id") id: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @FormUrlEncoded
+    @POST("v4/link/unlock?agent=LuminaStreams")
+    suspend fun unlockLink(
+        @Header("Authorization") auth: String,
+        @Field("link") link: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
+
+    @GET("v4/magnet/delete?agent=LuminaStreams")
+    suspend fun deleteMagnet(
+        @Header("Authorization") auth: String,
+        @Query("id") id: String
+    ): retrofit2.Response<com.google.gson.JsonElement>
 }

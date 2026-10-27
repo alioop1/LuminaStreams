@@ -3,93 +3,216 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>LuminaStreams | התחברות</title>
+    <title>LuminaStreams | כניסת WEB לאפליקציה</title>
     
     <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=Rubik:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     
     <link rel="stylesheet" href="/style.css">
+    <link rel="icon" type="image/png" href="/app/assets/icon.png">
 </head>
 <body>
 
-    <!-- Background Effects -->
-    <div class="bg-glow"></div>
-    <div class="bg-blur"></div>
+    <!-- Ambient Glowing Backgrounds -->
+    <div class="bg-glow cyan"></div>
+    <div class="bg-glow amber"></div>
+    <div class="bg-grid"></div>
 
-    <div class="auth-container">
-        <!-- Logo Area -->
-        <div class="logo-area">
-            <div class="logo-icon">LS</div>
-            <h1>Lumina<span>Streams</span></h1>
-            <p>התחבר לחשבון שלך כדי לסנכרן אוטומטית עם הטלוויזיה</p>
-        </div>
+    <!-- Main Container -->
+    <div class="portal-wrapper">
+        <!-- Top Bar -->
+        <header class="top-nav">
+            <div class="brand">
+                <div class="brand-badge">LS</div>
+                <div class="brand-name">LUMINA<span>STREAMS</span></div>
+            </div>
+            <div class="nav-actions">
+                <a href="/app/" class="btn-quick-app">
+                    <span class="icon">✨</span>
+                    <span>כניסה ישירה לנגן Web</span>
+                </a>
+            </div>
+        </header>
 
-        <!-- Auth Form -->
-        <div class="auth-card" id="authCard">
-            <!-- Tabs -->
-            <div class="tabs">
-                <button class="tab-btn active" id="tabLogin">התחברות</button>
-                <button class="tab-btn" id="tabRegister">הרשמה</button>
+        <!-- Main Card Section -->
+        <main class="portal-card-container">
+            <!-- Hero Title -->
+            <div class="portal-hero">
+                <div class="logo-orb">
+                    <span class="logo-symbol">L</span>
+                </div>
+                <h1>שער הכניסה של <span>LuminaStreams</span></h1>
+                <p>התחבר לחשבונך, קשר את מכשיר הטלוויזיה או היכנס ישירות לצפייה בדפדפן</p>
             </div>
 
-            <!-- Error/Success Banner -->
-            <div class="message-banner" id="messageBanner"></div>
-
-            <form id="authForm">
-                <div class="input-group">
-                    <label for="email">דואר אלקטרוני</label>
-                    <input type="email" id="email" placeholder="הכנס כתובת דוא״ל" required autocomplete="email">
+            <!-- Central Hub Card -->
+            <div class="auth-card" id="authCard">
+                <!-- Navigation Tabs -->
+                <div class="hub-tabs">
+                    <button class="hub-tab active" id="tabAuth" data-mode="auth">
+                        <span class="tab-icon">👤</span>
+                        <span>כניסה / הרשמה</span>
+                    </button>
+                    <button class="hub-tab" id="tabLink" data-mode="link">
+                        <span class="tab-icon">📺</span>
+                        <span>קישור טלוויזיה</span>
+                    </button>
+                    <button class="hub-tab" id="tabAppDirect" data-mode="app">
+                        <span class="tab-icon">🚀</span>
+                        <span>אפליקציית Web</span>
+                    </button>
                 </div>
 
-                <div class="input-group">
-                    <label for="password">סיסמה</label>
-                    <input type="password" id="password" placeholder="הכנס סיסמה" required autocomplete="current-password">
+                <!-- Message Alert Banner -->
+                <div class="message-banner" id="messageBanner" style="display: none;"></div>
+
+                <!-- SECTION 1: AUTH (Login / Register) -->
+                <div class="section-pane active" id="paneAuth">
+                    <div class="sub-tabs">
+                        <button class="sub-tab-btn active" id="subTabLogin">התחברות לחשבון</button>
+                        <button class="sub-tab-btn" id="subTabRegister">יצירת חשבון חדש</button>
+                    </div>
+
+                    <form id="authForm" autocomplete="on">
+                        <div class="form-group">
+                            <label for="email">דואר אלקטרוני</label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">✉️</span>
+                                <input type="email" id="email" placeholder="name@example.com" required autocomplete="email">
+                            </div>
+                        </div>
+
+                        <div class="form-group">
+                            <label for="password">סיסמה</label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">🔒</span>
+                                <input type="password" id="password" placeholder="הזן סיסמה" required autocomplete="current-password">
+                            </div>
+                        </div>
+
+                        <div class="form-group" id="confirmPassGroup" style="display: none;">
+                            <label for="confirmPassword">אימות סיסמה</label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">🔑</span>
+                                <input type="password" id="confirmPassword" placeholder="הזן שוב את הסיסמה">
+                            </div>
+                        </div>
+
+                        <button type="submit" class="cta-btn primary" id="submitBtn">
+                            <span id="btnText">התחבר עכשיו</span>
+                            <span class="loader" id="btnLoader" style="display: none;"></span>
+                        </button>
+                    </form>
+
+                    <div class="auth-auxiliary">
+                        <a href="#" id="forgotPassword" class="aux-link">שכחת סיסמה?</a>
+                        <span class="dot-separator">•</span>
+                        <a href="/app/" class="aux-link highlight">המשך כאורח ללא הרשמה</a>
+                    </div>
                 </div>
 
-                <div class="input-group" id="confirmPassGroup" style="display: none;">
-                    <label for="confirmPassword">אימות סיסמה</label>
-                    <input type="password" id="confirmPassword" placeholder="הכנס סיסמה שוב">
+                <!-- SECTION 2: DEVICE LINKING (TV pairing) -->
+                <div class="section-pane" id="paneLink">
+                    <div class="link-instructions">
+                        <div class="instruction-badge">קוד בן 6 תווים</div>
+                        <h3>חבר את הטלוויזיה לחשבון</h3>
+                        <p>הקלד את הקוד המופיע במסך הטלוויזיה של LuminaStreams כדי להתחבר ללא שלט רחוק:</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="linkCodeInput">קוד קישור מהטלוויזיה</label>
+                        <div class="input-wrapper">
+                            <input type="text" id="linkCodeInput" placeholder="A B C 1 2 3" maxlength="6" class="code-box-input" autocomplete="off" spellcheck="false">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="linkPasswordInput">סיסמת החשבון שלך</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔒</span>
+                            <input type="password" id="linkPasswordInput" placeholder="הזן סיסמה לאימות הקישור" class="input-field" autocomplete="current-password">
+                        </div>
+                    </div>
+
+                    <button type="button" id="linkBtn" class="cta-btn success">
+                        <span>קשר מכשיר עכשיו</span>
+                    </button>
+                    <div class="link-status" id="linkStatus"></div>
                 </div>
 
-                <button type="submit" class="submit-btn" id="submitBtn">
-                    <span id="btnText">התחבר עכשיו</span>
-                    <span class="loader" id="btnLoader" style="display: none;"></span>
-                </button>
-            </form>
-            
-            <div class="footer-links">
-                <a href="#" id="forgotPassword">שכחת סיסמה?</a>
+                <!-- SECTION 3: DIRECT WEB APP LAUNCH -->
+                <div class="section-pane" id="paneApp">
+                    <div class="direct-launch-card">
+                        <div class="launch-icon">🎬</div>
+                        <h3>LuminaStreams Web Player</h3>
+                        <p>צפה בסרטים, סדרות, ערוצי IPTV ונהל את רשימת הצפייה ישירות מהדפדפן שלך בכל מכשיר.</p>
+                        
+                        <div class="feature-pills">
+                            <span class="pill">⚡ מהיר וקל משקל</span>
+                            <span class="pill">🎬 סרטים וסדרות ב-HD/4K</span>
+                            <span class="pill">📡 שידורי IPTV חיים</span>
+                            <span class="pill">🔄 סנכרון ענן אוטומטי</span>
+                        </div>
+
+                        <a href="/app/" class="cta-btn glowing-launch">
+                            <span>🚀 פתח את האפליקציה עכשיו</span>
+                        </a>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <!-- Success State (Hidden by default) -->
-        <div class="success-card" id="successCard" style="display: none;">
-            <div class="check-icon">✓</div>
-            <h2>התחברת בהצלחה!</h2>
-            <p>אתה מחובר כעת בתור <strong id="userEmailDisplay"></strong>.</p>
-            
-            <!-- Device Linking Section -->
-            <div class="link-section" id="linkSection" style="display: none;">
-                <div class="link-divider"></div>
-                <h3>🔗 חיבור טלוויזיה</h3>
-                <p class="link-desc">הכנס את הקוד שמוצג במסך הטלוויזיה והסיסמה שלך:</p>
-                <div class="link-input-row">
-                    <input type="text" id="linkCodeInput" placeholder="XXXXXX" maxlength="6" class="link-code-input" autocomplete="off" spellcheck="false">
+            <!-- Logged-in State Card (shown after authentication) -->
+            <div class="success-card" id="successCard" style="display: none;">
+                <div class="welcome-badge">
+                    <div class="check-icon">✓</div>
+                    <div>
+                        <h2>התחברת בהצלחה!</h2>
+                        <p>מחובר כעת בתור: <strong id="userEmailDisplay"></strong></p>
+                    </div>
                 </div>
-                <div class="link-input-row" style="margin-top: 12px;">
-                    <input type="password" id="linkPasswordInput" placeholder="הסיסמה שלך" class="link-password-input" autocomplete="current-password">
-                    <button id="linkBtn" class="link-btn">קשר מכשיר</button>
+
+                <div class="post-login-actions">
+                    <a href="/app/" class="cta-btn primary-large">
+                        <span>🚀 כניסה לאפליקציית Web (צפייה ישירה)</span>
+                    </a>
                 </div>
-                <div class="link-status" id="linkStatus"></div>
+
+                <!-- Fast Device Linking Box inside logged-in view -->
+                <div class="logged-link-box">
+                    <div class="box-header">
+                        <span class="box-icon">📺</span>
+                        <div>
+                            <h4>קישור מהיר למסך טלוויזיה</h4>
+                            <p>הכנס את הקוד המוצג על מסך הטלוויזיה לחיבור מיידי:</p>
+                        </div>
+                    </div>
+
+                    <div class="link-row-inline">
+                        <input type="text" id="loggedLinkCode" placeholder="XXXXXX" maxlength="6" class="code-box-inline" autocomplete="off" spellcheck="false">
+                        <input type="password" id="loggedLinkPass" placeholder="הסיסמה שלך" class="pass-box-inline">
+                        <button id="loggedLinkBtn" class="cta-btn inline-btn">קשר מכשיר</button>
+                    </div>
+                    <div class="link-status" id="loggedLinkStatus"></div>
+                </div>
+
+                <div class="user-meta-bar">
+                    <button class="logout-btn" id="logoutBtn">
+                        <span>🚪</span>
+                        <span>התנתק מהחשבון</span>
+                    </button>
+                </div>
             </div>
+        </main>
 
-            <button class="submit-btn logout-btn" id="logoutBtn">התנתק</button>
-        </div>
+        <!-- Footer -->
+        <footer class="portal-footer">
+            <p>LuminaStreams © 2026 • מרכז מדיה וסטרימינג מתקדם לטלוויזיה, דסקטופ ו-Web</p>
+        </footer>
     </div>
 
-    <!-- Firebase SDKs -->
+    <!-- Firebase App Scripts -->
     <script type="module" src="/app.js"></script>
 </body>
 </html>

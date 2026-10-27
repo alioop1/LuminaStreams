@@ -22,8 +22,8 @@ data class SettingsState(
     // ── App Language ──────────────────────────────────────────────────────────
     val appLanguage: String = "he", // "en" or "he"
 
-    // ── Real-Debrid Auth ──────────────────────────────────────────────────────
-    val rdToken: String = "",
+    // ── AllDebrid Auth ──────────────────────────────────────────────────────
+    val debridToken: String = "",
     val authStatus: SettingsAuthStatus = SettingsAuthStatus.Idle,
 
     // ── Speed Test & Account Status ───────────────────────────────────────────
@@ -31,7 +31,7 @@ data class SettingsState(
     val rdSpeedTestResult: String? = null,
 
     // ── Server Health Status ──────────────────────────────────────────────────
-    val rdServerStatus: String = "Checking...",
+    val adServerStatus: String = "Checking...",
     val torrentioServerStatus: String = "Checking...",
     val isCheckingServers: Boolean = false,
 

@@ -14,7 +14,7 @@ import javax.net.ssl.X509TrustManager
  *
  * Many Android TV devices run outdated firmware with stale CA certificate stores,
  * causing "Chain Validation Failed" / CertPathValidatorException errors when
- * connecting to services like Torrentio and Real-Debrid whose certs rotate
+ * connecting to services like Torrentio and AllDebrid whose certs rotate
  * frequently or use newer intermediaries.
  *
  * This is acceptable here because:
@@ -42,7 +42,7 @@ object TrustedHttpClient {
     fun builder(): OkHttpClient.Builder = OkHttpClient.Builder()
         .sslSocketFactory(sslContext.socketFactory, trustAllManager)
         .hostnameVerifier { _, _ -> true }
-        .connectionSpecs(listOf(ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
+        .connectionSpecs(listOf(ConnectionSpec.MODERN_TLS, ConnectionSpec.COMPATIBLE_TLS, ConnectionSpec.CLEARTEXT))
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
 }

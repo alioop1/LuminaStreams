@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
@@ -59,6 +60,8 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.luminastreams.tv.ui.components.LoadingIndicator
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import kotlinx.coroutines.launch
 import androidx.compose.material.icons.filled.Visibility
@@ -127,6 +130,11 @@ fun DetailsScreen(
     var selectedEpisode by remember { mutableStateOf<Episode?>(null) }
     var selectedEpisodeIdx by remember { mutableIntStateOf(-1) }
     var focusedPreviewEpisode by remember { mutableStateOf<Episode?>(null) }
+    // Remember which season/episode the current sources overlay was opened for, so
+    // the "Refresh" button can re-scrape the exact same query (movie vs a specific
+    // episode) rather than defaulting back to season 1 episode 1.
+    var activeScrapeSeason by remember { mutableStateOf<Int?>(null) }
+    var activeScrapeEpisode by remember { mutableStateOf<Int?>(null) }
     val returnToEpisodeFR = remember { FocusRequester() }
     var showSeasonPopup by remember { mutableStateOf(false) }
 
@@ -168,16 +176,24 @@ fun DetailsScreen(
 
     LaunchedEffect(isResumed) {
         if (isResumed && state.mediaInfo.imdbId.isNotBlank()) {
-            val playerPrefs = context.getSharedPreferences("player_context", 0)
-            val autoSeason = playerPrefs.getInt("auto_play_season", -1)
-            val autoEpisode = playerPrefs.getInt("auto_play_episode", -1)
+            val (autoSeason, autoEpisode) = withContext(Dispatchers.IO) {
+                val playerPrefs = context.getSharedPreferences("player_context", 0)
+                val s = playerPrefs.getInt("auto_play_season", -1)
+                val e = playerPrefs.getInt("auto_play_episode", -1)
+                if (s > 0 && e > 0) {
+                    playerPrefs.edit().remove("auto_play_season").remove("auto_play_episode").apply()
+                }
+                s to e
+            }
             if (autoSeason > 0 && autoEpisode > 0) {
-                playerPrefs.edit().remove("auto_play_season").remove("auto_play_episode").apply()
                 if (autoSeason != state.selectedSeason) {
                     onEvent(DetailsEvent.SelectSeason(autoSeason))
                 }
                 showSources = true
-                onEvent(DetailsEvent.InitiateScraping(state.mediaInfo.imdbId, autoSeason, autoEpisode))
+                activeScrapeSeason = autoSeason
+                activeScrapeEpisode = autoEpisode
+                // Auto-play-next-episode: scrape AND immediately play the top source.
+                onEvent(DetailsEvent.InitiateScraping(state.mediaInfo.imdbId, autoSeason, autoEpisode, autoPlayTop = true))
             }
         }
     }
@@ -224,15 +240,34 @@ fun DetailsScreen(
         LocalDensity provides scaledDensity
     ) {
         Box(modifier = Modifier.fillMaxSize().background(ColorBgDark)) {
-            // ── FULL-BLEED CINEMATIC BACKDROP ──
-            Crossfade(targetState = currentBackdrop, animationSpec = tween(600), label = "backdrop") { bgUrl ->
-                val highResUrl = bgUrl.replace("/w780/", "/original/").replace("/w1280/", "/original/").replace("/w500/", "/original/")
-                AsyncImage(
-                    model = ImageRequest.Builder(context).data(highResUrl).size(3840, 2160).allowHardware(true).crossfade(true).build(),
-                    contentDescription = null, contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize()
-                )
+            var showTrailer by remember(media.trailerUrl) { mutableStateOf(false) }
+            LaunchedEffect(media.trailerUrl) {
+                if (!media.trailerUrl.isNullOrBlank()) {
+                    delay(3500) // Wait for WebView to load and YouTube to buffer
+                    showTrailer = true
+                }
             }
+
+            // 1. TRAILER LAYER (Bottom-most layer)
+            if (!media.trailerUrl.isNullOrBlank()) {
+                BackgroundTrailerView(videoId = media.trailerUrl, modifier = Modifier.fillMaxSize())
+            }
+
+            // 2. FULL-BLEED CINEMATIC BACKDROP LAYER (Fades out to reveal trailer)
+            val backdropAlpha by animateFloatAsState(targetValue = if (showTrailer) 0f else 1f, animationSpec = tween(1500))
+            
+            Box(modifier = Modifier.fillMaxSize().alpha(backdropAlpha)) {
+                Crossfade(targetState = currentBackdrop, animationSpec = tween(600), label = "backdrop") { bgUrl ->
+                    val highResUrl = bgUrl.replace("/w780/", "/original/").replace("/w1280/", "/original/").replace("/w500/", "/original/")
+                    AsyncImage(
+                        model = ImageRequest.Builder(context).data(highResUrl).size(3840, 2160).allowHardware(true).crossfade(true).build(),
+                        contentDescription = null, contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
+            
+            // 3. GRADIENT FADES (Keeps text readable over trailer)
             // Horizontal fade: physical Left is Transparent (for art), physical Right is Dark (for RTL text)
             Box(Modifier.fillMaxSize().background(Brush.horizontalGradient(
                 colors = listOf(Color.Transparent, Color.Transparent, ColorBgDark.copy(0.85f), ColorBgDark)
@@ -242,16 +277,6 @@ fun DetailsScreen(
                 colors = listOf(Color.Transparent, Color.Transparent, Color.Transparent, ColorBgDark.copy(0.9f), ColorBgDark),
                 startY = 0f
             )))
-
-            // Trailer overlay
-            androidx.compose.animation.AnimatedVisibility(
-                visible = !media.trailerUrl.isNullOrBlank(),
-                enter = fadeIn(tween(1500, delayMillis = 2000)),
-                exit = fadeOut(tween(800)),
-                modifier = Modifier.fillMaxSize()
-            ) {
-                BackgroundTrailerView(videoId = media.trailerUrl.orEmpty(), modifier = Modifier.fillMaxSize())
-            }
 
         // ── GLASS-MORPHIC CINEMATIC HUB ──
         Box(modifier = Modifier.fillMaxSize()) {
@@ -358,9 +383,15 @@ fun DetailsScreen(
                             Surface(
                                 onClick = {
                                     showSources = true
-                                    if (media.isSeries && isPartiallyWatched && state.lastWatchedSeason != null && state.lastWatchedEpisode != null)
+                                    if (media.isSeries && isPartiallyWatched && state.lastWatchedSeason != null && state.lastWatchedEpisode != null) {
+                                        activeScrapeSeason = state.lastWatchedSeason
+                                        activeScrapeEpisode = state.lastWatchedEpisode
                                         onEvent(DetailsEvent.InitiateScraping(media.imdbId, state.lastWatchedSeason, state.lastWatchedEpisode))
-                                    else onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                    } else {
+                                        activeScrapeSeason = null
+                                        activeScrapeEpisode = null
+                                        onEvent(DetailsEvent.InitiateScraping(media.imdbId))
+                                    }
                                 },
                                 shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(12.dp)),
                                 colors = ClickableSurfaceDefaults.colors(
@@ -410,6 +441,12 @@ fun DetailsScreen(
                             ),
                             modifier = Modifier.fillMaxWidth(0.9f)
                         )
+
+                        // ── 3b. NEXT-EPISODE RELEASE STRIP ──
+                        if (media.isSeries) {
+                            Spacer(Modifier.height(4.dp))
+                            NextEpisodeStatusCard(media = media)
+                        }
 
                         // ── 4. SEASON PILLS ──
                         if (media.isSeries && media.totalSeasons > 0) {
@@ -542,8 +579,13 @@ fun DetailsScreen(
                     modifier = Modifier
                         .fillMaxWidth(0.95f)
                         .fillMaxHeight(0.9f)
-                        .background(Color(0xFF08080B).copy(0.95f), RoundedCornerShape(32.dp))
-                        .border(1.dp, Color.White.copy(0.1f), RoundedCornerShape(32.dp))
+                        .shadow(64.dp, RoundedCornerShape(32.dp))
+                        .background(
+                            brush = Brush.linearGradient(
+                                colors = listOf(Color(0xFF14141E).copy(0.98f), Color(0xFF09090D).copy(0.98f))
+                            ),
+                            shape = RoundedCornerShape(32.dp)
+                        )
                         .padding(vertical = 32.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
@@ -583,6 +625,53 @@ fun DetailsScreen(
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Medium
                         )
+                        Spacer(Modifier.width(16.dp))
+                        // ── Refresh button ──
+                        // Flushes the in-memory stream cache for this title/episode and
+                        // re-queries Torrentio, so users can drop dead AD+ hints and get
+                        // fresh links without leaving the details screen.
+                        val isRefreshing = state.scrapingStatus is ScrapingStatus.Searching
+                        Surface(
+                            onClick = {
+                                if (!isRefreshing) {
+                                    onEvent(DetailsEvent.RefreshStreams(
+                                        media.imdbId,
+                                        activeScrapeSeason,
+                                        activeScrapeEpisode
+                                    ))
+                                }
+                            },
+                            shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(50)),
+                            colors = ClickableSurfaceDefaults.colors(
+                                containerColor = Color.White.copy(0.08f),
+                                focusedContainerColor = Color(0xFF3B82F6),
+                                contentColor = Color.White,
+                                focusedContentColor = Color.White
+                            ),
+                            border = ClickableSurfaceDefaults.border(
+                                border = Border(BorderStroke(1.dp, Color.White.copy(0.15f)))
+                            ),
+                            modifier = Modifier.height(44.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxHeight().padding(horizontal = 20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Refresh,
+                                    contentDescription = tr("Refresh sources", "רענן מקורות"),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    text = if (isRefreshing) tr("Refreshing…", "מרענן…")
+                                           else tr("Refresh", "רענן"),
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
                     }
 
                     // ── Gradient separator ──
@@ -610,6 +699,8 @@ fun DetailsScreen(
                                 .distinct()
                                 .sortedBy { it.ordinal }
                         }
+                        val originalLangEnum = remember(media.originalLanguage) { AudioLanguage.fromIso(media.originalLanguage) }
+
                         val hasActiveFilters = state.trackerFilters.isNotEmpty() ||
                                 state.languageFilters.isNotEmpty() ||
                                 state.showCachedOnly ||
@@ -698,7 +789,9 @@ fun DetailsScreen(
                                     }
 
                                     // Language chips
-                                    val filteredLanguages = allLanguages.filter { it == AudioLanguage.RUSSIAN || it == AudioLanguage.ENGLISH || it == AudioLanguage.HEBREW }
+                                    val filteredLanguages = allLanguages.filter { 
+                                        it == AudioLanguage.RUSSIAN || it == AudioLanguage.ENGLISH || it == AudioLanguage.HEBREW || (originalLangEnum != null && it == originalLangEnum)
+                                    }
                                     if (filteredLanguages.isNotEmpty()) {
                                         Text(
                                             text = tr("Audio", "שפה"),
@@ -794,6 +887,7 @@ fun DetailsScreen(
                                     DetailedSourceRow(
                                         stream = stream,
                                         logoUrl = media.logoUrl.takeIf { !it.isNullOrBlank() } ?: media.backdropUrl.takeIf { !it.isBlank() } ?: media.posterUrl,
+                                        originalLanguageIso = media.originalLanguage,
                                         modifier = if (idx == 0) Modifier.focusRequester(firstSourceFR) else Modifier,
                                         onClick = { onEvent(DetailsEvent.ResolveAndPlayStream(stream)) }
                                     )
@@ -822,6 +916,8 @@ fun DetailsScreen(
             onPlayEpisode = { ep ->
                 showSeasonPopup = false
                 showSources = true
+                activeScrapeSeason = ep.seasonNumber
+                activeScrapeEpisode = ep.episodeNumber
                 onEvent(DetailsEvent.InitiateScraping(media.imdbId, ep.seasonNumber, ep.episodeNumber))
             },
             onMarkSeasonWatched = { onEvent(DetailsEvent.MarkSeasonWatched(state.selectedSeason)) },
@@ -839,6 +935,8 @@ fun DetailsScreen(
                 selectedEpisode = null
                 showSeasonPopup = false
                 showSources = true
+                activeScrapeSeason = season
+                activeScrapeEpisode = episode
                 onEvent(DetailsEvent.InitiateScraping(media.imdbId, season, episode))
             },
             onMarkWatched = { season, episode, isWatched ->

@@ -9,7 +9,7 @@ import com.luminastreams.tv.core.LuminaApp
 import com.luminastreams.tv.core.TrustedHttpClient
 import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
-import com.luminastreams.tv.domain.usecase.RealDebridManager
+import com.luminastreams.tv.domain.usecase.AllDebridManager
 import com.luminastreams.tv.data.remote.FuzerEngine
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
@@ -50,14 +50,14 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
     private val _state = MutableStateFlow(DetailsScreenState())
     val state: StateFlow<DetailsScreenState> = _state.asStateFlow()
 
-    private val rdManager = RealDebridManager(appContext)
+    private val adManager = AllDebridManager(appContext)
 
     // OPTIMIZATION: Switched to the fast SQLite Room Repository
     private val watchlistRepository = (appContext as LuminaApp).watchlistRepository
     private val progressManager  = (appContext as LuminaApp).watchProgressManager
     private val syncManager = (appContext as LuminaApp).syncManager
 
-    private val isHebrew: Boolean = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE).getString("app_lang", "he") == "he"
+    private val isHebrew: Boolean = (appContext as LuminaApp).settingsRepository.current().appLanguage == "he"
 
     private val okHttpClient = TrustedHttpClient.builder()
         .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
@@ -66,16 +66,38 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         .build()
     private val dynamicTorrentio: DynamicTorrentioApi = Retrofit.Builder().baseUrl("https://torrentio.strem.fun/").client(okHttpClient).addConverterFactory(GsonConverterFactory.create()).build().create(DynamicTorrentioApi::class.java)
 
-    private val streamCache = ConcurrentHashMap<String, List<AdvancedStreamSource>>()
+    // Stream results cached with a TTL. Torrentio returns cached-on-AllDebrid hints ("AD+")
+    // that go stale — a torrent that was cached an hour ago may no longer be. Cache
+    // for a short window so repeat opens within the same session are fast, but old
+    // entries get re-fetched automatically.
+    private data class CachedStreams(val streams: List<AdvancedStreamSource>, val fetchedAt: Long)
+    private val streamCache = ConcurrentHashMap<String, CachedStreams>()
+    private val streamCacheTtlMs = TimeUnit.MINUTES.toMillis(10)
+    // The cache key for the streams currently shown in the sources overlay. Used by
+    // refilterStreams() so it re-filters the right title/episode instead of an
+    // arbitrary ConcurrentHashMap entry.
+    @Volatile private var currentCacheKey: String? = null
     private var scrapingJob: Job? = null
     private var resolveJob: Job? = null
+    private var backgroundFilterJob: Job? = null
 
     companion object {
-        /** Track all torrent IDs we've added to RD so we can delete them on cleanup across the app session */
+        /** Track all torrent IDs we've added to AllDebrid so we can delete them on cleanup across the app session */
         private val activeTorrentIds = CopyOnWriteArrayList<String>()
     }
 
-    private fun getRdToken(): String = com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.getValidToken() ?: ""
+    private fun getDebridToken(): String = com.luminastreams.tv.domain.usecase.AllDebridTokenKeeper.getValidToken() ?: ""
+
+    /** Audio languages we surface to the user: EN / RU / HE / Multi, plus the title's original language. */
+    private fun allowedAudioLanguages(originalLanguageIso: String): Set<AudioLanguage> =
+        buildSet {
+            add(AudioLanguage.ENGLISH); add(AudioLanguage.RUSSIAN); add(AudioLanguage.HEBREW); add(AudioLanguage.MULTI)
+            AudioLanguage.fromIso(originalLanguageIso)?.let { add(it) }
+        }
+
+    /** A stream passes the language filter if it has *any* allowed audio track. */
+    private fun AdvancedStreamSource.hasAllowedAudio(allowed: Set<AudioLanguage>): Boolean =
+        audioLanguages.any { it in allowed }
     private fun backdropUrl(path: String?): String = if (path.isNullOrBlank() || path == "null") "" else "${Constants.IMAGE_ORIGINAL}$path"
     private fun posterUrl(path: String?): String = if (path.isNullOrBlank() || path == "null") "" else "${Constants.IMAGE_ORIGINAL}$path"
 
@@ -84,8 +106,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         scrapingJob?.cancel()
         resolveJob?.cancel()
 
-        // Best-effort cleanup of any active torrents on RD — BEFORE killing the dispatcher
-        val token = getRdToken()
+        // Best-effort cleanup of any active torrents on AllDebrid — BEFORE killing the dispatcher
+        val token = getDebridToken()
         if (token.isNotBlank() && activeTorrentIds.isNotEmpty()) {
             val ids = activeTorrentIds.toList()
             activeTorrentIds.clear()
@@ -99,9 +121,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     ids.forEach { id ->
                         try {
                             val request = okhttp3.Request.Builder()
-                                .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$id")
+                                .url("https://api.alldebrid.com/v4/magnet/delete?id=$id&agent=LuminaStreams")
                                 .header("Authorization", "Bearer $token")
-                                .delete()
+                                .get()
                                 .build()
                             cleanupClient.newCall(request).execute().close()
                         } catch (_: Exception) {}
@@ -126,8 +148,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         when (event) {
             is DetailsEvent.LoadInitialData       -> loadData(event.fullId)
             is DetailsEvent.SelectSeason          -> fetchEpisodesForSeason(event.seasonNumber)
-            is DetailsEvent.InitiateScraping      -> startScrapingEngine(event.imdbId, event.season, event.episode)
-            is DetailsEvent.ResolveAndPlayStream  -> processRealDebridLink(event.stream)
+            is DetailsEvent.InitiateScraping      -> startScrapingEngine(event.imdbId, event.season, event.episode, event.autoPlayTop)
+            is DetailsEvent.RefreshStreams        -> refreshStreams(event.imdbId, event.season, event.episode)
+            is DetailsEvent.ResolveAndPlayStream  -> processDebridLink(event.stream)
             is DetailsEvent.ToggleFavorite        -> handleToggleFavorite()
             is DetailsEvent.ClearPlayUrl          -> _state.update { it.copy(readyToPlayUrl = null) }
             is DetailsEvent.CancelScraping        -> cancelActiveScraping()
@@ -172,9 +195,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 if (decodedId.startsWith("http")) {
                     _state.update {
                         it.copy(
-                            isLoadingData = false, isFuzerDirect = true, bestSourceHint = "Fuzer Direct • RD+",
+                            isLoadingData = false, isFuzerDirect = true, bestSourceHint = "Fuzer Direct • AD+",
                             mediaInfo = MediaDetailsInfo(id = decodedId, imdbId = decodedId, title = "Fuzer Release",
-                                overview = if (isHebrew) "מוריד ומפעיל אוטומטית דרך Real-Debrid..." else "Downloading and auto-playing via Real-Debrid...",
+                                overview = if (isHebrew) "מוריד ומפעיל אוטומטית דרך AllDebrid..." else "Downloading and auto-playing via AllDebrid...",
                                 isSeries = false, ageRating = "IL", studios = listOf("Fuzer Israel"), genres = listOf("Direct Download"))
                         )
                     }
@@ -195,9 +218,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private fun playFuzerDirect(torrentUrl: String, retryCount: Int = 0) {
         viewModelScope.launch(Dispatchers.IO) {
-            val token = getRdToken()
+            val token = getDebridToken()
             if (token.isEmpty()) {
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "טוקן Real-Debrid חסר — עבור להגדרות" else "Real-Debrid token missing — Go to Settings")) }
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "טוקן AllDebrid חסר — עבור להגדרות" else "AllDebrid token missing — Go to Settings")) }
                 return@launch
             }
             _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(if (isHebrew) "מוריד קובץ טורנט..." else "Downloading torrent file...")) }
@@ -205,29 +228,30 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאה בהורדת הטורנט: " else "Torrent download error: ") + e.message)) }
                 return@launch
             }
-            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(if (isHebrew) "מעלה ל-Real-Debrid..." else "Uploading to Real-Debrid...")) }
-            rdManager.resolveTorrentFileToStream(
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(if (isHebrew) "מעלה ל-AllDebrid..." else "Uploading to AllDebrid...")) }
+            adManager.resolveTorrentFileToStream(
                 torrentBytes = torrentBytes,
                 apiToken = token,
                 onTorrentAdded = { activeTorrentIds.add(it) },
                 onProgress = { progress ->
-                    _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid((if (isHebrew) "ממיר ב-RD: " else "Resolving in RD: ") + "${progress.toInt()}%")) }
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid((if (isHebrew) "ממיר ב-AllDebrid: " else "Resolving in AllDebrid: ") + "${progress.toInt()}%")) }
                 }
             ).fold(
                 onSuccess = { url -> _state.update { it.copy(readyToPlayUrl = url, scrapingStatus = ScrapingStatus.Idle) } },
                 onFailure = { e ->
-                    if (e.message == "RD_CONFLICT" && retryCount < 3) {
+                    val msg = e.message ?: ""
+                    if ((msg.contains("conflict", ignoreCase = true) || msg.contains("2000") || msg.contains("2004")) && retryCount < 3) {
                         viewModelScope.launch(Dispatchers.IO) {
-                            val currentToken = getRdToken()
+                            val currentToken = getDebridToken()
                             cleanupActiveTorrents(currentToken)
                             delay(1000)
                             playFuzerDirect(torrentUrl, retryCount + 1)
                         }
                     } else {
-                        val errorMsg = if (e.message == "RD_CONFLICT")
-                            (if (isHebrew) "שגיאת RD: קונפליקט מתמשך — נסה שוב מאוחר יותר" else "RD Error: Persistent conflict — try again later")
+                        val errorMsg = if (msg.contains("conflict", ignoreCase = true))
+                            (if (isHebrew) "שגיאת AllDebrid: קונפליקט מתמשך — נסה שוב מאוחר יותר" else "AllDebrid Error: Persistent conflict — try again later")
                         else
-                            (if (isHebrew) "שגיאת RD: " else "RD Error: ") + e.message
+                            (if (isHebrew) "שגיאת AllDebrid: " else "AllDebrid Error: ") + msg
                         _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(errorMsg)) }
                     }
                 }
@@ -259,7 +283,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 val collectionName = dto.belongsToCollection?.name
                 val collectionItems = if (collectionId != null) fetchCollectionViaHttp(collectionId) else emptyList()
                 val directorItems    = if (directorId != null) fetchActorWorksViaHttp(directorId) else emptyList()
-                val qualityHint      = if (dto.voteAverage >= 7.0f) "4K HDR • RD+" else "1080p • RD+"
+                val qualityHint      = if (dto.voteAverage >= 7.0f) "4K HDR • AD+" else "1080p • AD+"
                 val movieProg        = progressManager.getMovie(scrapeId)
                 val deviceLang = if (isHebrew) "he" else "en"
                 val logoPath = dto.images?.logos?.firstOrNull { it.lang == deviceLang }?.filePath
@@ -294,7 +318,7 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = false, releaseDate = dto.releaseDate?.take(4) ?: "", runtimeMinutes = dto.runtime ?: 0,
                             tmdbRating = dto.voteAverage.toDouble(), imdbRating = finalImdbRating, ageRating = "R",
-                            studios = studios, genres = genres, director = directorFullName, cast = castList,
+                            studios = studios, originalLanguage = dto.originalLanguage ?: "", genres = genres, director = directorFullName, cast = castList,
                             trailerUrl = trailerUrl, isFavorite = isSaved, collectionName = collectionName,
                             collectionItems = collectionItems, directorName = directorFullName, directorItems = directorItems,
                             rottenTomatoesScore = rottenTomatoes, metacriticScore = metacritic,
@@ -348,10 +372,20 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                     }
                 }
 
+                val nextEp = dto.nextEpisodeToAir?.let { n ->
+                    NextEpisodeInfo(
+                        seasonNumber  = n.seasonNumber ?: 0,
+                        episodeNumber = n.episodeNumber ?: 0,
+                        name = n.name?.takeIf { it.isNotBlank() } ?: (if (isHebrew) "פרק חדש" else "New Episode"),
+                        airDateIso = n.airDate.orEmpty(),
+                        stillUrl = n.stillPath?.let { "https://image.tmdb.org/t/p/w300$it" } ?: ""
+                    )
+                }
+
                 _state.update {
                     it.copy(
                         isLoadingData      = false,
-                        bestSourceHint     = "1080p • RD+",
+                        bestSourceHint     = "1080p • AD+",
                         contentProgress    = latestEp?.third?.fraction,
                         contentIsFinished  = latestEp?.third?.isFinished ?: false,
                         lastWatchedSeason  = latestEp?.first,
@@ -360,11 +394,14 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             id = "tv_${dto.id}", imdbId = scrapeId, title = dto.name, overview = dto.overview.takeIf { !it.isNullOrBlank() } ?: (if (isHebrew) "אין תקציר זמין לכותר זה." else "No synopsis available for this title."),
                             posterUrl = posterUrl(dto.posterPath), backdropUrl = backdropUrl(dto.backdropPath), logoUrl = fullLogoUrl,
                             isSeries = true, releaseDate = dto.firstAirDate?.take(4) ?: "", tmdbRating = dto.voteAverage.toDouble(),
-                            imdbRating = finalImdbRating, ageRating = "TV-MA", studios = studios, genres = genres,
+                            imdbRating = finalImdbRating, ageRating = "TV-MA", studios = studios, originalLanguage = dto.originalLanguage ?: "", genres = genres,
                             director = creatorFullName ?: "", cast = castList, totalSeasons = dto.numberOfSeasons,
                             trailerUrl = trailerUrl, isFavorite = isSaved, directorName = creatorFullName, directorItems = directorItems,
                             rottenTomatoesScore = rottenTomatoes, metacriticScore = metacritic,
-                            reviews = dto.reviews?.results?.mapNotNull { r -> if (r.content.isNotBlank() && r.author.isNotBlank()) Review(r.author, r.content, r.authorDetails?.rating) else null } ?: emptyList()
+                            reviews = dto.reviews?.results?.mapNotNull { r -> if (r.content.isNotBlank() && r.author.isNotBlank()) Review(r.author, r.content, r.authorDetails?.rating) else null } ?: emptyList(),
+                            seriesStatus = dto.status ?: "",
+                            nextEpisode = nextEp,
+                            lastEpisodeAiredIso = dto.lastEpisodeToAir?.airDate.orEmpty()
                         )
                     )
                 }
@@ -461,7 +498,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                                     title = title,
                                     overview = overview,
                                     stillUrl = stillUrl,
-                                    progress = 0f
+                                    progress = 0f,
+                                    airDateIso = e.optString("air_date", "")
                                 )
                             }
                         }
@@ -490,7 +528,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                                                     title = e.optString("name", "Episode $epNum"),
                                                     overview = e.optString("overview", ""),
                                                     stillUrl = list.find { it.episodeNumber == epNum }?.stillUrl ?: "",
-                                                    progress = 0f
+                                                    progress = 0f,
+                                                    airDateIso = e.optString("air_date", "")
                                                 )
                                             }
                                         }
@@ -532,7 +571,8 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                                 list += Episode(id = v.optString("id", "s${targetSeason}e$ep"), episodeNumber = ep,
                                     seasonNumber = targetSeason, title = v.optString("title", "Episode $ep"),
                                     overview = v.optString("overview", ""),
-                                    stillUrl = v.optString("thumbnail", "").replace("http://", "https://"), progress = 0f)
+                                    stillUrl = v.optString("thumbnail", "").replace("http://", "https://"), progress = 0f,
+                                    airDateIso = v.optString("released", "").take(10))
                             }
                         }
                     }
@@ -564,12 +604,28 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         }
     }
 
-    private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?) {
+    /**
+     * Manual refresh — drop the cached streams for this key (and anything derived
+     * from it, e.g. season-episode variants), then re-run scraping. Used by the
+     * "Refresh" button in the sources overlay so users can flush dead links.
+     */
+    private fun refreshStreams(imdbId: String, season: Int?, episode: Int?) {
+        val queryId = if (season != null && episode != null) "$imdbId:$season:$episode" else imdbId
+        streamCache.remove(queryId.trim())
+        // Also purge any stale variants for the same imdbId — protects against edge
+        // cases where the id was resolved differently (e.g. tmdb→imdb) across opens.
+        val prefix = imdbId.trim()
+        streamCache.keys.removeAll { it == prefix || it.startsWith("$prefix:") }
+        _state.update { it.copy(availableStreams = emptyList(), scrapingStatus = ScrapingStatus.Idle) }
+        startScrapingEngine(imdbId, season, episode)
+    }
+
+    private fun startScrapingEngine(scrapeId: String, season: Int?, episode: Int?, autoPlayTop: Boolean = false) {
         cancelActiveScraping()
-        val token = getRdToken()
-        Log.d("ScrapeDebug", "🔍 Token present: ${token.isNotEmpty()}, length: ${token.length}, first5: ${token.take(5)}")
+        val token = getDebridToken()
+        Log.d("ScrapeDebug", "🔍 Token present: ${token.isNotEmpty()}, length: ${token.length}")
         if (token.isEmpty()) {
-            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נדרש חשבון Real-Debrid. אנא התחבר בהגדרות." else "Real-Debrid account required. Please connect in Settings.")) }
+            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נדרש חשבון AllDebrid. אנא התחבר בהגדרות." else "AllDebrid account required. Please connect in Settings.")) }
             return
         }
         scrapingJob = viewModelScope.launch(Dispatchers.IO) {
@@ -594,75 +650,51 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             }
 
             streamCache[cacheKey]?.let { cached ->
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached) }
-                return@launch
+                val age = System.currentTimeMillis() - cached.fetchedAt
+                if (age <= streamCacheTtlMs) {
+                    currentCacheKey = cacheKey
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = cached.streams) }
+                    if (autoPlayTop) cached.streams.firstOrNull()?.let { processDebridLink(it) }
+                    return@launch
+                }
+                // Entry expired — drop it and re-fetch below.
+                streamCache.remove(cacheKey)
             }
 
             try {
-                var currentToken = token
-                val url = "https://torrentio.strem.fun/realdebrid=$currentToken/stream/$queryType/$queryId.json"
-                Log.d("ScrapeDebug", "🌐 Calling Torrentio: $url")
-                var response = dynamicTorrentio.getStreamsDynamic(url)
-                var responseBody = response.body()
+                val url = "https://torrentio.strem.fun/alldebrid=$token/stream/$queryType/$queryId.json"
+                Log.d("ScrapeDebug", "🌐 Calling Torrentio: stream/$queryType/$queryId.json")
+                val response = dynamicTorrentio.getStreamsDynamic(url)
+                val responseBody = response.body()
                 Log.d("ScrapeDebug", "📡 Response: code=${response.code()}, streams=${responseBody?.streams?.size ?: "null"}")
-
-                // ⚡ AUTO-RETRY: If Torrentio returns failure or empty (likely expired token),
-                // force-refresh the token and retry once with the new one
-                if (!response.isSuccessful || responseBody?.streams.isNullOrEmpty()) {
-                    Log.d("ScrapeDebug", "⚠️ First attempt failed, trying token refresh...")
-                    val refreshedToken = com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
-                    Log.d("ScrapeDebug", "🔄 Refreshed token: ${refreshedToken != null}, same=${refreshedToken == currentToken}")
-                    if (refreshedToken != null && refreshedToken != currentToken) {
-                        currentToken = refreshedToken
-                        response = dynamicTorrentio.getStreamsDynamic("https://torrentio.strem.fun/realdebrid=$currentToken/stream/$queryType/$queryId.json")
-                        responseBody = response.body()
-                        Log.d("ScrapeDebug", "📡 Retry response: code=${response.code()}, streams=${responseBody?.streams?.size ?: "null"}")
-                    }
-                }
 
                 if (!response.isSuccessful || responseBody?.streams.isNullOrEmpty()) {
                     Log.e("ScrapeDebug", "❌ No sources found! code=${response.code()}, body=${response.errorBody()?.string()?.take(200)}")
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות עבור תוכן זה." else "No sources found for this content.")) }
                     return@launch
                 }
+                // Entries with neither a magnet hash nor a direct URL are dropped by the
+                // parser — Torrentio still lists them but nothing can resolve them.
                 val mapped = responseBody.streams.orEmpty().mapIndexedNotNull { idx, s ->
-                    val titleSafe = s.title ?: return@mapIndexedNotNull null
-                    val nameSafe  = s.name ?: "Unknown"
-                    val upper     = titleSafe.uppercase()
-                    val sizeBytes = Regex("([0-9.]+)\\s*(GB|MB)").find(upper)?.let {
-                        val v = it.groupValues[1].toDoubleOrNull() ?: 0.0
-                        if (it.groupValues[2] == "GB") (v * 1_073_741_824).toLong() else (v * 1_048_576).toLong()
-                    } ?: 0L
-                    val tracker = TrackerParser.extractTracker(nameSafe)
-                    val audioLangs = AudioLanguage.detectFromTitle(titleSafe + " " + nameSafe)
-                    AdvancedStreamSource(id = "str_$idx", releaseGroup = nameSafe.replace("\n", " "),
-                        filename = titleSafe.substringBefore("\n"), infoHash = s.infoHash, directUrl = s.url,
-                        sizeBytes = sizeBytes, isCachedRd = nameSafe.contains("RD+"),
-                        quality = StreamQuality.fromString(upper), videoCodec = VideoCodec.fromString(upper), rawTitle = titleSafe,
-                        trackerName = tracker, audioLanguages = audioLangs)
-                }.sortedByDescending { it.sortScore }
+                    TorrentioStreamParser.parse(idx, s.name, s.title, s.url, s.infoHash)
+                }.sortedWith(AdvancedStreamSource.defaultComparator)
                     .let { list ->
-                        val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
-                        if (prefs.getBoolean("force_hdr", false)) {
-                            val hdr = list.filter { src ->
-                                val u = "${src.filename} ${src.releaseGroup}".uppercase()
-                                u.contains("HDR") || u.contains("DV") || u.contains(".DV.") ||
-                                        u.contains("DOLBY VISION") || u.contains("HDR10") || u.contains("HLG")
-                            }
-                            hdr + (list - hdr.toSet())
-                        } else list
-                    }.let { list ->
-                        val prefs = appContext.getSharedPreferences("lumina_settings", Context.MODE_PRIVATE)
+                        val settings = (appContext as LuminaApp).settingsRepository.current()
                         
+                        // Filter by allowed audio languages (English, Russian, Hebrew, Multi + Original Language).
+                        // Keep a stream if it has ANY allowed track — matches refilterStreams().
+                        val allowedLangs = allowedAudioLanguages(_state.value.mediaInfo.originalLanguage)
+                        val filteredByLang = list.filter { it.hasAllowedAudio(allowedLangs) }
+
                         // 1. Filter by Resolution
-                        val filteredByRes = when (prefs.getString("max_resolution", "Unlimited") ?: "Unlimited") {
-                            "1080p" -> list.filter { it.quality != StreamQuality.UHD_4K }
-                            "720p"  -> list.filter { it.quality != StreamQuality.UHD_4K && it.quality != StreamQuality.FHD_1080P }
-                            else    -> list
+                        val filteredByRes = when (settings.maxResolution) {
+                            "1080p" -> filteredByLang.filter { it.quality != StreamQuality.UHD_4K }
+                            "720p"  -> filteredByLang.filter { it.quality != StreamQuality.UHD_4K && it.quality != StreamQuality.FHD_1080P }
+                            else    -> filteredByLang
                         }
                         
                         // 2. Filter by File Size
-                        val maxBytes: Long? = when (prefs.getString("max_file_size", "Unlimited") ?: "Unlimited") {
+                        val maxBytes: Long? = when (settings.maxFileSize) {
                             "20GB" -> 20L * 1024 * 1024 * 1024
                             "10GB" -> 10L * 1024 * 1024 * 1024
                             "5GB"  -> 5L * 1024 * 1024 * 1024
@@ -678,8 +710,63 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 if (mapped.isEmpty()) {
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות התואמים להגדרות האיכות שלך." else "No sources matching your quality settings.")) }
                 } else {
-                    streamCache[cacheKey] = mapped
+                    currentCacheKey = cacheKey
+                    streamCache[cacheKey] = CachedStreams(mapped, System.currentTimeMillis())
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Success, availableStreams = mapped) }
+
+                    // Auto-play-next-episode: resolve & play the top source immediately.
+                    // If it turns out to be dead, processDebridLink surfaces an error and the
+                    // user is left on the (already visible) source list to pick another.
+                    if (autoPlayTop) mapped.firstOrNull()?.let { processDebridLink(it) }
+
+                    // Proactively drop DMCA/error videos from the top direct links in the
+                    // background. Bound to viewModelScope so it dies with the screen (no leak).
+                    backgroundFilterJob?.cancel()
+                    backgroundFilterJob = viewModelScope.launch(Dispatchers.IO) {
+                        try {
+                            var filteredStreams = mapped
+
+                            // Proactively check top 5 direct URLs for DMCA (file size < 20MB)
+                            val fastClient = okHttpClient.newBuilder()
+                                .connectTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+                                .readTimeout(4, java.util.concurrent.TimeUnit.SECONDS)
+                                .build()
+                            val topLinksToCheck = filteredStreams.filter { !it.directUrl.isNullOrBlank() }.take(5)
+                            val dmcaIds = mutableSetOf<String>()
+                            for (stream in topLinksToCheck) {
+                                try {
+                                    val req = okhttp3.Request.Builder()
+                                        .url(stream.directUrl!!)
+                                        .header("Range", "bytes=0-1")
+                                        .build()
+                                    val res = fastClient.newCall(req).execute()
+                                    var cLen = res.header("Content-Length")?.toLongOrNull() ?: -1L
+                                    val cRange = res.header("Content-Range")
+                                    if (cRange != null && cRange.contains("/")) {
+                                        cRange.substringAfterLast("/").toLongOrNull()?.let { cLen = it }
+                                    }
+                                    res.close()
+                                    if (cLen in 1..20_000_000L) {
+                                        dmcaIds.add(stream.id)
+                                    }
+                                } catch (e: Exception) {
+                                    if (e is CancellationException) throw e
+                                }
+                            }
+
+                            if (dmcaIds.isNotEmpty()) {
+                                filteredStreams = filteredStreams.filter { !dmcaIds.contains(it.id) }
+                            }
+
+                            // Update UI if we removed anything
+                            if (filteredStreams.size != mapped.size) {
+                                streamCache[cacheKey] = CachedStreams(filteredStreams, System.currentTimeMillis())
+                                _state.update { it.copy(availableStreams = filteredStreams) }
+                            }
+                        } catch (e: Exception) {
+                            if (e is CancellationException) throw e
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאה: " else "Error: ") + e.message)) }
@@ -691,6 +778,22 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         scrapingJob?.cancel()
         resolveJob?.cancel()
         _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle) }
+    }
+
+    /**
+     * Purge a single stream from the visible list and from any cached entry that
+     * contains it. Called when the HEAD probe on click reveals the link is dead
+     * (expired / DMCA-blocked / HTML error page) so we never show it again.
+     */
+    private fun removeStreamById(streamId: String) {
+        _state.update { s -> s.copy(availableStreams = s.availableStreams.filterNot { it.id == streamId }) }
+        // Rewrite each cache entry that still references this id, preserving fetchedAt
+        // so this doesn't accidentally extend the entry's TTL.
+        val keysToUpdate = streamCache.entries.filter { entry -> entry.value.streams.any { it.id == streamId } }
+        for (entry in keysToUpdate) {
+            val filtered = entry.value.streams.filterNot { it.id == streamId }
+            streamCache[entry.key] = entry.value.copy(streams = filtered)
+        }
     }
 
     // ── Stream Sort & Filter ──────────────────────────────────────────────────
@@ -746,10 +849,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
     private fun refilterStreams() {
         val s = _state.value
-        val cacheKey = streamCache.keys.firstOrNull()
-        val allStreams = if (cacheKey != null) streamCache[cacheKey] ?: emptyList() else s.availableStreams
+        // Re-filter from the cache entry for the streams actually on screen — never an
+        // arbitrary ConcurrentHashMap entry (which could be a different episode/title).
+        val cacheKey = currentCacheKey
+        val allStreams = cacheKey?.let { streamCache[it]?.streams } ?: s.availableStreams
 
-        var filtered = allStreams.toList()
+        val allowedLangs = allowedAudioLanguages(s.mediaInfo.originalLanguage)
+        var filtered = allStreams.filter { it.hasAllowedAudio(allowedLangs) }
 
         // Apply tracker filter
         if (s.trackerFilters.isNotEmpty()) {
@@ -780,14 +886,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
 
         // Apply sort
         val sorted = when (s.streamSortMode) {
-            StreamSortMode.DEFAULT -> filtered.sortedByDescending { it.sortScore }
+            StreamSortMode.DEFAULT -> filtered.sortedWith(AdvancedStreamSource.defaultComparator)
             StreamSortMode.BY_TRACKER -> filtered.sortedWith(
                 compareBy<AdvancedStreamSource> { it.trackerName.lowercase() }
-                    .thenByDescending { it.sortScore }
+                    .then(AdvancedStreamSource.defaultComparator)
             )
             StreamSortMode.BY_LANGUAGE -> {
-                val prefLang = appContext.getSharedPreferences("lumina_settings", android.content.Context.MODE_PRIVATE)
-                    .getString("preferred_audio_lang", "original") ?: "original"
+                val prefLang = (appContext as LuminaApp).settingsRepository.current().preferredAudioLang
                 val targetLang = when (prefLang) {
                     "he" -> AudioLanguage.HEBREW
                     "en" -> AudioLanguage.ENGLISH
@@ -797,9 +902,13 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                 if (targetLang != null) {
                     val preferred = filtered.filter { it.audioLanguages.contains(targetLang) }
                     val rest = filtered.filter { !it.audioLanguages.contains(targetLang) }
-                    preferred.sortedByDescending { it.sortScore } + rest.sortedByDescending { it.sortScore }
+                    if (preferred.isNotEmpty()) {
+                        preferred.sortedWith(AdvancedStreamSource.defaultComparator) + rest.sortedWith(AdvancedStreamSource.defaultComparator)
+                    } else {
+                        filtered.sortedWith(AdvancedStreamSource.defaultComparator)
+                    }
                 } else {
-                    filtered.sortedByDescending { it.sortScore }
+                    filtered.sortedWith(AdvancedStreamSource.defaultComparator)
                 }
             }
         }
@@ -807,103 +916,136 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
         _state.update { it.copy(availableStreams = sorted) }
     }
 
-    /** Delete a torrent from RD account to prevent 2000/2004 conflicts */
-    private suspend fun deleteRdTorrent(torrentId: String, token: String) {
+    /** Delete a torrent from AD account to prevent conflicts */
+    private suspend fun deleteDebridTorrent(torrentId: String, token: String) {
         withContext(Dispatchers.IO) {
             try {
                 val request = okhttp3.Request.Builder()
-                    .url("https://api.real-debrid.com/rest/1.0/torrents/delete/$torrentId")
+                    .url("https://api.alldebrid.com/v4/magnet/delete?id=$torrentId&agent=LuminaStreams")
                     .header("Authorization", "Bearer $token")
-                    .delete()
+                    .get()
                     .build()
                 okHttpClient.newCall(request).execute().close()
             } catch (e: Exception) { if (e is CancellationException) throw e /* best-effort cleanup */ }
         }
     }
 
-    /** Cleanup all tracked RD torrents — called before resolving a new source */
+    /** Cleanup all tracked AD torrents — called before resolving a new source */
     private suspend fun cleanupActiveTorrents(token: String) {
         val ids = activeTorrentIds.toList()
         activeTorrentIds.clear()
-        ids.forEach { id -> deleteRdTorrent(id, token) }
+        ids.forEach { id -> deleteDebridTorrent(id, token) }
     }
 
-    private fun processRealDebridLink(stream: AdvancedStreamSource) {
+    private fun processDebridLink(stream: AdvancedStreamSource) {
         // ⚡ התיקון: חסימה מוחלטת של לחיצה כפולה (Double Click) ⚡
         // אם האפליקציה כבר התחילה לעבד מקור, היא תתעלם מכל לחיצה נוספת
         if (resolveJob?.isActive == true) return
+
+        // ⚡ התיקון לבאג של "File Was removed from debrid service due to copy":
+        // נעדיף קודם כל לפתור את ה-Magnet בעצמנו עם ה-Token העדכני של המשתמש, 
+        // במקום לסמוך על הקישור הישיר של Torrentio שעלול להחזיר סרטון שגיאה או להיות פג תוקף.
+        if (!stream.infoHash.isNullOrBlank()) {
+            resolveJob = viewModelScope.launch(Dispatchers.IO) {
+                val token = getDebridToken()
+                _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
+
+                // מנקה טורנטים ישנים
+                cleanupActiveTorrents(token)
+
+                try {
+                    val magnetUri = "magnet:?xt=urn:btih:${stream.infoHash}"
+                    
+                    val resolutionComplete = kotlinx.coroutines.withTimeoutOrNull(25_000L) {
+                        val result = adManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
+                            activeTorrentIds.add(torrentId)
+                        }
+                        result.fold(
+                            onSuccess = { url ->
+                                _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) }
+                            },
+                            onFailure = { e ->
+                                val msg = e.message ?: ""
+                                if (msg.contains("conflict", ignoreCase = true) || msg.contains("2000") || msg.contains("2004")) {
+                                    val currentToken = getDebridToken()
+                                    cleanupActiveTorrents(currentToken)
+                                    delay(1200)
+                                    val retry = adManager.resolveMagnetToStreamTracked(magnetUri, currentToken) { torrentId ->
+                                        activeTorrentIds.add(torrentId)
+                                    }
+                                    retry.fold(
+                                        onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
+                                        onFailure = { e2 ->
+                                            removeStreamById(stream.id)
+                                            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "שגיאת כפל ב-AllDebrid: ${e2.message}" else "AllDebrid Conflict: ${e2.message}")) }
+                                        }
+                                    )
+                                } else {
+                                    removeStreamById(stream.id)
+                                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) }
+                                }
+                            }
+                        )
+                        true // Indicate completion
+                    }
+                    
+                    if (resolutionComplete == null) {
+                        removeStreamById(stream.id)
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "הפענוח לקח זמן רב מדי (Timeout)" else "Resolution timed out")) }
+                    }
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    removeStreamById(stream.id)
+                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת רשת: " else "Network error: ") + e.message)) }
+                }
+            }
+            return
+        }
 
         if (stream.directUrl?.startsWith("http") == true) {
             resolveJob = viewModelScope.launch(Dispatchers.IO) {
                 _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
                 try {
                     val fastClient = okHttpClient.newBuilder()
-                        .connectTimeout(2, TimeUnit.SECONDS)
-                        .readTimeout(2, TimeUnit.SECONDS)
+                        .connectTimeout(6, TimeUnit.SECONDS)
+                        .readTimeout(6, TimeUnit.SECONDS)
                         .build()
 
-                    val request = okhttp3.Request.Builder().url(stream.directUrl).head().build()
+                    // Use GET with Range to ensure we get the file size, as HEAD might not return Content-Length on redirects
+                    val request = okhttp3.Request.Builder()
+                        .url(stream.directUrl)
+                        .header("Range", "bytes=0-1")
+                        .build()
                     val response = fastClient.newCall(request).execute()
                     val contentType = response.header("Content-Type") ?: ""
+                    
+                    var contentLength = response.header("Content-Length")?.toLongOrNull() ?: -1L
+                    val contentRange = response.header("Content-Range")
+                    if (contentRange != null && contentRange.contains("/")) {
+                        contentRange.substringAfterLast("/").toLongOrNull()?.let { contentLength = it }
+                    }
                     val isHtml = contentType.contains("text/html", ignoreCase = true)
+                    val resolvedUrl = response.request.url.toString()
                     response.close()
 
                     if (isHtml) {
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "הקישור פג תוקף או נמחק משרתי RD. נסה מקור אחר." else "Link expired or deleted from RD. Try another source.")) }
+                        removeStreamById(stream.id)
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "הקישור פג תוקף או נמחק משרתי AllDebrid. נסה מקור אחר." else "Link expired or deleted from AllDebrid. Try another source.")) }
+                    } else if (contentLength in 1..20_000_000L) {
+                        // DMCA or Error videos are usually 1-5MB. Real content is > 30MB.
+                        removeStreamById(stream.id)
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "המקור נחסם ע״י שרתי Debrid (זכויות יוצרים). אנא בחר מקור אחר מהרשימה." else "Source blocked by Debrid servers (DMCA). Please select another source.")) }
                     } else {
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
+                        val finalPlayUrl = if (resolvedUrl.startsWith("http")) resolvedUrl else stream.directUrl
+                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = finalPlayUrl) }
                     }
                 } catch (e: Exception) {
                     if (e is CancellationException) throw e
+                    // On timeout or other errors, fallback to playing it anyway, as ExoPlayer has its own robust retries
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = stream.directUrl) }
                 }
             }
             return
-        }
-        if (stream.infoHash.isNullOrBlank()) return
-
-        resolveJob = viewModelScope.launch(Dispatchers.IO) {
-            // ⚡ Force-refresh token before resolving to guarantee freshness
-            com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.forceRefreshNow()
-            val token = getRdToken()
-            _state.update { it.copy(scrapingStatus = ScrapingStatus.ResolvingDebrid(stream.id)) }
-
-            // מנקה טורנטים ישנים
-            cleanupActiveTorrents(token)
-
-            try {
-                val magnetUri = "magnet:?xt=urn:btih:${stream.infoHash}"
-                val result = rdManager.resolveMagnetToStreamTracked(magnetUri, token) { torrentId ->
-                    activeTorrentIds.add(torrentId)
-                }
-                result.fold(
-                    onSuccess = { url ->
-                        _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) }
-                    },
-                    onFailure = { e ->
-                        val msg = e.message ?: ""
-                        if (msg == "RD_CONFLICT" || msg.contains("2000") || msg.contains("2004")) {
-                            val currentToken = getRdToken()
-                            cleanupActiveTorrents(currentToken)
-                            delay(1200)
-                            val retry = rdManager.resolveMagnetToStreamTracked(magnetUri, currentToken) { torrentId ->
-                                activeTorrentIds.add(torrentId)
-                            }
-                            retry.fold(
-                                onSuccess = { url -> _state.update { it.copy(scrapingStatus = ScrapingStatus.Idle, readyToPlayUrl = url) } },
-                                onFailure = { e2 ->
-                                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "שגיאת כפל ב-RD: ${e2.message}" else "RD Conflict: ${e2.message}")) }
-                                }
-                            )
-                        } else {
-                            _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "נכשל בפענוח קישור מאובטח" else "Failed to resolve secure link")) }
-                        }
-                    }
-                )
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                _state.update { it.copy(scrapingStatus = ScrapingStatus.Error((if (isHebrew) "שגיאת רשת: " else "Network error: ") + e.message)) }
-            }
         }
     }
 

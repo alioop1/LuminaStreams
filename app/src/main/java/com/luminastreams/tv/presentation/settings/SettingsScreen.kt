@@ -7,7 +7,7 @@
 package com.luminastreams.tv.presentation.settings
 
 import androidx.compose.animation.*
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -61,135 +62,141 @@ fun SettingsScreen(
     viewModel: SettingsViewModel,
     onNavigateBack: () -> Unit
 ) {
-    val backFR = remember { FocusRequester() }
+    val backFR    = remember { FocusRequester() }
     val contentFR = remember { FocusRequester() }
-    val sidebarFR = remember { FocusRequester() }
+    val menuFR    = remember { FocusRequester() }
     val isLowTier = DeviceProfile.tier == DeviceProfile.Tier.LOW
 
     LaunchedEffect(Unit) {
         delay(100)
-        runCatching { sidebarFR.requestFocus() }
+        runCatching { menuFR.requestFocus() }
     }
 
-    Box(Modifier.fillMaxSize().background(Color(0xFF222428))) {
+    // ── COLORS ────────────────────────────────────────────────────────────
+    val BG        = Color(0xFF0F0F0F)   // Near-black Netflix canvas
+    val SIDEBAR   = Color(0xFF171717)   // Slightly lifted sidebar panel
+    val CARD_BG   = Color(0xFF1C1C1E)   // Apple "grouped" card surface
+    val GOLD      = Color(0xFFE2B258)   // LuminaStreams accent
+    val MUTED     = Color(0xFF6E6E73)   // Apple secondary label
+    val SEPARATOR = Color(0xFF2C2C2E)   // Apple separator
+
+    Box(Modifier.fillMaxSize().background(BG)) {
         Row(Modifier.fillMaxSize()) {
 
-            // ── LEFT SIDEBAR ──
+            // ══════════════════════════════════════════════════════════════
+            //  SIDEBAR – Netflix-style with Apple spacing
+            // ══════════════════════════════════════════════════════════════
             Column(
                 modifier = Modifier
-                    .width(320.dp)
+                    .width(280.dp)
                     .fillMaxHeight()
-                    .background(Color(0xFF1A1C1E))
-                    .padding(vertical = 40.dp)
+                    .background(SIDEBAR)
+                    .padding(top = 48.dp, bottom = 32.dp)
+                    .focusGroup()
+                    .focusRestorer()
             ) {
+                // Back + Title
                 Row(
-                    Modifier.fillMaxWidth().padding(start = 40.dp, end = 40.dp, bottom = 32.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(horizontal = 24.dp).padding(bottom = 40.dp)
                 ) {
                     IconButton(
                         onClick  = onNavigateBack,
-                        modifier = Modifier.size(48.dp).focusRequester(backFR),
+                        modifier = Modifier.size(40.dp).focusRequester(backFR),
                         colors   = IconButtonDefaults.colors(
-                            containerColor        = CARD_IDLE,
-                            focusedContainerColor = TEXT_PRIMARY,
-                            contentColor          = TEXT_PRIMARY,
-                            focusedContentColor   = BG_DARK
+                            containerColor        = Color.Transparent,
+                            focusedContainerColor = Color.White,
+                            contentColor          = MUTED,
+                            focusedContentColor   = Color.Black
                         )
-                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(24.dp)) }
-
-                    Spacer(Modifier.width(16.dp))
+                    ) { Icon(Icons.AutoMirrored.Filled.ArrowBack, null, Modifier.size(20.dp)) }
+                    Spacer(Modifier.width(12.dp))
                     Text(
-                        text = tr("Settings", "הגדרות"),
-                        color = TEXT_PRIMARY,
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 1.sp
+                        text       = tr("Settings", "הגדרות"),
+                        color      = Color.White,
+                        fontSize   = 26.sp,
+                        fontWeight = FontWeight.Bold
                     )
                 }
 
-                val categories = SettingsCategory.values().toList()
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                    contentPadding = PaddingValues(horizontal = 24.dp),
-                    modifier = Modifier.focusGroup().focusRestorer()
-                ) {
-                    items(categories) { cat ->
-                        val isSelected = state.selectedCategory == cat
+                // Separator
+                Box(Modifier.fillMaxWidth().height(0.5.dp).background(SEPARATOR))
+                Spacer(Modifier.height(16.dp))
 
-                        // Map each category to a title and standard Material Icon
-                        val (title, icon) = when (cat) {
-                            SettingsCategory.ACCOUNT -> Pair(tr("Account & Network", "חשבון ורשת"), Icons.Default.Person)
-                            SettingsCategory.PLAYBACK -> Pair(tr("Video & Audio", "וידאו וסאונד"), Icons.Default.PlayCircle)
-                            SettingsCategory.SUBTITLES -> Pair(tr("Subtitles & UI", "כתוביות וממשק"), Icons.Default.Subtitles)
-                            SettingsCategory.PERFORMANCE -> Pair(tr("Performance", "ביצועים ואחסון"), Icons.Default.Speed)
-                            SettingsCategory.SYSTEM_INFO -> Pair(tr("System Info", "אודות המערכת"), Icons.Default.Info)
-                        }
+                // Category list
+                SettingsCategory.values().forEach { cat ->
+                    val isSelected = state.selectedCategory == cat
+                    val label = when (cat) {
+                        SettingsCategory.ACCOUNT      -> tr("Account",  "חשבון")
+                        SettingsCategory.PLAYBACK     -> tr("Playback", "ניגון")
+                        SettingsCategory.SUBTITLES    -> tr("Subtitles","כתוביות")
+                        SettingsCategory.PERFORMANCE  -> tr("System",   "מערכת")
+                        SettingsCategory.SYSTEM_INFO  -> tr("About",    "אודות")
+                    }
 
-                        val surfaceMod = if (isSelected) Modifier.focusRequester(sidebarFR) else Modifier
-
-                        Surface(
-                            onClick = {
-                                viewModel.setCategory(cat)
-                                runCatching { contentFR.requestFocus() }
-                            },
-                            colors = ClickableSurfaceDefaults.colors(
-                                containerColor = Color.Transparent,
-                                focusedContainerColor = Color.Transparent,
-                                contentColor = if (isSelected) Color.White else Color(0xFFAAAEB4),
-                                focusedContentColor = Color.White
-                            ),
-                            shape = ClickableSurfaceDefaults.shape(RectangleShape),
-                            border = ClickableSurfaceDefaults.border(Border.None, Border.None),
-                            modifier = surfaceMod
-                                .fillMaxWidth()
-                                .onFocusChanged { if (it.isFocused) viewModel.setCategory(cat) }
-                        ) {
-                            // Row to hold the Icon and the Text
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(horizontal = 24.dp, vertical = 18.dp)
-                            ) {
-                                Box(
-                                    modifier = Modifier.size(40.dp),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    if (isSelected) {
-                                        Box(
-                                            modifier = Modifier.fillMaxSize().background(
-                                                Color.White.copy(0.1f),
-                                                CircleShape
-                                            )
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(24.dp),
-                                        tint = if (isSelected) Color.White else Color(0xFFAAAEB4)
-                                    )
+                    val focusedScale = if (isLowTier) 1f else 1.02f
+                    Surface(
+                        onClick = {
+                            viewModel.setCategory(cat)
+                            runCatching { contentFR.requestFocus() }
+                        },
+                        colors = ClickableSurfaceDefaults.colors(
+                            containerColor        = Color.Transparent,
+                            focusedContainerColor = Color.White,
+                            contentColor          = if (isSelected) Color.White else MUTED,
+                            focusedContentColor   = Color.Black
+                        ),
+                        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(10.dp)),
+                        scale = ClickableSurfaceDefaults.scale(focusedScale = focusedScale),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 3.dp)
+                            .then(if (isSelected) Modifier.focusRequester(menuFR) else Modifier)
+                            .onPreviewKeyEvent { ev ->
+                                if (ev.key == Key.DirectionLeft && ev.type == KeyEventType.KeyDown) {
+                                    runCatching { contentFR.requestFocus() }
+                                    return@onPreviewKeyEvent true
                                 }
-                                Spacer(modifier = Modifier.width(20.dp))
-                                Text(
-                                    text = title,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
+                                false
                             }
+                            .onFocusChanged { if (it.isFocused) viewModel.setCategory(cat) }
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp)
+                        ) {
+                            // Netflix-style active indicator
+                            Box(
+                                Modifier
+                                    .width(3.dp)
+                                    .height(20.dp)
+                                    .background(
+                                        if (isSelected) GOLD else Color.Transparent,
+                                        RoundedCornerShape(2.dp)
+                                    )
+                            )
+                            Spacer(Modifier.width(14.dp))
+                            Text(
+                                text       = label,
+                                fontSize   = 17.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                            )
                         }
                     }
                 }
             }
 
-            // ── RIGHT CONTENT AREA ──
+            // ══════════════════════════════════════════════════════════════
+            //  CONTENT AREA
+            // ══════════════════════════════════════════════════════════════
             Box(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(start = 32.dp, end = 64.dp, top = 40.dp, bottom = 40.dp)
                     .focusGroup()
                     .onPreviewKeyEvent { ev ->
-                        if (ev.key == Key.Back && ev.type == KeyEventType.KeyDown) {
-                            runCatching { sidebarFR.requestFocus() }
+                        if ((ev.key == Key.Back || ev.key == Key.DirectionRight) && ev.type == KeyEventType.KeyDown) {
+                            runCatching { menuFR.requestFocus() }
                             return@onPreviewKeyEvent true
                         }
                         false
@@ -197,241 +204,190 @@ fun SettingsScreen(
             ) {
                 AnimatedContent(
                     targetState = state.selectedCategory,
-                    transitionSpec = { fadeIn(tween(250)) togetherWith fadeOut(tween(250)) },
-                    label = "settings_crossfade"
+                    transitionSpec = { fadeIn(tween(220)) togetherWith fadeOut(tween(220)) },
+                    contentAlignment = Alignment.TopStart,
+                    label = "settings_content"
                 ) { category ->
-                    val categoryTitle = when (category) {
-                        SettingsCategory.ACCOUNT -> tr("Account & Network", "חשבון ורשת")
-                        SettingsCategory.PLAYBACK -> tr("Video & Audio", "וידאו ושמע")
-                        SettingsCategory.SUBTITLES -> tr("Subtitles & UI", "כתוביות וממשק")
-                        SettingsCategory.PERFORMANCE -> tr("Performance", "ביצועים וזיכרון")
-                        SettingsCategory.SYSTEM_INFO -> tr("System Info", "מידע מערכת")
-                    }
-
-                    Column(
-                        Modifier
-                            .fillMaxHeight()
-                            .widthIn(max = 650.dp)
+                    LazyColumn(
+                        contentPadding = PaddingValues(
+                            start  = 48.dp, end    = 48.dp,
+                            top    = 16.dp, bottom = 64.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.fillMaxSize()
                     ) {
-                        Text(
-                            text = categoryTitle,
-                            color = Color.White,
-                            fontSize = 32.sp,
-                            fontWeight = FontWeight.Light,
-                            modifier = Modifier.padding(bottom = 24.dp)
-                        )
-
-                        LazyColumn(
-                            contentPadding = PaddingValues(bottom = 40.dp),
-                            modifier = Modifier.fillMaxSize()
-                        ) {
-                            when (category) {
-                                SettingsCategory.ACCOUNT -> {
-                                    item {
-                                        SectionHeader(tr("REAL-DEBRID INTEGRATION", "חיבור לשרתי הפרימיום"))
-                                    }
-                                    item {
-                                        BuildRdBanner(modifier = Modifier.focusRequester(contentFR), state = state, viewModel = viewModel, isLowTier = isLowTier)
-                                    }
-                                    item {
-                                        SectionHeader(tr("SERVICE HEALTH", "סטטוס שרתים"))
-                                    }
-                                    item {
-                                        ServerHealthCard(state = state, viewModel = viewModel, isLowTier = isLowTier)
-                                    }
-                                    item {
-                                        SectionHeader(tr("CLOUD SYNC", "סנכרון ענן"))
-                                    }
-                                    item {
-                                        CloudSyncCard(state = state, viewModel = viewModel, isLowTier = isLowTier)
-                                    }
+                        when (category) {
+                            SettingsCategory.ACCOUNT -> {
+                                item { SectionHeader(tr("PREMIUM", "חשבון פרימיום")) }
+                                item {
+                                    BuildRdBanner(
+                                        modifier  = Modifier.focusRequester(contentFR),
+                                        state     = state,
+                                        viewModel = viewModel,
+                                        isLowTier = isLowTier
+                                    )
                                 }
+                                item { SectionHeader(tr("SERVICE STATUS", "סטטוס שרתים")) }
+                                item {
+                                    ServerHealthCard(
+                                        state     = state,
+                                        viewModel = viewModel,
+                                        isLowTier = isLowTier
+                                    )
+                                }
+                                item { SectionHeader(tr("CLOUD SYNC", "סנכרון ענן")) }
+                                item {
+                                    CloudSyncCard(
+                                        state     = state,
+                                        viewModel = viewModel,
+                                        isLowTier = isLowTier
+                                    )
+                                }
+                            }
 
-                                SettingsCategory.PLAYBACK -> {
-                                    item {
-                                        SectionHeader(tr("VIDEO DECODING", "פענוח וידאו"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            ToggleRow(
-                                                modifier = Modifier.focusRequester(contentFR),
-                                                title = tr("HW Acceleration", "האצת חומרה"),
-                                                icon  = Icons.Default.Memory,
-                                                isChecked = state.hwAcceleration
-                                            ) { viewModel.updateToggleSetting("hw_accel", !state.hwAcceleration) }
-                                            ToggleRow(
-                                                title = tr("Auto Frame Rate", "התאמת קצב (AFR)"),
-                                                icon  = Icons.Default.Monitor,
-                                                isChecked = state.autoFrameRate
-                                            ) { viewModel.updateToggleSetting("afr", !state.autoFrameRate) }
-                                        }
-                                    }
-                                    item {
-                                        SectionHeader(tr("AUDIO SETTINGS", "הגדרות שמע"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            ToggleRow(
-                                                title = tr("Audio Passthrough", "העברת שמע גולמי"),
-                                                icon  = Icons.Default.SurroundSound,
-                                                isChecked = state.audioPassthrough
-                                            ) { viewModel.updateToggleSetting("audio_passthrough", !state.audioPassthrough) }
-                                            
-                                            val langs = listOf("original", "he", "en")
-                                            val currentIdx = langs.indexOf(state.preferredAudioLang).takeIf { it >= 0 } ?: 0
-                                            CycleRow(
-                                                title = tr("Preferred Audio", "שפת שמע מועדפת"),
-                                                currentValue = when(state.preferredAudioLang) {
-                                                    "original" -> tr("Original", "שפת מקור")
-                                                    "he" -> "Hebrew"
-                                                    "en" -> "English"
-                                                    else -> state.preferredAudioLang
-                                                },
-                                                icon = Icons.Default.RecordVoiceOver
-                                            ) {
-                                                val next = langs[(currentIdx + 1) % langs.size]
-                                                viewModel.updateStringSetting("preferred_audio_lang", next)
-                                            }
-                                        }
-                                    }
-                                    item {
-                                        SectionHeader(tr("STREAMING FILTERS", "מסנני הזרמה"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            val resList = listOf("Unlimited", "4K", "1080p", "720p")
-                                            val currentResIdx = resList.indexOf(state.maxResolution).takeIf { it >= 0 } ?: 0
-                                            CycleRow(
-                                                title = tr("Max Resolution", "רזולוציה מקסימלית"),
-                                                currentValue = if (state.maxResolution == "Unlimited") tr("Unlimited", "ללא הגבלה") else state.maxResolution,
-                                                icon = Icons.Default.HighQuality
-                                            ) {
-                                                val next = resList[(currentResIdx + 1) % resList.size]
-                                                viewModel.updateStringSetting("max_resolution", next)
-                                            }
-
-                                            val sizeList = listOf("Unlimited", "20GB", "10GB", "5GB")
-                                            val currentSizeIdx = sizeList.indexOf(state.maxFileSize).takeIf { it >= 0 } ?: 0
-                                            CycleRow(
-                                                title = tr("Max File Size", "גודל קובץ מקסימלי"),
-                                                currentValue = if (state.maxFileSize == "Unlimited") tr("Unlimited", "ללא הגבלה") else state.maxFileSize,
-                                                icon = Icons.Default.FolderZip
-                                            ) {
-                                                val next = sizeList[(currentSizeIdx + 1) % sizeList.size]
-                                                viewModel.updateStringSetting("max_file_size", next)
-                                            }
+                            SettingsCategory.PLAYBACK -> {
+                                item { SectionHeader(tr("AUDIO", "שמע")) }
+                                item {
+                                    SettingsCard {
+                                        val langs = listOf("original", "he", "en")
+                                        val lIdx  = langs.indexOf(state.preferredAudioLang).takeIf { it >= 0 } ?: 0
+                                        ToggleRow(
+                                            modifier  = Modifier.focusRequester(contentFR),
+                                            title     = tr("Audio Passthrough", "העברת שמע גולמי"),
+                                            icon      = Icons.Default.SurroundSound,
+                                            isChecked = state.audioPassthrough
+                                        ) { viewModel.updateToggleSetting("audio_passthrough", !state.audioPassthrough) }
+                                        CardDivider()
+                                        CycleRow(
+                                            title        = tr("Preferred Audio", "שפת שמע מועדפת"),
+                                            currentValue = when (state.preferredAudioLang) {
+                                                "original" -> tr("Original", "מקור")
+                                                "he"       -> "עברית"
+                                                else       -> "English"
+                                            },
+                                            icon = Icons.Default.RecordVoiceOver
+                                        ) {
+                                            val next = langs[(lIdx + 1) % langs.size]
+                                            viewModel.updateStringSetting("preferred_audio_lang", next)
                                         }
                                     }
                                 }
-
-                                SettingsCategory.SUBTITLES -> {
-                                    item {
-                                        SectionHeader(tr("SUBTITLES PREFERENCES", "העדפות כתוביות"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            val subs = listOf("Hebrew", "English", "None")
-                                            val currentIdx = subs.indexOf(state.defaultSubtitles).takeIf { it >= 0 } ?: 0
-                                            CycleRow(
-                                                modifier = Modifier.focusRequester(contentFR),
-                                                title = tr("Default Subtitles", "שפת כתוביות"),
-                                                currentValue = when(state.defaultSubtitles) {
-                                                    "Hebrew" -> tr("Hebrew", "עברית")
-                                                    "English" -> tr("English", "אנגלית")
-                                                    else -> tr("Off", "ללא")
-                                                },
-                                                icon = Icons.Default.Subtitles
-                                            ) {
-                                                val next = subs[(currentIdx + 1) % subs.size]
-                                                viewModel.updateStringSetting("def_subs", next)
-                                            }
-
-                                            val sizes = listOf("small", "medium", "large", "xlarge")
-                                            val currentIdxSize = sizes.indexOf(state.subtitleFontScale).takeIf { it >= 0 } ?: 1
-                                            CycleRow(
-                                                title = tr("Subtitle Size", "גודל כתוביות"),
-                                                currentValue = when(state.subtitleFontScale) {
-                                                    "small" -> tr("Small", "קטן")
-                                                    "medium" -> tr("Medium", "בינוני")
-                                                    "large" -> tr("Large", "גדול")
-                                                    "xlarge" -> tr("Extra Large", "ענק")
-                                                    else -> "Medium"
-                                                },
-                                                icon = Icons.Default.FormatSize
-                                            ) {
-                                                val next = sizes[(currentIdxSize + 1) % sizes.size]
-                                                viewModel.updateStringSetting("subtitle_font_scale", next)
-                                            }
-
-                                            ToggleRow(
-                                                title = tr("Yellow Subtitles", "כתוביות צהובות"),
-                                                icon  = Icons.Default.FormatColorText,
-                                                isChecked = state.yellowSubtitles
-                                            ) { viewModel.updateToggleSetting("yellow_subs", !state.yellowSubtitles) }
-
-                                            CycleRow(
-                                                title = tr("App Language", "שפת האפליקציה"),
-                                                currentValue = if (state.appLanguage == "he") "עברית" else "English",
-                                                icon = Icons.Default.Language
-                                            ) {
-                                                viewModel.updateStringSetting("app_lang", if (state.appLanguage == "he") "en" else "he")
-                                            }
-                                        }
+                                item { SectionHeader(tr("QUALITY", "איכות")) }
+                                item {
+                                    SettingsCard {
+                                        val resList = listOf("Unlimited", "4K", "1080p", "720p")
+                                        val rIdx    = resList.indexOf(state.maxResolution).takeIf { it >= 0 } ?: 0
+                                        CycleRow(
+                                            title        = tr("Max Resolution", "רזולוציה מקסימלית"),
+                                            currentValue = if (state.maxResolution == "Unlimited") tr("No Limit", "ללא הגבלה") else state.maxResolution,
+                                            icon = Icons.Default.HighQuality
+                                        ) { viewModel.updateStringSetting("max_resolution", resList[(rIdx + 1) % resList.size]) }
+                                        CardDivider()
+                                        val sizeList = listOf("Unlimited", "20GB", "10GB", "5GB")
+                                        val sIdx     = sizeList.indexOf(state.maxFileSize).takeIf { it >= 0 } ?: 0
+                                        CycleRow(
+                                            title        = tr("Max File Size", "גודל קובץ מקסימלי"),
+                                            currentValue = if (state.maxFileSize == "Unlimited") tr("No Limit", "ללא הגבלה") else state.maxFileSize,
+                                            icon = Icons.Default.FolderZip
+                                        ) { viewModel.updateStringSetting("max_file_size", sizeList[(sIdx + 1) % sizeList.size]) }
                                     }
                                 }
+                            }
 
-                                SettingsCategory.PERFORMANCE -> {
-                                    item {
-                                        SectionHeader(tr("PERFORMANCE & MEMORY", "ניהול זיכרון וביצועים"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            ToggleRow(
-                                                modifier = Modifier.focusRequester(contentFR),
-                                                title = tr("Lite UI Mode", "ממשק קל (Lite)"),
-                                                icon  = Icons.Default.Speed,
-                                                isChecked = state.liteUiMode
-                                            ) { viewModel.updateToggleSetting("lite_ui", !state.liteUiMode) }
-                                            ToggleRow(
-                                                title = tr("Pre-allocate Buffer", "שריון זיכרון לנגן"),
-                                                icon  = Icons.Default.Storage,
-                                                isChecked = state.preAllocateBuffer
-                                            ) { viewModel.updateToggleSetting("pre_buffer", !state.preAllocateBuffer) }
-                                        }
-                                    }
-                                    item {
-                                        SectionHeader(tr("STORAGE CLEARANCE", "ניקוי נתונים"))
-                                    }
-                                    item {
-                                        SettingsGroup {
-                                            ToggleRow(
-                                                title = tr("Save Search History", "שמור היסטוריית חיפוש"),
-                                                icon  = Icons.Default.History,
-                                                isChecked = state.saveSearchHistory
-                                            ) { viewModel.updateToggleSetting("save_history", !state.saveSearchHistory) }
-
-                                            ActionRow(
-                                                title = tr("Clear Image Cache", "ניקוי מטמון תמונות"),
-                                                desc  = state.cacheSizeStr,
-                                                icon  = Icons.Default.DeleteSweep
-                                            ) { viewModel.clearCache() }
-
-                                            ActionRow(
-                                                title = tr("Clear Search History", "מחק היסטוריית חיפוש"),
-                                                desc  = if (state.searchHistoryStatus == "Clear") tr("Clear", "נקה") else state.searchHistoryStatus,
-                                                icon  = Icons.AutoMirrored.Filled.ManageSearch
-                                            ) { if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory() }
-                                        }
+                            SettingsCategory.SUBTITLES -> {
+                                item { SectionHeader(tr("LANGUAGE & DISPLAY", "שפה ותצוגה")) }
+                                item {
+                                    SettingsCard {
+                                        val subs = listOf("Hebrew", "English", "None")
+                                        val sIdx = subs.indexOf(state.defaultSubtitles).takeIf { it >= 0 } ?: 0
+                                        CycleRow(
+                                            modifier     = Modifier.focusRequester(contentFR),
+                                            title        = tr("Default Subtitles", "כתוביות ברירת מחדל"),
+                                            currentValue = when (state.defaultSubtitles) {
+                                                "Hebrew"  -> tr("Hebrew",  "עברית")
+                                                "English" -> tr("English", "אנגלית")
+                                                else      -> tr("Off",     "כבוי")
+                                            },
+                                            icon = Icons.Default.Subtitles
+                                        ) { viewModel.updateStringSetting("def_subs", subs[(sIdx + 1) % subs.size]) }
+                                        CardDivider()
+                                        val sizes = listOf("small", "medium", "large", "xlarge")
+                                        val fIdx  = sizes.indexOf(state.subtitleFontScale).takeIf { it >= 0 } ?: 1
+                                        CycleRow(
+                                            title        = tr("Subtitle Size", "גודל כתוביות"),
+                                            currentValue = when (state.subtitleFontScale) {
+                                                "small"  -> tr("Small",       "קטן")
+                                                "large"  -> tr("Large",       "גדול")
+                                                "xlarge" -> tr("Extra Large",  "ענק")
+                                                else     -> tr("Medium",      "בינוני")
+                                            },
+                                            icon = Icons.Default.FormatSize
+                                        ) { viewModel.updateStringSetting("subtitle_font_scale", sizes[(fIdx + 1) % sizes.size]) }
+                                        CardDivider()
+                                        ToggleRow(
+                                            title     = tr("Yellow Subtitles", "כתוביות צהובות"),
+                                            icon      = Icons.Default.FormatColorText,
+                                            isChecked = state.yellowSubtitles
+                                        ) { viewModel.updateToggleSetting("yellow_subs", !state.yellowSubtitles) }
+                                        CardDivider()
+                                        CycleRow(
+                                            title        = tr("App Language", "שפת הממשק"),
+                                            currentValue = if (state.appLanguage == "he") "עברית" else "English",
+                                            icon = Icons.Default.Language
+                                        ) { viewModel.updateStringSetting("app_lang", if (state.appLanguage == "he") "en" else "he") }
                                     }
                                 }
+                            }
 
-                                SettingsCategory.SYSTEM_INFO -> {
-                                    item {
-                                        SectionHeader(tr("ABOUT DEVICE", "אודות המערכת"))
+                            SettingsCategory.PERFORMANCE -> {
+                                item { SectionHeader(tr("PERFORMANCE", "ביצועים")) }
+                                item {
+                                    SettingsCard {
+                                        ToggleRow(
+                                            modifier  = Modifier.focusRequester(contentFR),
+                                            title     = tr("Lite UI Mode", "מצב ממשק קל"),
+                                            icon      = Icons.Default.Speed,
+                                            isChecked = state.liteUiMode
+                                        ) { viewModel.updateToggleSetting("lite_ui", !state.liteUiMode) }
+                                        CardDivider()
+                                        ToggleRow(
+                                            title     = tr("Pre-allocate Buffer", "הקצאת זיכרון מראש"),
+                                            icon      = Icons.Default.Storage,
+                                            isChecked = state.preAllocateBuffer
+                                        ) { viewModel.updateToggleSetting("pre_buffer", !state.preAllocateBuffer) }
                                     }
-                                    item {
-                                        SystemInfoCard(modifier = Modifier.focusRequester(contentFR), state = state)
+                                }
+                                item { SectionHeader(tr("STORAGE", "אחסון")) }
+                                item {
+                                    SettingsCard {
+                                        ToggleRow(
+                                            title     = tr("Save Search History", "שמור היסטוריית חיפוש"),
+                                            icon      = Icons.Default.History,
+                                            isChecked = state.saveSearchHistory
+                                        ) { viewModel.updateToggleSetting("save_history", !state.saveSearchHistory) }
+                                        CardDivider()
+                                        ActionRow(
+                                            title = tr("Clear Image Cache", "נקה מטמון תמונות"),
+                                            desc  = state.cacheSizeStr,
+                                            icon  = Icons.Default.DeleteSweep
+                                        ) { viewModel.clearCache() }
+                                        CardDivider()
+                                        ActionRow(
+                                            title = tr("Clear Search History", "נקה היסטוריית חיפוש"),
+                                            desc  = if (state.searchHistoryStatus == "Clear") tr("Clear", "נקה") else state.searchHistoryStatus,
+                                            icon  = Icons.AutoMirrored.Filled.ManageSearch
+                                        ) { if (state.searchHistoryStatus == "Clear") viewModel.clearSearchHistory() }
                                     }
+                                }
+                            }
+
+                            SettingsCategory.SYSTEM_INFO -> {
+                                item { SectionHeader(tr("ABOUT", "אודות")) }
+                                item {
+                                    SystemInfoCard(
+                                        modifier = Modifier.focusRequester(contentFR),
+                                        state    = state
+                                    )
                                 }
                             }
                         }
@@ -446,31 +402,43 @@ fun SettingsScreen(
 //  COMPONENTS
 // ══════════════════════════════════════════════════════════════════
 
+
+
 @Composable
 private fun SectionHeader(title: String) {
     Text(
-        text = title,
-        color = Color(0xFFAAAEB4),
-        fontSize = 14.sp,
-        fontWeight = FontWeight.Medium,
+        text          = title,
+        color         = Color(0xFF6E6E73),
+        fontSize      = 12.sp,
+        fontWeight    = FontWeight.SemiBold,
         letterSpacing = 1.5.sp,
-        modifier = Modifier.padding(start = 16.dp, bottom = 8.dp, top = 24.dp)
+        modifier      = Modifier.padding(start = 4.dp, bottom = 10.dp)
     )
 }
 
 @Composable
-private fun SettingsGroup(content: @Composable () -> Unit) {
+private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(24.dp))
-            .background(Color(0xFF282A2E))
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color(0xFF1C1C1E))
     ) {
-        Column(Modifier.padding(vertical = 8.dp, horizontal = 8.dp)) {
-            content()
-        }
+        Column(content = content)
     }
 }
+
+@Composable
+private fun CardDivider() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = 68.dp)   // aligns with text after icon + spacer
+            .height(0.5.dp)
+            .background(Color(0xFF2C2C2E))
+    )
+}
+
 
 @Composable
 private fun ToggleRow(
@@ -479,42 +447,61 @@ private fun ToggleRow(
     isChecked: Boolean, onToggle: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val isLowTier = DeviceProfile.tier == DeviceProfile.Tier.LOW
 
     Surface(
-        onClick = onToggle,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color(0xFF3B3E43)
+        onClick     = onToggle,
+        shape       = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        colors      = ClickableSurfaceDefaults.colors(
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color.White
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        scale       = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier    = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+            modifier              = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment     = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = if (focused) Color.White else Color(0xFFAAAEB4), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(20.dp))
-                Text(title, color = if (focused) Color.White else Color(0xFFE3E3E3), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Box(
+                    modifier          = Modifier.size(32.dp).background(
+                        if (focused) Color.Black.copy(0.08f) else Color(0xFF2C2C2E),
+                        RoundedCornerShape(8.dp)
+                    ),
+                    contentAlignment  = Alignment.Center
+                ) {
+                    Icon(icon, null, tint = if (focused) Color.Black else Color(0xFF6E6E73), modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(
+                    text       = title,
+                    color      = if (focused) Color.Black else Color.White,
+                    fontSize   = 17.sp,
+                    fontWeight = FontWeight.Normal
+                )
             }
-            
-            // Modern Cyan Switch
-            val switchOffset by animateDpAsState(if (isChecked) 20.dp else 4.dp, tween(300))
-            val switchBg by animateColorAsState(if (isChecked) Color(0xFF00E5FF) else Color(0xFF5A5D62), tween(300))
-            
+            // Animated switch
+            val switchOffset by animateDpAsState(if (isChecked) 18.dp else 3.dp, tween(250))
+            val switchBg     by animateColorAsState(
+                when { isChecked && focused -> Color.Black; isChecked -> Color(0xFFE2B258); else -> Color(0xFF3A3A3C) },
+                tween(250)
+            )
+            val knobColor    by animateColorAsState(
+                if (isChecked && focused) Color(0xFFE2B258) else Color.White,
+                tween(250)
+            )
             Box(
-                modifier = Modifier.width(42.dp).height(22.dp).clip(RoundedCornerShape(50))
-                    .background(switchBg),
+                modifier         = Modifier.width(40.dp).height(24.dp).clip(RoundedCornerShape(50)).background(switchBg),
                 contentAlignment = Alignment.CenterStart
             ) {
-                Box(Modifier.padding(start = switchOffset).size(14.dp).background(Color(0xFF1A1C1E), CircleShape))
+                Box(Modifier.padding(start = switchOffset).size(18.dp).background(knobColor, CircleShape))
             }
         }
     }
 }
+
 
 @Composable
 private fun CycleRow(
@@ -522,31 +509,49 @@ private fun CycleRow(
     title: String, currentValue: String, icon: ImageVector, onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val isLowTier = DeviceProfile.tier == DeviceProfile.Tier.LOW
 
     Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color(0xFF3B3E43)
+        onClick     = onClick,
+        shape       = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        colors      = ClickableSurfaceDefaults.colors(
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color.White
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        scale       = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier    = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+            modifier              = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment     = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = if (focused) Color.White else Color(0xFFAAAEB4), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(20.dp))
-                Text(title, color = if (focused) Color.White else Color(0xFFE3E3E3), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Box(
+                    modifier         = Modifier.size(32.dp).background(
+                        if (focused) Color.Black.copy(0.08f) else Color(0xFF2C2C2E),
+                        RoundedCornerShape(8.dp)
+                    ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, null, tint = if (focused) Color.Black else Color(0xFF6E6E73), modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(title, color = if (focused) Color.Black else Color.White, fontSize = 17.sp, fontWeight = FontWeight.Normal)
             }
-            Text(currentValue, color = if (focused) Color.White else Color(0xFFAAAEB4), fontSize = 15.sp)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(currentValue, color = if (focused) Color(0xFF555555) else Color(0xFF6E6E73), fontSize = 17.sp)
+                Spacer(Modifier.width(6.dp))
+                Icon(
+                    Icons.Default.ChevronRight, null,
+                    tint     = if (focused) Color(0xFF555555) else Color(0xFF3A3A3C),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
     }
 }
+
 
 @Composable
 private fun ActionRow(
@@ -554,41 +559,51 @@ private fun ActionRow(
     title: String, desc: String, icon: ImageVector, onClick: () -> Unit
 ) {
     var focused by remember { mutableStateOf(false) }
+    val isLowTier = DeviceProfile.tier == DeviceProfile.Tier.LOW
 
     Surface(
-        onClick = onClick,
-        shape = ClickableSurfaceDefaults.shape(RoundedCornerShape(16.dp)),
-        colors = ClickableSurfaceDefaults.colors(
-            containerColor = Color.Transparent,
-            focusedContainerColor = Color(0xFF3B3E43)
+        onClick     = onClick,
+        shape       = ClickableSurfaceDefaults.shape(RoundedCornerShape(0.dp)),
+        colors      = ClickableSurfaceDefaults.colors(
+            containerColor        = Color.Transparent,
+            focusedContainerColor = Color.White
         ),
-        scale = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
-        modifier = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
+        scale       = ClickableSurfaceDefaults.scale(focusedScale = 1f),
+        modifier    = modifier.fillMaxWidth().onFocusChanged { focused = it.isFocused }
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 18.dp),
+            modifier              = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment     = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(icon, null, tint = if (focused) Color.White else Color(0xFFAAAEB4), modifier = Modifier.size(24.dp))
-                Spacer(Modifier.width(20.dp))
-                Text(title, color = if (focused) Color.White else Color(0xFFE3E3E3), fontSize = 16.sp, fontWeight = FontWeight.Medium)
+                Box(
+                    modifier         = Modifier.size(32.dp).background(
+                        if (focused) Color.Black.copy(0.08f) else Color(0xFF2C2C2E),
+                        RoundedCornerShape(8.dp)
+                    ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(icon, null, tint = if (focused) Color.Black else Color(0xFF6E6E73), modifier = Modifier.size(18.dp))
+                }
+                Spacer(Modifier.width(16.dp))
+                Text(title, color = if (focused) Color.Black else Color.White, fontSize = 17.sp, fontWeight = FontWeight.Normal)
             }
-            Text(desc, color = if (focused) Color.White else Color(0xFFAAAEB4), fontSize = 15.sp)
+            Text(desc, color = if (focused) Color(0xFF555555) else Color(0xFF6E6E73), fontSize = 15.sp)
         }
     }
 }
 
-// ── REAL-DEBRID & SERVER STATUS BANNERS ──
+
+// ── AllDebrid & SERVER STATUS BANNERS ──
 
 @Composable
 private fun BuildRdBanner(modifier: Modifier = Modifier, state: SettingsState, viewModel: SettingsViewModel, isLowTier: Boolean) {
-    if (state.rdToken.isNotEmpty()) {
+    if (state.debridToken.isNotEmpty()) {
 
         LaunchedEffect(Unit) {
             if (state.rdSpeedTestResult == null) {
-                viewModel.checkRealDebridAccount()
+                viewModel.checkAllDebridAccount()
             }
         }
 
@@ -600,7 +615,7 @@ private fun BuildRdBanner(modifier: Modifier = Modifier, state: SettingsState, v
         val bannerGradient = remember { Brush.horizontalGradient(listOf(Color(0xFF451A03), Color(0xFF1E1B4B))) }
 
         Surface(
-            onClick  = { viewModel.logoutRealDebrid() },
+            onClick  = { viewModel.logoutAllDebrid() },
             shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(20.dp)),
             colors   = ClickableSurfaceDefaults.colors(containerColor = Color.Transparent, focusedContainerColor = Color.White.copy(0.05f)),
             scale    = ClickableSurfaceDefaults.scale(focusedScale = scale),
@@ -616,17 +631,17 @@ private fun BuildRdBanner(modifier: Modifier = Modifier, state: SettingsState, v
                 Column {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.WorkspacePremium, null, tint = Color(0xFFF59E0B), modifier = Modifier.size(24.dp))
-                        Text(tr("REAL-DEBRID ACTIVE", "חשבון פרימיום פעיל"), color = Color(0xFFF59E0B), fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
+                        Text(tr("AllDebrid ACTIVE", "חשבון פרימיום פעיל"), color = Color(0xFFF59E0B), fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text(tr("Token:", "טוקן:") + " ${state.rdToken.take(5)}•••••••••${state.rdToken.takeLast(4)}", color = Color.White.copy(0.6f), fontSize = 14.sp, fontFamily = FontFamily.Monospace)
+                    Text(tr("Token:", "טוקן:") + " ${state.debridToken.take(5)}•••••••••${state.debridToken.takeLast(4)}", color = Color.White.copy(0.6f), fontSize = 14.sp, fontFamily = FontFamily.Monospace)
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (state.rdSpeedTestResult != null) {
                         Text(state.rdSpeedTestResult, color = Color.White, fontSize = 14.sp, modifier = Modifier.padding(end = 24.dp))
                     } else {
-                        Button(onClick = { viewModel.checkRealDebridAccount() }, colors = ButtonDefaults.colors(containerColor = Color.White.copy(0.1f))) {
+                        Button(onClick = { viewModel.checkAllDebridAccount() }, colors = ButtonDefaults.colors(containerColor = Color.White.copy(0.1f))) {
                             Text(if (state.rdSpeedTesting) tr("Contacting...", "בודק...") else tr("Check Status", "בדוק חיבור"), color = Color.White)
                         }
                         Spacer(Modifier.width(16.dp))
@@ -756,7 +771,7 @@ private fun BuildRdBanner(modifier: Modifier = Modifier, state: SettingsState, v
                 val glowingBorder = remember { Brush.linearGradient(listOf(Color(0xFF8B5CF6), Color(0xFF3B82F6))) }
 
                 Surface(
-                    onClick  = { viewModel.startRealDebridAuth() },
+                    onClick  = { viewModel.startAllDebridAuth() },
                     shape    = ClickableSurfaceDefaults.shape(RoundedCornerShape(24.dp)),
                     colors   = ClickableSurfaceDefaults.colors(containerColor = Color(0xFF2E3135), focusedContainerColor = Color(0xFF383C41)),
                     scale    = ClickableSurfaceDefaults.scale(focusedScale = 1.0f),
@@ -769,7 +784,7 @@ private fun BuildRdBanner(modifier: Modifier = Modifier, state: SettingsState, v
                         }
                         Spacer(Modifier.width(24.dp))
                         Column(Modifier.weight(1f)) {
-                            Text(tr("Connect Real-Debrid", "חבר חשבון Real-Debrid"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                            Text(tr("Connect AllDebrid", "חבר חשבון AllDebrid"), color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
                             Text(tr("Unlock 4K streaming and zero-buffering playback.", "תמיכה ב-4K וסטרימינג ללא עצירות."), color = Color.White.copy(0.6f), fontSize = 14.sp)
                         }
                         Box(Modifier.background(if (focused) Color.White else Color(0xFF3B82F6).copy(0.15f), RoundedCornerShape(50)).padding(horizontal = 24.dp, vertical = 12.dp)) {
@@ -811,9 +826,9 @@ private fun ServerHealthCard(modifier: Modifier = Modifier, state: SettingsState
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(tr("Real-Debrid API", "שרתי Real-Debrid"), color = Color.White.copy(0.5f), fontSize = 13.sp)
+                Text(tr("AllDebrid API", "שרתי AllDebrid"), color = Color.White.copy(0.5f), fontSize = 13.sp)
                 Spacer(Modifier.height(4.dp))
-                Text(state.rdServerStatus, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(state.adServerStatus, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
 
             Box(modifier = Modifier.width(2.dp).height(40.dp).background(Color.White.copy(0.1f)))

@@ -13,7 +13,14 @@
 
     <uses-feature
         android:name="android.software.leanback"
-        android:required="true" />
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.type.pc"
+        android:required="false" />
+
+    <queries>
+        <package android:name="com.google.android.gms" />
+    </queries>
 
     <application
         android:name=".core.LuminaApp"
@@ -28,12 +35,19 @@
         android:hardwareAccelerated="true"
         android:enableOnBackInvokedCallback="true"
         android:usesCleartextTraffic="true"
+        android:resizeableActivity="true"
         tools:targetApi="34">
 
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:configChanges="keyboard|keyboardHidden|navigation|screenSize|screenLayout"
+            android:banner="@drawable/tv_banner"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:screenOrientation="landscape"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="keyboard|keyboardHidden|navigation|screenSize|screenLayout|orientation|smallestScreenSize|uiMode"
             android:hardwareAccelerated="true"
             android:windowSoftInputMode="adjustNothing"
             android:theme="@android:style/Theme.NoTitleBar.Fullscreen">
@@ -42,6 +56,13 @@
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <meta-data
+                android:name="android.supports_size_changes"
+                android:value="true" />
+            <meta-data
+                android:name="com.google.android.apps.muppet.desktop_fullscreen"
+                android:value="true" />
         </activity>
 
     </application>

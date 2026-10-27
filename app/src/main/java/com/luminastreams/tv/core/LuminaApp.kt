@@ -53,15 +53,22 @@ class LuminaApp : Application() {
 
         DeviceProfile.init(this)
 
-        val prefs = getSharedPreferences("lumina_settings", MODE_PRIVATE)
-        DeviceProfile.forceLowTier      = prefs.getBoolean("lite_ui",       false)
-        DeviceProfile.forceReduceMotion = prefs.getBoolean("reduce_motion", false)
+        settingsRepository = SettingsRepository(this)
+
+        // Read the *persisted* values (not the placeholder defaults that settingsFlow.value
+        // returns before DataStore has finished its first disk read / SharedPreferences
+        // migration). Bounded so pathologically slow storage can't hang app startup.
+        val initialSnap = kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.withTimeoutOrNull(3000) { settingsRepository.awaitSnapshot() }
+        } ?: com.luminastreams.tv.data.repository.SettingsSnapshot()
+        DeviceProfile.forceLowTier      = initialSnap.liteUiMode
+        DeviceProfile.forceReduceMotion = initialSnap.reduceMotion
 
         Log.d("DeviceProfile", DeviceProfile.debugInfo())
 
         setupCoil()
 
-        settingsRepository = SettingsRepository(this)
+        // settingsRepository is already initialized above
         repository = MediaRepositoryImpl(this)
 
         database = Room.databaseBuilder(
@@ -89,9 +96,8 @@ class LuminaApp : Application() {
         // Trigger a background real-time sync listener on app launch if the user is already logged in
         syncManager.startRealtimeSync()
 
-        // ⚡ Start proactive Real-Debrid token refresh loop (every 8 minutes)
-        // This prevents token expiry (~10 min) from ever disrupting playback or scraping
-        com.luminastreams.tv.domain.usecase.RealDebridTokenKeeper.start(this)
+        // ⚡ Initialize AllDebrid token provider
+        com.luminastreams.tv.domain.usecase.AllDebridTokenKeeper.start(this)
 
         if (DeviceProfile.tier != DeviceProfile.Tier.HIGH) {
             registerLowMemoryCallbacks()

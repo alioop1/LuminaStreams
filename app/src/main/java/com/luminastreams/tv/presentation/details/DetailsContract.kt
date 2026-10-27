@@ -3,7 +3,20 @@ package com.luminastreams.tv.presentation.details
 import androidx.compose.runtime.Immutable
 
 @Immutable data class CastMember(val id: String, val name: String, val character: String, val imageUrl: String)
-@Immutable data class Episode(val id: String, val episodeNumber: Int, val seasonNumber: Int, val title: String, val overview: String, val stillUrl: String, val hasWatched: Boolean = false, val progress: Float = 0f)
+@Immutable data class Episode(
+    val id: String, val episodeNumber: Int, val seasonNumber: Int, val title: String,
+    val overview: String, val stillUrl: String, val hasWatched: Boolean = false, val progress: Float = 0f,
+    /** yyyy-MM-dd air date, or "" if unknown. */
+    val airDateIso: String = ""
+) {
+    /** True once the episode has aired (or the air date is unknown, so we don't block it). */
+    val isReleased: Boolean get() {
+        val d = parseIsoDate(airDateIso) ?: return true
+        return !d.isAfter(java.time.LocalDate.now())
+    }
+    /** True only when we KNOW it hasn't aired yet. */
+    val isUpcoming: Boolean get() = airDateIso.isNotBlank() && !isReleased
+}
 @Immutable data class Recommendation(val id: String, val title: String, val posterUrl: String)
 
 enum class StreamQuality(val priority: Int) {
@@ -57,6 +70,26 @@ enum class AudioLanguage(val displayName: String, val flag: String) {
     UNKNOWN("", "");
 
     companion object {
+        fun fromIso(iso: String): AudioLanguage? {
+            return when (iso.lowercase()) {
+                "ru" -> RUSSIAN
+                "en" -> ENGLISH
+                "he" -> HEBREW
+                "uk" -> UKRAINIAN
+                "es" -> SPANISH
+                "fr" -> FRENCH
+                "de" -> GERMAN
+                "it" -> ITALIAN
+                "ja" -> JAPANESE
+                "ko" -> KOREAN
+                "ar" -> ARABIC
+                "tr" -> TURKISH
+                "hi" -> HINDI
+                "pt" -> PORTUGUESE
+                else -> null
+            }
+        }
+
         // Pre-compiled patterns to avoid re-allocation
         private val RUS_WORD = Regex("\\bRUS\\b")
         private val UKR_WORD = Regex("\\bUKR\\b")
@@ -185,10 +218,18 @@ data class AdvancedStreamSource(
     val directUrl: String?, val sizeBytes: Long, val isCachedRd: Boolean, val quality: StreamQuality, val videoCodec: VideoCodec,
     val rawTitle: String = "",
     val trackerName: String = "Torrentio",
-    val audioLanguages: List<AudioLanguage> = listOf(AudioLanguage.UNKNOWN)
+    val audioLanguages: List<AudioLanguage> = listOf(AudioLanguage.UNKNOWN),
+    val seeders: Int = 0,
+    val leechers: Int = 0
 ) {
     val sizeGb: Double get() = sizeBytes / (1024.0 * 1024.0 * 1024.0)
     val sortScore: Int get() = (if (isCachedRd) 10000 else 0) + (quality.priority * 100) + (if (sizeGb in 2.0..20.0) 10 else 0)
+
+    companion object {
+        val defaultComparator = compareByDescending<AdvancedStreamSource> { it.sizeBytes }
+            .thenByDescending { it.seeders }
+            .thenByDescending { it.leechers }
+    }
 }
 
 @Immutable data class Review(val author: String, val content: String, val rating: Double?)
@@ -200,6 +241,7 @@ data class MediaDetailsInfo(
     val logoUrl: String? = null, val isSeries: Boolean = false, val releaseDate: String = "",
     val runtimeMinutes: Int = 0, val tmdbRating: Double = 0.0, val imdbRating: Double = 0.0,
     val ageRating: String = "TV-MA", val studios: List<String> = emptyList(),
+    val originalLanguage: String = "",
     val genres: List<String> = emptyList(), val director: String = "",
     val cast: List<CastMember> = emptyList(),
     val totalSeasons: Int = 0, val isFavorite: Boolean = false, val trailerUrl: String? = null,
@@ -207,19 +249,26 @@ data class MediaDetailsInfo(
     val directorName: String? = null, val directorItems: List<Recommendation> = emptyList(),
     val rottenTomatoesScore: String? = null,
     val metacriticScore: String? = null,
-    val reviews: List<Review> = emptyList()
+    val reviews: List<Review> = emptyList(),
+    // ── Next-episode release tracking (series only) ──
+    val seriesStatus: String = "",                 // raw TMDB status ("Returning Series", "Ended", …)
+    val nextEpisode: NextEpisodeInfo? = null,       // next episode to air, per TMDB
+    val lastEpisodeAiredIso: String = ""            // air date of the most recent episode
 ) {
     val displayStudios: String get() = studios.take(2).joinToString(" • ").uppercase()
     val displayGenres:  String get() = genres.take(3).joinToString(" • ")
     val formattedRuntime: String get() = if (runtimeMinutes > 0) "${runtimeMinutes / 60}h ${runtimeMinutes % 60}m" else "N/A"
+
+    val releaseState: SeriesReleaseState
+        get() = resolveSeriesReleaseState(isSeries, seriesStatus, nextEpisode, lastEpisodeAiredIso)
 }
 
-sealed interface ScrapingStatus {
-    object Idle : ScrapingStatus
-    object Searching : ScrapingStatus
-    data class ResolvingDebrid(val streamId: String) : ScrapingStatus
-    object Success : ScrapingStatus
-    data class Error(val message: String) : ScrapingStatus
+sealed class ScrapingStatus {
+    object Idle : ScrapingStatus()
+    object Searching : ScrapingStatus()
+    data class ResolvingDebrid(val streamId: String) : ScrapingStatus()
+    object Success : ScrapingStatus()
+    data class Error(val message: String) : ScrapingStatus()
 }
 
 @Immutable
@@ -243,7 +292,7 @@ data class DetailsScreenState(
     val streamSortMode: StreamSortMode = StreamSortMode.DEFAULT,
     val trackerFilters: Set<String> = emptySet(),         // empty = show all, set of tracker names to show
     val languageFilters: Set<AudioLanguage> = emptySet(),  // empty = show all, set of languages to show
-    val showCachedOnly: Boolean = false,                   // only RD+ cached torrents
+    val showCachedOnly: Boolean = false,                   // only AD+ cached torrents
     val showDvOnly: Boolean = false,                       // only Dolby Vision streams
     val qualityFilter: StreamQuality? = null,               // null = all, else filter by quality
 
@@ -256,7 +305,19 @@ data class DetailsScreenState(
 sealed interface DetailsEvent {
     data class LoadInitialData(val fullId: String) : DetailsEvent
     data class SelectSeason(val seasonNumber: Int) : DetailsEvent
-    data class InitiateScraping(val imdbId: String, val season: Int? = null, val episode: Int? = null) : DetailsEvent
+    data class InitiateScraping(
+        val imdbId: String,
+        val season: Int? = null,
+        val episode: Int? = null,
+        /** When true (auto-play-next-episode), resolve & play the top source as soon as scraping finishes. */
+        val autoPlayTop: Boolean = false
+    ) : DetailsEvent
+    /**
+     * Force-refresh the stream list: drops the cached entry for this key and
+     * re-queries Torrentio for fresh links. Used by the manual "Refresh" button
+     * so users can flush stale/dead links without leaving the details screen.
+     */
+    data class RefreshStreams(val imdbId: String, val season: Int? = null, val episode: Int? = null) : DetailsEvent
     data class ResolveAndPlayStream(val stream: AdvancedStreamSource) : DetailsEvent
     object ToggleFavorite : DetailsEvent
     object ClearPlayUrl : DetailsEvent

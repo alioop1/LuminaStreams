@@ -210,7 +210,8 @@ class IptvViewModel(private val repository: IptvRepository) : ViewModel() {
                 )
                 repository.dao.insertPlaylist(updated)
 
-                // Re-fetch channels if M3U changed
+                // Re-fetch channels if M3U changed — stream batches into Room, don't buffer
+                // the whole playlist in memory.
                 if (urlChanged && trimmedUrl.isNotBlank()) {
                     repository.dao.clearChannels(current.id)
                     M3uParser.parseStreaming(current.id, trimmedUrl) { batch ->
