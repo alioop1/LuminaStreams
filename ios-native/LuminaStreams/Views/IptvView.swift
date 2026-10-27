@@ -73,13 +73,11 @@ struct IptvView: View {
                                 vm.activeChannel = channel
                             } label: {
                                 HStack(spacing: 12) {
-                                    AsyncImage(url: URL(string: channel.logoUrl)) { phase in
-                                        if case .success(let img) = phase {
-                                            img.resizable().aspectRatio(contentMode: .fit)
-                                        } else {
-                                            Image(systemName: "tv.fill")
-                                                .foregroundColor(LuminaTheme.cyan)
-                                        }
+                                    LuminaAsyncImage(url: channel.logoUrl) { img in
+                                        img.resizable().aspectRatio(contentMode: .fit)
+                                    } placeholder: {
+                                        Image(systemName: "tv.fill")
+                                            .foregroundColor(LuminaTheme.cyan)
                                     }
                                     .frame(width: 44, height: 44)
                                     .background(Color.black.opacity(0.35))

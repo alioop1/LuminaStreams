@@ -135,29 +135,27 @@ struct MainContainerView: View {
         Group {
             if isWideScreen {
                 // Horizontal Single-Row Layout (Landscape or iPad)
-                HStack(spacing: 12) {
+                HStack(spacing: 14) {
                     brandLogoView
                     Spacer(minLength: 8)
                     actionButtonsScrollView
                     Spacer(minLength: 8)
                     liveClockView
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, 20)
                 .padding(.vertical, 8)
             } else {
-                // 2-Row Layout (iPhone Portrait) - 100% deterministic & immediate
-                VStack(spacing: 6) {
+                // 2-Row Layout (iPhone Portrait) - Clean, balanced, no redundant clock
+                VStack(spacing: 8) {
                     HStack {
                         brandLogoView
                         Spacer()
-                        liveClockView
                     }
-                    .padding(.horizontal, 16)
+                    .padding(.horizontal, 20)
+                    .padding(.top, 4)
 
                     actionButtonsScrollView
-                        .padding(.horizontal, 8)
                 }
-                .padding(.top, 4)
                 .padding(.bottom, 6)
             }
         }
@@ -174,10 +172,10 @@ struct MainContainerView: View {
     private var brandLogoView: some View {
         HStack(spacing: 4) {
             Text("LUMINA")
-                .font(.system(size: 17, weight: .black, design: .rounded))
+                .font(.system(size: 18, weight: .black, design: .rounded))
                 .foregroundColor(.white)
             Text("STREAMS")
-                .font(.system(size: 17, weight: .light, design: .rounded))
+                .font(.system(size: 18, weight: .light, design: .rounded))
                 .foregroundColor(.white.opacity(0.75))
         }
         .fixedSize()
@@ -208,26 +206,28 @@ struct MainContainerView: View {
                             }
                         }
                     } label: {
-                        ZStack {
-                            Circle()
-                                .fill(isSelected ? Color.white : Color.white.opacity(0.08))
-                                .frame(width: 38, height: 38)
-                                .overlay(
-                                    Circle()
-                                        .stroke(isSelected ? Color.white : Color.white.opacity(0.14), lineWidth: 1)
-                                )
-
+                        VStack(spacing: 3) {
                             Image(systemName: section.icon)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(isSelected ? .black : .white)
+                                .font(.system(size: 16, weight: isSelected ? .bold : .medium))
+                                .foregroundColor(isSelected ? .white : .white.opacity(0.42))
+                                .frame(width: 38, height: 32)
+                                .background(
+                                    isSelected ? Color.white.opacity(0.16) : Color.clear
+                                )
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+                            // Subtle active indicator dot
+                            Circle()
+                                .fill(isSelected ? Color.white : Color.clear)
+                                .frame(width: 4, height: 4)
                         }
-                        .contentShape(Circle())
+                        .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 2)
         }
     }
 

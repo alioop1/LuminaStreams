@@ -101,13 +101,10 @@ struct DetailsView: View {
     // ── Backdrop Header ─────────────────────────────────────────────────────
     private var headerBackdropSection: some View {
         ZStack(alignment: .bottomLeading) {
-            AsyncImage(url: URL(string: vm.mediaInfo.backdropUrl.isEmpty ? vm.mediaInfo.posterUrl : vm.mediaInfo.backdropUrl)) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                default:
-                    Rectangle().fill(LuminaTheme.navy)
-                }
+            LuminaAsyncImage(url: vm.mediaInfo.backdropUrl.isEmpty ? vm.mediaInfo.posterUrl : vm.mediaInfo.backdropUrl) { image in
+                image.resizable().aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle().fill(LuminaTheme.navy)
             }
             .frame(height: 320)
             .clipped()
@@ -117,16 +114,14 @@ struct DetailsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 if !vm.mediaInfo.logoUrl.isEmpty {
-                    AsyncImage(url: URL(string: vm.mediaInfo.logoUrl)) { phase in
-                        if case .success(let logo) = phase {
-                            logo.resizable()
-                                .aspectRatio(contentMode: .fit)
-                                .frame(maxWidth: 220, maxHeight: 75, alignment: .leading)
-                        } else {
-                            Text(vm.mediaInfo.title)
-                                .font(.system(size: 28, weight: .black, design: .rounded))
-                                .foregroundColor(.white)
-                        }
+                    LuminaAsyncImage(url: vm.mediaInfo.logoUrl) { logo in
+                        logo.resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(maxWidth: 220, maxHeight: 75, alignment: .leading)
+                    } placeholder: {
+                        Text(vm.mediaInfo.title)
+                            .font(.system(size: 28, weight: .black, design: .rounded))
+                            .foregroundColor(.white)
                     }
                 } else {
                     Text(vm.mediaInfo.title)
@@ -318,12 +313,10 @@ struct DetailsView: View {
                         } label: {
                             HStack(spacing: 12) {
                                 ZStack(alignment: .center) {
-                                    AsyncImage(url: URL(string: ep.stillUrl.isEmpty ? vm.mediaInfo.backdropUrl : ep.stillUrl)) { phase in
-                                        if case .success(let img) = phase {
-                                            img.resizable().aspectRatio(contentMode: .fill)
-                                        } else {
-                                            Rectangle().fill(LuminaTheme.navy)
-                                        }
+                                    LuminaAsyncImage(url: ep.stillUrl.isEmpty ? vm.mediaInfo.backdropUrl : ep.stillUrl) { img in
+                                        img.resizable().aspectRatio(contentMode: .fill)
+                                    } placeholder: {
+                                        Rectangle().fill(LuminaTheme.navy)
                                     }
                                     .frame(width: 120, height: 70)
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -385,12 +378,10 @@ struct DetailsView: View {
                             vm.loadActor(actorId: actor.id)
                         } label: {
                             VStack(spacing: 6) {
-                                AsyncImage(url: URL(string: actor.imageUrl)) { phase in
-                                    if case .success(let img) = phase {
-                                        img.resizable().aspectRatio(contentMode: .fill)
-                                    } else {
-                                        Circle().fill(LuminaTheme.cardSurface)
-                                    }
+                                LuminaAsyncImage(url: actor.imageUrl) { img in
+                                    img.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Circle().fill(LuminaTheme.cardSurface)
                                 }
                                 .frame(width: 72, height: 72)
                                 .clipShape(Circle())
@@ -428,12 +419,10 @@ struct DetailsView: View {
                             onNavigateMedia?(rec.id)
                         } label: {
                             VStack(alignment: .leading, spacing: 5) {
-                                AsyncImage(url: URL(string: rec.posterUrl)) { phase in
-                                    if case .success(let img) = phase {
-                                        img.resizable().aspectRatio(contentMode: .fill)
-                                    } else {
-                                        Rectangle().fill(LuminaTheme.cardSurface)
-                                    }
+                                LuminaAsyncImage(url: rec.posterUrl) { img in
+                                    img.resizable().aspectRatio(contentMode: .fill)
+                                } placeholder: {
+                                    Rectangle().fill(LuminaTheme.cardSurface)
                                 }
                                 .frame(width: 115, height: 170)
                                 .clipShape(RoundedRectangle(cornerRadius: 10))

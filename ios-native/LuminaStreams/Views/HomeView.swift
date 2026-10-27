@@ -95,16 +95,13 @@ struct HomeView: View {
             let hero = viewModel.heroItems[min(viewModel.heroIndex, max(0, viewModel.heroItems.count - 1))]
 
             ZStack(alignment: .bottomLeading) {
-            // Backdrop Image
-            AsyncImage(url: URL(string: hero.backdropUrl.isEmpty ? hero.posterUrl : hero.backdropUrl)) { phase in
-                switch phase {
-                case .success(let image):
-                    image
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                default:
-                    Rectangle().fill(LuminaTheme.cardSurface)
-                }
+            // Backdrop Image with Cloudflare Resilient Cache
+            LuminaAsyncImage(url: hero.backdropUrl.isEmpty ? hero.posterUrl : hero.backdropUrl) { image in
+                image
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            } placeholder: {
+                Rectangle().fill(LuminaTheme.cardSurface)
             }
             .frame(height: isLandscape ? 240 : 340)
             .clipped()
@@ -173,7 +170,7 @@ struct HomeView: View {
                     Text("|").foregroundColor(.white.opacity(0.25))
 
                     if hero.year > 0 {
-                        Text("\(hero.year)").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
+                        Text(verbatim: "\(hero.year)").font(.system(size: 11, weight: .semibold)).foregroundColor(.white.opacity(0.75))
                         Text("|").foregroundColor(.white.opacity(0.25))
                     }
 
@@ -323,13 +320,10 @@ struct HomeView: View {
             ZStack {
                 LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing)
 
-                AsyncImage(url: URL(string: logoUrl)) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fit).padding(8)
-                    default:
-                        Text(name).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
-                    }
+                LuminaAsyncImage(url: logoUrl) { img in
+                    img.resizable().aspectRatio(contentMode: .fit).padding(8)
+                } placeholder: {
+                    Text(name).font(.system(size: 11, weight: .bold)).foregroundColor(.white)
                 }
             }
             .frame(width: 110, height: 50)
@@ -379,18 +373,16 @@ struct MediaCardView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
             ZStack(alignment: .topTrailing) {
-                AsyncImage(url: URL(string: isLandscape ? (movie.backdropUrl.isEmpty ? movie.posterUrl : movie.backdropUrl) : movie.posterUrl)) { phase in
-                    switch phase {
-                    case .success(let img):
-                        img.resizable().aspectRatio(contentMode: .fill)
-                    default:
-                        Rectangle()
-                            .fill(LuminaTheme.cardSurface)
-                            .overlay(
-                                Image(systemName: "film")
-                                    .foregroundColor(.white.opacity(0.25))
-                            )
-                    }
+                let imgUrl = isLandscape ? (movie.backdropUrl.isEmpty ? movie.posterUrl : movie.backdropUrl) : movie.posterUrl
+                LuminaAsyncImage(url: imgUrl) { img in
+                    img.resizable().aspectRatio(contentMode: .fill)
+                } placeholder: {
+                    Rectangle()
+                        .fill(LuminaTheme.cardSurface)
+                        .overlay(
+                            Image(systemName: "film")
+                                .foregroundColor(.white.opacity(0.25))
+                        )
                 }
                 .frame(width: cardWidth, height: cardHeight)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
