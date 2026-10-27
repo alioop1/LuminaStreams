@@ -1,42 +1,28 @@
 import SwiftUI
 
 enum LuminaSection: String, CaseIterable, Identifiable {
+    case search    = "search"
     case home      = "home"
     case movies    = "movies"
     case series    = "series"
-    case fuzer     = "fuzer"
     case iptv      = "iptv"
+    case fuzer     = "fuzer"
     case debrid    = "debrid"
     case watchlist = "watchlist"
-    case search    = "search"
     case settings  = "settings"
 
     var id: String { rawValue }
 
-    var icon: String {
-        switch self {
-        case .home:      return "house.fill"
-        case .movies:    return "film.fill"
-        case .series:    return "tv.fill"
-        case .fuzer:     return "sparkles"
-        case .iptv:      return "antenna.radiowaves.left.and.right"
-        case .debrid:    return "cloud.fill"
-        case .watchlist: return "heart.fill"
-        case .search:    return "magnifyingglass"
-        case .settings:  return "gearshape.fill"
-        }
-    }
-
     func title(isRTL: Bool) -> String {
         switch self {
+        case .search:    return isRTL ? "חיפוש" : "Search"
         case .home:      return isRTL ? "בית" : "Home"
         case .movies:    return isRTL ? "סרטים" : "Movies"
         case .series:    return isRTL ? "סדרות" : "Series"
-        case .fuzer:     return "Fuzer"
         case .iptv:      return "IPTV"
+        case .fuzer:     return "Fuzer"
         case .debrid:    return "Debrid"
         case .watchlist: return isRTL ? "מועדפים" : "Watchlist"
-        case .search:    return isRTL ? "חיפוש" : "Search"
         case .settings:  return isRTL ? "הגדרות" : "Settings"
         }
     }
@@ -54,60 +40,64 @@ struct MainContainerView: View {
     private let clockTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        NavigationStack {
-            ZStack(alignment: .top) {
-                LuminaTheme.blackBg.ignoresSafeArea()
+        GeometryReader { proxy in
+            let isLandscape = proxy.size.width > proxy.size.height
 
-                // ── Main Content Area ───────────────────────────────────────
-                Group {
-                    switch activeSection {
-                    case .home:
-                        HomeView(
-                            viewModel: homeVM,
-                            tabMode: "home",
-                            onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                        )
-                    case .movies:
-                        HomeView(
-                            viewModel: homeVM,
-                            tabMode: "movies",
-                            onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                        )
-                    case .series:
-                        HomeView(
-                            viewModel: homeVM,
-                            tabMode: "series",
-                            onSelectMedia: { movie in selectedMediaId = movie.displayId }
-                        )
-                    case .fuzer:
-                        FuzerView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                    case .iptv:
-                        IptvView()
-                    case .debrid:
-                        DebridCloudView()
-                    case .watchlist:
-                        WatchlistView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                    case .search:
-                        SearchView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
-                    case .settings:
-                        SettingsView()
+            NavigationStack {
+                ZStack(alignment: .top) {
+                    LuminaTheme.blackBg.ignoresSafeArea()
+
+                    // Main Content Area
+                    Group {
+                        switch activeSection {
+                        case .home:
+                            HomeView(
+                                viewModel: homeVM,
+                                tabMode: "home",
+                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+                            )
+                        case .movies:
+                            HomeView(
+                                viewModel: homeVM,
+                                tabMode: "movies",
+                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+                            )
+                        case .series:
+                            HomeView(
+                                viewModel: homeVM,
+                                tabMode: "series",
+                                onSelectMedia: { movie in selectedMediaId = movie.displayId }
+                            )
+                        case .fuzer:
+                            FuzerView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+                        case .iptv:
+                            IptvView()
+                        case .debrid:
+                            DebridCloudView()
+                        case .watchlist:
+                            WatchlistView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+                        case .search:
+                            SearchView(onSelectMedia: { movie in selectedMediaId = movie.displayId })
+                        case .settings:
+                            SettingsView()
+                        }
                     }
-                }
-                .padding(.top, 64)
+                    .padding(.top, isLandscape ? 58 : 68)
 
-                // ── PS5 Top Navigation Bar (Matches HomeNavigation.kt) ──────
-                ps5TopBar
-            }
-            .navigationDestination(
-                isPresented: Binding(
-                    get: { selectedMediaId != nil },
-                    set: { if !$0 { selectedMediaId = nil } }
-                )
-            ) {
-                if let mediaId = selectedMediaId {
-                    DetailsView(fullId: mediaId, onNavigateMedia: { newId in
-                        selectedMediaId = newId
-                    })
+                    // PS5 Top Nav Bar with 100% Material Vector Icons
+                    ps5TopBar(isLandscape: isLandscape)
+                }
+                .navigationDestination(
+                    isPresented: Binding(
+                        get: { selectedMediaId != nil },
+                        set: { if !$0 { selectedMediaId = nil } }
+                    )
+                ) {
+                    if let mediaId = selectedMediaId {
+                        DetailsView(fullId: mediaId, onNavigateMedia: { newId in
+                            selectedMediaId = newId
+                        })
+                    }
                 }
             }
         }
@@ -115,26 +105,28 @@ struct MainContainerView: View {
         .onReceive(clockTimer) { _ in updateClock() }
     }
 
-    private var ps5TopBar: some View {
+    // ── PS5 Top Bar with Pure Vector Shapes & Original Spacing ─────────────
+    @ViewBuilder
+    private func ps5TopBar(isLandscape: Bool) -> some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                // Brand Logo (LTR fixed like Android TV)
-                HStack(spacing: 4) {
+            HStack(spacing: 10) {
+                // Brand: LUMINA STREAMS
+                HStack(spacing: 3) {
                     Text("LUMINA")
-                        .font(.system(size: 17, weight: .black, design: .rounded))
+                        .font(.system(size: 16, weight: .black, design: .rounded))
                         .foregroundColor(.white)
                     Text("STREAMS")
-                        .font(.system(size: 17, weight: .light, design: .rounded))
-                        .foregroundColor(LuminaTheme.cyan)
+                        .font(.system(size: 16, weight: .light, design: .rounded))
+                        .foregroundColor(.white.opacity(0.7))
                 }
                 .environment(\.layoutDirection, .leftToRight)
                 .onTapGesture {
                     withAnimation(.spring(response: 0.3)) { activeSection = .home }
                 }
 
-                Spacer(minLength: 4)
+                Spacer(minLength: 6)
 
-                // Scrollable Circular PS5 Glass Buttons
+                // Circular PS5 Action Icons (Exact Material Icons)
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         ForEach(LuminaSection.allCases) { section in
@@ -148,45 +140,65 @@ struct MainContainerView: View {
                                     }
                                 }
                             } label: {
-                                HStack(spacing: 5) {
-                                    Image(systemName: section.icon)
-                                        .font(.system(size: 13, weight: .semibold))
-                                    if isSelected {
-                                        Text(section.title(isRTL: settings.isRTL))
-                                            .font(.system(size: 12, weight: .bold))
-                                    }
+                                ZStack {
+                                    Circle()
+                                        .fill(isSelected ? Color.white : Color.white.opacity(0.08))
+                                        .frame(width: 36, height: 36)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(isSelected ? Color.white : Color.white.opacity(0.12), lineWidth: 1)
+                                        )
+                                        .shadow(color: isSelected ? Color.white.opacity(0.4) : .clear, radius: 8)
+
+                                    iconFor(section: section)
+                                        .frame(width: 18, height: 18)
+                                        .foregroundColor(isSelected ? .black : .white)
                                 }
-                                .foregroundColor(isSelected ? .black : .white.opacity(0.8))
-                                .padding(.horizontal, isSelected ? 12 : 10)
-                                .padding(.vertical, 8)
-                                .background(
-                                    Capsule()
-                                        .fill(isSelected ? LuminaTheme.cyan : Color.white.opacity(0.09))
-                                )
-                                .overlay(
-                                    Capsule()
-                                        .stroke(isSelected ? LuminaTheme.cyan : Color.white.opacity(0.14), lineWidth: 1)
-                                )
-                                .shadow(color: isSelected ? LuminaTheme.cyan.opacity(0.45) : .clear, radius: 8)
                             }
                             .buttonStyle(.plain)
                         }
                     }
                     .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
                 }
 
                 // Live Clock
                 Text(currentTimeString)
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
                     .foregroundColor(.white.opacity(0.75))
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
+            .padding(.horizontal, isLandscape ? 40 : 16)
+            .padding(.top, 4)
+            .padding(.bottom, 8)
             .background(
-                LuminaTheme.blackBg.opacity(0.92)
+                LuminaTheme.blackBg.opacity(0.94)
                     .background(.ultraThinMaterial)
             )
             Divider().background(Color.white.opacity(0.08))
+        }
+    }
+
+    @ViewBuilder
+    private func iconFor(section: LuminaSection) -> some View {
+        switch section {
+        case .search:
+            MaterialSearchIcon()
+        case .home:
+            MaterialHomeIcon()
+        case .movies:
+            MaterialMovieIcon()
+        case .series:
+            MaterialTvIcon()
+        case .iptv:
+            MaterialLiveTvIcon()
+        case .fuzer:
+            MaterialAutoAwesomeIcon()
+        case .debrid:
+            MaterialCloudIcon()
+        case .watchlist:
+            MaterialFavoriteIcon()
+        case .settings:
+            MaterialSettingsIcon()
         }
     }
 
