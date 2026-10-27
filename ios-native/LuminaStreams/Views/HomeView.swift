@@ -249,13 +249,13 @@ struct HomeView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
-                    studioButton(id: "hbo", name: "HBO", logoUrl: "https://image.tmdb.org/t/p/original/tuomPhY2UtuPTqqFnKMVHvSb724.png", colors: [Color(hex: 0x1A0A2E), Color(hex: 0x2D1B4E)])
-                    studioButton(id: "netflix", name: "Netflix", logoUrl: "https://image.tmdb.org/t/p/original/wwemzKWzjKYJFfCeiB57q3r4Bcm.png", colors: [Color(hex: 0x141414), Color(hex: 0x1C1C1C)])
-                    studioButton(id: "disney", name: "Disney+", logoUrl: "https://image.tmdb.org/t/p/original/1edZOYAfoyZyZ3rklNSiUpXX30Q.png", colors: [Color(hex: 0x0A1628), Color(hex: 0x142240)])
-                    studioButton(id: "apple", name: "Apple TV+", logoUrl: "https://image.tmdb.org/t/p/original/bngHRFi794mnMq34gfVcm9nDxN1.png", colors: [Color(hex: 0x1A1A2E), Color(hex: 0x2A2A40)])
-                    studioButton(id: "amazon", name: "Amazon", logoUrl: "https://image.tmdb.org/t/p/original/w7HfLNm9CWwRmAMU58udl2L7We7.png", colors: [Color(hex: 0x0A1E2C), Color(hex: 0x0F2B3D)])
-                    studioButton(id: "paramount", name: "Paramount+", logoUrl: "https://image.tmdb.org/t/p/original/fi83B1oztoS47xxcemFdPMhIzK.png", colors: [Color(hex: 0x0A0F1E), Color(hex: 0x141E35)])
-                    studioButton(id: "hulu", name: "Hulu", logoUrl: "https://image.tmdb.org/t/p/original/pqUTCleNUiTLAVlelGxUgWn1ELh.png", colors: [Color(hex: 0x0A1A14), Color(hex: 0x0F2A1E)])
+                    studioButton(id: "hbo", name: "HBO", logoUrl: "https://image.tmdb.org/t/p/original/tuomPhY2UtuPTqqFnKMVHvSb724.png", colors: [LuminaTheme.hexColor(0x1A0A2E), LuminaTheme.hexColor(0x2D1B4E)])
+                    studioButton(id: "netflix", name: "Netflix", logoUrl: "https://image.tmdb.org/t/p/original/wwemzKWzjKYJFfCeiB57q3r4Bcm.png", colors: [LuminaTheme.hexColor(0x141414), LuminaTheme.hexColor(0x1C1C1C)])
+                    studioButton(id: "disney", name: "Disney+", logoUrl: "https://image.tmdb.org/t/p/original/1edZOYAfoyZyZ3rklNSiUpXX30Q.png", colors: [LuminaTheme.hexColor(0x0A1628), LuminaTheme.hexColor(0x142240)])
+                    studioButton(id: "apple", name: "Apple TV+", logoUrl: "https://image.tmdb.org/t/p/original/bngHRFi794mnMq34gfVcm9nDxN1.png", colors: [LuminaTheme.hexColor(0x1A1A2E), LuminaTheme.hexColor(0x2A2A40)])
+                    studioButton(id: "amazon", name: "Amazon", logoUrl: "https://image.tmdb.org/t/p/original/w7HfLNm9CWwRmAMU58udl2L7We7.png", colors: [LuminaTheme.hexColor(0x0A1E2C), LuminaTheme.hexColor(0x0F2B3D)])
+                    studioButton(id: "paramount", name: "Paramount+", logoUrl: "https://image.tmdb.org/t/p/original/fi83B1oztoS47xxcemFdPMhIzK.png", colors: [LuminaTheme.hexColor(0x0A0F1E), LuminaTheme.hexColor(0x141E35)])
+                    studioButton(id: "hulu", name: "Hulu", logoUrl: "https://image.tmdb.org/t/p/original/pqUTCleNUiTLAVlelGxUgWn1ELh.png", colors: [LuminaTheme.hexColor(0x0A1A14), LuminaTheme.hexColor(0x0F2A1E)])
                     
                     // SONY
                     let isSelected = viewModel.selectedStudio == "sony"
@@ -267,7 +267,7 @@ struct HomeView: View {
                             .foregroundColor(.white)
                             .frame(width: 110, height: 50)
                             .background(
-                                LinearGradient(colors: [Color(hex: 0x050A14), Color(hex: 0x152238)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                                LinearGradient(colors: [LuminaTheme.hexColor(0x050A14), LuminaTheme.hexColor(0x152238)], startPoint: .topLeading, endPoint: .bottomTrailing)
                             )
                             .clipShape(RoundedRectangle(cornerRadius: 12))
                             .overlay(
@@ -441,15 +441,5 @@ struct MediaCardView: View {
                     .foregroundColor(.white.opacity(0.45))
             }
         }
-    }
-}
-
-// Color Hex Extension
-extension Color {
-    init(hex: UInt32, alpha: Double = 1.0) {
-        let r = Double((hex >> 16) & 0xFF) / 255.0
-        let g = Double((hex >> 8) & 0xFF) / 255.0
-        let b = Double(hex & 0xFF) / 255.0
-        self.init(.sRGB, red: r, green: g, blue: b, opacity: alpha)
     }
 }
