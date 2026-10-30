@@ -177,6 +177,30 @@
       return;
     }
 
+    // Width of Windows' minimize/maximize/close (Electron titleBarOverlay) as
+    // --caption-w. The Window Controls Overlay API can briefly report "not
+    // visible" (after reloads, while unfocused), so keep the last real value;
+    // in fullscreen Windows hides the buttons and nothing is reserved.
+    let lastCaptionW = 300;
+    const updateCaption = () => {
+      const wco = navigator.windowControlsOverlay;
+      let w;
+      if (window.innerHeight >= screen.height) {
+        w = 0;
+      } else if (wco && wco.visible && wco.getTitlebarAreaRect().width > 0) {
+        w = Math.max(0, window.innerWidth - wco.getTitlebarAreaRect().right);
+        lastCaptionW = w;
+      } else {
+        w = lastCaptionW;
+      }
+      document.documentElement.style.setProperty('--caption-w', `${w}px`);
+    };
+    updateCaption();
+    window.addEventListener('resize', updateCaption);
+    if (navigator.windowControlsOverlay) {
+      navigator.windowControlsOverlay.addEventListener('geometrychange', updateCaption);
+    }
+
     const btnMin   = document.getElementById('btn-minimize');
     const btnMax   = document.getElementById('btn-maximize');
     const btnClose = document.getElementById('btn-close');
@@ -193,6 +217,42 @@
         }
       });
     }
+  }
+
+  /* ── Text direction per content ────────────────────────────────── */
+  /**
+   * The layout follows the app language (Hebrew → RTL, English → LTR), but
+   * content text follows its own language: an English title in the Hebrew UI
+   * reads left-to-right and is truncated at its end ("Nathan Tyl…", not
+   * "…than Tylutki"). dir="auto" picks the direction from the text itself;
+   * CSS keeps its alignment matched to the surrounding layout.
+   */
+  function _setupTextDirection() {
+    const SELECTOR = '[class*="title"], [class*="name"], [class*="synopsis"], [class*="overview"], [class*="label"]';
+    const apply = root => {
+      const els = root.matches && root.matches(SELECTOR) ? [root] : [];
+      if (root.querySelectorAll) root.querySelectorAll(SELECTOR).forEach(el => els.push(el));
+      els.forEach(el => {
+        if (el.childElementCount === 0 && !el.hasAttribute('dir')) el.setAttribute('dir', 'auto');
+      });
+    };
+    apply(document.body);
+    new MutationObserver(mutations => {
+      for (const m of mutations) m.addedNodes.forEach(node => { if (node.nodeType === 1) apply(node); });
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+
+  /** Expose the fixed header's height so pages start below it (--header-h). */
+  function _trackHeaderHeight() {
+    const header = document.getElementById('ps5-top-bar');
+    const update = () => {
+      // (offsetParent is always null for position:fixed, so check display instead)
+      const h = header && getComputedStyle(header).display !== 'none' ? header.offsetHeight : 0;
+      document.documentElement.style.setProperty('--header-h', `${h}px`);
+    };
+    update();
+    window.addEventListener('resize', update);
+    if (header && window.ResizeObserver) new ResizeObserver(update).observe(header);
   }
 
   /* ── PS5 Navigation & Clock ───────────────────────────────────── */
@@ -354,6 +414,8 @@
 
       // 3. Set up titlebar
       _setupTitlebar();
+      _setupTextDirection();
+      _trackHeaderHeight();
 
       // 4. Set up sidebar navigation & clock
       _setupSidebar();

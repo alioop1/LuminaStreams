@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const { startServer } = require('./src/server');
 const { NativePlayer } = require('./src/player');
+const fuzer = require('./src/fuzer');
 
 // Packaged: the web app and mpv ship in resources/. Dev: read them from the repo.
 const WEB_DIR = app.isPackaged
@@ -132,6 +133,13 @@ function registerIpc() {
   });
   ipcMain.on('player:stop', () => player.stop());
 
+  // Fuzer (sign-in window + session-backed requests; see src/fuzer.js)
+  ipcMain.handle('fuzer:status', () => fuzer.status());
+  ipcMain.handle('fuzer:signIn', e => fuzer.signIn(fromSender(e)));
+  ipcMain.handle('fuzer:signOut', () => fuzer.signOut());
+  ipcMain.handle('fuzer:page', (_e, pathOrUrl) => fuzer.fetchPage(pathOrUrl));
+  ipcMain.handle('fuzer:torrent', async (_e, pathOrUrl) => new Uint8Array(await fuzer.downloadTorrent(pathOrUrl)));
+
   const forward = channel => payload => mainWindow?.webContents.send(channel, payload);
   player.on('progress', forward('player:progress'));
   player.on('ended', payload => {
@@ -143,6 +151,9 @@ function registerIpc() {
 }
 
 // ── Startup ──────────────────────────────────────────────────────────────
+// Development runs use their own profile, so they can run beside the installed app.
+if (!app.isPackaged) app.setPath('userData', path.join(app.getPath('appData'), 'LuminaStreams-dev'));
+
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {

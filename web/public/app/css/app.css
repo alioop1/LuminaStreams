@@ -890,7 +890,6 @@ body[data-screen="player"] #mobile-bottom-nav {
   flex-direction: column;
   gap: 16px;
   box-shadow: 0 24px 60px rgba(0,0,0,0.9), 0 0 40px rgba(255,255,255,0.06);
-  direction: rtl;
 }
 .modal-sheet-handle {
   width: 44px;
@@ -3511,7 +3510,6 @@ ul, ol {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  direction: rtl;
 }
 
 /* Progress bar wrapper */
@@ -5867,7 +5865,7 @@ ul, ol {
 body.is-electron #ps5-top-bar {
   -webkit-app-region: drag;
   /* Reserve exactly the caption buttons' width (varies with display scaling). */
-  padding-right: calc(28px + 100vw - env(titlebar-area-width, 100vw));
+  padding-right: calc(28px + var(--caption-w, 0px));
 }
 body.is-electron #ps5-top-bar button,
 body.is-electron #ps5-top-bar a,
@@ -5876,3 +5874,70 @@ body.is-electron #ps5-top-bar [role="button"],
 body.is-electron #ps5-top-bar .ps5-logo {
   -webkit-app-region: no-drag;
 }
+
+/* ── Text direction (see _setupTextDirection in app.js) ─────────────────
+   dir="auto" text keeps the alignment of its surroundings (match-parent
+   resolves start/end against the parent's direction), so an English title
+   in the Hebrew layout still lines up on the right. Zero specificity: any
+   explicit text-align on the element wins. */
+:where([dir="auto"]) {
+  text-align: match-parent;
+}
+
+/* ── Pages start below the fixed header (--header-h set in app.js) ───── */
+#screen-container .search-page,
+#screen-container .watchlist-page,
+#screen-container .settings-page {
+  padding-top: calc(var(--header-h, 54px) + 24px);
+}
+
+/* ── Desktop app: keep controls clear of the Windows caption buttons ─── */
+/* Back sits in the title-bar row, just left of minimize/maximize/close. */
+body.is-electron .ps5-back-btn {
+  top: 7px;
+  right: calc(var(--caption-w, 0px) + 12px);
+  left: auto;
+  width: 40px;
+  height: 40px;
+  -webkit-app-region: no-drag;
+}
+/* Screens without the header (details) still get a draggable title strip. */
+body.is-electron::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: var(--caption-w, 0px);
+  height: 36px;
+  -webkit-app-region: drag;
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* ── Desktop Fuzer screen ─────────────────────────────────────────────── */
+.fuzer-desktop { padding: calc(var(--header-h, 54px) + 24px) 48px 48px; }
+.fuzer-desktop-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 16px; }
+.fuzer-desktop-title { font-size: 26px; font-weight: 900; margin: 0; }
+.fuzer-desktop-search { display: flex; gap: 8px; flex: 1; min-width: 260px; }
+.fuzer-desktop-search input {
+  flex: 1; min-width: 0; font: inherit; color: #fff; background: #131d33;
+  border: 1px solid rgba(255, 255, 255, 0.12); border-radius: 12px; padding: 10px 14px;
+}
+.fuzer-desktop-list { display: flex; flex-direction: column; gap: 10px; margin-top: 16px; }
+.fuzer-desktop-row {
+  display: flex; align-items: center; gap: 14px; width: 100%; text-align: start; font: inherit; color: #fff;
+  background: rgba(255, 255, 255, 0.04); border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px; padding: 10px 14px; cursor: pointer;
+}
+.fuzer-desktop-row:hover { background: rgba(0, 212, 255, 0.08); border-color: rgba(0, 212, 255, 0.35); }
+.fuzer-desktop-row:disabled { opacity: 0.7; cursor: progress; }
+.fuzer-desktop-poster { width: 54px; height: 76px; object-fit: cover; border-radius: 8px; background: #131d33; flex-shrink: 0; }
+.fuzer-desktop-info { flex: 1; min-width: 0; }
+.fuzer-desktop-name { font-weight: 800; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fuzer-desktop-raw { font-size: 12px; color: rgba(255, 255, 255, 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; direction: ltr; text-align: match-parent; }
+.fuzer-desktop-meta { display: flex; gap: 10px; flex-wrap: wrap; font-size: 12px; color: rgba(255, 255, 255, 0.75); margin-top: 5px; }
+.fuzer-desktop-meta .up { color: #32d74b; }
+.fuzer-desktop-meta .down { color: #ff3b5c; }
+.fuzer-badge { background: #00d4ff; color: #000; font-weight: 900; border-radius: 4px; padding: 0 6px; }
+.fuzer-badge.alt { background: #7b61ff; color: #fff; }
+.fuzer-desktop-play { color: #00d4ff; font-weight: 800; font-size: 13px; white-space: nowrap; }

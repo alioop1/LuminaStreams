@@ -32,4 +32,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onEnded: callback => subscribe('player:ended', callback),
     onError: callback => subscribe('player:error', callback),
   },
+
+  fuzer: {
+    /** @returns {Promise<{signedIn: boolean}>} */
+    status: () => ipcRenderer.invoke('fuzer:status'),
+    /** Opens Fuzer's login page; resolves true once signed in. */
+    signIn: () => ipcRenderer.invoke('fuzer:signIn'),
+    signOut: () => ipcRenderer.invoke('fuzer:signOut'),
+    /** @returns {Promise<{signedIn: boolean, html: string}>} */
+    page: pathOrUrl => ipcRenderer.invoke('fuzer:page', pathOrUrl),
+    /** @returns {Promise<Uint8Array>} .torrent bytes */
+    torrent: pathOrUrl => ipcRenderer.invoke('fuzer:torrent', pathOrUrl),
+  },
 });

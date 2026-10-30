@@ -263,12 +263,40 @@
 
     report('מעלה ל-AllDebrid…');
     const torrentId = await uploadMagnet(magnet);
+    return waitAndUnlock(torrentId, report, season, episode, 60);
+  }
 
+  /**
+   * Upload raw .torrent bytes (Fuzer releases) and resolve them to a stream URL.
+   * @param {Uint8Array} bytes
+   */
+  async function resolveTorrentFile(bytes, onProgress, season = null, episode = null) {
+    const report = (msg) => {
+      if (typeof onProgress === 'function') onProgress(msg);
+    };
+    report('מעלה קובץ טורנט ל-AllDebrid…');
+    const form = new FormData();
+    form.append('files[]', new Blob([bytes], { type: 'application/x-bittorrent' }), 'upload.torrent');
+    const res = await fetch(`${AD_BASE}/magnet/upload/file?agent=LuminaStreams`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${getToken()}` },
+      body: form,
+    });
+    if (!res.ok) throw new Error(`AllDebrid upload HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.status !== 'success') throw new Error(json.error?.message || 'Torrent upload failed');
+    const file = json.data?.files?.[0];
+    if (!file || file.error) throw new Error(file?.error?.message || 'Torrent upload failed');
+    // Android polls torrent-file uploads for up to 150 × 2 s.
+    return waitAndUnlock(file.id, report, season, episode, 150);
+  }
+
+  /** Poll a magnet until AllDebrid has it, pick the best file and unlock it. */
+  async function waitAndUnlock(torrentId, report, season, episode, maxPolls) {
     report('ממתין לעיבוד ב-AllDebrid…');
-    const MAX_POLLS = 60;
     const POLL_INTERVAL = 2000;
 
-    for (let i = 0; i < MAX_POLLS; i++) {
+    for (let i = 0; i < maxPolls; i++) {
       const statusData = await getMagnetStatus(torrentId);
       if (!statusData) {
         await sleep(POLL_INTERVAL);
@@ -318,6 +346,7 @@
     getMagnetFiles,
     unlockLink,
     resolveStream,
+    resolveTorrentFile,
   });
 
   window.AllDebrid = AllDebrid;

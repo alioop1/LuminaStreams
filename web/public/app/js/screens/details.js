@@ -35,9 +35,10 @@
     if (!minutes || minutes <= 0) return '';
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
-    if (h > 0 && m > 0) return `${h}שע ${m}ד`;
-    if (h > 0) return `${h}שע`;
-    return `${m}ד`;
+    const isEn = (window.I18n && window.I18n.getLanguage ? window.I18n.getLanguage() : 'he') !== 'he';
+    if (h > 0 && m > 0) return isEn ? `${h}h ${m}m` : `${h}שע ${m}ד`;
+    if (h > 0) return isEn ? `${h}h` : `${h}שע`;
+    return isEn ? `${m}m` : `${m}ד`;
   }
 
   function _imdbIdOf(data) {
@@ -113,11 +114,11 @@
     if (isTv && data.number_of_seasons > 0) {
       seasonPillsHtml = `
         <div class="ps5-seasons-row">
-          <span class="ps5-seasons-label">עונות:</span>
+          <span class="ps5-seasons-label">${tr('Seasons:', 'עונות:')}</span>
           <div class="ps5-seasons-pills">
             ${Array.from({ length: data.number_of_seasons }, (_, i) => i + 1).map(sn => `
               <button class="ps5-season-pill${sn === activeSeason ? ' active' : ''}" data-season="${sn}">
-                עונה ${sn}
+                ${tr('Season', 'עונה')} ${sn}
               </button>
             `).join('')}
           </div>
@@ -156,7 +157,7 @@
         </div>
 
         <!-- 2. Back Button (Top Right in RTL) -->
-        <button id="ps5-back-btn" class="ps5-back-btn" aria-label="חזרה" title="חזרה">
+        <button id="ps5-back-btn" class="ps5-back-btn" aria-label="${tr('Back', 'חזרה')}" title="${tr('Back', 'חזרה')}">
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <line x1="5" y1="12" x2="19" y2="12"></line>
             <polyline points="12 5 19 12 12 19"></polyline>
@@ -242,7 +243,7 @@
     const poster = mediaData.poster_path ? `https://image.tmdb.org/t/p/w500${mediaData.poster_path}` : '';
 
     const label = isTv && season != null && episode != null
-      ? `${title} — עונה ${season} פרק ${episode}`
+      ? `${title} — ${tr('Season', 'עונה')} ${season} ${tr('Episode', 'פרק')} ${episode}`
       : title;
 
     const modalHtml = `
@@ -250,10 +251,10 @@
         <div class="modal-sheet-handle"></div>
         <div class="ps5-sources-header">
           <div class="ps5-sources-title-group">
-            <h2 class="ps5-sources-title">מקורות צפייה</h2>
+            <h2 class="ps5-sources-title">${tr('Sources', 'מקורות צפייה')}</h2>
             <span class="ps5-sources-subtitle">${escapeHtml(label)}</span>
           </div>
-          <button class="ps5-modal-close" id="sources-close-btn" aria-label="סגור">✕</button>
+          <button class="ps5-modal-close" id="sources-close-btn" aria-label="${tr('Close', 'סגור')}">✕</button>
         </div>
 
         <div class="ps5-sources-filters" id="ps5-sources-filters" role="toolbar" aria-label="${tr('Filter', 'סינון')}"></div>
@@ -261,7 +262,7 @@
         <div class="ps5-sources-list" id="ps5-sources-list">
           <div class="ps5-sources-loading">
             <div class="ps5-spinner"></div>
-            <span>סורק מקורות צפייה איכותיים (Torrentio & Debrid)...</span>
+            <span>${tr('Scanning for quality sources (Torrentio & Debrid)...', 'סורק מקורות צפייה איכותיים (Torrentio & Debrid)...')}</span>
           </div>
         </div>
       </div>
@@ -280,7 +281,7 @@
 
     if (!imdbId) {
       if (listEl) {
-        listEl.innerHTML = `<div class="ps5-sources-empty">לא נמצא מזהה IMDb עבור תוכן זה.</div>`;
+        listEl.innerHTML = `<div class="ps5-sources-empty">${tr('No IMDb ID found for this title.', 'לא נמצא מזהה IMDb עבור תוכן זה.')}</div>`;
       }
       return;
     }
@@ -295,7 +296,7 @@
 
       if (!streams || streams.length === 0) {
         if (listEl) {
-          listEl.innerHTML = `<div class="ps5-sources-empty">לא נמצאו מקורות זמינים כרגע.</div>`;
+          listEl.innerHTML = `<div class="ps5-sources-empty">${tr('No sources available right now.', 'לא נמצאו מקורות זמינים כרגע.')}</div>`;
         }
         return;
       }
@@ -372,7 +373,7 @@
             <div class="ps5-source-actions">
               <button class="ps5-btn-source-play">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
-                <span>צפה</span>
+                <span>${tr('Play', 'צפה')}</span>
               </button>
             </div>
           </div>
@@ -390,7 +391,7 @@
           if (!stream) return;
 
           card.classList.add('loading');
-          card.querySelector('.ps5-btn-source-play span').textContent = 'טוען...';
+          card.querySelector('.ps5-btn-source-play span').textContent = tr('Loading...', 'טוען...');
 
           try {
             // Torrentio's /resolve/alldebrid/... URL redirects to the AllDebrid
@@ -432,7 +433,7 @@
             console.error('[Details] Stream launch failed:', err);
             window.showToast(tr('Failed to launch stream', 'שגיאה בהפעלת המקור'), 'error');
             card.classList.remove('loading');
-            card.querySelector('.ps5-btn-source-play span').textContent = 'צפה';
+            card.querySelector('.ps5-btn-source-play span').textContent = tr('Play', 'צפה');
           }
         });
       });
@@ -444,7 +445,7 @@
     } catch (err) {
       console.error('[Details] Scraping failed:', err);
       if (listEl) {
-        listEl.innerHTML = `<div class="ps5-sources-empty">שגיאה בסריקת המקורות: ${escapeHtml(err.message)}</div>`;
+        listEl.innerHTML = `<div class="ps5-sources-empty">${tr('Error scanning sources:', 'שגיאה בסריקת המקורות:')} ${escapeHtml(err.message)}</div>`;
       }
     }
   }
@@ -459,16 +460,16 @@
         <div class="modal-sheet-handle"></div>
         <div class="ps5-sources-header">
           <div class="ps5-sources-title-group">
-            <h2 class="ps5-sources-title">עונה ${seasonNum} — פרקים</h2>
+            <h2 class="ps5-sources-title">${tr('Season', 'עונה')} ${seasonNum} — ${tr('Episodes', 'פרקים')}</h2>
             <span class="ps5-sources-subtitle">${escapeHtml(tvTitle)}</span>
           </div>
-          <button class="ps5-modal-close" id="episodes-close-btn" aria-label="סגור">✕</button>
+          <button class="ps5-modal-close" id="episodes-close-btn" aria-label="${tr('Close', 'סגור')}">✕</button>
         </div>
 
         <div class="ps5-episodes-list" id="ps5-episodes-list">
           <div class="ps5-sources-loading">
             <div class="ps5-spinner"></div>
-            <span>טוען רשימת פרקים...</span>
+            <span>${tr('Loading episodes...', 'טוען רשימת פרקים...')}</span>
           </div>
         </div>
       </div>
@@ -490,7 +491,7 @@
       const episodes = seasonData.episodes || [];
 
       if (episodes.length === 0) {
-        if (listEl) listEl.innerHTML = `<div class="ps5-sources-empty">לא נמצאו פרקים עבור עונה זו.</div>`;
+        if (listEl) listEl.innerHTML = `<div class="ps5-sources-empty">${tr('No episodes found for this season.', 'לא נמצאו פרקים עבור עונה זו.')}</div>`;
         return;
       }
 
@@ -498,9 +499,9 @@
         const epThumb = ep.still_path
           ? `https://image.tmdb.org/t/p/w300${ep.still_path}`
           : 'assets/img/backdrop-placeholder.svg';
-        const epTitle = ep.name || `פרק ${ep.episode_number}`;
+        const epTitle = ep.name || `${tr('Episode', 'פרק')} ${ep.episode_number}`;
         const epOverview = ep.overview || '';
-        const epRuntime = ep.runtime ? `${ep.runtime} דקות` : '';
+        const epRuntime = ep.runtime ? `${ep.runtime} ${tr('min', 'דקות')}` : '';
 
         return `
           <div class="ps5-episode-card" data-ep-num="${ep.episode_number}">
@@ -515,7 +516,7 @@
             </div>
             <button class="ps5-btn-source-play">
               <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,3 20,12 6,21"/></svg>
-              <span>צפה</span>
+              <span>${tr('Play', 'צפה')}</span>
             </button>
           </div>
         `;
@@ -531,7 +532,7 @@
     } catch (err) {
       console.error('[Details] Episodes load error:', err);
       if (listEl) {
-        listEl.innerHTML = `<div class="ps5-sources-empty">שגיאה בטעינת הפרקים: ${escapeHtml(err.message)}</div>`;
+        listEl.innerHTML = `<div class="ps5-sources-empty">${tr('Error loading episodes:', 'שגיאה בטעינת הפרקים:')} ${escapeHtml(err.message)}</div>`;
       }
     }
   }
@@ -549,7 +550,7 @@
     const modalHtml = `
       <div class="ps5-trailer-modal">
         <div class="ps5-trailer-header">
-          <span>${escapeHtml(trailer.name || 'טריילר')}</span>
+          <span>${escapeHtml(trailer.name || tr('Trailer', 'טריילר'))}</span>
           <button class="ps5-modal-close" onclick="document.getElementById('modal-overlay').classList.add('hidden')">✕</button>
         </div>
         <div class="ps5-trailer-video-wrap">
@@ -667,9 +668,9 @@
         console.error('[DetailsScreen] Render error:', err);
         container.innerHTML = `
           <div class="ps5-details-layout error">
-            <h2>שגיאה בטעינת פרטי הכותר</h2>
+            <h2>${tr('Error loading title details', 'שגיאה בטעינת פרטי הכותר')}</h2>
             <p>${escapeHtml(err.message)}</p>
-            <button class="ps5-btn-play" onclick="window.Router.navigate('home')">חזרה לדף הבית</button>
+            <button class="ps5-btn-play" onclick="window.Router.navigate('home')">${tr('Back to Home', 'חזרה לדף הבית')}</button>
           </div>
         `;
       }

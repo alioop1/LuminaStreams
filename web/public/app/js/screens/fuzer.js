@@ -616,6 +616,13 @@
     torrents = [];
     searchQuery = '';
 
+    // Desktop app: real Fuzer access through the app's own Fuzer session.
+    if (window.electronAPI && window.electronAPI.fuzer && window.FuzerDesktop) {
+      usingDesktop = true;
+      return window.FuzerDesktop.render(container);
+    }
+    usingDesktop = false;
+
     // A browser cannot reach Fuzer directly: it sends no CORS headers, needs its
     // own cookies, and sign-in is now behind reCAPTCHA. Until the server-side
     // proxy exists (docs/PARITY.md step 6), say so instead of a fake login.
@@ -624,16 +631,19 @@
         <div style="font-size:44px;margin-bottom:12px;">✨</div>
         <h1 style="font-size:22px;font-weight:900;margin-bottom:10px;">Fuzer</h1>
         <p style="color:rgba(255,255,255,0.75);line-height:1.7;font-size:15px;">
-          ${tr('Fuzer works in the iPhone app. In the browser it needs a server proxy, which is not set up yet.',
-               'Fuzer זמין באפליקציית האייפון. בדפדפן הוא דורש שרת מתווך שעדיין לא הוגדר.')}
+          ${tr('Fuzer works in the iPhone and Windows apps. In the browser it needs a server proxy, which is not set up yet.',
+               'Fuzer זמין באפליקציית האייפון ובאפליקציית Windows. בדפדפן הוא דורש שרת מתווך שעדיין לא הוגדר.')}
         </p>
       </div>
     `;
   }
 
   /* ── Destroy ─────────────────────────────────────────────────────── */
+  let usingDesktop = false;
+
   function destroy() {
     destroyed = true;
+    if (usingDesktop && window.FuzerDesktop) window.FuzerDesktop.destroy();
     debouncedSearch.cancel?.();
     containerEl = null;
     torrents = [];

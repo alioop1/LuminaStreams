@@ -240,7 +240,7 @@
     if (isFetchingSubs && subtitlesList.length === 0) {
       const loading = document.createElement('div');
       loading.style.cssText = 'padding:24px 16px;text-align:center;color:rgba(238,242,255,0.6);font-size:13px;display:flex;flex-direction:column;align-items:center;gap:10px;';
-      loading.innerHTML = '<div class="spinner" style="width:24px;height:24px;border-width:2px;"></div><span>מחפש כתוביות בעברית ובאנגלית…</span>';
+      loading.innerHTML = '<div class="spinner" style="width:24px;height:24px;border-width:2px;"></div><span>' + tr('Searching for Hebrew and English subtitles…', 'מחפש כתוביות בעברית ובאנגלית…') + '</span>';
       list.appendChild(loading);
       selector.classList.remove('hidden');
       return;
@@ -249,7 +249,7 @@
     if (subtitlesList.length === 0) {
       const empty = document.createElement('div');
       empty.style.cssText = 'padding:18px;text-align:center;color:rgba(238,242,255,0.5);font-size:13px;';
-      empty.textContent = 'לא נמצאו כתוביות זמינות לסרט/פרק זה';
+      empty.textContent = tr('No subtitles available for this title/episode', 'לא נמצאו כתוביות זמינות לסרט/פרק זה');
       list.appendChild(empty);
       selector.classList.remove('hidden');
       return;
@@ -313,11 +313,11 @@
       <div style="display:flex;align-items:center;gap:10px;">
         <span style="font-size:18px;">🔊</span>
         <div>
-          <div style="font-weight:700;font-size:13px;">הגברת עוצמת שמע (Boost 200%)</div>
-          <div style="font-size:11px;color:rgba(238,242,255,0.5);">פתרון לסרטים עם קול שקט</div>
+          <div style="font-weight:700;font-size:13px;">${tr('Volume Boost (200%)', 'הגברת עוצמת שמע (Boost 200%)')}</div>
+          <div style="font-size:11px;color:rgba(238,242,255,0.5);">${tr('A fix for movies with quiet audio', 'פתרון לסרטים עם קול שקט')}</div>
         </div>
       </div>
-      <span style="padding:4px 10px;border-radius:12px;font-size:11px;font-weight:700;background:${isAudioBoosted ? 'var(--cyan)' : 'rgba(255,255,255,0.1)'};color:${isAudioBoosted ? '#000' : '#fff'};">${isAudioBoosted ? 'פעיל' : 'כבוי'}</span>
+      <span style="padding:4px 10px;border-radius:12px;font-size:11px;font-weight:700;background:${isAudioBoosted ? 'var(--cyan)' : 'rgba(255,255,255,0.1)'};color:${isAudioBoosted ? '#000' : '#fff'};">${isAudioBoosted ? tr('On', 'פעיל') : tr('Off', 'כבוי')}</span>
     `;
     boostItem.onclick = () => {
       toggleAudioBoost();
@@ -334,23 +334,23 @@
     if (isFetchingStreams && streams.length === 0) {
       const loadingEl = document.createElement('div');
       loadingEl.style.cssText = 'padding:14px;display:flex;align-items:center;gap:10px;font-size:12px;color:rgba(238,242,255,0.7);';
-      loadingEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div><span>טוען מקורות שמע ושפות נוספות...</span>';
+      loadingEl.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div><span>' + tr('Loading audio sources and more languages...', 'טוען מקורות שמע ושפות נוספות...') + '</span>';
       list.appendChild(loadingEl);
     }
 
     if (hasRus || hasHeb || hasEng || streams.length > 0) {
       const langHeader = document.createElement('div');
       langHeader.style.cssText = 'padding:12px 14px 6px;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;';
-      langHeader.textContent = 'שפת שמע (Audio Language):';
+      langHeader.textContent = tr('Audio Language:', 'שפת שמע (Audio Language):');
       list.appendChild(langHeader);
 
       const langTabsContainer = document.createElement('div');
       langTabsContainer.style.cssText = 'display:flex;gap:8px;padding:0 14px 10px;border-bottom:1px solid rgba(255,255,255,0.08);overflow-x:auto;';
 
       const langs = [
-        { code: 'eng', flag: '🇬🇧', label: 'אנגלית (ברירת מחדל)', show: true },
-        { code: 'rus', flag: '🇷🇺', label: 'רוסית', show: hasRus },
-        { code: 'heb', flag: '🇮🇱', label: 'עברית', show: hasHeb },
+        { code: 'eng', flag: '🇬🇧', label: tr('English (default)', 'אנגלית (ברירת מחדל)'), show: true },
+        { code: 'rus', flag: '🇷🇺', label: tr('Russian', 'רוסית'), show: hasRus },
+        { code: 'heb', flag: '🇮🇱', label: tr('Hebrew', 'עברית'), show: hasHeb },
       ];
 
       langs.filter(l => l.show).forEach(l => {
@@ -385,7 +385,7 @@
       if (matchingHls.length > 0) {
         const hlsHeader = document.createElement('div');
         hlsHeader.style.cssText = 'padding:10px 14px 4px;font-size:11px;font-weight:700;color:var(--cyan);text-transform:uppercase;';
-        hlsHeader.textContent = 'ערוצי שמע מובנים (HLS):';
+        hlsHeader.textContent = tr('Built-in audio tracks (HLS):', 'ערוצי שמע מובנים (HLS):');
         list.appendChild(hlsHeader);
 
         matchingHls.forEach((track) => {
@@ -395,7 +395,7 @@
           item.className = `subtitle-option ${isActive ? 'active' : ''}`;
           item.innerHTML = `
             <span style="width:20px;text-align:center;color:var(--cyan);font-weight:bold">${isActive ? '✓' : ''}</span>
-            <span style="flex:1">${track.name || track.lang || `רצועה ${originalIdx + 1}`}</span>
+            <span style="flex:1">${track.name || track.lang || `${tr('Track', 'רצועה')} ${originalIdx + 1}`}</span>
           `;
           item.onclick = () => {
             hlsInstance.audioTrack = originalIdx;
@@ -413,8 +413,8 @@
     if (toRender.length > 0) {
       const streamHeader = document.createElement('div');
       streamHeader.style.cssText = 'padding:12px 14px 4px;font-size:11px;font-weight:700;color:rgba(238,242,255,0.6);text-transform:uppercase;';
-      const langName = currentAudioLang === 'rus' ? 'רוסית' : (currentAudioLang === 'heb' ? 'עברית' : 'אנגלית');
-      streamHeader.textContent = `מקורות שמע ב${langName} (תואמי דפדפן ראשונים):`;
+      const langName = currentAudioLang === 'rus' ? tr('Russian', 'רוסית') : (currentAudioLang === 'heb' ? tr('Hebrew', 'עברית') : tr('English', 'אנגלית'));
+      streamHeader.textContent = tr(`${langName} audio sources (browser-compatible first):`, `מקורות שמע ב${langName} (תואמי דפדפן ראשונים):`);
       list.appendChild(streamHeader);
 
       toRender.slice(0, 16).forEach((st) => {
@@ -430,8 +430,8 @@
           <div style="flex:1;min-width:0;">
             <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px;">
               <span style="font-weight:700;font-size:12px;">${st.quality || '1080p'}</span>
-              ${isWebAudio ? `<span style="background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;">🔊 שמע תואם כרום (AAC)</span>` : ''}
-              ${isWarning ? `<span style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:1px 6px;font-size:10px;">⚠️ ${st.audio} (ללא שמע בכרום)</span>` : (!isWebAudio && st.audio ? `<span style="background:rgba(255,255,255,0.1);color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;">${st.audio}</span>` : '')}
+              ${isWebAudio ? `<span style="background:rgba(16,185,129,0.25);color:#34d399;border:1px solid rgba(16,185,129,0.4);border-radius:4px;padding:1px 6px;font-size:10px;font-weight:700;">🔊 ${tr('Chrome-compatible audio (AAC)', 'שמע תואם כרום (AAC)')}</span>` : ''}
+              ${isWarning ? `<span style="background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:1px 6px;font-size:10px;">⚠️ ${st.audio} (${tr('no audio in Chrome', 'ללא שמע בכרום')})</span>` : (!isWebAudio && st.audio ? `<span style="background:rgba(255,255,255,0.1);color:#fff;border-radius:4px;padding:1px 6px;font-size:10px;">${st.audio}</span>` : '')}
             </div>
             <div style="font-size:11px;color:rgba(238,242,255,0.45);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${window.Helpers.truncate(st.filename || st.name, 40)}</div>
           </div>
@@ -446,7 +446,7 @@
     } else if (streams.length > 0) {
       const emptyEl = document.createElement('div');
       emptyEl.style.cssText = 'padding:16px 14px;color:rgba(238,242,255,0.5);font-size:12px;text-align:center;';
-      emptyEl.textContent = 'לא נמצאו מקורות נוספים בשפה זו';
+      emptyEl.textContent = tr('No other sources found in this language', 'לא נמצאו מקורות נוספים בשפה זו');
       list.appendChild(emptyEl);
     }
 
@@ -471,7 +471,7 @@
     const notice = document.createElement('div');
     notice.className = 'stream-switch-notice';
     notice.style.cssText = 'position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(10,16,28,0.92);border:1px solid rgba(0,212,255,0.4);color:#fff;padding:18px 28px;border-radius:14px;z-index:70;display:flex;align-items:center;gap:14px;font-size:15px;box-shadow:0 12px 40px rgba(0,0,0,0.8);';
-    notice.innerHTML = '<div class="spinner" style="width:24px;height:24px;border-width:2px;"></div><span>מחליף מקור שמע וממשיך צפייה...</span>';
+    notice.innerHTML = '<div class="spinner" style="width:24px;height:24px;border-width:2px;"></div><span>' + tr('Switching audio source and resuming...', 'מחליף מקור שמע וממשיך צפייה...') + '</span>';
     overlay?.appendChild(notice);
 
     try {
@@ -482,7 +482,7 @@
           playUrl = await debridClient.resolveStream(stream.infoHash, null, params.season, params.episode);
         }
       }
-      if (!playUrl) throw new Error('לא ניתן היה לפתוח את מקור השמע הנבחר');
+      if (!playUrl) throw new Error(tr('Could not open the selected audio source', 'לא ניתן היה לפתוח את מקור השמע הנבחר'));
 
       params.url = playUrl;
       params.audio = stream.audio || null;
@@ -493,7 +493,7 @@
       checkAudioCompatibilityAndWarn();
     } catch (err) {
       console.error('[Player] Switch stream failed:', err);
-      showError(err.message || 'שגיאה במעבר למקור שמע זה');
+      showError(err.message || tr('Error switching to this audio source', 'שגיאה במעבר למקור שמע זה'));
     } finally {
       notice.remove();
     }
@@ -704,8 +704,8 @@
       font-size:13px;box-shadow:0 8px 30px rgba(0,0,0,0.7);animation:fadeIn 0.3s ease;
     `;
     toast.innerHTML = `
-      <span>ממשיך מ-<strong>${fmtTime(pos)}</strong> ↻</span>
-      <button style="background:rgba(255,255,255,0.15);border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">התחל מהתחלה</button>
+      <span>${tr('Resuming from', 'ממשיך מ-')}<strong>${fmtTime(pos)}</strong> ↻</span>
+      <button style="background:rgba(255,255,255,0.15);border:none;color:#fff;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">${tr('Start Over', 'התחל מהתחלה')}</button>
     `;
     const startOverBtn = toast.querySelector('button');
     startOverBtn.onclick = (e) => {
@@ -746,7 +746,7 @@
       cursor:pointer;box-shadow:0 6px 30px rgba(0,212,255,0.7);
       animation:pulse 1.8s infinite;display:flex;align-items:center;gap:10px;
     `;
-    notice.innerHTML = '<span style="font-size:20px">🔊</span> <span>כרום השתיק את השמע — לחץ כאן להפעלת שמע</span>';
+    notice.innerHTML = '<span style="font-size:20px">🔊</span> <span>' + tr('Chrome muted the audio — click here to unmute', 'כרום השתיק את השמע — לחץ כאן להפעלת שמע') + '</span>';
     notice.onclick = (e) => {
       e.stopPropagation();
       if (video) {
@@ -782,8 +782,8 @@
       font-size:13px;animation:fadeIn 0.3s ease;
     `;
     banner.innerHTML = `
-      <span style="color:#fca5a5;font-weight:600;">⚠️ שמע בפורמט ${params.audio || 'AC3/DTS'} אינו נתמך בכרום.</span>
-      ${aacAlt ? `<button id="auto-switch-aac-btn" style="background:#10b981;border:none;color:#000;font-weight:800;padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(16,185,129,0.4);">🔊 החלף עכשיו לשמע תואם כרום (AAC)</button>` : `<button id="open-audio-sel-btn" style="background:var(--cyan);border:none;color:#000;font-weight:700;padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;">🔊 בחר מקור שמע אחר</button>`}
+      <span style="color:#fca5a5;font-weight:600;">⚠️ ${tr(`${params.audio || 'AC3/DTS'} audio is not supported in Chrome.`, `שמע בפורמט ${params.audio || 'AC3/DTS'} אינו נתמך בכרום.`)}</span>
+      ${aacAlt ? `<button id="auto-switch-aac-btn" style="background:#10b981;border:none;color:#000;font-weight:800;padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;display:flex;align-items:center;gap:6px;box-shadow:0 2px 10px rgba(16,185,129,0.4);">🔊 ${tr('Switch to Chrome-compatible audio (AAC)', 'החלף עכשיו לשמע תואם כרום (AAC)')}</button>` : `<button id="open-audio-sel-btn" style="background:var(--cyan);border:none;color:#000;font-weight:700;padding:6px 16px;border-radius:20px;cursor:pointer;font-size:12px;">🔊 ${tr('Choose another audio source', 'בחר מקור שמע אחר')}</button>`}
       <span id="close-audio-banner" style="cursor:pointer;opacity:0.6;font-size:16px;margin-right:4px;">✕</span>
     `;
 
@@ -956,7 +956,7 @@
                   hlsInstance.recoverMediaError();
                   break;
                 default:
-                  showError(data.details || 'שגיאת ניגון HLS');
+                  showError(data.details || tr('HLS playback error', 'שגיאת ניגון HLS'));
                   break;
               }
             }
@@ -965,7 +965,7 @@
           video.src = url;
           checkAudioCompatibilityAndWarn();
         } else {
-          showError('ניגון HLS אינו נתמך בדפדפן זה');
+          showError(tr('HLS playback is not supported in this browser', 'ניגון HLS אינו נתמך בדפדפן זה'));
         }
       } else {
         // Direct stream (MP4 / MKV)
@@ -1135,7 +1135,7 @@
       saveProgress();
     });
     on(video, 'error', () => {
-      const msg = video.error ? video.error.message : 'שגיאת ניגון לא מזוהה';
+      const msg = video.error ? video.error.message : tr('Unknown playback error', 'שגיאת ניגון לא מזוהה');
       showError(msg);
     });
 
@@ -1246,7 +1246,7 @@
       e.stopPropagation();
       const streamUrl = params.streamUrl || (video ? video.src : '');
       if (!streamUrl) {
-        if (window.showToast) window.showToast('אין קישור זמין לניגון', 'warning');
+        if (window.showToast) window.showToast(tr('No playable link available', 'אין קישור זמין לניגון'), 'warning');
         return;
       }
 
@@ -1254,20 +1254,20 @@
       const outplayerUrl = `outplayer://${streamUrl}`;
 
       const modalHtml = `
-        <div style="text-align: right; padding: 12px; direction: rtl;">
-          <h3 style="font-size: 18px; margin-bottom: 12px; color: #00D4FF;">🎬 פתיחה בנגן חיצוני</h3>
+        <div style="text-align: start; padding: 12px;">
+          <h3 style="font-size: 18px; margin-bottom: 12px; color: #00D4FF;">🎬 ${tr('Open in External Player', 'פתיחה בנגן חיצוני')}</h3>
           <p style="font-size: 14px; color: #94a3b8; margin-bottom: 20px; line-height: 1.5;">
-            אם הווידאו הוא בפורמט MKV או שהסאונד הוא DTS שאינו נתמך ישירות בדפדפן iOS, תוכל להפעיל אותו בלחיצה אחת בנגן מקצועי:
+            ${tr('If the video is MKV or the audio is DTS, which the iOS browser can\'t play directly, you can open it in a pro player with one tap:', 'אם הווידאו הוא בפורמט MKV או שהסאונד הוא DTS שאינו נתמך ישירות בדפדפן iOS, תוכל להפעיל אותו בלחיצה אחת בנגן מקצועי:')}
           </p>
           <div style="display: flex; flex-direction: column; gap: 12px;">
             <a href="${vlcUrl}" class="btn btn-primary" style="display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: 600; background: linear-gradient(135deg, #FF8C00, #E65100); color: #fff;">
-              <span>🟠 פתח ב-VLC for iOS</span>
+              <span>🟠 ${tr('Open in VLC for iOS', 'פתח ב-VLC for iOS')}</span>
             </a>
             <a href="${outplayerUrl}" class="btn" style="display: flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; padding: 12px; border-radius: 10px; font-weight: 600; background: rgba(255,255,255,0.08); color: #fff; border: 1px solid rgba(255,255,255,0.15);">
-              <span>⚪ פתח ב-Outplayer</span>
+              <span>⚪ ${tr('Open in Outplayer', 'פתח ב-Outplayer')}</span>
             </a>
             <button id="btn-copy-stream-url" class="btn" style="display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border-radius: 10px; background: rgba(0,212,255,0.1); color: #00D4FF; border: 1px solid rgba(0,212,255,0.3); cursor: pointer;">
-              <span>📋 העתק קישור סטרימינג ישיר</span>
+              <span>📋 ${tr('Copy direct stream link', 'העתק קישור סטרימינג ישיר')}</span>
             </button>
           </div>
         </div>
@@ -1281,10 +1281,10 @@
             btnCopy.addEventListener('click', () => {
               if (navigator.clipboard) {
                 navigator.clipboard.writeText(streamUrl).then(() => {
-                  if (window.showToast) window.showToast('קישור הסטרימינג הועתק ללוח!', 'success');
+                  if (window.showToast) window.showToast(tr('Stream link copied to clipboard!', 'קישור הסטרימינג הועתק ללוח!'), 'success');
                 });
               } else {
-                prompt('העתק את הקישור:', streamUrl);
+                prompt(tr('Copy the link:', 'העתק את הקישור:'), streamUrl);
               }
             });
           }
@@ -1334,7 +1334,7 @@
     const sidebar = $('sidebar');
     if (overlay) {
       overlay.classList.remove('hidden');
-      overlay.setAttribute('dir', 'rtl');
+      overlay.setAttribute('dir', document.documentElement.getAttribute('dir') || 'rtl');
     }
     if (sidebar) sidebar.style.display = 'none';
     container.style.display = 'none';

@@ -77,7 +77,16 @@
         container.style.transform = 'translateY(0)';
       }
       const duration = direction === 'out' ? 150 : 250;
-      setTimeout(resolve, duration);
+      setTimeout(() => {
+        // Clear the transform once the slide-in ends: any transform (even
+        // translateY(0)) makes position:fixed children — the details back
+        // button, overlays — position against this container and scroll with it.
+        if (direction === 'in') {
+          container.style.transform = '';
+          container.style.transition = '';
+        }
+        resolve();
+      }, duration);
     });
   }
 

@@ -5,6 +5,12 @@
 (() => {
   'use strict';
 
+  /** TMDB content language follows the app language (Hebrew UI → he-IL, English → en-US). */
+  function contentLanguage() {
+    const lang = window.I18n && window.I18n.getLanguage ? window.I18n.getLanguage() : 'he';
+    return lang === 'en' ? 'en-US' : 'he-IL';
+  }
+
   const API_KEY = window.CONST.TMDB_API_KEY;
   const BASE    = window.CONST.TMDB_BASE;
 
@@ -66,7 +72,7 @@
   function getTrending(type = 'all', page = 1) {
     return tmdbFetch(`/trending/${type}/week`, {
       page,
-      language: 'he-IL',
+      language: contentLanguage(),
     });
   }
 
@@ -81,7 +87,7 @@
   function discoverMovies(genreId = null, page = 1) {
     const params = {
       page,
-      language:           'he-IL',
+      language:           contentLanguage(),
       sort_by:            'popularity.desc',
       include_adult:      false,
       'vote_count.gte':   50,
@@ -99,7 +105,7 @@
   function discoverTv(genreId = null, page = 1) {
     const params = {
       page,
-      language:           'he-IL',
+      language:           contentLanguage(),
       sort_by:            'popularity.desc',
       include_adult:      false,
       'vote_count.gte':   50,
@@ -121,7 +127,7 @@
 
     const params = {
       page,
-      language:      'he-IL',
+      language:      contentLanguage(),
       sort_by:       'popularity.desc',
       include_adult: false,
       watch_region:  'IL',
@@ -156,7 +162,7 @@
     const endpoint = type === 'tv' ? '/discover/tv' : '/discover/movie';
     const params = {
       page,
-      language:      'he-IL',
+      language:      contentLanguage(),
       sort_by:       sortBy,
       include_adult: false,
     };
@@ -195,9 +201,11 @@
    */
   function getMovieDetails(id) {
     return tmdbFetch(`/movie/${id}`, {
-      language:          'he-IL',
+      language:          contentLanguage(),
       append_to_response: 'credits,videos,external_ids,images,reviews',
       include_image_language: 'he,en,null',
+      // Trailers: Hebrew ones rarely exist, so also accept English/untagged videos.
+      include_video_language: 'he,en,null',
     });
   }
 
@@ -208,9 +216,11 @@
    */
   function getTvDetails(id) {
     return tmdbFetch(`/tv/${id}`, {
-      language:          'he-IL',
+      language:          contentLanguage(),
       append_to_response: 'credits,videos,external_ids,images,reviews',
       include_image_language: 'he,en,null',
+      // Trailers: Hebrew ones rarely exist, so also accept English/untagged videos.
+      include_video_language: 'he,en,null',
     });
   }
 
@@ -222,7 +232,7 @@
    */
   function getTvSeason(tvId, seasonNum) {
     return tmdbFetch(`/tv/${tvId}/season/${seasonNum}`, {
-      language: 'he-IL',
+      language: contentLanguage(),
     });
   }
 
@@ -235,7 +245,7 @@
    */
   function getTvEpisode(tvId, seasonNum, episodeNum) {
     return tmdbFetch(`/tv/${tvId}/season/${seasonNum}/episode/${episodeNum}`, {
-      language: 'he-IL',
+      language: contentLanguage(),
     });
   }
 
@@ -251,7 +261,7 @@
     return tmdbFetch('/search/multi', {
       query,
       page,
-      language:      'he-IL',
+      language:      contentLanguage(),
       include_adult: false,
     });
   }
@@ -266,7 +276,7 @@
     return tmdbFetch('/search/movie', {
       query,
       page,
-      language:      'he-IL',
+      language:      contentLanguage(),
       include_adult: false,
     });
   }
@@ -281,7 +291,7 @@
     return tmdbFetch('/search/tv', {
       query,
       page,
-      language:      'he-IL',
+      language:      contentLanguage(),
       include_adult: false,
     });
   }
@@ -298,7 +308,7 @@
   function getSimilar(type, id, page = 1) {
     return tmdbFetch(`/${type}/${id}/similar`, {
       page,
-      language: 'he-IL',
+      language: contentLanguage(),
     });
   }
 
@@ -312,7 +322,7 @@
   function getRecommendations(type, id, page = 1) {
     return tmdbFetch(`/${type}/${id}/recommendations`, {
       page,
-      language: 'he-IL',
+      language: contentLanguage(),
     });
   }
 
@@ -325,7 +335,7 @@
    */
   function getPersonDetails(personId) {
     return tmdbFetch(`/person/${personId}`, {
-      language:          'he-IL',
+      language:          contentLanguage(),
       append_to_response: 'combined_credits,images',
     });
   }
@@ -333,31 +343,31 @@
   /* ── Lists / Charts ───────────────────────────────────────────────── */
 
   function getPopularMovies(page = 1) {
-    return tmdbFetch('/movie/popular', { page, language: 'he-IL' });
+    return tmdbFetch('/movie/popular', { page, language: contentLanguage() });
   }
 
   function getTopRatedMovies(page = 1) {
-    return tmdbFetch('/movie/top_rated', { page, language: 'he-IL' });
+    return tmdbFetch('/movie/top_rated', { page, language: contentLanguage() });
   }
 
   function getUpcomingMovies(page = 1) {
-    return tmdbFetch('/movie/upcoming', { page, language: 'he-IL', region: 'IL' });
+    return tmdbFetch('/movie/upcoming', { page, language: contentLanguage(), region: 'IL' });
   }
 
   function getNowPlayingMovies(page = 1) {
-    return tmdbFetch('/movie/now_playing', { page, language: 'he-IL', region: 'IL' });
+    return tmdbFetch('/movie/now_playing', { page, language: contentLanguage(), region: 'IL' });
   }
 
   function getPopularTv(page = 1) {
-    return tmdbFetch('/tv/popular', { page, language: 'he-IL' });
+    return tmdbFetch('/tv/popular', { page, language: contentLanguage() });
   }
 
   function getTopRatedTv(page = 1) {
-    return tmdbFetch('/tv/top_rated', { page, language: 'he-IL' });
+    return tmdbFetch('/tv/top_rated', { page, language: contentLanguage() });
   }
 
   function getOnTheAirTv(page = 1) {
-    return tmdbFetch('/tv/on_the_air', { page, language: 'he-IL' });
+    return tmdbFetch('/tv/on_the_air', { page, language: contentLanguage() });
   }
 
   /* ── Watch Providers ──────────────────────────────────────────────── */

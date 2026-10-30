@@ -18,14 +18,14 @@
 
   /* ── Category Definitions ────────────────────────────────────────── */
   const CATEGORIES = [
-    { id: 'trending_m',   title: 'סרטים פופולריים',   type: 'trending_movie' },
-    { id: 'hbo',          title: 'בלעדי ל-HBO',       type: 'studio', studio: 'hbo', mediaType: 'tv' },
-    { id: 'netflix',      title: 'מקור של נטפליקס',   type: 'studio', studio: 'netflix', mediaType: 'movie' },
-    { id: 'trending_tv',  title: 'סדרות פופולריות',    type: 'trending_tv' },
-    { id: 'amazon',       title: 'מקור של אמזון',      type: 'studio', studio: 'amazon', mediaType: 'movie' },
-    { id: 'apple',        title: 'מקור של אפל TV',    type: 'studio', studio: 'apple', mediaType: 'tv' },
-    { id: 'genre_28',     title: 'סרטי אקשן',          type: 'genre', genreId: 28 },
-    { id: 'genre_35',     title: 'קומדיה',             type: 'genre', genreId: 35 },
+    { id: 'trending_m',   title: 'סרטים פופולריים',   titleEn: 'Popular Movies', type: 'trending_movie' },
+    { id: 'hbo',          title: 'בלעדי ל-HBO',       titleEn: 'HBO Exclusives', type: 'studio', studio: 'hbo', mediaType: 'tv' },
+    { id: 'netflix',      title: 'מקור של נטפליקס',   titleEn: 'Netflix Originals', type: 'studio', studio: 'netflix', mediaType: 'movie' },
+    { id: 'trending_tv',  title: 'סדרות פופולריות',    titleEn: 'Popular Series', type: 'trending_tv' },
+    { id: 'amazon',       title: 'מקור של אמזון',      titleEn: 'Amazon Originals', type: 'studio', studio: 'amazon', mediaType: 'movie' },
+    { id: 'apple',        title: 'מקור של אפל TV',    titleEn: 'Apple TV+ Originals', type: 'studio', studio: 'apple', mediaType: 'tv' },
+    { id: 'genre_28',     title: 'סרטי אקשן',          titleEn: 'Action Movies', type: 'genre', genreId: 28 },
+    { id: 'genre_35',     title: 'קומדיה',             titleEn: 'Comedy', type: 'genre', genreId: 35 },
   ];
 
   /* ── State ────────────────────────────────────────────────────────── */
@@ -41,9 +41,10 @@
     if (!minutes || minutes <= 0) return '';
     const h = Math.floor(minutes / 60);
     const m = minutes % 60;
-    if (h > 0 && m > 0) return `${h}שע ${m}ד`;
-    if (h > 0) return `${h}שע`;
-    return `${m}ד`;
+    const isEn = (window.I18n && window.I18n.getLanguage ? window.I18n.getLanguage() : 'he') !== 'he';
+    if (h > 0 && m > 0) return isEn ? `${h}h ${m}m` : `${h}שע ${m}ד`;
+    if (h > 0) return isEn ? `${h}h` : `${h}שע`;
+    return isEn ? `${m}m` : `${m}ד`;
   }
 
   /* ── Fetch Category Movies ────────────────────────────────────────── */
@@ -115,19 +116,19 @@
 
             <!-- Hero Action Buttons (צפה עכשיו / פרטים) -->
             <div class="ps5-hero-actions" id="ps5-hero-actions">
-              <button class="ps5-btn-hero-play" id="hero-btn-play" title="צפה עכשיו">
+              <button class="ps5-btn-hero-play" id="hero-btn-play" title="${tr('Watch Now', 'צפה עכשיו')}">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                   <polygon points="6,3 20,12 6,21"/>
                 </svg>
-                <span>צפה עכשיו</span>
+                <span>${tr('Watch Now', 'צפה עכשיו')}</span>
               </button>
-              <button class="ps5-btn-hero-info" id="hero-btn-info" title="פרטים נוספים">
+              <button class="ps5-btn-hero-info" id="hero-btn-info" title="${tr('More Info', 'פרטים נוספים')}">
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="10"></circle>
                   <line x1="12" y1="16" x2="12" y2="12"></line>
                   <line x1="12" y1="8" x2="12.01" y2="8"></line>
                 </svg>
-                <span>פרטים</span>
+                <span>${tr('Details', 'פרטים')}</span>
               </button>
             </div>
           </div>
@@ -139,7 +140,7 @@
           <div class="ps5-cycler-categories" id="ps5-cycler-categories">
             ${CATEGORIES.map((cat, idx) => `
               <button class="ps5-category-btn${idx === 0 ? ' active' : ''}" data-cat-idx="${idx}">
-                ${escapeHtml(cat.title)}
+                ${escapeHtml(tr(cat.titleEn, cat.title))}
               </button>
             `).join('')}
           </div>
@@ -162,7 +163,7 @@
   function renderLandscapeCard(movie, index, isActive = false) {
     const title = escapeHtml(movie.title || movie.name || '');
     const isTv = movie.media_type === 'tv' || (movie.first_air_date && !movie.release_date);
-    const typeLabel = isTv ? 'סדרה' : 'סרט';
+    const typeLabel = isTv ? tr('Series', 'סדרה') : tr('Movie', 'סרט');
     const rating = movie.vote_average ? movie.vote_average.toFixed(1) : '';
 
     // Backdrop prefered for 16:9; fallback to poster
@@ -319,7 +320,7 @@
       if (castBox && details.credits && details.credits.cast && details.credits.cast.length > 0) {
         const topCast = details.credits.cast.slice(0, 4);
         castBox.innerHTML = `
-          <span class="ps5-cast-label">בכיכובם של:</span>
+          <span class="ps5-cast-label">${tr('Starring:', 'בכיכובם של:')}</span>
           <div class="ps5-cast-list">
             ${topCast.map(actor => {
               const photo = actor.profile_path
