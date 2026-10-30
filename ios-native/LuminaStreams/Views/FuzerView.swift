@@ -9,6 +9,8 @@ struct FuzerView: View {
     @State private var items: [Movie] = []
     @State private var isLoading: Bool = false
     @State private var errorMessage: String? = nil
+    @State private var needsSignIn: Bool = false
+    @State private var showSignIn: Bool = false
 
     private let categories: [(id: Int, title: String)] = [
         (7, "סרטים HD"),
@@ -87,6 +89,34 @@ struct FuzerView: View {
                     Spacer()
                 }
                 Spacer()
+            } else if needsSignIn {
+                Spacer()
+                VStack(spacing: 14) {
+                    Image(systemName: "person.crop.circle.badge.exclamationmark")
+                        .font(.system(size: 40))
+                        .foregroundColor(LuminaTheme.cyan)
+                    Text(settings.tr("Fuzer דורש התחברות (כולל אימות reCAPTCHA).
+התחבר פעם אחת והאפליקציה תזכור אותך.",
+                                     "Fuzer requires signing in (with reCAPTCHA).
+Sign in once and the app remembers you."))
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.85))
+                        .multilineTextAlignment(.center)
+                    Button {
+                        showSignIn = true
+                    } label: {
+                        Text(settings.tr("התחבר ל-Fuzer", "Sign in to Fuzer"))
+                            .font(.system(size: 15, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 22)
+                            .padding(.vertical, 11)
+                            .background(LuminaTheme.cyan)
+                            .clipShape(Capsule())
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+                Spacer()
             } else if let err = errorMessage {
                 Spacer()
                 HStack {
@@ -146,17 +176,31 @@ struct FuzerView: View {
                 await loadCategory(selectedCatId)
             }
         }
+        .sheet(isPresented: $showSignIn) {
+            FuzerLoginView {
+                Task { await loadCategory(selectedCatId) }
+            }
+        }
+    }
+
+    private func handle(_ error: Error) {
+        if (error as NSError).domain == "Fuzer" && (error as NSError).code == 401 {
+            needsSignIn = true
+        } else {
+            errorMessage = error.localizedDescription
+        }
     }
 
     private func loadCategory(_ catId: Int) async {
         isLoading = true
         errorMessage = nil
+        needsSignIn = false
         do {
             items = try await FuzerService.shared.fetchCategory(catId: catId)
             isLoading = false
         } catch {
             isLoading = false
-            errorMessage = error.localizedDescription
+            handle(error)
         }
     }
 
@@ -165,12 +209,13 @@ struct FuzerView: View {
         guard !q.isEmpty else { return }
         isLoading = true
         errorMessage = nil
+        needsSignIn = false
         do {
             items = try await FuzerService.shared.search(query: q)
             isLoading = false
         } catch {
             isLoading = false
-            errorMessage = error.localizedDescription
+            handle(error)
         }
     }
 }

@@ -187,6 +187,14 @@ iOS: AVPlayer plays HLS only (raw `.ts` needs KSPlayer or `.m3u8` rewrite); live
 
 ---
 
+### Fuzer login changed (found 2026-10-30) — affects all three apps
+Fuzer replaced the vBulletin login with a new page (`/auth-next`, fields `csrf`/`username`/`password`)
+whose submit button is a **Google reCAPTCHA**. The automatic MD5 login in Android `FuzerEngine.kt`, iOS and web
+can no longer work, and must not try to get around the CAPTCHA.
+- [x] iOS: user signs in once in an in-app web view (`FuzerLoginView`); the session cookies are reused and persisted.
+- [ ] Android TV: needs the same approach (WebView sign-in, or QR → phone sign-in that hands over the session).
+- [ ] Web: needs the Fuzer proxy (step 6) plus a sign-in flow.
+
 ## 6. Security notes (outside parity, but real)
 - `app/keystore.jks` and `app/google-services.json` are committed.
 - AllDebrid token and Fuzer username/password are hard-coded in iOS `Constants.swift` and web JS (public).

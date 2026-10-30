@@ -19,6 +19,7 @@ struct PlayerView: View {
     @State private var externalSubLang: String? = nil
     @State private var isLoadingSubtitles: Bool = false
     @State private var showTracksSheet: Bool = false
+    @State private var userPickedSubtitles = false
 
     @State private var showResumeBanner = false
     @State private var lastSavedAt = Date.distantPast
@@ -102,6 +103,7 @@ struct PlayerView: View {
             if phase != .active { saveProgress() }
         }
         .onReceive(ticker) { _ in tick() }
+        .onChange(of: playback.subtitleTracks) { _ in applyDefaultSubtitles() }
         .sheet(isPresented: $showTracksSheet) {
             tracksSheet
                 .presentationDetents([.medium, .large])
@@ -339,6 +341,21 @@ struct PlayerView: View {
             LuminaTheme.blackBg.ignoresSafeArea()
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    HStack {
+                        Text(settings.tr("שמע וכתוביות", "Audio & Subtitles"))
+                            .font(.system(size: 18, weight: .black))
+                            .foregroundColor(.white)
+                        Spacer()
+                        Button {
+                            showTracksSheet = false
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .font(.system(size: 26))
+                                .foregroundColor(.white.opacity(0.75))
+                        }
+                        .accessibilityLabel(settings.tr("סגור", "Close"))
+                    }
+
                     sheetSection(settings.tr("שמע", "Audio")) {
                         if playback.audioTracks.isEmpty {
                             sheetHint(settings.tr("אין רצועות שמע נוספות", "No alternate audio tracks"))
@@ -353,18 +370,21 @@ struct PlayerView: View {
                     sheetSection(settings.tr("כתוביות", "Subtitles")) {
                         sheetRow(settings.tr("כבוי", "Off"),
                                  selected: externalSubLang == nil && playback.currentSubtitleTrack < 0) {
+                            userPickedSubtitles = true
                             externalSubLang = nil
                             playback.selectSubtitleTrack(-1)
                         }
                         ForEach([("heb", "🇮🇱 עברית"), ("eng", "🇬🇧 English"), ("rus", "🇷🇺 Русский")], id: \.0) { code, label in
                             sheetRow(label + (isLoadingSubtitles && externalSubLang == code ? " …" : ""),
                                      selected: externalSubLang == code) {
+                                userPickedSubtitles = true
                                 playback.selectSubtitleTrack(-1)
                                 loadSubtitles(lang: code)
                             }
                         }
                         ForEach(playback.subtitleTracks) { track in
                             sheetRow("▸ " + track.name, selected: externalSubLang == nil && track.id == playback.currentSubtitleTrack) {
+                                userPickedSubtitles = true
                                 externalSubLang = nil
                                 playback.selectSubtitleTrack(track.id)
                             }
@@ -462,8 +482,36 @@ struct PlayerView: View {
                 langCode: lang
             )
             // Ignore a late result if the user switched language meanwhile.
-            if externalSubLang == lang { subtitles = cues }
+            if externalSubLang == lang {
+                subtitles = cues
+                if cues.isEmpty { externalSubLang = nil }
+            }
             isLoadingSubtitles = false
+            applyDefaultSubtitles()
+        }
+    }
+
+    /// Android behaviour: the preferred language from the web first, then a matching
+    /// track inside the file, otherwise subtitles off. VLC would otherwise turn on
+    /// whatever embedded track the file marks as default (often English).
+    private func applyDefaultSubtitles() {
+        guard !userPickedSubtitles, !isLoadingSubtitles else { return }
+        if externalSubLang != nil && !subtitles.isEmpty {
+            playback.selectSubtitleTrack(-1)
+            return
+        }
+        let preferred = settings.defaultSubtitles.lowercased()
+        let wanted: [String] = preferred.hasPrefix("en")
+            ? ["english", "eng"]
+            : ["hebrew", "heb", "עברית"]
+        if !preferred.hasPrefix("none") && !preferred.hasPrefix("off"),
+           let match = playback.subtitleTracks.first(where: { track in
+               let name = track.name.lowercased()
+               return wanted.contains { name.contains($0) }
+           }) {
+            playback.selectSubtitleTrack(match.id)
+        } else if !playback.subtitleTracks.isEmpty {
+            playback.selectSubtitleTrack(-1)
         }
     }
 

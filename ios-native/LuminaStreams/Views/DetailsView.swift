@@ -472,6 +472,14 @@ struct SourcesOverlaySheet: View {
                         .font(.system(size: 12, weight: .bold))
                         .foregroundColor(LuminaTheme.red)
                     }
+                    Button {
+                        vm.showSourcesSheet = false
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 26))
+                            .foregroundColor(.white.opacity(0.75))
+                    }
+                    .accessibilityLabel(settings.tr("סגור", "Close"))
                 }
                 .padding(.horizontal, 16)
                 .padding(.top, 16)
@@ -479,6 +487,9 @@ struct SourcesOverlaySheet: View {
                 // ── Filter Pills Bar ────────────────────────────────────────
                 HScroll {
                     HStack(spacing: 8) {
+                        Label(settings.tr("סינון", "Filter"), systemImage: "line.3.horizontal.decrease.circle")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white.opacity(0.6))
                         filterPill(title: "⚡ AD+ בלבד", isActive: vm.showCachedOnly) {
                             vm.showCachedOnly.toggle()
                             vm.applyFiltersAndSort()
@@ -662,10 +673,20 @@ struct ActorDetailsSheet: View {
     let onSelectMovie: (Movie) -> Void
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .topTrailing) {
             LuminaTheme.blackBg.ignoresSafeArea()
+            Button {
+                vm.showActorSheet = false
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 26))
+                    .foregroundColor(.white.opacity(0.75))
+            }
+            .padding(14)
+            .zIndex(1)
             if vm.isLoadingActor {
                 ProgressView().tint(LuminaTheme.cyan)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let actor = vm.selectedActor {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 16) {

@@ -234,6 +234,9 @@ struct HomeView: View {
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.horizontal, metrics.horizontalPadding)
             .padding(.bottom, 12)
+            // Swap title/synopsis instantly when the carousel advances; animating
+            // them cross-faded two different titles on top of each other.
+            .transaction { $0.animation = nil }
         }
     } else {
         // Stable placeholder so studio ribbon and content never jump!

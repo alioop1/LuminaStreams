@@ -48,24 +48,29 @@ struct FullWidthImage: View {
 }
 
 /// Horizontal scroller that behaves in right-to-left layouts.
-/// SwiftUI misplaces RTL scroll content that is narrower than the viewport
-/// (it starts on the wrong side and jumps when touched); pinning the content to
-/// at least the viewport width, aligned to the leading edge, avoids that.
+/// SwiftUI's RTL horizontal ScrollView computes its starting offset from the first
+/// layout; when the width changes afterwards (sheets sliding in, rotation) the
+/// content shows from the wrong end and jumps when touched. In RTL this runs the
+/// ScrollView in plain LTR mode and mirrors it, then mirrors the content back:
+/// offset 0 then shows the right-hand (leading) end, text renders normally and
+/// swiping follows the finger as expected.
 struct HScroll<Content: View>: View {
     @ViewBuilder let content: () -> Content
-    @State private var viewportWidth: CGFloat = 0
+    @Environment(\.layoutDirection) private var layoutDirection
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            content()
-                .frame(minWidth: viewportWidth, alignment: .leading)
-        }
-        .background(
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { viewportWidth = geo.size.width }
-                    .onChange(of: geo.size.width) { newWidth in viewportWidth = newWidth }
+        if layoutDirection == .rightToLeft {
+            ScrollView(.horizontal, showsIndicators: false) {
+                content()
+                    .environment(\.layoutDirection, .rightToLeft)
+                    .scaleEffect(x: -1, y: 1)
             }
-        )
+            .environment(\.layoutDirection, .leftToRight)
+            .scaleEffect(x: -1, y: 1)
+        } else {
+            ScrollView(.horizontal, showsIndicators: false) {
+                content()
+            }
+        }
     }
 }

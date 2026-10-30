@@ -13,8 +13,6 @@ enum Constants {
     static let defaultAllDebridToken = "GkRRCMwdGBSvjzWqnNP8"
 
     // ── Fuzer Credentials (matches Android TV FuzerEngine.kt) ────────────────
-    static let fuzerUsername = "microxbox93"
-    static let fuzerPassword = "AliooP93"
     static let fuzerBaseUrl  = "https://www.fuzer.xyz"
 
     // ── Image Base URLs ──────────────────────────────────────────────────────
@@ -27,12 +25,14 @@ enum Constants {
     static func backdropUrl(_ path: String?) -> String {
         guard let path = path, !path.isEmpty, path != "null" else { return "" }
         if path.hasPrefix("http") { return path }
-        return "\(imageOriginal)\(path)"
+        // w1280 covers full-screen iPhone/iPad widths; "original" is often 4K and several MB.
+        return "\(imageW1280)\(path)"
     }
 
     static func posterUrl(_ path: String?) -> String {
         guard let path = path, !path.isEmpty, path != "null" else { return "" }
         if path.hasPrefix("http") { return path }
-        return "\(imageW780)\(path)"
+        // Cards are at most ~160 pt wide (480 px @3x), so w500 is plenty.
+        return "\(imageW500)\(path)"
     }
 }
