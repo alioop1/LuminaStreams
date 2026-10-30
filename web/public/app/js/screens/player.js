@@ -39,7 +39,7 @@
     return new Promise((resolve, reject) => {
       if (window.Hls) { hlsReady = true; return resolve(); }
       const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+      s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js';
       s.onload = () => { hlsReady = true; resolve(); };
       s.onerror = () => reject(new Error('Failed to load hls.js'));
       document.head.appendChild(s);
@@ -143,7 +143,14 @@
       try {
         const res = await fetch(sub.url);
         if (res.ok) {
-          const rawText = await res.text();
+          // Hebrew sources (e.g. Wizdom) often serve windows-1255 labelled as UTF-8.
+          const bytes = await res.arrayBuffer();
+          let rawText;
+          try {
+            rawText = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          } catch {
+            rawText = new TextDecoder('windows-1255').decode(bytes);
+          }
           let vttText;
           if (rawText.trim().startsWith('WEBVTT')) {
             vttText = rawText;
@@ -666,33 +673,20 @@
   function saveProgress() {
     if (!video || !isFinite(video.currentTime) || !isFinite(video.duration)) return;
     if (video.duration < 15) return;
+    // Progress is keyed by IMDb id (shared with Android/iOS); without it there is nothing to save.
+    if (!window.WatchProgress || !params.imdbId) return;
 
-    const id = params.type === 'series'
-      ? `ep_${params.imdbId || params.id}_s${params.season}e${params.episode}`
-      : `movie_${params.imdbId || params.id}`;
-
-    const progressObj = {
-      id: id,
-      key: id,
+    window.WatchProgress.save({
       mediaId: params.id,
       imdbId: params.imdbId,
-      type: params.type || 'movie',
-      title: params.title || '',
+      type: params.type,
+      title: params.showTitle || params.title || '',
       poster_path: params.poster_path || params.poster || '',
-      season: params.season || null,
-      episode: params.episode || null,
-      position: Math.round(video.currentTime * 100) / 100,
-      duration: Math.round(video.duration * 100) / 100,
-      percentage: Math.round((video.currentTime / video.duration) * 1000) / 10,
-      progress: Math.round((video.currentTime / video.duration) * 1000) / 10,
-      timestamp: Date.now(),
-    };
-
-    if (window.WatchProgress && typeof window.WatchProgress.save === 'function') {
-      window.WatchProgress.save(progressObj);
-    } else if (window.Storage) {
-      window.Storage.updateContinueWatching(progressObj);
-    }
+      season: params.season,
+      episode: params.episode,
+      position: video.currentTime,
+      duration: video.duration,
+    });
   }
 
   function showResumeToast(pos) {
@@ -1099,8 +1093,8 @@
   function exitPlayer() {
     saveProgress();
 
-    if (window.SyncManager && typeof window.SyncManager.push === 'function') {
-      window.SyncManager.push().catch(() => {});
+    if (window.SyncManager && typeof window.SyncManager.flushProgress === 'function') {
+      window.SyncManager.flushProgress().catch(() => {});
     }
 
     // Exit fullscreen if active
@@ -1316,7 +1310,8 @@
   /* ── Render ──────────────────────────────────────────────────────── */
   async function render(container, p) {
     destroyed = false;
-    params = p || {};
+    params = { ...(p || {}) };
+    if (params.type === 'tv') params.type = 'series';
     subtitlesList = [];
     activeSubIndex = -1;
     activeSelectorType = null;
@@ -1355,13 +1350,10 @@
     }
 
     // Check saved progress
-    const progKey = params.type === 'series'
-      ? `ep_${params.imdbId || params.id}_s${params.season}e${params.episode}`
-      : `movie_${params.imdbId || params.id}`;
-
-    const savedProg = window.WatchProgress
-      ? (window.WatchProgress.get(progKey) || window.WatchProgress.get(params.imdbId) || window.WatchProgress.get(params.id))
+    const progKey = window.WatchProgress
+      ? window.WatchProgress.keyFor(params.type, params.imdbId, params.season, params.episode)
       : null;
+    const savedProg = progKey ? window.WatchProgress.get(progKey) : null;
 
     if ((!params.startPosition || params.startPosition <= 0) && savedProg && savedProg.position > 10 && (savedProg.percentage || 0) < 95) {
       params.startPosition = savedProg.position;

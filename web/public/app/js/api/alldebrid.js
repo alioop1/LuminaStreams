@@ -139,6 +139,26 @@
     return Array.isArray(m) ? m[0] : m;
   }
 
+  /** File tree for a magnet (/v4/magnet/files) — used when status omits it. */
+  async function getMagnetFiles(id) {
+    const form = new URLSearchParams();
+    form.append('id[]', id);
+    const res = await fetch(`${AD_BASE}/magnet/files?agent=LuminaStreams`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${getToken()}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: form.toString(),
+    });
+    if (!res.ok) throw new Error(`AllDebrid files HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.status !== 'success') {
+      throw new Error(json.error?.message || 'Files lookup failed');
+    }
+    return json.data?.magnets?.[0]?.files || [];
+  }
+
   async function unlockLink(link) {
     const token = getToken();
     const form = new URLSearchParams();
@@ -258,7 +278,8 @@
       const statusCode = statusData.statusCode ?? 0;
       if (statusCode === 4) {
         // Ready!
-        const files = statusData.files || statusData.links || [];
+        let files = statusData.files || statusData.links || [];
+        if (files.length === 0) files = await getMagnetFiles(torrentId);
         const best = selectBestFile(files, season, episode);
         if (!best) throw new Error('לא נמצאו קבצי וידאו בטורנט');
 
@@ -294,6 +315,7 @@
     pollAuth,
     uploadMagnet,
     getMagnetStatus,
+    getMagnetFiles,
     unlockLink,
     resolveStream,
   });

@@ -7,10 +7,22 @@ service cloud.firestore {
       allow read, write: if request.auth != null && request.auth.uid == userId;
     }
     
-    // Device links: anyone authenticated can read/write (for QR code linking)
-    // Links are short-lived and deleted after use
+    // Device links (TV QR/code login). The TV is signed out while it waits,
+    // so it may create and read its own pending code by id; listing all
+    // codes is never allowed. Only the signed-in owner of an account can
+    // complete a code with that account's email. Links are deleted after use.
     match /device_links/{code} {
-      allow read, write: if true;
+      allow get: if true;
+      allow list: if false;
+      allow create: if request.resource.data.keys().hasOnly(['status', 'created'])
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.created is int;
+      allow update: if resource.data.status == 'pending'
+                    && request.auth != null
+                    && request.resource.data.keys().hasOnly(['status', 'created', 'email', 'password', 'linked_at'])
+                    && request.resource.data.status == 'completed'
+                    && request.resource.data.email == request.auth.token.email;
+      allow delete: if true;
     }
   }
 }

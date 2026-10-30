@@ -40,6 +40,31 @@
     return `${m}ד`;
   }
 
+  function _imdbIdOf(data) {
+    return (data && (data.external_ids?.imdb_id || data.imdb_id)) || null;
+  }
+
+  /**
+   * What the main play button should start (Android DetailsViewModel):
+   * movies resume themselves; series resume the latest episode, or move on
+   * to the next one once it is finished.
+   */
+  function _resumeTarget(data) {
+    const imdbId = _imdbIdOf(data);
+    const WP = window.WatchProgress;
+    if (!imdbId || !WP) return { season: 1, episode: 1, inProgress: false };
+    if (currentType !== 'tv') {
+      const p = WP.get(WP.keyFor('movie', imdbId));
+      return { inProgress: !!p && p.percentage >= 2 && p.percentage < 90 };
+    }
+    const last = WP.getLatestEpisode(imdbId);
+    if (!last) return { season: 1, episode: 1, inProgress: false };
+    if (last.percentage < 90) {
+      return { season: last.season, episode: last.episode, inProgress: last.percentage >= 2 };
+    }
+    return { season: last.season, episode: last.episode + 1, inProgress: false };
+  }
+
   /* ── Build Shell HTML ─────────────────────────────────────────────── */
   function buildDetailsShell(data) {
     const isTv = currentType === 'tv';
@@ -57,12 +82,16 @@
     const genreNames = (data.genres || []).map(g => g.name).slice(0, 3);
     const genresStr = genreNames.join(' • ');
 
-    // Watch progress
-    const continueItem = window.Storage.getContinueWatching().find(w => String(w.id) === String(data.id));
-    const isPartiallyWatched = continueItem && continueItem.progress >= 2 && !continueItem.finished;
-    const playBtnText = isTv
-      ? (isPartiallyWatched ? tr('CONTINUE WATCHING', 'המשך צפייה') : tr('WATCH S1 E1', 'צפה ע1 פ1'))
-      : (isPartiallyWatched ? tr('CONTINUE WATCHING', 'המשך צפייה') : tr('WATCH NOW', 'צפה עכשיו'));
+    // Watch progress (shared keys with Android: movie_{imdb} / ep_{imdb}_s{S}e{E})
+    const resume = _resumeTarget(data);
+    let playBtnText;
+    if (isTv) {
+      playBtnText = resume.inProgress
+        ? tr('CONTINUE', 'המשך צפייה')
+        : tr(`WATCH S${resume.season} E${resume.episode}`, `צפה ע${resume.season} פ${resume.episode}`);
+    } else {
+      playBtnText = resume.inProgress ? tr('CONTINUE', 'המשך צפייה') : tr('WATCH NOW', 'צפה עכשיו');
+    }
 
     // Watchlist state
     const inWatchlist = window.Storage.isInWatchlist(data.id, currentType);
@@ -207,7 +236,7 @@
   /* ── Open Sources Dialog (Matches Android showSources) ───────────── */
   async function openSourcesModal(season = null, episode = null) {
     const isTv = currentType === 'tv';
-    const imdbId = mediaData.external_ids?.imdb_id;
+    const imdbId = _imdbIdOf(mediaData);
     const title = mediaData.title || mediaData.name || '';
     const backdrop = mediaData.backdrop_path ? `https://image.tmdb.org/t/p/original${mediaData.backdrop_path}` : '';
     const poster = mediaData.poster_path ? `https://image.tmdb.org/t/p/w500${mediaData.poster_path}` : '';
@@ -285,7 +314,7 @@
               <div class="ps5-source-meta">
                 ${seeds > 0 ? `<span class="source-seeds">▲ ${seeds}</span>` : ''}
                 ${sizeStr ? `<span class="source-size">${sizeStr}</span>` : ''}
-                ${s.isDebrid ? `<span class="source-debrid">⚡ RD+</span>` : ''}
+                ${s.isCached ? `<span class="source-debrid">⚡ AD+</span>` : ''}
               </div>
             </div>
             <div class="ps5-source-actions">
@@ -309,16 +338,20 @@
           card.querySelector('.ps5-btn-source-play span').textContent = 'טוען...';
 
           try {
+            // Torrentio's /resolve/alldebrid/... URL redirects to the AllDebrid
+            // file itself (Android plays it directly too). Only a bare
+            // infoHash needs the upload → poll → unlock flow.
             let playUrl = stream.url;
-
-            // If AllDebrid or RealDebrid link needs unlocking
-            if (stream.infoHash && window.AllDebrid && window.AllDebrid.isConfigured()) {
-              try {
-                playUrl = await window.AllDebrid.unlockMagnet(stream.infoHash);
-              } catch (e) {
-                console.warn('[Details] Debrid unlock failed, using direct URL:', e);
-              }
+            if (!playUrl && stream.infoHash && window.AllDebrid) {
+              const status = card.querySelector('.ps5-btn-source-play span');
+              playUrl = await window.AllDebrid.resolveStream(
+                stream.infoHash,
+                msg => { if (status) status.textContent = msg; },
+                season,
+                episode
+              );
             }
+            if (!playUrl) throw new Error('No playable URL for this source');
 
             // Close modal
             const overlay = document.getElementById('modal-overlay');
@@ -328,12 +361,17 @@
             window.Router.navigate('player', {
               url: playUrl,
               title: label,
-              type: currentType,
+              showTitle: title,
+              type: isTv ? 'series' : 'movie',
               id: currentId,
+              imdbId,
               backdrop,
               poster,
               season,
               episode,
+              audio: stream.audio || null,
+              isWebAudio: !!stream.isWebAudio,
+              allStreams: streams,
             });
           } catch (err) {
             console.error('[Details] Stream launch failed:', err);
@@ -486,11 +524,8 @@
     if (playBtn) {
       playBtn.addEventListener('click', () => {
         if (currentType === 'tv') {
-          // Open season 1 episode 1, or continue episode
-          const continueItem = window.Storage.getContinueWatching().find(w => String(w.id) === String(data.id));
-          const s = continueItem?.season || 1;
-          const e = continueItem?.episode || 1;
-          openSourcesModal(s, e);
+          const { season, episode } = _resumeTarget(data);
+          openSourcesModal(season, episode);
         } else {
           openSourcesModal();
         }
@@ -522,8 +557,10 @@
             title: data.title || data.name,
             poster_path: data.poster_path,
             backdrop_path: data.backdrop_path,
+            overview: data.overview,
             vote_average: data.vote_average,
             release_date: data.release_date || data.first_air_date,
+            genre: (data.genres || []).map(g => g.name).join(', '),
           });
           watchlistBtn.classList.add('active');
           watchlistBtn.querySelector('span').textContent = tr('MY LIST', 'הרשימה שלי');

@@ -247,6 +247,13 @@ async function performDeviceLink(code, password, email, btnEl, statusEl) {
     statusEl.className = "link-status loading";
 
     try {
+        // Completing a link requires being signed in as that account (firestore.rules);
+        // this also checks the password before it is handed to the TV.
+        if (!auth.currentUser || auth.currentUser.email.toLowerCase() !== email.toLowerCase()) {
+            await signInWithEmailAndPassword(auth, email, password);
+        }
+        email = auth.currentUser.email;
+
         const linkRef = doc(db, "device_links", cleanCode);
         const linkDoc = await getDoc(linkRef);
 

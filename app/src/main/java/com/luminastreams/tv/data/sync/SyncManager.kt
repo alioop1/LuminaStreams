@@ -298,7 +298,10 @@ class SyncManager(
                             val rawFavorites = data["favorites"]
                             if (rawFavorites is List<*>) {
                                 val cloudMovies = rawFavorites.filterIsInstance<String>().mapNotNull { it.toMovie() }
-                                watchlistRepository.replaceWatchlist(cloudMovies)
+                                // Never wipe the local list because of entries we can't parse
+                                if (cloudMovies.isNotEmpty() || rawFavorites.isEmpty()) {
+                                    watchlistRepository.replaceWatchlist(cloudMovies)
+                                }
                             }
 
                             // 2. Fetch Progress — safe extraction

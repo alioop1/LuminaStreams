@@ -414,8 +414,8 @@
     if (fbLogoutBtn) {
       fbLogoutBtn.addEventListener('click', async () => {
         if (window.FirebaseAuth) {
+          if (window.SyncManager) await window.SyncManager.flushProgress().catch(() => {});
           await window.FirebaseAuth.logout();
-          if (window.SyncManager) window.SyncManager.stopRealtimeSync();
         }
         if (window.showToast) window.showToast(tr('Signed out', 'יצאת מהחשבון'), 'info');
         render(container);
@@ -427,18 +427,15 @@
     if (clearCacheBtn) {
       clearCacheBtn.addEventListener('click', () => {
         // Clear non-essential storage items
-        const keysToKeep = ['lumina_language', 'lumina_rd_token', 'lumina_rd_refresh_token',
-          'lumina_rd_client_id', 'lumina_rd_client_secret', 'lumina_rd_token_expiry',
-          'lumina_watchlist', 'lumina_watch_progress'];
-
-        const keys = [];
-        for (let i = 0; i < localStorage.length; i++) {
+        // Only caches are cleared; settings, tokens, lists and progress are kept.
+        const cacheKeys = ['lumina_continue_watching', 'lumina_last_played'];
+        for (let i = localStorage.length - 1; i >= 0; i--) {
           const key = localStorage.key(i);
-          if (key.startsWith('lumina_') && !keysToKeep.includes(key)) {
-            keys.push(key);
+          if (key && (cacheKeys.includes(key) || key.startsWith('lumina_cache_'))) {
+            localStorage.removeItem(key);
           }
         }
-        keys.forEach(k => localStorage.removeItem(k));
+        try { sessionStorage.clear(); } catch {}
 
         const display = container.querySelector('#cache-size-display');
         if (display) display.textContent = _estimateCacheSize();

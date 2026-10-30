@@ -179,26 +179,49 @@
     return _getRaw(KEYS.WATCHLIST, []);
   }
 
+  // Ids may arrive as numbers (TMDB) or strings (dataset attributes).
+  function _sameItem(w, id, type) {
+    const norm = t => (t === 'series' ? 'tv' : t);
+    return String(w.id) === String(id) && norm(w.type) === norm(type);
+  }
+
+  function _pushWatchlist() {
+    if (window.SyncManager) window.SyncManager.pushFavorites().catch(() => {});
+  }
+
   function addToWatchlist(item) {
     const list = getWatchlist();
-    if (list.some(w => w.id === item.id && w.type === item.type)) return;
+    if (list.some(w => _sameItem(w, item.id, item.type))) return;
+    const date = item.release_date || item.first_air_date || '';
     list.unshift({
       id:        item.id,
-      type:      item.type,
+      type:      item.type === 'series' ? 'tv' : item.type,
       title:     item.title || item.name,
       poster:    item.poster_path || item.poster,
+      backdrop:  item.backdrop_path || item.backdrop || '',
+      overview:  item.overview || '',
+      rating:    item.vote_average || item.rating || 0,
+      year:      item.year || (date ? parseInt(date.slice(0, 4), 10) : 0),
+      genre:     item.genre || '',
       addedAt:   Date.now(),
     });
     _setRaw(KEYS.WATCHLIST, list);
+    _pushWatchlist();
   }
 
   function removeFromWatchlist(id, type) {
-    const list = getWatchlist().filter(w => !(w.id === id && w.type === type));
+    const list = getWatchlist().filter(w => !_sameItem(w, id, type));
     _setRaw(KEYS.WATCHLIST, list);
+    _pushWatchlist();
   }
 
   function isInWatchlist(id, type) {
-    return getWatchlist().some(w => w.id === id && w.type === type);
+    return getWatchlist().some(w => _sameItem(w, id, type));
+  }
+
+  /** Replace the whole list (used by cloud sync; does not push back). */
+  function setWatchlist(list) {
+    _setRaw(KEYS.WATCHLIST, Array.isArray(list) ? list : []);
   }
 
   /* ── Continue Watching ────────────────────────────────────────────── */
@@ -289,6 +312,7 @@
     addToWatchlist,
     removeFromWatchlist,
     isInWatchlist,
+    setWatchlist,
 
     // Continue Watching
     getContinueWatching,

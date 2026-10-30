@@ -30,7 +30,7 @@
     return new Promise((resolve, reject) => {
       if (window.Hls) return resolve();
       const s = document.createElement('script');
-      s.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+      s.src = 'https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js';
       s.onload = () => resolve();
       s.onerror = () => reject(new Error('Failed to load hls.js'));
       document.head.appendChild(s);
@@ -208,8 +208,10 @@
     const isHls = url.includes('.m3u8') || url.includes('m3u8');
 
     try {
+      if (isHls) {
+        try { await loadHls(); } catch (e) { console.warn('[IPTV] hls.js unavailable:', e); }
+      }
       if (isHls && window.Hls?.isSupported()) {
-        await loadHls();
         hlsInstance = new window.Hls({
           maxBufferLength: 30,
           liveSyncDuration: 3,

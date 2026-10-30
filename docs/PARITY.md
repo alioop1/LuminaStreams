@@ -13,21 +13,26 @@ Audit date: 2026-10-30.
 ## 0. Blockers — nothing "works" until these are fixed
 
 ### Shared (data contract)
-- [ ] **Web sync wipes Android's watchlist.** Web pushes `favorites` as numeric ids (`W/core/sync.js:63`); Android keeps only
-      JSON strings and calls `replaceWatchlist(empty)` (`A/data/sync/SyncManager.kt:298-301`). Web must write Android's schema.
-- [ ] **One canonical Firestore schema** (Android's), used by all three apps — `users/{uid}`:
+- [x] **Web sync wipes Android's watchlist.** Web now writes Android's schema (`W/core/sync.js`); Android no longer
+      replaces its list with an empty one when cloud entries can't be parsed (`A/data/sync/SyncManager.kt`).
+- [x] **One canonical Firestore schema** (Android's) — web done; iOS pending (step 4) — `users/{uid}`:
       - `favorites`: array of JSON **strings** `{id:"movie_123"|"tv_123", title, backdropUrl, posterUrl, overview, rating, year, genre, mediaType}` (overwritten whole)
       - `progress`: map key → JSON **string** `{p, d, t[, tmdb]}` in **milliseconds**, `""` = deleted (written per field)
       - `_exists: true`
-- [ ] **One canonical progress key:** `movie_<imdb>` / `ep_<imdb>_s<S>e<E>`. iOS uses `_s<S>_e<E>` and seconds (`I/Core/WatchProgressManager.swift:62`); web uses seconds and other field names.
-- [ ] **firestore.rules:** `device_links` is `allow read, write: if true` and the web landing page writes the **plaintext password** there (`web/public/app.js:269-273`). Lock down rules; stop storing passwords.
-- [ ] **AllDebrid v4.1:** `magnet/status` no longer returns files → must call `/v4/magnet/files` (per AllDebrid changelog 16/10/2024; verify with a real token). Affects all three apps.
+- [ ] **One canonical progress key:** `movie_<imdb>` / `ep_<imdb>_s<S>e<E>`. Web ✅ (IMDb-only keys, synced as Android's ms JSON). iOS still uses `_s<S>_e<E>` and seconds (`I/Core/WatchProgressManager.swift:62`).
+- [~] **firestore.rules:** `device_links` no longer listable; create/complete validated; completing a code now requires being signed in as that account (landing page signs in first). **Not deployed yet** (`firebase deploy --only firestore:rules`). Still open: the password itself is still passed through the doc for a few seconds — the real fix is a Cloud Function issuing a custom token.
+- [x] ~~AllDebrid v4.1 files~~ — **false alarm**, verified live 2026-10-30: `/v4.1/magnet/status` with a single `id` still returns the `files` tree. Web now also falls back to `/v4/magnet/files` if it's ever missing.
 
 ### Web
-- [ ] **No torrent source can play:** `W/screens/details.js:315-317` calls `AllDebrid.isConfigured()` / `unlockMagnet()`, which don't exist.
-- [ ] Back button throws: `Router.canGoBack()` not exported (`W/screens/details.js:476`).
-- [ ] hls.js never loaded in the IPTV screen (checks `window.Hls` before `loadHls()`); unpinned `hls.js@latest` in player and IPTV.
-- [ ] Wizdom Hebrew `.srt` files are windows-1255 → decode fallback needed (`W/screens/player.js:146`).
+- [x] **No torrent source could play** — details now plays Torrentio's `/resolve/alldebrid/...` URL directly (as Android does) and only runs upload→poll→unlock for bare hashes. Verified: Inception plays in Chrome.
+- [x] Back button: `Router.canGoBack()` added.
+- [x] hls.js now loaded before the support check in IPTV; pinned to `hls.js@1.5.20` in player and IPTV.
+- [x] Subtitles decode as UTF-8 with windows-1255 fallback. Verified: Hebrew cues readable.
+- [x] Progress keyed by IMDb id; details passes `imdbId`/`series` type; resume uses the exact key; Continue/next-episode button matches Android.
+- [x] Watchlist remove fixed (string vs number id); watchlist stores Android's fields and pushes on change.
+- [x] False "AC3 unsupported" banner — player now receives the stream's audio info.
+- [x] "Clear cache" no longer wipes settings/tokens; `fullSync` no longer runs twice on login.
+- [x] Local `server.js` redirects `/` → `/app/` (assets were 404ing as HTML at `/`).
 
 ### iOS
 - [ ] **Most debrid files won't play:** plain AVPlayer rejects MKV/AVI/WebM, DTS, TrueHD, embedded subs. Add **KSPlayer** (or MPVKit) via SPM in `project.yml`.

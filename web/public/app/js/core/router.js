@@ -263,6 +263,7 @@
     getCurrentScreen,
     getCurrentParams,
     getHistoryDepth,
+    canGoBack: () => getHistoryDepth() > 0,
     isRegistered,
     clearHistory,
     init,

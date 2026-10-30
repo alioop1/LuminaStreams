@@ -290,7 +290,8 @@
         const meta  = parseStreamTitle(title);
         const hash  = extractHash(stream);
         const name  = stream.name || meta.filename || 'Unknown';
-        const isCached = name.includes('AD+') || name.includes('RD+') || !!stream.url;
+        // Torrentio marks instantly-available debrid torrents "[AD+]"; others still need downloading.
+        const isCached = name.includes('AD+') || name.includes('RD+');
 
         return {
           id:          `stream-${index}-${hash || index}`,

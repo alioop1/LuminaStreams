@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "web",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["web/server.js"],
+      "env": { "NO_OPEN": "1", "PORT": "5000" },
+      "port": 5000
+    }
+  ]
+}

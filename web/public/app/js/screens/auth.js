@@ -181,8 +181,8 @@
     const logoutBtn = container.querySelector('#btn-auth-logout');
     if (logoutBtn) {
       logoutBtn.addEventListener('click', async () => {
+        if (window.SyncManager) await window.SyncManager.flushProgress().catch(() => {});
         if (window.FirebaseAuth) await window.FirebaseAuth.logout();
-        if (window.SyncManager) window.SyncManager.stopRealtimeSync();
         _updateProfileNav(null);
         render(container);
       });
@@ -259,12 +259,7 @@
         try {
           const user = await window.FirebaseAuth.login(email, password);
           _updateProfileNav(user);
-
-          // Start cloud sync
-          if (window.SyncManager) {
-            await window.SyncManager.fullSync();
-            window.SyncManager.startRealtimeSync();
-          }
+          // Cloud sync starts from the auth-state listener in app.js.
 
           if (window.showToast) window.showToast(tr('Welcome back!', 'ברוך שובך!'), 'success');
           window.Router.navigate('home');
@@ -313,11 +308,7 @@
         try {
           const user = await window.FirebaseAuth.register(email, password);
           _updateProfileNav(user);
-
-          if (window.SyncManager) {
-            await window.SyncManager.push();
-            window.SyncManager.startRealtimeSync();
-          }
+          // Cloud sync starts from the auth-state listener in app.js.
 
           if (window.showToast) window.showToast(tr('Account created!', 'החשבון נוצר בהצלחה!'), 'success');
           window.Router.navigate('home');

@@ -293,12 +293,11 @@
 
       // Start/stop realtime sync and pull initial cloud data
       if (user && window.SyncManager) {
-        window.SyncManager.fullSync().catch(err => {
-          console.warn('[App] Initial fullSync warning:', err);
+        window.SyncManager.onSignedIn().catch(err => {
+          console.warn('[App] Initial sync warning:', err);
         });
-        window.SyncManager.startRealtimeSync();
       } else if (!user && window.SyncManager) {
-        window.SyncManager.stopRealtimeSync();
+        window.SyncManager.onSignedOut();
       }
     });
   }

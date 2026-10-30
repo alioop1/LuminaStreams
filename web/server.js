@@ -23,8 +23,11 @@ const MIME_TYPES = {
 
 const server = http.createServer((req, res) => {
     let reqPath = decodeURI(req.url.split('?')[0]);
-    if (reqPath === '/' || reqPath === '/index.html') {
-        reqPath = '/app/index.html';
+    // The app uses relative asset paths, so it must be served from /app/.
+    if (reqPath === '/' || reqPath === '/index.html' || reqPath === '/app') {
+        res.writeHead(302, { Location: '/app/' });
+        res.end();
+        return;
     }
 
     let filePath = path.join(PUBLIC_DIR, reqPath);
@@ -86,6 +89,6 @@ server.listen(PORT, '0.0.0.0', () => {
     console.log(`  📱 iPhone / iPad (Wi-Fi): ${networkAppUrl}`);
     console.log(`======================================================\n`);
 
-    // Open browser on Windows
-    exec(`start ${localUrl}`);
+    // Open browser on Windows (skip with NO_OPEN=1, e.g. for automated previews)
+    if (!process.env.NO_OPEN) exec(`start ${localUrl}`);
 });
