@@ -32,7 +32,10 @@ jobs:
           sed -i '' 's/objectVersion = 77;/objectVersion = 56;/g' LuminaStreams.xcodeproj/project.pbxproj
 
       - name: Build Native iOS Archive (Unsigned)
+        # xcbeautify's GitHub renderer turns compiler errors into run annotations,
+        # which are readable through the API without downloading logs.
         run: |
+          set -o pipefail
           xcodebuild -project ios-native/LuminaStreams.xcodeproj \
             -scheme LuminaStreams \
             -configuration Release \
@@ -42,7 +45,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
+            DEVELOPMENT_TEAM="" \
+            | xcbeautify --renderer github-actions
 
       - name: Package .app into LuminaStreams.ipa
         run: |
