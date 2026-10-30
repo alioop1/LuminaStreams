@@ -35,9 +35,12 @@ Audit date: 2026-10-30.
 - [x] Local `server.js` redirects `/` → `/app/` (assets were 404ing as HTML at `/`).
 
 ### iOS
-- [ ] **Most debrid files won't play:** plain AVPlayer rejects MKV/AVI/WebM, DTS, TrueHD, embedded subs. Add **KSPlayer** (or MPVKit) via SPM in `project.yml`.
-- [ ] `NSAppTransportSecurity` missing from `project.yml` `info.properties` → XcodeGen drops it → http IPTV/streams blocked.
-- [ ] `AVAudioSession` never set to `.playback` → silent with ring switch on, no background audio / PiP.
+- [~] **Most debrid files won't play** → player rebuilt on **MobileVLCKit 3.6.0** (`vlckit-spm`, SPM in `project.yml`): MKV/HEVC/DTS/TrueHD/embedded subs, audio + subtitle track pickers, speed, skip-intro, error overlay with retry, resume banner, progress every 5 s. **Written against the real VLCKit headers but not yet compiled** — needs a CI build.
+- [~] `NSAppTransportSecurity`, URL schemes and the other plist keys moved into `project.yml` `info.properties` (CI build will confirm).
+- [x] `AVAudioSession` set to `.playback` at launch.
+- [x] Progress store now Android's format (`ep_tt…_sNeM`, `{p,d,t,tmdb}` ms), with one-time migration of old iOS data; Continue Watching is one card per show.
+- [x] AllDebrid: Torrentio direct URL first (as Android), POST form requests, `v4.1` status + `/magnet/files` fallback, expired/DMCA probe. **`/v4/magnet/status` is DISCONTINUED** (verified live) — the Debrid Cloud list used it and returned nothing; now `v4.1` + batched `/v4/magnet/files`.
+- [x] Subtitles: no longer load a random language when the requested one is missing.
 - [ ] No Firebase at all → no login, no sync.
 
 ---

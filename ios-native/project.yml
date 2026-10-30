@@ -18,6 +18,13 @@ settings:
     CODE_SIGNING_REQUIRED: NO
     CODE_SIGNING_ALLOWED: NO
 
+packages:
+  # MobileVLCKit 3.6.0 — plays MKV/AVI/WebM, HEVC, AC3/EAC3/DTS/TrueHD and
+  # embedded SRT/ASS/PGS, which AVPlayer cannot (debrid torrents are mostly MKV).
+  VLCKitSPM:
+    url: https://github.com/tylerjonesio/vlckit-spm
+    exactVersion: 3.6.0
+
 targets:
   LuminaStreams:
     type: application
@@ -25,11 +32,30 @@ targets:
     deploymentTarget: "16.0"
     sources:
       - path: LuminaStreams
+    dependencies:
+      - package: VLCKitSPM
+        product: VLCKitSPM
+    # XcodeGen regenerates Info.plist from these properties on every build,
+    # so every key the app needs must be listed here, not only in the plist.
     info:
       path: LuminaStreams/Info.plist
       properties:
+        CFBundleDisplayName: LuminaStreams
+        CFBundleDevelopmentRegion: he
         UILaunchScreen: {}
         UIRequiresFullScreen: true
+        UIStatusBarStyle: UIStatusBarStyleLightContent
+        UIViewControllerBasedStatusBarAppearance: false
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        # Debrid CDNs, IPTV panels and EPG feeds are often plain http.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+        LSApplicationQueriesSchemes:
+          - vlc-x-callback
+          - vlc
+          - infuse
+          - outplayer
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft

@@ -17,6 +17,82 @@ final class AllDebridService {
         SettingsManager.shared.effectiveDebridToken
     }
 
+    private static func adError(_ code: Int, _ message: String) -> NSError {
+        NSError(domain: "AllDebrid", code: code, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    /// application/x-www-form-urlencoded value encoding (magnets and links contain & = : ?).
+    private static func formEncode(_ value: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        return value.addingPercentEncoding(withAllowedCharacters: allowed) ?? value
+    }
+
+    /// POST to the AllDebrid API (POST is the documented default since 15/01/2025).
+    /// Returns the `data` object, or throws with AllDebrid's error message.
+    private func post(_ path: String, form: [(String, String)] = []) async throws -> [String: Any] {
+        var req = URLRequest(url: URL(string: "\(baseUrl)\(path)?agent=LuminaStreams")!)
+        req.httpMethod = "POST"
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        req.httpBody = form
+            .map { "\(Self.formEncode($0.0))=\(Self.formEncode($0.1))" }
+            .joined(separator: "&")
+            .data(using: .utf8)
+
+        let (data, _) = try await session.data(for: req)
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw Self.adError(-1, "AllDebrid: invalid response")
+        }
+        guard (json["status"] as? String) == "success" else {
+            let message = ((json["error"] as? [String: Any])?["message"] as? String) ?? "AllDebrid error"
+            throw Self.adError(-1, message)
+        }
+        return (json["data"] as? [String: Any]) ?? [:]
+    }
+
+    private static func idString(_ value: Any?) -> String? {
+        if let n = value as? NSNumber { return n.stringValue }
+        if let s = value as? String, !s.isEmpty { return s }
+        return nil
+    }
+
+    /// `magnets` is an object for a single id and an array/object map for lists.
+    private static func firstMagnet(in data: [String: Any]) -> [String: Any]? {
+        if let arr = data["magnets"] as? [[String: Any]] { return arr.first }
+        if let dict = data["magnets"] as? [String: Any] {
+            if dict["id"] != nil { return dict }
+            return dict.values.first as? [String: Any]
+        }
+        return nil
+    }
+
+    /// Upload a magnet (or .torrent upload id) and wait until AllDebrid has the files.
+    private func waitForFiles(magnetId: String, attempts: Int) async throws -> [DebridFileItem] {
+        for _ in 0..<attempts {
+            let data = try await post("/v4.1/magnet/status", form: [("id", magnetId)])
+            if let m = Self.firstMagnet(in: data) {
+                let statusCode = (m["statusCode"] as? NSNumber)?.intValue ?? 0
+                if statusCode == 4 {
+                    var files = extractFiles(from: m)
+                    if files.isEmpty {
+                        // Files moved to their own endpoint in v4.1 for some responses.
+                        let filesData = try await post("/v4/magnet/files", form: [("id[]", magnetId)])
+                        if let first = (filesData["magnets"] as? [[String: Any]])?.first {
+                            files = extractFiles(from: first)
+                        }
+                    }
+                    if !files.isEmpty { return files }
+                } else if statusCode > 4 {
+                    let statusText = (m["status"] as? String) ?? "Error"
+                    throw Self.adError(statusCode, "הטורנט נכשל ב-AllDebrid (\(statusText))")
+                }
+            }
+            try await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+        return []
+    }
+
     // ── PIN Device Authentication Flow ──────────────────────────────────────
     func requestPin() async throws -> (pin: String, check: String, userUrl: String) {
         let url = URL(string: "\(baseUrl)/v4/pin/get?agent=LuminaStreams")!
@@ -47,29 +123,39 @@ final class AllDebridService {
     }
 
     // ── Resolve Stream (Magnet InfoHash OR Direct URL) ──────────────────────
+    /// Android order: Torrentio's /resolve/alldebrid/... URL plays directly (Torrentio
+    /// uploads and redirects); only a bare infoHash needs upload → poll → unlock.
     func resolveStream(source: AdvancedStreamSource, season: Int? = nil, episode: Int? = nil) async throws -> String {
+        if let directUrl = source.directUrl, directUrl.hasPrefix("http") {
+            return try await resolveDirectTorrentioUrl(directUrl)
+        }
         if let infoHash = source.infoHash, !infoHash.isEmpty {
             let magnet = "magnet:?xt=urn:btih:\(infoHash)"
             return try await resolveMagnetToStream(magnetUri: magnet, season: season, episode: episode)
         }
-        if let directUrl = source.directUrl, directUrl.hasPrefix("http") {
-            return try await resolveDirectTorrentioUrl(directUrl)
-        }
-        throw NSError(domain: "AllDebrid", code: -2, userInfo: [NSLocalizedDescriptionKey: "מקור לא תקין להפעלה"])
+        throw Self.adError(-2, "מקור לא תקין להפעלה")
     }
 
+    /// Range probe (Android DetailsViewModel): an HTML reply means the link expired;
+    /// a file of 20 MB or less is a DMCA placeholder. On timeout, play anyway.
     private func resolveDirectTorrentioUrl(_ urlStr: String) async throws -> String {
         guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
         var req = URLRequest(url: url)
         req.setValue("bytes=0-1", forHTTPHeaderField: "Range")
-        req.timeoutInterval = 8
+        req.timeoutInterval = 6
 
         do {
             let (_, response) = try await session.data(for: req)
             if let http = response as? HTTPURLResponse {
                 let cType = (http.value(forHTTPHeaderField: "Content-Type") ?? "").lowercased()
                 if cType.contains("text/html") {
-                    throw NSError(domain: "AllDebrid", code: 410, userInfo: [NSLocalizedDescriptionKey: "הקישור פג תוקף ב-AllDebrid. בחר מקור אחר."])
+                    throw Self.adError(410, "הקישור פג תוקף ב-AllDebrid. בחר מקור אחר.")
+                }
+                // "Content-Range: bytes 0-1/123456789" → total size.
+                if let range = http.value(forHTTPHeaderField: "Content-Range"),
+                   let total = Int64(range.split(separator: "/").last ?? ""),
+                   total > 0, total <= 20 * 1024 * 1024 {
+                    throw Self.adError(451, "המקור הוסר (DMCA). בחר מקור אחר.")
                 }
                 if let finalUrl = http.url?.absoluteString, finalUrl.hasPrefix("http") {
                     return finalUrl
@@ -78,85 +164,30 @@ final class AllDebridService {
         } catch let err as NSError where err.domain == "AllDebrid" {
             throw err
         } catch {
-            // Fallback to original direct URL if Range probe times out
+            // Probe timed out or failed — let the player try the original URL.
         }
         return urlStr
     }
 
     // ── Upload Magnet -> Poll Status -> Select Best File -> Unlock Link ─────
     func resolveMagnetToStream(magnetUri: String, season: Int? = nil, episode: Int? = nil) async throws -> String {
-        let apiToken = token
-        guard !apiToken.isEmpty else {
-            throw NSError(domain: "AllDebrid", code: 401, userInfo: [NSLocalizedDescriptionKey: "טוקן AllDebrid חסר בהגדרות"])
+        guard !token.isEmpty else {
+            throw Self.adError(401, "טוקן AllDebrid חסר בהגדרות")
         }
 
-        var comps = URLComponents(string: "\(baseUrl)/v4/magnet/upload")!
-        comps.queryItems = [
-            URLQueryItem(name: "agent", value: "LuminaStreams"),
-            URLQueryItem(name: "magnets[]", value: magnetUri)
-        ]
-        var uploadReq = URLRequest(url: comps.url!)
-        uploadReq.httpMethod = "POST"
-        uploadReq.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-
-        let (uploadData, _) = try await session.data(for: uploadReq)
-        guard let uploadJson = try JSONSerialization.jsonObject(with: uploadData) as? [String: Any],
-              (uploadJson["status"] as? String) == "success",
-              let dataObj = uploadJson["data"] as? [String: Any],
-              let magnetsArr = dataObj["magnets"] as? [[String: Any]],
-              let firstMagnet = magnetsArr.first else {
-            let errMsg = ((try? JSONSerialization.jsonObject(with: uploadData) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String ?? "Upload failed"
-            throw NSError(domain: "AllDebrid", code: -3, userInfo: [NSLocalizedDescriptionKey: "שגיאת AllDebrid: \(errMsg)"])
+        let uploadData = try await post("/v4/magnet/upload", form: [("magnets[]", magnetUri)])
+        guard let firstMagnet = (uploadData["magnets"] as? [[String: Any]])?.first else {
+            throw Self.adError(-3, "שגיאת AllDebrid: Upload failed")
         }
-
         if let errObj = firstMagnet["error"] as? [String: Any], let msg = errObj["message"] as? String {
-            throw NSError(domain: "AllDebrid", code: -4, userInfo: [NSLocalizedDescriptionKey: msg])
+            throw Self.adError(-4, msg)
+        }
+        guard let magnetId = Self.idString(firstMagnet["id"]) else {
+            throw Self.adError(-5, "לא התקבל מזהה מגנט")
         }
 
-        let magnetId: String
-        if let idInt = firstMagnet["id"] as? Int64 {
-            magnetId = "\(idInt)"
-        } else if let idNum = firstMagnet["id"] as? Int {
-            magnetId = "\(idNum)"
-        } else if let idStr = firstMagnet["id"] as? String {
-            magnetId = idStr
-        } else {
-            throw NSError(domain: "AllDebrid", code: -5, userInfo: [NSLocalizedDescriptionKey: "לא התקבל מזהה מגנט"])
-        }
-
-        // Poll status until ready (statusCode == 4)
-        var readyFiles: [DebridFileItem] = []
-        for _ in 0..<25 {
-            let statusUrl = URL(string: "\(baseUrl)/v4/magnet/status?agent=LuminaStreams&id=\(magnetId)")!
-            var statusReq = URLRequest(url: statusUrl)
-            statusReq.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-
-            let (statusData, _) = try await session.data(for: statusReq)
-            if let statusJson = try JSONSerialization.jsonObject(with: statusData) as? [String: Any],
-               (statusJson["status"] as? String) == "success",
-               let sData = statusJson["data"] as? [String: Any] {
-                let magnetObj: [String: Any]?
-                if let mDict = sData["magnets"] as? [String: Any] {
-                    magnetObj = mDict
-                } else if let mArr = sData["magnets"] as? [[String: Any]] {
-                    magnetObj = mArr.first
-                } else {
-                    magnetObj = nil
-                }
-
-                if let m = magnetObj {
-                    let statusCode = (m["statusCode"] as? Int) ?? 0
-                    if statusCode == 4 {
-                        readyFiles = extractFiles(from: m)
-                        if !readyFiles.isEmpty { break }
-                    } else if statusCode > 4 {
-                        let statusText = (m["status"] as? String) ?? "Error"
-                        throw NSError(domain: "AllDebrid", code: statusCode, userInfo: [NSLocalizedDescriptionKey: "הטורנט נכשל ב-AllDebrid (\(statusText))"])
-                    }
-                }
-            }
-            try await Task.sleep(nanoseconds: 1_500_000_000)
-        }
+        // ~25 s, like Android's overall timeout for the infoHash flow.
+        let readyFiles = try await waitForFiles(magnetId: magnetId, attempts: 17)
 
         guard !readyFiles.isEmpty,
               let bestFile = selectBestFile(files: readyFiles, season: season, episode: episode) else {
@@ -193,28 +224,15 @@ final class AllDebridService {
             throw NSError(domain: "AllDebrid", code: -7, userInfo: [NSLocalizedDescriptionKey: "העלאת קובץ הטורנט ל-AllDebrid נכשלה"])
         }
 
-        let magnetId: String
-        if let idInt = firstFile["id"] as? Int64 { magnetId = "\(idInt)" }
-        else if let idNum = firstFile["id"] as? Int { magnetId = "\(idNum)" }
-        else if let idStr = firstFile["id"] as? String { magnetId = idStr }
-        else { throw NSError(domain: "AllDebrid", code: -8, userInfo: [NSLocalizedDescriptionKey: "מזהה טורנט חסר"]) }
-
-        var readyFiles: [DebridFileItem] = []
-        for _ in 0..<30 {
-            let statusUrl = URL(string: "\(baseUrl)/v4/magnet/status?agent=LuminaStreams&id=\(magnetId)")!
-            var statusReq = URLRequest(url: statusUrl)
-            statusReq.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-            let (statusData, _) = try await session.data(for: statusReq)
-            if let statusJson = try JSONSerialization.jsonObject(with: statusData) as? [String: Any],
-               let sData = statusJson["data"] as? [String: Any] {
-                let mObj = (sData["magnets"] as? [String: Any]) ?? (sData["magnets"] as? [[String: Any]])?.first
-                if let m = mObj, ((m["statusCode"] as? Int) ?? 0) == 4 {
-                    readyFiles = extractFiles(from: m)
-                    if !readyFiles.isEmpty { break }
-                }
-            }
-            try await Task.sleep(nanoseconds: 1_500_000_000)
+        if let errObj = firstFile["error"] as? [String: Any], let msg = errObj["message"] as? String {
+            throw Self.adError(-8, msg)
         }
+        guard let magnetId = Self.idString(firstFile["id"]) else {
+            throw Self.adError(-8, "מזהה טורנט חסר")
+        }
+
+        // Android polls torrent-file uploads for up to 150 × 2 s.
+        let readyFiles = try await waitForFiles(magnetId: magnetId, attempts: 200)
 
         guard let target = selectBestFile(files: readyFiles, season: season, episode: episode) else {
             throw NSError(domain: "AllDebrid", code: -9, userInfo: [NSLocalizedDescriptionKey: "הטורנט עדיין בהורדה או שאין בו וידאו זמין"])
@@ -224,22 +242,14 @@ final class AllDebridService {
 
     // ── Unlock AllDebrid Link ───────────────────────────────────────────────
     func unlockLink(_ lockedLink: String) async throws -> String {
-        let apiToken = token
-        var comps = URLComponents(string: "\(baseUrl)/v4/link/unlock")!
-        comps.queryItems = [
-            URLQueryItem(name: "agent", value: "LuminaStreams"),
-            URLQueryItem(name: "link", value: lockedLink)
-        ]
-        var req = URLRequest(url: comps.url!)
-        req.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-
-        let (data, _) = try await session.data(for: req)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (json["status"] as? String) == "success",
-              let dataObj = json["data"] as? [String: Any],
-              let streamLink = dataObj["link"] as? String, !streamLink.isEmpty else {
-            let errMsg = ((try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? [String: Any])?["message"] as? String ?? "Unlock error"
-            throw NSError(domain: "AllDebrid", code: -10, userInfo: [NSLocalizedDescriptionKey: "פתיחת הקישור נכשלה: \(errMsg)"])
+        let data: [String: Any]
+        do {
+            data = try await post("/v4/link/unlock", form: [("link", lockedLink)])
+        } catch {
+            throw Self.adError(-10, "פתיחת הקישור נכשלה: \(error.localizedDescription)")
+        }
+        guard let streamLink = data["link"] as? String, !streamLink.isEmpty else {
+            throw Self.adError(-10, "פתיחת הקישור נכשלה: Unlock error")
         }
         return streamLink
     }
@@ -307,24 +317,38 @@ final class AllDebridService {
 
     // ── Debrid Cloud: Fetch User Magnets & Delete Magnet ────────────────────
     func fetchUserMagnets() async throws -> [DebridMagnetItem] {
-        let apiToken = token
-        let url = URL(string: "\(baseUrl)/v4/magnet/status?agent=LuminaStreams")!
-        var req = URLRequest(url: url)
-        req.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
+        // /v4/magnet/status is discontinued; v4.1 lists magnets without file trees.
+        let data = try await post("/v4.1/magnet/status")
+        let magnetsArr: [[String: Any]]
+        if let arr = data["magnets"] as? [[String: Any]] {
+            magnetsArr = arr
+        } else if let dict = data["magnets"] as? [String: Any] {
+            magnetsArr = dict.values.compactMap { $0 as? [String: Any] }
+        } else {
+            magnetsArr = []
+        }
 
-        let (data, _) = try await session.data(for: req)
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              (json["status"] as? String) == "success",
-              let dataObj = json["data"] as? [String: Any],
-              let magnetsArr = dataObj["magnets"] as? [[String: Any]] else {
-            return []
+        // File trees for ready magnets come from /v4/magnet/files (batched id[]).
+        var filesById: [String: [DebridFileItem]] = [:]
+        let readyIds = magnetsArr
+            .filter { ($0["statusCode"] as? NSNumber)?.intValue == 4 }
+            .compactMap { Self.idString($0["id"]) }
+        var start = 0
+        while start < readyIds.count {
+            let chunk = Array(readyIds[start..<min(start + 50, readyIds.count)])
+            start += 50
+            if let filesData = try? await post("/v4/magnet/files", form: chunk.map { ("id[]", $0) }),
+               let entries = filesData["magnets"] as? [[String: Any]] {
+                for entry in entries {
+                    if let id = Self.idString(entry["id"]) {
+                        filesById[id] = extractFiles(from: entry)
+                    }
+                }
+            }
         }
 
         return magnetsArr.compactMap { m -> DebridMagnetItem? in
-            let id: Int64
-            if let i64 = m["id"] as? Int64 { id = i64 }
-            else if let i = m["id"] as? Int { id = Int64(i) }
-            else { return nil }
+            guard let idStr = Self.idString(m["id"]), let id = Int64(idStr) else { return nil }
 
             let filename = (m["filename"] as? String) ?? "Unknown"
             let size = (m["size"] as? Int64) ?? Int64((m["size"] as? Int) ?? 0)
@@ -333,7 +357,7 @@ final class AllDebridService {
             let downloaded = (m["downloaded"] as? Int64) ?? Int64((m["downloaded"] as? Int) ?? 0)
             let seeders = (m["seeders"] as? Int) ?? 0
             let uploadDate = (m["uploadDate"] as? Int64) ?? Int64((m["uploadDate"] as? Int) ?? 0)
-            let files = extractFiles(from: m)
+            let files = filesById[idStr] ?? extractFiles(from: m)
 
             let clean = filename
                 .replacingOccurrences(of: ".", with: " ")
@@ -357,10 +381,6 @@ final class AllDebridService {
     }
 
     func deleteMagnet(id: Int64) async throws {
-        let apiToken = token
-        let url = URL(string: "\(baseUrl)/v4/magnet/delete?agent=LuminaStreams&id=\(id)")!
-        var req = URLRequest(url: url)
-        req.setValue("Bearer \(apiToken)", forHTTPHeaderField: "Authorization")
-        _ = try await session.data(for: req)
+        _ = try await post("/v4/magnet/delete", form: [("id", "\(id)")])
     }
 }

@@ -29,7 +29,8 @@ final class SubtitleService {
                 let l = (($0["lang"] as? String) ?? "").lowercased()
                 return l.hasPrefix(langCode.lowercased().prefix(2))
             }
-            if let chosen = matching.first ?? subsArr.first,
+            // Only the requested language — never fall back to an arbitrary one.
+            if let chosen = matching.first,
                let srtUrlStr = chosen["url"] as? String,
                let srtUrl = URL(string: srtUrlStr),
                let (srtData, _) = try? await session.data(from: srtUrl) {

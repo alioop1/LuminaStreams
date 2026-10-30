@@ -215,7 +215,9 @@ final class DetailsViewModel: ObservableObject {
             let progKey = (activeSeasonForScrape != nil && activeEpisodeForScrape != nil)
                 ? WatchProgressManager.shared.episodeKey(mediaInfo.imdbId, season: activeSeasonForScrape!, episode: activeEpisodeForScrape!)
                 : WatchProgressManager.shared.movieKey(mediaInfo.imdbId)
-            let resumePos = WatchProgressManager.shared.getProgress(progKey)?.positionSeconds ?? 0
+            // Resume unless already finished (Android: ≥ 90 % counts as watched).
+            let saved = WatchProgressManager.shared.getProgress(progKey)
+            let resumePos = (saved?.isFinished == false) ? (saved?.positionSeconds ?? 0) : 0
 
             activePlayback = PlaybackRequest(
                 streamUrl: streamUrl,
