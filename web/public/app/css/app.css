@@ -5218,7 +5218,7 @@ ul, ol {
 
   /* Search Screen */
   .search-page {
-    padding: 16px 12px !important;
+    padding: calc(var(--header-h, 56px) + 16px) 12px 16px !important; /* clear the fixed header */
   }
   .search-bar-wrap {
     max-width: 100% !important;
