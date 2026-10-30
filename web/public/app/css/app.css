@@ -5832,3 +5832,47 @@ ul, ol {
     transition: none;
   }
 }
+
+/* ── Desktop app: native (mpv/VLC) "now playing" screen ─────────────── */
+.native-player {
+  position: relative;
+  min-height: calc(100vh - 120px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background: linear-gradient(rgba(7, 11, 20, 0.82), rgba(7, 11, 20, 0.95)), var(--bg) center / cover no-repeat;
+}
+.native-player-card {
+  width: min(560px, 100%);
+  background: rgba(13, 21, 37, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 20px;
+  padding: 28px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+}
+.native-player-eyebrow { font-size: 12px; font-weight: 800; letter-spacing: 0.08em; color: #00d4ff; }
+.native-player-title { font-size: 24px; font-weight: 900; margin: 6px 0 4px; }
+.native-player-status { font-size: 14px; color: rgba(255, 255, 255, 0.7); min-height: 20px; }
+.native-player-bar { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, 0.12); margin-top: 18px; overflow: hidden; }
+.native-player-fill { height: 100%; width: 0; background: #00d4ff; transition: width 0.8s linear; }
+.native-player-time { display: flex; justify-content: space-between; font-size: 12px; color: rgba(255, 255, 255, 0.6); margin-top: 6px; direction: ltr; }
+.native-player-note { font-size: 12px; color: rgba(255, 255, 255, 0.55); margin-top: 8px; }
+.native-player-actions { display: flex; gap: 12px; margin-top: 22px; flex-wrap: wrap; }
+
+/* ── Desktop app window chrome ───────────────────────────────────────────
+   The header doubles as the window's title bar: drag it to move the window.
+   Windows draws minimize/maximize/close in the top-right corner (Electron
+   titleBarOverlay), so the header keeps that area free. */
+body.is-electron #ps5-top-bar {
+  -webkit-app-region: drag;
+  /* Reserve exactly the caption buttons' width (varies with display scaling). */
+  padding-right: calc(28px + 100vw - env(titlebar-area-width, 100vw));
+}
+body.is-electron #ps5-top-bar button,
+body.is-electron #ps5-top-bar a,
+body.is-electron #ps5-top-bar input,
+body.is-electron #ps5-top-bar [role="button"],
+body.is-electron #ps5-top-bar .ps5-logo {
+  -webkit-app-region: no-drag;
+}

@@ -195,6 +195,19 @@ can no longer work, and must not try to get around the CAPTCHA.
 - [ ] Android TV: needs the same approach (WebView sign-in, or QR → phone sign-in that hands over the session).
 - [ ] Web: needs the Fuzer proxy (step 6) plus a sign-in flow.
 
+## Windows desktop app (`desktop/`)
+Electron window running the shared web app (served from 127.0.0.1:41541, same Firebase sync), with
+playback handed to a bundled **mpv 0.41.0** (official build, SHA-256 verified): Direct3D 11 output,
+GPU decoding via D3D11VA/DXVA2 with automatic FFmpeg CPU fallback, HDR passthrough. VLC is the fallback
+player, the browser `<video>` the last resort. Build: `cd desktop && npm install && node
+node_modules/electron/install.js && npm run dist` (mpv must be in `desktop/vendor/mpv`, not committed).
+- [x] Native playback with resume, progress sync, Hebrew subtitles (converted to UTF-8), GPU/CPU indicator
+- [x] IPTV channels play in mpv (raw MPEG-TS, plain http)
+- [x] Windows caption buttons over the app header (draggable), F11 fullscreen, single instance, window memory
+- [x] NSIS installer `LuminaStreams Setup 1.0.0.exe` (~139 MB, unsigned → SmartScreen warns)
+- [ ] Fuzer sign-in window (desktop can reach Fuzer without CORS, like iOS)
+- [ ] Code-signing certificate, auto-update
+
 ## 6. Security notes (outside parity, but real)
 - `app/keystore.jks` and `app/google-services.json` are committed.
 - AllDebrid token and Fuzer username/password are hard-coded in iOS `Constants.swift` and web JS (public).

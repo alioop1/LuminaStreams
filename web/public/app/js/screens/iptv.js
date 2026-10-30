@@ -171,6 +171,14 @@
     addToRecent(channel.id);
     renderChannelList(); // Update active state
 
+    // Desktop app: mpv plays raw MPEG-TS and plain-http streams the browser can't.
+    if (window.NativePlayback && await window.NativePlayback.shouldUse()) {
+      if (await window.NativePlayback.playLive(channel.url, channel.name || 'IPTV')) {
+        if (window.showToast) window.showToast(tr(`Playing ${channel.name || ''}`, `מנגן את ${channel.name || ''}`), 'success');
+        return;
+      }
+    }
+
     const videoEl = document.getElementById('iptv-video');
     const placeholder = document.getElementById('iptv-placeholder');
     const infoBar = document.getElementById('iptv-channel-info');

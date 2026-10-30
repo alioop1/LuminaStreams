@@ -1,0 +1,41 @@
+{
+  "name": "luminastreams-desktop",
+  "version": "1.0.0",
+  "description": "LuminaStreams for Windows: the shared web app in a desktop window, with mpv/VLC playback.",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.17.0"
+  },
+  "build": {
+    "appId": "com.luminastreams.desktop",
+    "productName": "LuminaStreams",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*"
+    ],
+    "extraResources": [
+      { "from": "../web/public/app", "to": "web", "filter": ["**/*", "!.vercel/**"] },
+      { "from": "vendor/mpv", "to": "mpv", "filter": ["**/*"] }
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "LuminaStreams"
+    }
+  }
+}

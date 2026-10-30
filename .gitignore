@@ -21,3 +21,6 @@ dist/
 *.aab
 *.ipa
 /app/release/
+
+# Desktop: downloaded player binaries are bundled at build time, never committed
+desktop/vendor/

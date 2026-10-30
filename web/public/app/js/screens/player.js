@@ -1308,10 +1308,20 @@
   }
 
   /* ── Render ──────────────────────────────────────────────────────── */
+  let usingNative = false;
+
   async function render(container, p) {
     destroyed = false;
     params = { ...(p || {}) };
     if (params.type === 'tv') params.type = 'series';
+
+    // Desktop app: hand the stream to mpv/VLC (plays every format) instead of <video>.
+    if (window.NativePlayback && await window.NativePlayback.shouldUse(params)) {
+      usingNative = true;
+      window.NativePlayback.start(container, params);
+      return;
+    }
+    usingNative = false;
     subtitlesList = [];
     activeSubIndex = -1;
     activeSelectorType = null;
@@ -1391,6 +1401,12 @@
   /* ── Destroy ─────────────────────────────────────────────────────── */
   function destroy() {
     destroyed = true;
+    if (usingNative) {
+      usingNative = false;
+      window.NativePlayback.cleanup();
+      params = {};
+      return;
+    }
 
     saveProgress();
 
