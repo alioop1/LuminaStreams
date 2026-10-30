@@ -95,10 +95,8 @@ struct FuzerView: View {
                     Image(systemName: "person.crop.circle.badge.exclamationmark")
                         .font(.system(size: 40))
                         .foregroundColor(LuminaTheme.cyan)
-                    Text(settings.tr("Fuzer דורש התחברות (כולל אימות reCAPTCHA).
-התחבר פעם אחת והאפליקציה תזכור אותך.",
-                                     "Fuzer requires signing in (with reCAPTCHA).
-Sign in once and the app remembers you."))
+                    Text(settings.tr("Fuzer דורש התחברות (כולל אימות reCAPTCHA).\nהתחבר פעם אחת והאפליקציה תזכור אותך.",
+                                     "Fuzer requires signing in (with reCAPTCHA).\nSign in once and the app remembers you."))
                         .font(.system(size: 14))
                         .foregroundColor(.white.opacity(0.85))
                         .multilineTextAlignment(.center)
