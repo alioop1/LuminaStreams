@@ -60,14 +60,50 @@
     });
   }
 
-  async function preferredSubtitleUrls(p) {
-    const pref = window.Storage ? window.Storage.getSubtitleLang() : 'heb';
-    if (pref === 'none' || !p.imdbId || !window.Subtitles) return [];
+  /** All web subtitles for the title, plus the preferred one to load at start. */
+  async function webSubtitles(p) {
+    if (!p.imdbId || !window.Subtitles) return { list: [], preferred: null };
     try {
-      const subs = await window.Subtitles.fetchAll(p.type === 'series' ? 'series' : 'movie', p.imdbId, p.season, p.episode);
-      return subs.filter(s => s.lang3 === pref && s.url).slice(0, 2).map(s => s.url);
+      const subs = (await window.Subtitles.fetchAll(p.type === 'series' ? 'series' : 'movie', p.imdbId, p.season, p.episode))
+        .filter(s => s.url);
+      const pref = window.Storage ? window.Storage.getSubtitleLang() : 'heb';
+      const preferred = pref === 'none' ? null : (subs.find(s => s.lang3 === pref) || null);
+      return {
+        list: subs.slice(0, 40).map(s => ({ url: s.url, lang: s.lang3 || s.lang || '', source: s.source || '' })),
+        preferred: preferred && preferred.url,
+      };
     } catch {
-      return [];
+      return { list: [], preferred: null };
+    }
+  }
+
+  /** Next episode of a series (same season, else first of the next season). */
+  async function nextEpisodeOf(p) {
+    if (p.type !== 'series' || !p.id || !p.season || !p.episode || !window.TMDB) return null;
+    try {
+      const season = await window.TMDB.getTvSeason(p.id, p.season);
+      if ((season.episodes || []).some(e => e.episode_number === p.episode + 1)) {
+        return { season: p.season, episode: p.episode + 1 };
+      }
+      const show = await window.TMDB.getTvDetails(p.id);
+      if (show.number_of_seasons > p.season) return { season: p.season + 1, episode: 1 };
+    } catch {}
+    return null;
+  }
+
+  // Up-next/end of episode: details reopens sources for this episode (Android
+  // stores auto_play_season/episode the same way).
+  const PENDING_NEXT_KEY = 'lumina_autoplay_next';
+  function takePendingNext(tmdbId) {
+    try {
+      const raw = sessionStorage.getItem(PENDING_NEXT_KEY);
+      if (!raw) return null;
+      const next = JSON.parse(raw);
+      if (String(next.id) !== String(tmdbId)) return null;
+      sessionStorage.removeItem(PENDING_NEXT_KEY);
+      return next;
+    } catch {
+      return null;
     }
   }
 
@@ -112,7 +148,7 @@
       window.Router.replace('player', { ...p, forceBuiltin: true });
     });
 
-    const subtitleUrls = await preferredSubtitleUrls(p);
+    const [subs, nextEpisode] = await Promise.all([webSubtitles(p), nextEpisodeOf(p)]);
     if (!current || current.params !== p) return; // left the screen meanwhile
 
     const onProgress = data => {
@@ -147,21 +183,50 @@
     const onError = message => {
       setStatus(container, `${tr('Player error', 'שגיאת נגן')}: ${message}`);
     };
+    const onRestart = () => {
+      // "From start" in the resume dialog: forget the saved position (synced as a deletion).
+      if (key && window.WatchProgress) window.WatchProgress.remove(key);
+    };
+    const onNext = next => {
+      if (!next) return;
+      try { sessionStorage.setItem(PENDING_NEXT_KEY, JSON.stringify({ id: p.id, ...next })); } catch {}
+    };
     unsubscribers = [
       api().onProgress(onProgress),
       api().onEnded(onEnded),
       api().onError(onError),
+      api().onRestart ? api().onRestart(onRestart) : () => {},
+      api().onNext ? api().onNext(onNext) : () => {},
     ];
 
     try {
+      const lang = window.I18n && window.I18n.getLanguage ? window.I18n.getLanguage() : 'he';
       const result = await api().play({
         url: p.url,
         title: p.title || '',
         startSeconds,
-        subtitleUrls,
+        subtitleUrls: subs.preferred ? [subs.preferred] : [],
         live: !!p.live,
+        subStyle: {
+          yellow: !!(window.Storage && window.Storage.get('settings_yellow_subs', false)),
+          size: (window.Storage && window.Storage.get('settings_sub_font_size', 'medium')) || 'medium',
+        },
+        // Shown by the Android-style player controls (desktop/src/overlay).
+        overlay: {
+          lang,
+          showTitle: p.showTitle || p.title || '',
+          backdrop: p.backdrop || '',
+          logo: p.logo || '',
+          season: p.season || null,
+          episode: p.episode || null,
+          nextEpisode,
+          resumeSeconds: startSeconds,
+          dolbyVision: p.hdr === 'DV',
+          atmos: /atmos/i.test(p.audio || ''),
+        },
       });
       session = result.session;
+      if (api().setWebSubs) api().setWebSubs({ list: subs.list, selected: subs.preferred });
       setStatus(container, `${tr('Playing in', 'מתנגן ב-')}${result.player === 'mpv' ? 'mpv' : 'VLC'}`);
     } catch (err) {
       setStatus(container, `${tr('Could not start the player', 'לא ניתן להפעיל את הנגן')}: ${err.message}`);
@@ -192,5 +257,5 @@
     }
   }
 
-  window.NativePlayback = Object.freeze({ shouldUse, start, cleanup, playLive });
+  window.NativePlayback = Object.freeze({ shouldUse, start, cleanup, playLive, takePendingNext });
 })();

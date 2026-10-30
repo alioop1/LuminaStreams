@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src https: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>LuminaStreams Player</title>
+  <link rel="stylesheet" href="player.css">
+</head>
+<body>
+  <!-- Click area over the video (shows/hides controls; double-click = fullscreen) -->
+  <div id="surface"></div>
+
+  <div id="badges" class="badges"></div>
+  <div id="aspect-badge" class="aspect-badge" hidden></div>
+
+  <div id="center-play" class="center-play" hidden><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg></div>
+
+  <div id="seek-overlay" class="seek-overlay" hidden>
+    <div class="seek-diff" id="seek-diff"></div>
+    <div class="seek-time" id="seek-time"></div>
+  </div>
+
+  <div id="controls" class="controls">
+    <div class="controls-gradient"></div>
+    <div id="popup" class="popup" hidden></div>
+    <div class="controls-bottom">
+      <div class="progress-row">
+        <span class="time" id="elapsed">0:00</span>
+        <div class="bar-area" id="bar-area">
+          <div class="bar-track"></div>
+          <div class="bar-fill" id="bar-fill"></div>
+          <div class="bar-thumb" id="bar-thumb"></div>
+        </div>
+        <span class="time dim" id="remaining">0:00</span>
+      </div>
+      <div class="buttons-row">
+        <div class="button-group">
+          <button class="icon-btn" id="btn-play" data-tip="play"></button>
+          <button class="icon-btn" id="btn-skip" data-tip="skip"></button>
+          <button class="icon-btn" id="btn-close" data-tip="close"></button>
+        </div>
+        <div class="button-group">
+          <button class="icon-btn" data-menu="AUDIO"></button>
+          <button class="icon-btn" data-menu="EMBEDDED_SUBS"></button>
+          <button class="icon-btn" data-menu="WEB_SUBS"></button>
+          <button class="icon-btn" data-menu="ASPECT_RATIO"></button>
+          <button class="icon-btn" data-menu="SPEED"></button>
+          <button class="icon-btn" data-menu="SYNC"></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="upnext" class="upnext" hidden></div>
+  <div id="volume-osd" class="volume-osd" hidden></div>
+  <div id="toast" class="toast" hidden></div>
+  <div id="resume" class="modal-layer" hidden></div>
+  <div id="error" class="modal-layer error-layer" hidden></div>
+
+  <div id="loading" class="loading">
+    <div class="loading-backdrop" id="loading-backdrop"></div>
+    <div class="loading-fade"></div>
+    <div class="loading-center">
+      <div id="loading-title"></div>
+      <div class="spinner"></div>
+      <div class="loading-status" id="loading-status"></div>
+    </div>
+  </div>
+
+  <script src="player.js"></script>
+</body>
+</html>

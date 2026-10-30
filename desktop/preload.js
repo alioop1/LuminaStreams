@@ -31,6 +31,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onProgress: callback => subscribe('player:progress', callback),
     onEnded: callback => subscribe('player:ended', callback),
     onError: callback => subscribe('player:error', callback),
+    /** Web subtitles for the player's Web Subtitles menu: {list: [{url, lang, source}], selected} */
+    setWebSubs: payload => ipcRenderer.send('player:webSubs', payload),
+    /** "From start" chosen in the resume dialog. */
+    onRestart: callback => subscribe('player:restart', callback),
+    /** Up-next card / end of episode: {season, episode} */
+    onNext: callback => subscribe('player:next', callback),
   },
 
   fuzer: {

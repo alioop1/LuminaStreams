@@ -4,8 +4,9 @@
  * web app, video goes to a real player that handles everything browsers cannot —
  * MKV, HEVC, AC3/EAC3/DTS/TrueHD, embedded SRT/ASS/PGS, raw MPEG-TS IPTV.
  *
- * Preference: mpv (bundled, then installed) → VLC → none (the web player is used).
- * Both report position back so watch progress syncs like on every other platform.
+ * mpv runs embedded (--wid) in the player window, under the Android-style
+ * controls overlay (see playerWindow.js / overlay/). VLC is a fallback with its
+ * own window. Both report position back so watch progress syncs everywhere.
  */
 const { spawn } = require('child_process');
 const { EventEmitter } = require('events');
@@ -49,49 +50,56 @@ function findPlayers({ resourcesPath, devVendorDir }) {
 }
 
 /**
- * Download subtitle files and store them as UTF-8. Hebrew sources often serve
- * windows-1255 labelled as UTF-8, which both players would otherwise garble.
+ * Download a subtitle file and store it as UTF-8. Hebrew sources often serve
+ * windows-1255 labelled as UTF-8, which mpv/VLC would otherwise garble.
+ * @returns {Promise<string|null>} local file path
  */
-async function prepareSubtitles(urls) {
+async function prepareSubtitle(url) {
   const dir = path.join(os.tmpdir(), 'luminastreams-subs');
   fs.mkdirSync(dir, { recursive: true });
-  const files = [];
-  for (const url of urls.slice(0, 3)) {
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+    if (!res.ok) return null;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    let text;
     try {
-      const res = await fetch(url, { headers: { 'User-Agent': USER_AGENT } });
-      if (!res.ok) continue;
-      const bytes = new Uint8Array(await res.arrayBuffer());
-      let text;
-      try {
-        text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-      } catch {
-        text = new TextDecoder('windows-1255').decode(bytes);
-      }
-      const ext = /\.vtt(\?|$)/i.test(url) || text.trimStart().startsWith('WEBVTT') ? '.vtt' : '.srt';
-      const file = path.join(dir, crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + ext);
-      fs.writeFileSync(file, text, 'utf8');
-      files.push(file);
+      text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
     } catch {
-      // A missing subtitle must never block playback.
+      text = new TextDecoder('windows-1255').decode(bytes);
     }
+    const ext = /\.vtt(\?|$)/i.test(url) || text.trimStart().startsWith('WEBVTT') ? '.vtt' : '.srt';
+    const file = path.join(dir, crypto.createHash('sha1').update(url).digest('hex').slice(0, 16) + ext);
+    fs.writeFileSync(file, text, 'utf8');
+    return file;
+  } catch {
+    return null; // a missing subtitle must never block playback
   }
-  return files;
 }
+
+// Android subtitle sizes (small/medium/large/xlarge) → mpv sub-font-size
+const SUB_SIZES = { small: 42, medium: 52, large: 62, xlarge: 74 };
 
 class NativePlayer extends EventEmitter {
   constructor(locations) {
     super();
     this.locations = locations;
     this.proc = null;
-    this.position = 0;
-    this.duration = 0;
-    this.paused = false;
-    this.decoder = null; // e.g. 'd3d11va' (GPU) or 'no' (CPU)
-    this.codec = null;
+    this.session = 0; // tags events so a closing player never ends a newer one
     this._poll = null;
     this._pipe = null;
+    this._requests = new Map();
+    this._requestId = 0;
     this._lastEmit = 0;
-    this.session = 0; // tags events so a closing player never ends a newer one
+    this._opts = null;
+    this._resetState();
+  }
+
+  _resetState() {
+    this.state = {
+      position: 0, duration: 0, paused: false, buffering: true, started: false,
+      decoder: null, codec: null, width: 0, height: 0, fps: 0,
+      tracks: [], subDelay: 0, speed: 1, volume: 100, muted: false,
+    };
   }
 
   info() {
@@ -100,19 +108,18 @@ class NativePlayer extends EventEmitter {
   }
 
   /**
-   * @param {{url: string, title?: string, startSeconds?: number,
-   *          subtitleUrls?: string[], live?: boolean}} opts
+   * @param {{url: string, title?: string, startSeconds?: number, startPaused?: boolean,
+   *          subtitleUrls?: string[], live?: boolean, wid?: string,
+   *          subStyle?: {yellow?: boolean, size?: string}}} opts
    */
   async play(opts) {
     this.stop();
     const session = ++this.session;
     const { mpv, vlc } = findPlayers(this.locations);
     if (!mpv && !vlc) throw new Error('No native player found');
-    this.position = 0;
-    this.duration = 0;
-    this.decoder = null;
-    this.codec = null;
-    const subs = await prepareSubtitles(opts.subtitleUrls || []);
+    this._resetState();
+    this._opts = opts;
+    const subs = (await Promise.all((opts.subtitleUrls || []).slice(0, 2).map(prepareSubtitle))).filter(Boolean);
     if (session !== this.session) return { player: null, session }; // superseded meanwhile
     if (mpv) this._playMpv(mpv, opts, subs, session);
     else this._playVlc(vlc, opts, subs, session);
@@ -122,6 +129,8 @@ class NativePlayer extends EventEmitter {
   stop() {
     if (this._poll) { clearInterval(this._poll); this._poll = null; }
     if (this._pipe) { this._pipe.destroy(); this._pipe = null; }
+    for (const { reject } of this._requests.values()) reject(new Error('Player stopped'));
+    this._requests.clear();
     if (this.proc) {
       const proc = this.proc;
       this.proc = null;
@@ -129,13 +138,50 @@ class NativePlayer extends EventEmitter {
     }
   }
 
-  _emitProgress(force) {
+  // ── Commands (mpv JSON IPC) ──────────────────────────────────────────
+  command(...args) {
+    if (!this._pipe) return Promise.reject(new Error('Player not ready'));
+    const request_id = ++this._requestId;
+    return new Promise((resolve, reject) => {
+      this._requests.set(request_id, { resolve, reject });
+      this._pipe.write(JSON.stringify({ command: args, request_id }) + '\n');
+      setTimeout(() => {
+        if (this._requests.delete(request_id)) reject(new Error('mpv did not answer'));
+      }, 5000);
+    });
+  }
+
+  setProperty(name, value) { return this.command('set_property', name, value); }
+  getProperty(name) { return this.command('get_property', name); }
+
+  /** Download a web subtitle (UTF-8) and add it as the active subtitle track. */
+  async addSubtitle(url, title, lang) {
+    const file = await prepareSubtitle(url);
+    if (!file) throw new Error('Subtitle download failed');
+    await this.command('sub-add', file, 'select', title || 'Web', lang || '');
+    return file;
+  }
+
+  /** Reload the stream from the current position (error recovery). */
+  async retry() {
+    if (!this._opts) return;
+    const pos = Math.floor(this.state.position || 0);
+    await this.command('loadfile', this._opts.url, 'replace', -1, pos > 1 ? `start=${pos}` : '');
+    this.state.buffering = true;
+    this._emitState(true);
+  }
+
+  // ── Internal ─────────────────────────────────────────────────────────
+  _emitState(force) {
     const now = Date.now();
-    if (!force && now - this._lastEmit < 1000) return;
+    if (!force && now - this._lastEmit < 250) return;
     this._lastEmit = now;
+    const s = this.state;
+    this.emit('state', { session: this.session, ...s });
+    // Compact progress for the app window (watch-progress sync).
     this.emit('progress', {
-      session: this.session, position: this.position, duration: this.duration, paused: this.paused,
-      decoder: this.decoder, codec: this.codec,
+      session: this.session, position: s.position, duration: s.duration,
+      paused: s.paused, decoder: s.decoder, codec: s.codec,
     });
   }
 
@@ -144,20 +190,15 @@ class NativePlayer extends EventEmitter {
     if (this._poll) { clearInterval(this._poll); this._poll = null; }
     if (this._pipe) { this._pipe.destroy(); this._pipe = null; }
     if (this.proc === proc) this.proc = null;
-    this.emit('ended', { session, position: this.position, duration: this.duration });
+    this.emit('ended', { session, position: this.state.position, duration: this.state.duration });
   }
 
-  // ── mpv: JSON IPC over a named pipe ──────────────────────────────────
   _playMpv(exe, opts, subs, session) {
     const pipe = `\\\\.\\pipe\\luminastreams-mpv-${process.pid}-${Date.now()}`;
+    const style = opts.subStyle || {};
     const args = [
       opts.url,
       `--force-media-title=${opts.title || 'LuminaStreams'}`,
-      '--fullscreen',
-      '--keep-open=no',
-      '--idle=no',
-      '--osc=yes',
-      // Predictable behaviour: ignore any separate mpv install's settings.
       '--no-config',
       // Windows-native rendering (Direct3D 11) and decoding: GPU first via
       // DirectX D3D11VA/DXVA2, automatic fallback to FFmpeg on the CPU for any
@@ -174,7 +215,22 @@ class NativePlayer extends EventEmitter {
       `--input-ipc-server=${pipe}`,
       // Hebrew first, like the Android app's default; embedded tracks included.
       '--slang=he,heb,iw,en,eng',
+      // Android subtitle look: yellow or white, bold, outlined with a soft shadow.
+      `--sub-color=${style.yellow ? '#FFE600' : '#FFFFFF'}`,
+      `--sub-font-size=${SUB_SIZES[style.size] || SUB_SIZES.medium}`,
+      '--sub-bold=yes',
+      '--sub-border-size=2.6',
+      '--sub-shadow-offset=1.5',
+      '--sub-shadow-color=#000000A0',
     ];
+    if (opts.wid) {
+      // Embedded under the HTML controls overlay: mpv draws video only.
+      args.push(`--wid=${opts.wid}`, '--osc=no', '--osd-level=0', '--idle=yes',
+        '--input-default-bindings=no', '--input-vo-keyboard=no', '--cursor-autohide=no');
+    } else {
+      args.push('--fullscreen', '--osc=yes', '--idle=no', '--keep-open=no');
+    }
+    if (opts.startPaused) args.push('--pause=yes');
     if (opts.startSeconds > 1 && !opts.live) args.push(`--start=${Math.floor(opts.startSeconds)}`);
     for (const file of subs) args.push(`--sub-file=${file}`);
     if (subs.length) args.push('--sid=auto');
@@ -184,18 +240,17 @@ class NativePlayer extends EventEmitter {
     proc.on('exit', () => this._onExit(proc, session));
     proc.on('error', err => { this.emit('error', err.message); this._onExit(proc, session); });
 
+    const OBSERVED = ['time-pos', 'duration', 'pause', 'paused-for-cache', 'hwdec-current', 'video-codec',
+      'video-params/w', 'video-params/h', 'container-fps', 'track-list', 'sub-delay', 'speed', 'volume', 'mute'];
+
     let attempts = 0;
     const connect = () => {
       if (this.proc !== proc) return;
       const sock = net.connect(pipe);
       sock.on('connect', () => {
         this._pipe = sock;
-        const send = cmd => sock.write(JSON.stringify({ command: cmd }) + '\n');
-        send(['observe_property', 1, 'time-pos']);
-        send(['observe_property', 2, 'duration']);
-        send(['observe_property', 3, 'pause']);
-        send(['observe_property', 4, 'hwdec-current']);
-        send(['observe_property', 5, 'video-codec']);
+        OBSERVED.forEach((name, i) => sock.write(JSON.stringify({ command: ['observe_property', i + 1, name] }) + '\n'));
+        this.emit('ready', { session });
       });
       let buffer = '';
       sock.on('data', chunk => {
@@ -206,13 +261,7 @@ class NativePlayer extends EventEmitter {
           buffer = buffer.slice(nl + 1);
           let msg;
           try { msg = JSON.parse(line); } catch { continue; }
-          if (msg.event !== 'property-change') continue;
-          if (msg.name === 'time-pos' && typeof msg.data === 'number') this.position = msg.data;
-          if (msg.name === 'duration' && typeof msg.data === 'number') this.duration = msg.data;
-          if (msg.name === 'pause') { this.paused = !!msg.data; this._emitProgress(true); continue; }
-          if (msg.name === 'hwdec-current') { this.decoder = msg.data || 'no'; this._emitProgress(true); continue; }
-          if (msg.name === 'video-codec') { this.codec = msg.data || null; continue; }
-          this._emitProgress(false);
+          this._handleMpvMessage(msg, session);
         }
       });
       sock.on('error', () => {
@@ -223,7 +272,58 @@ class NativePlayer extends EventEmitter {
     setTimeout(connect, 300);
   }
 
-  // ── VLC: HTTP status interface ───────────────────────────────────────
+  _handleMpvMessage(msg, session) {
+    if (msg.request_id && this._requests.has(msg.request_id)) {
+      const { resolve, reject } = this._requests.get(msg.request_id);
+      this._requests.delete(msg.request_id);
+      if (msg.error === 'success') resolve(msg.data);
+      else reject(new Error(msg.error));
+      return;
+    }
+    const s = this.state;
+    if (msg.event === 'property-change') {
+      const v = msg.data;
+      switch (msg.name) {
+        case 'time-pos':
+          if (typeof v === 'number') {
+            s.position = v;
+            if (v > 0) { s.started = true; s.buffering = false; }
+          }
+          break;
+        case 'duration': if (typeof v === 'number') s.duration = v; break;
+        case 'pause': s.paused = !!v; break;
+        case 'paused-for-cache': s.buffering = !!v; break;
+        case 'hwdec-current': s.decoder = v || 'no'; break;
+        case 'video-codec': s.codec = v || null; break;
+        case 'video-params/w': s.width = v || 0; break;
+        case 'video-params/h': s.height = v || 0; break;
+        case 'container-fps': s.fps = v || 0; break;
+        case 'track-list':
+          s.tracks = (v || []).filter(t => t.type === 'audio' || t.type === 'sub').map(t => ({
+            id: t.id, type: t.type, lang: t.lang || '', title: t.title || '', codec: t.codec || '',
+            channels: t['demux-channel-count'] || 0, selected: !!t.selected, external: !!t.external,
+            externalFile: t['external-filename'] || '',
+          }));
+          break;
+        case 'sub-delay': s.subDelay = v || 0; break;
+        case 'speed': s.speed = v || 1; break;
+        case 'volume': s.volume = v || 0; break;
+        case 'mute': s.muted = !!v; break;
+        default: break;
+      }
+      this._emitState(msg.name !== 'time-pos');
+      return;
+    }
+    if (msg.event === 'end-file') {
+      if (msg.reason === 'error') {
+        this.emit('playback-error', { session, message: msg.file_error || 'Playback error' });
+      } else if (msg.reason === 'eof') {
+        this.emit('eof', { session });
+      }
+    }
+  }
+
+  // ── VLC: own window, HTTP status interface ───────────────────────────
   _playVlc(exe, opts, subs, session) {
     const password = crypto.randomBytes(12).toString('hex');
     const port = 41542;
@@ -253,11 +353,11 @@ class NativePlayer extends EventEmitter {
       try {
         const res = await fetch(`http://127.0.0.1:${port}/requests/status.json`, { headers: { Authorization: auth } });
         if (!res.ok) return;
-        const s = await res.json();
-        if (typeof s.time === 'number') this.position = s.time;
-        if (typeof s.length === 'number' && s.length > 0) this.duration = s.length;
-        this.paused = s.state === 'paused';
-        this._emitProgress(true);
+        const st = await res.json();
+        if (typeof st.time === 'number') this.state.position = st.time;
+        if (typeof st.length === 'number' && st.length > 0) this.state.duration = st.length;
+        this.state.paused = st.state === 'paused';
+        this._emitState(true);
       } catch {
         // VLC still starting.
       }
@@ -265,4 +365,4 @@ class NativePlayer extends EventEmitter {
   }
 }
 
-module.exports = { NativePlayer, findPlayers };
+module.exports = { NativePlayer, findPlayers, prepareSubtitle };

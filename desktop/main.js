@@ -8,7 +8,8 @@ const { app, BrowserWindow, ipcMain, shell, screen } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { startServer } = require('./src/server');
-const { NativePlayer } = require('./src/player');
+const { NativePlayer, findPlayers } = require('./src/player');
+const { PlayerWindow } = require('./src/playerWindow');
 const fuzer = require('./src/fuzer');
 
 // Packaged: the web app and mpv ship in resources/. Dev: read them from the repo.
@@ -22,6 +23,9 @@ const player = new NativePlayer({
 });
 
 let mainWindow = null;
+const playerWindow = new PlayerWindow();
+let overlayInit = null; // title/artwork/subtitles for the player controls
+let overlayWebSubs = null; // last web-subtitle list, resent if the controls reload
 
 // ── Window size/position memory ──────────────────────────────────────────
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -129,9 +133,78 @@ function registerIpc() {
     if (!opts || typeof opts.url !== 'string' || !/^(https?|rtmp|rtsp):/i.test(opts.url)) {
       throw new Error('Invalid stream URL');
     }
+    // With mpv, video plays inside the player window under the Android controls.
+    const { mpv } = findPlayers({ resourcesPath: app.isPackaged ? process.resourcesPath : null, devVendorDir: path.join(__dirname, 'vendor') });
+    if (mpv) {
+      overlayInit = { ...(opts.overlay || {}), title: opts.title || '' };
+      overlayWebSubs = null;
+      const resume = overlayInit.resumeSeconds > 30 && !opts.live;
+      const wid = await playerWindow.open(mainWindow);
+      return player.play({ ...opts, wid, startPaused: resume, startSeconds: resume ? overlayInit.resumeSeconds : opts.startSeconds });
+    }
     return player.play(opts);
   });
-  ipcMain.on('player:stop', () => player.stop());
+  ipcMain.on('player:stop', () => { player.stop(); playerWindow.close(); });
+  ipcMain.on('player:webSubs', (_e, payload) => {
+    overlayWebSubs = payload;
+    playerWindow.send('overlay:event', { type: 'subtitles', ...payload });
+  });
+
+  // ── Player controls overlay → mpv ──────────────────────────────────────
+  ipcMain.on('overlay:ready', () => {
+    if (overlayInit) playerWindow.send('overlay:init', overlayInit);
+    if (overlayWebSubs) playerWindow.send('overlay:event', { type: 'subtitles', ...overlayWebSubs });
+  });
+  const ASPECT = {
+    NORMAL: { 'video-aspect-override': '-1', panscan: 0, keepaspect: true },
+    ZOOM: { 'video-aspect-override': '-1', panscan: 1, keepaspect: true },
+    STRETCH: { 'video-aspect-override': '-1', panscan: 0, keepaspect: false },
+    '16:9': { 'video-aspect-override': '16:9', panscan: 0, keepaspect: true },
+    '4:3': { 'video-aspect-override': '4:3', panscan: 0, keepaspect: true },
+    '21:9': { 'video-aspect-override': '21:9', panscan: 0, keepaspect: true },
+  };
+  const SETTABLE = new Set(['aid', 'sid', 'speed', 'sub-delay', 'volume', 'mute']);
+  const quitPlayer = () => player.command('quit').catch(() => player.stop());
+  ipcMain.handle('overlay:cmd', async (_e, name, args = []) => {
+    switch (name) {
+      case 'togglePause': return player.command('cycle', 'pause');
+      case 'seek': return player.command('seek', Number(args[0]) || 0, 'absolute');
+      case 'setProperty':
+        if (!SETTABLE.has(args[0])) throw new Error('Not allowed');
+        return player.setProperty(args[0], args[1]);
+      case 'webSub': return player.addSubtitle(String(args[0]), args[1], args[2]);
+      case 'aspect': {
+        const props = ASPECT[args[0]] || ASPECT.NORMAL;
+        for (const [k, v] of Object.entries(props)) await player.setProperty(k, v);
+        return true;
+      }
+      case 'syncToHeard': {
+        // The line on screen is being spoken now: shift subtitles by the gap.
+        const [start, pos, delay] = await Promise.all([
+          player.getProperty('sub-start').catch(() => null),
+          player.getProperty('time-pos'),
+          player.getProperty('sub-delay'),
+        ]);
+        if (typeof start !== 'number') return false;
+        await player.setProperty('sub-delay', (delay || 0) + (pos - start));
+        return true;
+      }
+      case 'retry': return player.retry();
+      case 'resume':
+        if (args[0] === 'restart') {
+          await player.command('seek', 0, 'absolute');
+          mainWindow?.webContents.send('player:restart', {});
+        }
+        return player.setProperty('pause', false);
+      case 'playNext':
+        mainWindow?.webContents.send('player:next', overlayInit && overlayInit.nextEpisode);
+        return quitPlayer();
+      case 'fullscreen': return playerWindow.toggleFullscreen();
+      case 'close': return quitPlayer();
+      default: throw new Error(`Unknown player command ${name}`);
+    }
+  });
+  playerWindow.onClosed = () => player.stop(); // window closed directly (Alt+F4)
 
   // Fuzer (sign-in window + session-backed requests; see src/fuzer.js)
   ipcMain.handle('fuzer:status', () => fuzer.status());
@@ -142,7 +215,15 @@ function registerIpc() {
 
   const forward = channel => payload => mainWindow?.webContents.send(channel, payload);
   player.on('progress', forward('player:progress'));
+  player.on('state', state => playerWindow.send('overlay:state', state));
+  player.on('playback-error', ({ message }) => playerWindow.send('overlay:event', { type: 'error', message }));
+  player.on('eof', () => {
+    // Finished: the next episode starts like Android's up-next countdown would.
+    if (overlayInit && overlayInit.nextEpisode) mainWindow?.webContents.send('player:next', overlayInit.nextEpisode);
+    quitPlayer();
+  });
   player.on('ended', payload => {
+    playerWindow.close();
     forward('player:ended')(payload);
     // Bring the app back to the front once the player window closes.
     if (mainWindow) { mainWindow.show(); mainWindow.focus(); }

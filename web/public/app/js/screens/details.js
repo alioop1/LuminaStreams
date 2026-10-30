@@ -41,6 +41,13 @@
     return isEn ? `${m}m` : `${m}ד`;
   }
 
+  /** Title logo (Hebrew, then English, then any) for the player's loading screen. */
+  function _logoUrl(data) {
+    const logos = (data && data.images && data.images.logos) || [];
+    const logo = logos.find(l => l.iso_639_1 === 'he') || logos.find(l => l.iso_639_1 === 'en') || logos[0];
+    return logo && logo.file_path ? `https://image.tmdb.org/t/p/w500${logo.file_path}` : '';
+  }
+
   function _imdbIdOf(data) {
     return (data && (data.external_ids?.imdb_id || data.imdb_id)) || null;
   }
@@ -427,6 +434,8 @@
               episode,
               audio: stream.audio || null,
               isWebAudio: !!stream.isWebAudio,
+              hdr: stream.hdr || null,
+              logo: _logoUrl(mediaData),
               allStreams: streams,
             });
           } catch (err) {
@@ -661,6 +670,10 @@
         mediaData = data;
         container.innerHTML = buildDetailsShell(data);
         _setupListeners(data);
+
+        // Desktop player's up-next finished an episode: open the next one's sources.
+        const next = window.NativePlayback && window.NativePlayback.takePendingNext(currentId);
+        if (next && currentType === 'tv') openSourcesModal(next.season, next.episode);
 
         // Scroll to top
         window.scrollTo(0, 0);
