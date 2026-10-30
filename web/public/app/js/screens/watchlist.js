@@ -90,7 +90,7 @@
                src="${posterUrl}"
                alt="${title}"
                loading="lazy"
-               onerror="this.src='assets/img/poster-placeholder.png'">
+               onerror="this.src='assets/img/poster-placeholder.svg'">
           
           ${rating ? `<span class="card-rating"><span class="star-icon">★</span> ${item.rating ? Number(item.rating).toFixed(1) : ''}</span>` : ''}
           
@@ -163,7 +163,7 @@
   /* ── Helpers ───────────────────────────────────────────────────── */
 
   function _getPosterUrl(poster) {
-    if (!poster) return 'assets/img/poster-placeholder.png';
+    if (!poster) return 'assets/img/poster-placeholder.svg';
     if (poster.startsWith('http')) return poster;
     return window.CONST.posterUrl(poster);
   }

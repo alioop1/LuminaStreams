@@ -1022,10 +1022,10 @@
       subtitlesList = subs || [];
       console.log(`[Player] Loaded ${subtitlesList.length} subtitles for ${params.imdbId}`);
 
-      // Auto-load Hebrew subtitle if available
+      // Auto-load the preferred language only (Android: Hebrew / English / None).
       const prefLang = window.Storage ? window.Storage.getSubtitleLang() : 'heb';
-      if (subtitlesList.length > 0 && activeSubIndex === -1) {
-        const autoIdx = subtitlesList.findIndex(s => s.lang3 === prefLang || s.lang3 === 'heb' || s.language === 'עברית');
+      if (prefLang !== 'none' && subtitlesList.length > 0 && activeSubIndex === -1) {
+        const autoIdx = subtitlesList.findIndex(s => s.lang3 === prefLang);
         if (autoIdx !== -1) {
           activeSubIndex = autoIdx;
           loadSubtitleTrack(subtitlesList[autoIdx]);

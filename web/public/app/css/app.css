@@ -880,10 +880,12 @@ body[data-screen="player"] #mobile-bottom-nav {
   border-radius: 20px;
   backdrop-filter: blur(28px);
   -webkit-backdrop-filter: blur(28px);
-  width: 90vw;
+  width: min(90vw, 680px);
   max-width: 680px;
   max-height: 82vh;
+  max-height: 82dvh;
   padding: 24px;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -928,6 +930,47 @@ body[data-screen="player"] #mobile-bottom-nav {
 .ps5-modal-close:hover {
   color: #ffffff;
   background: rgba(255, 255, 255, 0.1);
+}
+/* Sources filter bar (Android/iOS parity) */
+.ps5-sources-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding: 2px 0;
+  flex-shrink: 0;
+}
+.ps5-sources-filters::-webkit-scrollbar { display: none; }
+.ps5-sources-filters:empty { display: none; }
+.ps5-filter-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+}
+.ps5-filter-pill {
+  flex-shrink: 0;
+  white-space: nowrap;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ffffff;
+  background: #131d33;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.ps5-filter-pill.active {
+  color: #000000;
+  background: #00d4ff;
+  border-color: #00d4ff;
+}
+.ps5-filter-pill.reset {
+  color: #ff3b5c;
+  background: transparent;
+  border-color: rgba(255, 59, 92, 0.4);
 }
 .ps5-sources-list, .ps5-episodes-list {
   display: flex;
@@ -983,6 +1026,7 @@ body[data-screen="player"] #mobile-bottom-nav {
 .badge-720 { background: #757575; color: #ffffff; }
 .ps5-source-details {
   flex: 1;
+  min-width: 0; /* lets long filenames ellipsize instead of widening the row */
   display: flex;
   flex-direction: column;
   gap: 3px;
@@ -1849,6 +1893,14 @@ body[data-screen="player"] #mobile-bottom-nav {
   max-width: 500px;
   width: 90%;
   animation: scaleIn 0.25s ease;
+}
+/* Full sheets (sources / episodes / trailer) bring their own frame. */
+#modal-content.modal-bare {
+  background: none;
+  border: none;
+  padding: 0;
+  max-width: none;
+  width: auto;
 }
 
 /* — Toast — */

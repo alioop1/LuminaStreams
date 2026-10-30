@@ -74,9 +74,9 @@
     const runtimeStr = formatHebrewRuntime(runtimeMinutes);
     const rating = data.vote_average ? data.vote_average.toFixed(1) : '';
     const bgPath = data.backdrop_path || data.poster_path;
-    const bgHighRes = bgPath ? `https://image.tmdb.org/t/p/original${bgPath}` : '';
+    const bgHighRes = bgPath ? window.CONST.heroUrl(bgPath) : '';
     const posterPath = data.poster_path || data.backdrop_path;
-    const posterHighRes = posterPath ? `https://image.tmdb.org/t/p/w780${posterPath}` : 'assets/img/poster-placeholder.png';
+    const posterHighRes = posterPath ? `https://image.tmdb.org/t/p/w780${posterPath}` : 'assets/img/poster-placeholder.svg';
 
     // Genres
     const genreNames = (data.genres || []).map(g => g.name).slice(0, 3);
@@ -134,7 +134,7 @@
           ${cast.map(actor => {
             const photo = actor.profile_path
               ? `https://image.tmdb.org/t/p/w185${actor.profile_path}`
-              : 'assets/img/avatar-placeholder.png';
+              : 'assets/img/avatar-placeholder.svg';
             return `
               <div class="ps5-details-actor" title="${escapeHtml(actor.name)}">
                 <img class="ps5-details-actor-img" src="${photo}" alt="${escapeHtml(actor.name)}" loading="lazy" />
@@ -238,7 +238,7 @@
     const isTv = currentType === 'tv';
     const imdbId = _imdbIdOf(mediaData);
     const title = mediaData.title || mediaData.name || '';
-    const backdrop = mediaData.backdrop_path ? `https://image.tmdb.org/t/p/original${mediaData.backdrop_path}` : '';
+    const backdrop = mediaData.backdrop_path ? window.CONST.heroUrl(mediaData.backdrop_path) : '';
     const poster = mediaData.poster_path ? `https://image.tmdb.org/t/p/w500${mediaData.poster_path}` : '';
 
     const label = isTv && season != null && episode != null
@@ -256,6 +256,8 @@
           <button class="ps5-modal-close" id="sources-close-btn" aria-label="סגור">✕</button>
         </div>
 
+        <div class="ps5-sources-filters" id="ps5-sources-filters" role="toolbar" aria-label="${tr('Filter', 'סינון')}"></div>
+
         <div class="ps5-sources-list" id="ps5-sources-list">
           <div class="ps5-sources-loading">
             <div class="ps5-spinner"></div>
@@ -265,7 +267,7 @@
       </div>
     `;
 
-    window.showModal(modalHtml);
+    window.showModal(modalHtml, { bare: true });
 
     const listEl = document.getElementById('ps5-sources-list');
     const closeBtn = document.getElementById('sources-close-btn');
@@ -298,8 +300,58 @@
         return;
       }
 
+      // Filters (Android/iOS parity): cached, quality, Dolby Vision, audio language
+      const filters = { cached: false, quality: null, dv: false, lang: null };
+      const filtersEl = document.getElementById('ps5-sources-filters');
+      const FILTER_DEFS = [
+        { key: 'cached',  label: '⚡ AD+',       test: s => s.isCached },
+        { key: 'quality', value: '4K',    label: '4K',           test: s => s.quality === '4K' },
+        { key: 'quality', value: '1080p', label: '1080p',        test: s => s.quality === '1080p' },
+        { key: 'dv',      label: 'Dolby Vision', test: s => s.hdr === 'DV' },
+        { key: 'lang',    value: 'heb',   label: '🇮🇱 עברית',    test: s => (s.languages || []).includes('heb') },
+        { key: 'lang',    value: 'eng',   label: '🇬🇧 English',  test: s => (s.languages || []).includes('eng') },
+        { key: 'lang',    value: 'rus',   label: '🇷🇺 Русский',  test: s => (s.languages || []).includes('rus') },
+      ];
+      const isActive = f => (f.value === undefined ? filters[f.key] === true : filters[f.key] === f.value);
+      const visibleStreams = () => streams.filter(st =>
+        FILTER_DEFS.every(f => !isActive(f) || f.test(st)));
+
+      const renderFilters = () => {
+        if (!filtersEl) return;
+        const anyActive = FILTER_DEFS.some(isActive);
+        filtersEl.innerHTML = `
+          <span class="ps5-filter-label">${tr('Filter', 'סינון')}</span>
+          ${FILTER_DEFS.map((f, i) => `
+            <button class="ps5-filter-pill${isActive(f) ? ' active' : ''}" data-filter="${i}" aria-pressed="${isActive(f)}">${escapeHtml(f.label)}</button>
+          `).join('')}
+          ${anyActive ? `<button class="ps5-filter-pill reset" data-filter="reset">${tr('Reset', 'נקה')}</button>` : ''}
+        `;
+        filtersEl.querySelectorAll('.ps5-filter-pill').forEach(btn => {
+          btn.addEventListener('click', () => {
+            if (btn.dataset.filter === 'reset') {
+              Object.assign(filters, { cached: false, quality: null, dv: false, lang: null });
+            } else {
+              const f = FILTER_DEFS[Number(btn.dataset.filter)];
+              if (f.value === undefined) filters[f.key] = !filters[f.key];
+              else filters[f.key] = isActive(f) ? null : f.value;
+            }
+            renderFilters();
+            renderStreams();
+          });
+        });
+      };
+
       // Render streams list
-      listEl.innerHTML = streams.map((s, idx) => {
+      const renderStreams = () => {
+      const shown = visibleStreams();
+      const subtitleEl = document.querySelector('.ps5-sources-subtitle');
+      if (subtitleEl) subtitleEl.textContent = `${label} • ${shown.length} ${tr('sources', 'מקורות')}`;
+      if (shown.length === 0) {
+        listEl.innerHTML = `<div class="ps5-sources-empty">${tr('No sources match these filters.', 'אין מקורות שמתאימים לסינון.')}</div>`;
+        return;
+      }
+      listEl.innerHTML = shown.map(s => {
+        const idx = streams.indexOf(s);
         const q = (s.quality || '1080p').toUpperCase();
         const qClass = q.includes('4K') || q.includes('2160') ? 'badge-4k' : (q.includes('1080') ? 'badge-1080' : 'badge-720');
         const seeds = s.seeders || 0;
@@ -326,8 +378,11 @@
           </div>
         `;
       }).join('');
+      attachStreamHandlers();
+      };
 
       // Add click handlers on streams
+      const attachStreamHandlers = () => {
       listEl.querySelectorAll('.ps5-source-card').forEach(card => {
         card.addEventListener('click', async () => {
           const idx = parseInt(card.dataset.streamIdx, 10);
@@ -381,6 +436,10 @@
           }
         });
       });
+      };
+
+      renderFilters();
+      renderStreams();
 
     } catch (err) {
       console.error('[Details] Scraping failed:', err);
@@ -415,7 +474,7 @@
       </div>
     `;
 
-    window.showModal(modalHtml);
+    window.showModal(modalHtml, { bare: true });
 
     const listEl = document.getElementById('ps5-episodes-list');
     const closeBtn = document.getElementById('episodes-close-btn');
@@ -438,7 +497,7 @@
       listEl.innerHTML = episodes.map(ep => {
         const epThumb = ep.still_path
           ? `https://image.tmdb.org/t/p/w300${ep.still_path}`
-          : 'assets/img/backdrop-placeholder.png';
+          : 'assets/img/backdrop-placeholder.svg';
         const epTitle = ep.name || `פרק ${ep.episode_number}`;
         const epOverview = ep.overview || '';
         const epRuntime = ep.runtime ? `${ep.runtime} דקות` : '';
@@ -502,7 +561,7 @@
         </div>
       </div>
     `;
-    window.showModal(modalHtml);
+    window.showModal(modalHtml, { bare: true });
   }
 
   /* ── Setup Event Listeners ────────────────────────────────────────── */

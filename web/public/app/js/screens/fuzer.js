@@ -616,7 +616,19 @@
     torrents = [];
     searchQuery = '';
 
-    renderPage();
+    // A browser cannot reach Fuzer directly: it sends no CORS headers, needs its
+    // own cookies, and sign-in is now behind reCAPTCHA. Until the server-side
+    // proxy exists (docs/PARITY.md step 6), say so instead of a fake login.
+    container.innerHTML = `
+      <div class="page" style="max-width:560px;margin:12vh auto 0;padding:0 20px;text-align:center;">
+        <div style="font-size:44px;margin-bottom:12px;">✨</div>
+        <h1 style="font-size:22px;font-weight:900;margin-bottom:10px;">Fuzer</h1>
+        <p style="color:rgba(255,255,255,0.75);line-height:1.7;font-size:15px;">
+          ${tr('Fuzer works in the iPhone app. In the browser it needs a server proxy, which is not set up yet.',
+               'Fuzer זמין באפליקציית האייפון. בדפדפן הוא דורש שרת מתווך שעדיין לא הוגדר.')}
+        </p>
+      </div>
+    `;
   }
 
   /* ── Destroy ─────────────────────────────────────────────────────── */

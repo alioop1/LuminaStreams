@@ -167,7 +167,7 @@
 
     // Backdrop prefered for 16:9; fallback to poster
     const imgPath = movie.backdrop_path || movie.poster_path;
-    const thumbUrl = imgPath ? `https://image.tmdb.org/t/p/w780${imgPath}` : 'assets/img/backdrop-placeholder.png';
+    const thumbUrl = imgPath ? `https://image.tmdb.org/t/p/w780${imgPath}` : 'assets/img/backdrop-placeholder.svg';
 
     return `
       <div class="ps5-landscape-card${isActive ? ' active' : ''}" 
@@ -212,17 +212,26 @@
     const bgImgPrevEl = document.getElementById('ps5-backdrop-img-prev');
     const bgPath = movie.backdrop_path || movie.poster_path;
     if (bgImgEl && bgPath) {
-      const highRes = `https://image.tmdb.org/t/p/original${bgPath}`;
       if (bgImgPrevEl) {
         bgImgPrevEl.style.backgroundImage = bgImgEl.style.backgroundImage;
       }
-      const preloader = new Image();
-      preloader.src = highRes;
-      preloader.onload = () => {
-        if (currentActiveMovieId === movie.id && bgImgEl) {
-          bgImgEl.style.backgroundImage = `url("${highRes}")`;
-        }
+      // Background images have no <img> error event, so fall back to the proxy here.
+      const showBackdrop = (url, isRetry) => {
+        const preloader = new Image();
+        preloader.onload = () => {
+          if (currentActiveMovieId === movie.id && bgImgEl) {
+            bgImgEl.style.backgroundImage = `url("${url}")`;
+          }
+        };
+        preloader.onerror = () => {
+          if (!isRetry && url.includes('image.tmdb.org')) {
+            window.CONST.markTmdbBlocked();
+            showBackdrop(window.CONST.heroUrl(bgPath), true);
+          }
+        };
+        preloader.src = url;
       };
+      showBackdrop(window.CONST.heroUrl(bgPath), false);
     }
 
     // 2. Fast update: Title fallback
@@ -315,7 +324,7 @@
             ${topCast.map(actor => {
               const photo = actor.profile_path
                 ? `https://image.tmdb.org/t/p/w185${actor.profile_path}`
-                : 'assets/img/avatar-placeholder.png';
+                : 'assets/img/avatar-placeholder.svg';
               return `
                 <div class="ps5-cast-member">
                   <img class="ps5-cast-avatar" src="${photo}" alt="${escapeHtml(actor.name)}" />

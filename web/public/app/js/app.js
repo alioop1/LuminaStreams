@@ -73,7 +73,13 @@
    * @param {string} htmlContent  Inner HTML for the modal body
    * @returns {HTMLElement} The modal element
    */
-  window.showModal = function showModal(htmlContent) {
+  /**
+   * @param {string} htmlContent
+   * @param {{bare?: boolean}} [opts]  bare: the content is a complete sheet with its
+   *   own frame and close button (sources, episodes, trailer). Wrapping it in the
+   *   small-dialog shell squeezed it to ~320px and added a second close button.
+   */
+  window.showModal = function showModal(htmlContent, opts = {}) {
     // Use the existing modal overlay in the DOM
     const overlay = document.getElementById('modal-overlay');
     const content = document.getElementById('modal-content');
@@ -83,7 +89,8 @@
       return _createFallbackModal(htmlContent);
     }
 
-    content.innerHTML = `
+    content.classList.toggle('modal-bare', !!opts.bare);
+    content.innerHTML = opts.bare ? htmlContent : `
       <div class="modal animate-slideUp">
         <div class="modal-header">
           <span></span>

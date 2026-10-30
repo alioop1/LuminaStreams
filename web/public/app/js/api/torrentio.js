@@ -81,7 +81,8 @@
 
     // HDR
     let hdr = null;
-    if (/dolby\s*vision|dv/i.test(t))  hdr = 'DV';
+    // Whole-token match: a bare /dv/ also hit names like "DVDRip" or "Advent".
+    if (/dolby\s*vision|(dv|dovi)/i.test(t))  hdr = 'DV';
     else if (/hdr10\+/i.test(t))       hdr = 'HDR10+';
     else if (/hdr10/i.test(t))         hdr = 'HDR10';
     else if (/hdr/i.test(t))           hdr = 'HDR';

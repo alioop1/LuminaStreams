@@ -29,7 +29,7 @@
    * @returns {string} Full URL or placeholder
    */
   function posterUrl(path) {
-    if (!path) return 'assets/img/poster-placeholder.png';
+    if (!path) return 'assets/img/poster-placeholder.svg';
     return `${IMAGE_BASE_W500}${path}`;
   }
 
@@ -39,7 +39,7 @@
    * @returns {string} Full URL or placeholder
    */
   function backdropUrl(path) {
-    if (!path) return 'assets/img/backdrop-placeholder.png';
+    if (!path) return 'assets/img/backdrop-placeholder.svg';
     return `${IMAGE_BASE_W1280}${path}`;
   }
 
@@ -49,7 +49,7 @@
    * @returns {string}
    */
   function profileUrl(path) {
-    if (!path) return 'assets/img/avatar-placeholder.png';
+    if (!path) return 'assets/img/avatar-placeholder.svg';
     return `${IMAGE_BASE_W300}${path}`;
   }
 
@@ -216,7 +216,63 @@
   };
 
   /* ── Export ────────────────────────────────────────────────────────── */
+  /* ── TMDB image delivery ─────────────────────────────────────────────
+   * Some Israeli cellular networks block image.tmdb.org. The first failed TMDB
+   * image marks it blocked (for 6 h); from then on every TMDB image — current and
+   * future — goes through the wsrv.nl proxy instead of failing one by one. */
+  const TMDB_BLOCK_KEY = 'lumina_tmdb_blocked_until';
+
+  function tmdbBlocked() {
+    try { return Date.now() < Number(localStorage.getItem(TMDB_BLOCK_KEY) || 0); } catch { return false; }
+  }
+
+  function proxiedImage(url) {
+    return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
+  }
+
+  /** The URL to actually load for an image (proxied when TMDB is blocked). */
+  function img(url) {
+    return url && url.includes('image.tmdb.org') && tmdbBlocked() ? proxiedImage(url) : url;
+  }
+
+  function markTmdbBlocked() {
+    try { localStorage.setItem(TMDB_BLOCK_KEY, String(Date.now() + 6 * 3600 * 1000)); } catch {}
+    document.querySelectorAll('img[src*="image.tmdb.org"]').forEach(el => { el.src = proxiedImage(el.src); });
+  }
+
+  /** Full-screen backdrop: w1280 unless the display really needs more pixels. */
+  function heroUrl(path) {
+    if (!path) return 'assets/img/backdrop-placeholder.svg';
+    const px = Math.max(screen.width, screen.height) * (window.devicePixelRatio || 1);
+    return img(`${px > 2000 ? IMAGE_BASE_ORIGINAL : IMAGE_BASE_W1280}${path}`);
+  }
+
+  // Failed TMDB <img> → switch to the proxy (capture phase: error events don't bubble).
+  document.addEventListener('error', e => {
+    const el = e.target;
+    if (el && el.tagName === 'IMG' && el.src.includes('image.tmdb.org')) {
+      markTmdbBlocked();
+      el.src = proxiedImage(el.src);
+    }
+  }, true);
+
+  // While blocked, rewrite TMDB images as screens render them.
+  new MutationObserver(mutations => {
+    if (!tmdbBlocked()) return;
+    for (const m of mutations) {
+      m.addedNodes.forEach(node => {
+        if (node.nodeType !== 1) return;
+        const imgs = node.tagName === 'IMG' ? [node] : node.querySelectorAll('img[src*="image.tmdb.org"]');
+        imgs.forEach(el => { if (el.src.includes('image.tmdb.org')) el.src = proxiedImage(el.src); });
+      });
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
+
   window.CONST = Object.freeze({
+    img,
+    heroUrl,
+    markTmdbBlocked,
+
     TMDB_API_KEY,
     TMDB_BASE,
     OMDB_API_KEY,

@@ -56,7 +56,7 @@
     return `
       <div class="card-portrait" data-id="${item.id}" data-type="tv" tabindex="0">
         <img class="card-poster" src="${poster}" alt="${title}" loading="lazy"
-             onerror="this.src='assets/img/poster-placeholder.png'">
+             onerror="this.src='assets/img/poster-placeholder.svg'">
         ${rating ? `<div class="card-rating"><span class="star-icon">★</span> ${rating}</div>` : ''}
         <div class="card-play">
           <svg viewBox="0 0 24 24"><polygon points="8,5 19,12 8,19"/></svg>
