@@ -34,7 +34,7 @@ struct IptvView: View {
 
             // Group Pills
             if !vm.groups.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
+                HScroll {
                     HStack(spacing: 8) {
                         ForEach(vm.groups, id: \.self) { grp in
                             let isSelected = vm.selectedGroup == grp

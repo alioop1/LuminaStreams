@@ -7,6 +7,12 @@ struct DetailsView: View {
     @StateObject private var vm = DetailsViewModel()
     @EnvironmentObject var settings: SettingsManager
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    private var metrics: LayoutMetrics {
+        LayoutMetrics(horizontal: horizontalSizeClass, vertical: verticalSizeClass)
+    }
 
     var body: some View {
         ZStack {
@@ -40,7 +46,7 @@ struct DetailsView: View {
                                 .lineSpacing(4)
 
                             if !vm.mediaInfo.genres.isEmpty {
-                                ScrollView(.horizontal, showsIndicators: false) {
+                                HScroll {
                                     HStack(spacing: 8) {
                                         ForEach(vm.mediaInfo.genres, id: \.self) { g in
                                             Text(g)
@@ -70,7 +76,7 @@ struct DetailsView: View {
                                 recommendationsSection
                             }
                         }
-                        .padding(.horizontal, 16)
+                        .padding(.horizontal, metrics.horizontalPadding)
                         .padding(.bottom, 40)
                     }
                 }
@@ -78,7 +84,8 @@ struct DetailsView: View {
             }
         }
         .navigationBarBackButtonHidden(false)
-        .task {
+        // Keyed on the id so tapping a recommendation or actor credit reloads.
+        .task(id: fullId) {
             await vm.load(fullId: fullId)
         }
         .sheet(isPresented: $vm.showSourcesSheet) {
@@ -101,16 +108,12 @@ struct DetailsView: View {
     // ── Backdrop Header ─────────────────────────────────────────────────────
     private var headerBackdropSection: some View {
         ZStack(alignment: .bottomLeading) {
-            LuminaAsyncImage(url: vm.mediaInfo.backdropUrl.isEmpty ? vm.mediaInfo.posterUrl : vm.mediaInfo.backdropUrl) { image in
-                image.resizable().aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle().fill(LuminaTheme.navy)
-            }
-            .frame(height: 320)
-            .clipped()
+            // Pinned to the screen width; a bare fill image widened the whole page.
+            FullWidthImage(url: vm.mediaInfo.backdropUrl.isEmpty ? vm.mediaInfo.posterUrl : vm.mediaInfo.backdropUrl,
+                           height: metrics.backdropHeight)
 
             LuminaTheme.heroBottomGradient
-                .frame(height: 320)
+                .frame(height: metrics.backdropHeight)
 
             VStack(alignment: .leading, spacing: 8) {
                 if !vm.mediaInfo.logoUrl.isEmpty {
@@ -136,7 +139,7 @@ struct DetailsView: View {
 
     // ── Ratings & Metadata Row (IMDb, Rotten Tomatoes, Metacritic, Year) ────
     private var metadataAndBadgesSection: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
+        HScroll {
             HStack(spacing: 10) {
                 // IMDb Badge
                 if vm.mediaInfo.imdbRating > 0 {
@@ -279,7 +282,7 @@ struct DetailsView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.white)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 HStack(spacing: 8) {
                     ForEach(1...max(1, vm.mediaInfo.totalSeasons), id: \.self) { sNum in
                         let isSelected = vm.selectedSeason == sNum
@@ -371,7 +374,7 @@ struct DetailsView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.white)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 HStack(spacing: 14) {
                     ForEach(vm.mediaInfo.cast) { actor in
                         Button {
@@ -412,7 +415,7 @@ struct DetailsView: View {
                 .font(.system(size: 18, weight: .bold))
                 .foregroundColor(.white)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 HStack(spacing: 12) {
                     ForEach(vm.recommendations) { rec in
                         Button {
@@ -474,7 +477,7 @@ struct SourcesOverlaySheet: View {
                 .padding(.top, 16)
 
                 // ── Filter Pills Bar ────────────────────────────────────────
-                ScrollView(.horizontal, showsIndicators: false) {
+                HScroll {
                     HStack(spacing: 8) {
                         filterPill(title: "⚡ AD+ בלבד", isActive: vm.showCachedOnly) {
                             vm.showCachedOnly.toggle()
@@ -705,7 +708,7 @@ struct ActorDetailsSheet: View {
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.white)
 
-                        ScrollView(.horizontal, showsIndicators: false) {
+                        HScroll {
                             HStack(spacing: 12) {
                                 ForEach(actor.knownFor) { movie in
                                     Button {

@@ -47,19 +47,9 @@ struct MainContainerView: View {
     @EnvironmentObject var watchProgress: WatchProgressManager
     @StateObject private var homeVM = HomeViewModel()
 
-    @Environment(\.verticalSizeClass) private var verticalSizeClass
-
     @State private var activeSection: LuminaSection = .home
     @State private var selectedMediaId: String? = nil
     @State private var currentTimeString: String = ""
-
-    private var isLandscape: Bool {
-        verticalSizeClass == .compact
-    }
-
-    private var isWideScreen: Bool {
-        UIDevice.current.userInterfaceIdiom == .pad || isLandscape
-    }
 
     private let clockTimer = Timer.publish(every: 15, on: .main, in: .common).autoconnect()
 
@@ -132,32 +122,31 @@ struct MainContainerView: View {
 
     // ── PS5 Top Bar with Pure Native Safe-Area Placement ────────────────────
     private var ps5TopBar: some View {
-        Group {
-            if isWideScreen {
-                // Horizontal Single-Row Layout (Landscape or iPad)
-                HStack(spacing: 14) {
+        // One row when everything fits (iPad, landscape); otherwise two rows with the
+        // section icons spread across the full width. No scrolling, so nothing drifts.
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 14) {
+                brandLogoView
+                Spacer(minLength: 8)
+                sectionButtons(stretch: false)
+                Spacer(minLength: 8)
+                liveClockView
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+
+            VStack(spacing: 8) {
+                HStack {
                     brandLogoView
-                    Spacer(minLength: 8)
-                    actionButtonsScrollView
-                    Spacer(minLength: 8)
-                    liveClockView
+                    Spacer()
                 }
                 .padding(.horizontal, 20)
-                .padding(.vertical, 8)
-            } else {
-                // 2-Row Layout (iPhone Portrait) - Clean, balanced, no redundant clock
-                VStack(spacing: 8) {
-                    HStack {
-                        brandLogoView
-                        Spacer()
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.top, 4)
+                .padding(.top, 4)
 
-                    actionButtonsScrollView
-                }
-                .padding(.bottom, 6)
+                sectionButtons(stretch: true)
+                    .padding(.horizontal, 8)
             }
+            .padding(.bottom, 6)
         }
         .background(
             LuminaTheme.blackBg.opacity(0.96)
@@ -192,9 +181,8 @@ struct MainContainerView: View {
             .fixedSize()
     }
 
-    private var actionButtonsScrollView: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+    private func sectionButtons(stretch: Bool) -> some View {
+        HStack(spacing: stretch ? 0 : 8) {
                 ForEach(LuminaSection.allCases) { section in
                     let isSelected = activeSection == section
                     Button {
@@ -221,14 +209,14 @@ struct MainContainerView: View {
                                 .fill(isSelected ? Color.white : Color.clear)
                                 .frame(width: 4, height: 4)
                         }
+                        .frame(maxWidth: stretch ? .infinity : nil)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityLabel(section.title(isRTL: settings.isRTL))
                 }
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 2)
         }
+        .padding(.vertical, 2)
     }
 
     private func updateClock() {

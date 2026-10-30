@@ -43,7 +43,7 @@ struct WatchlistView: View {
                             Button {
                                 onSelectMedia(movie)
                             } label: {
-                                MediaCardView(movie: movie)
+                                MediaCardView(movie: movie, fillsWidth: true)
                             }
                             .buttonStyle(.plain)
                         }

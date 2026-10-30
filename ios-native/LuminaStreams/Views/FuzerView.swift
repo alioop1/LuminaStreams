@@ -56,7 +56,7 @@ struct FuzerView: View {
             .padding(.horizontal, 16)
 
             // Category Pills
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 HStack(spacing: 8) {
                     ForEach(categories, id: \.id) { cat in
                         let isSelected = selectedCatId == cat.id

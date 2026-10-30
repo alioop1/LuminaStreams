@@ -6,9 +6,14 @@ struct HomeView: View {
     let onSelectMedia: (Movie) -> Void
     @EnvironmentObject var settings: SettingsManager
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     private var isLandscape: Bool {
         verticalSizeClass == .compact
+    }
+
+    private var metrics: LayoutMetrics {
+        LayoutMetrics(horizontal: horizontalSizeClass, vertical: verticalSizeClass)
     }
 
     private let heroTimer = Timer.publish(every: 8, on: .main, in: .common).autoconnect()
@@ -95,16 +100,9 @@ struct HomeView: View {
             let hero = viewModel.heroItems[min(viewModel.heroIndex, max(0, viewModel.heroItems.count - 1))]
 
             ZStack(alignment: .bottomLeading) {
-            // Backdrop Image with Cloudflare Resilient Cache
-            LuminaAsyncImage(url: hero.backdropUrl.isEmpty ? hero.posterUrl : hero.backdropUrl) { image in
-                image
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
-            } placeholder: {
-                Rectangle().fill(LuminaTheme.cardSurface)
-            }
-            .frame(height: isLandscape ? 240 : 340)
-            .clipped()
+            // Backdrop pinned to the screen width (a bare fill image widened the whole page)
+            FullWidthImage(url: hero.backdropUrl.isEmpty ? hero.posterUrl : hero.backdropUrl,
+                           height: metrics.heroHeight)
 
             // Directional TV Gradients: Bottom fade + Horizontal RTL vignette
             LinearGradient(
@@ -132,7 +130,7 @@ struct HomeView: View {
             VStack(alignment: .leading, spacing: 6) {
                 // Title
                 Text(hero.title)
-                    .font(.system(size: isLandscape ? 20 : 23, weight: .black, design: .rounded))
+                    .font(.system(size: metrics.isRegular ? 32 : (isLandscape ? 20 : 23), weight: .black, design: .rounded))
                     .foregroundColor(.white)
                     .shadow(color: .black.opacity(0.9), radius: 8, x: 0, y: 2)
                     .lineLimit(1)
@@ -234,7 +232,7 @@ struct HomeView: View {
                 .padding(.top, 4)
             }
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .padding(.horizontal, 16)
+            .padding(.horizontal, metrics.horizontalPadding)
             .padding(.bottom, 12)
         }
     } else {
@@ -251,7 +249,7 @@ struct HomeView: View {
                         endPoint: .bottom
                     )
                 )
-                .frame(height: isLandscape ? 240 : 340)
+                .frame(height: metrics.heroHeight)
 
             VStack(alignment: .leading, spacing: 8) {
                 RoundedRectangle(cornerRadius: 4)
@@ -261,10 +259,10 @@ struct HomeView: View {
                     .fill(Color.white.opacity(0.05))
                     .frame(width: 120, height: 14)
             }
-            .padding(.horizontal, 16)
+            .padding(.horizontal, metrics.horizontalPadding)
             .padding(.bottom, 24)
         }
-        .frame(height: isLandscape ? 240 : 340)
+        .frame(height: metrics.heroHeight)
     }
 }
 
@@ -274,9 +272,9 @@ struct HomeView: View {
             Text("אולפנים ורשתות סטרימינג")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundColor(.white.opacity(0.9))
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.horizontalPadding)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 HStack(spacing: 10) {
                     studioButton(id: "hbo", name: "HBO", logoUrl: "https://image.tmdb.org/t/p/original/tuomPhY2UtuPTqqFnKMVHvSb724.png", colors: [LuminaTheme.hexColor(0x1A0A2E), LuminaTheme.hexColor(0x2D1B4E)])
                     studioButton(id: "netflix", name: "Netflix", logoUrl: "https://image.tmdb.org/t/p/original/wwemzKWzjKYJFfCeiB57q3r4Bcm.png", colors: [LuminaTheme.hexColor(0x141414), LuminaTheme.hexColor(0x1C1C1C)])
@@ -307,7 +305,7 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.horizontalPadding)
             }
         }
     }
@@ -343,9 +341,9 @@ struct HomeView: View {
             Text(title)
                 .font(.system(size: 16, weight: .bold))
                 .foregroundColor(.white)
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.horizontalPadding)
 
-            ScrollView(.horizontal, showsIndicators: false) {
+            HScroll {
                 LazyHStack(spacing: 10) {
                     ForEach(items) { movie in
                         Button {
@@ -356,7 +354,7 @@ struct HomeView: View {
                         .buttonStyle(.plain)
                     }
                 }
-                .padding(.horizontal, 16)
+                .padding(.horizontal, metrics.horizontalPadding)
             }
         }
     }
@@ -366,84 +364,30 @@ struct HomeView: View {
 struct MediaCardView: View {
     let movie: Movie
     var isLandscape: Bool = false
+    /// Grids pass true so the card fills its column instead of a fixed width
+    /// (a fixed 120 pt card overflowed narrower adaptive grid columns).
+    var fillsWidth: Bool = false
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
-    var cardWidth: CGFloat { isLandscape ? 190 : 120 }
-    var cardHeight: CGFloat { isLandscape ? 108 : 175 }
+    private var metrics: LayoutMetrics { LayoutMetrics(horizontal: horizontalSizeClass, vertical: nil) }
+    var cardWidth: CGFloat { isLandscape ? metrics.landscapeCardWidth : metrics.posterWidth }
+    var cardHeight: CGFloat { isLandscape ? metrics.landscapeCardHeight : metrics.posterHeight }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ZStack(alignment: .topTrailing) {
-                let imgUrl = isLandscape ? (movie.backdropUrl.isEmpty ? movie.posterUrl : movie.backdropUrl) : movie.posterUrl
-                LuminaAsyncImage(url: imgUrl) { img in
-                    img.resizable().aspectRatio(contentMode: .fill)
-                } placeholder: {
-                    Rectangle()
-                        .fill(LuminaTheme.cardSurface)
-                        .overlay(
-                            Image(systemName: "film")
-                                .foregroundColor(.white.opacity(0.25))
-                        )
-                }
-                .frame(width: cardWidth, height: cardHeight)
+            sized(artwork)
                 .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .stroke(Color.white.opacity(0.12), lineWidth: 1)
                 )
 
-                // Fuzer Badge (Top Left / Right based on RTL)
-                if movie.id.hasPrefix("http") {
-                    HStack {
-                        Text("💎 FUZER")
-                            .font(.system(size: 8, weight: .black))
-                            .foregroundColor(.white)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 2)
-                            .background(Color(red: 0x00/255, green: 0xB0/255, blue: 0xFF/255))
-                            .clipShape(RoundedRectangle(cornerRadius: 3))
-                        Spacer()
-                    }
-                    .padding(5)
-                }
-
-                // Rating Badge
-                if movie.rating > 0 {
-                    HStack(spacing: 2) {
-                        Text("★")
-                            .foregroundColor(LuminaTheme.gold)
-                        Text(String(format: "%.1f", movie.rating))
-                            .foregroundColor(.white)
-                    }
-                    .font(.system(size: 9, weight: .bold))
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Color.black.opacity(0.75))
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .padding(5)
-                }
-
-                // Watch Progress Bar
-                if let prog = movie.progress, prog > 0 {
-                    VStack {
-                        Spacer()
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Rectangle().fill(Color.black.opacity(0.4)).frame(height: 3)
-                                Rectangle().fill(LuminaTheme.red).frame(width: geo.size.width * CGFloat(prog), height: 3)
-                            }
-                        }
-                        .frame(height: 3)
-                    }
-                    .frame(width: cardWidth, height: cardHeight)
-                    .clipShape(RoundedRectangle(cornerRadius: 10))
-                }
-            }
-
             Text(movie.title)
-                .font(.system(size: 11, weight: .semibold))
+                .font(.system(size: metrics.isRegular ? 13 : 11, weight: .semibold))
                 .foregroundColor(.white)
                 .lineLimit(1)
-                .frame(width: cardWidth, alignment: .leading)
+                .frame(width: fillsWidth ? nil : cardWidth, alignment: .leading)
+                .frame(maxWidth: fillsWidth ? CGFloat.infinity : nil, alignment: .leading)
 
             if movie.id.hasPrefix("http") && (movie.seeders > 0 || !movie.size.isEmpty) {
                 HStack(spacing: 4) {
@@ -463,6 +407,82 @@ struct MediaCardView: View {
                 Text(movie.mediaType == "tv" ? "סדרה" : "סרט")
                     .font(.system(size: 9.5, weight: .regular))
                     .foregroundColor(.white.opacity(0.45))
+            }
+        }
+    }
+
+    /// Fixed size in rows; column width with the card's aspect ratio in grids.
+    @ViewBuilder
+    private func sized<V: View>(_ view: V) -> some View {
+        if fillsWidth {
+            view
+                .frame(maxWidth: .infinity)
+                .aspectRatio(cardWidth / cardHeight, contentMode: .fit)
+        } else {
+            view.frame(width: cardWidth, height: cardHeight)
+        }
+    }
+
+    private var artwork: some View {
+        ZStack(alignment: .topTrailing) {
+            let imgUrl = isLandscape ? (movie.backdropUrl.isEmpty ? movie.posterUrl : movie.backdropUrl) : movie.posterUrl
+            // The image sits in an overlay so its natural size never drives the layout.
+            Color.clear
+                .overlay {
+                    LuminaAsyncImage(url: imgUrl) { img in
+                        img.resizable().aspectRatio(contentMode: .fill)
+                    } placeholder: {
+                        Rectangle()
+                            .fill(LuminaTheme.cardSurface)
+                            .overlay(
+                                Image(systemName: "film")
+                                    .foregroundColor(.white.opacity(0.25))
+                            )
+                    }
+                }
+                .clipped()
+
+            // Fuzer Badge (Top Left / Right based on RTL)
+            if movie.id.hasPrefix("http") {
+                HStack {
+                    Text("💎 FUZER")
+                        .font(.system(size: 8, weight: .black))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(Color(red: 0x00/255, green: 0xB0/255, blue: 0xFF/255))
+                        .clipShape(RoundedRectangle(cornerRadius: 3))
+                    Spacer()
+                }
+                .padding(5)
+            }
+
+            // Rating Badge
+            if movie.rating > 0 {
+                HStack(spacing: 2) {
+                    Text("★")
+                        .foregroundColor(LuminaTheme.gold)
+                    Text(String(format: "%.1f", movie.rating))
+                        .foregroundColor(.white)
+                }
+                .font(.system(size: 9, weight: .bold))
+                .padding(.horizontal, 5)
+                .padding(.vertical, 2)
+                .background(Color.black.opacity(0.75))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .padding(5)
+            }
+        }
+        .overlay(alignment: .bottom) {
+            // Watch Progress Bar
+            if let prog = movie.progress, prog > 0 {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Rectangle().fill(Color.black.opacity(0.4))
+                        Rectangle().fill(LuminaTheme.red).frame(width: geo.size.width * CGFloat(prog))
+                    }
+                }
+                .frame(height: 3)
             }
         }
     }
