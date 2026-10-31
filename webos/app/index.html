@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: 'unsafe-inline' https:; script-src 'self' file: 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: https://fonts.gstatic.com data:; img-src 'self' file: https: data: blob:; media-src * blob: data:; connect-src *;">
+  <title>LuminaStreams</title>
+  <link rel="preconnect" href="https://image.tmdb.org">
+  <link rel="preconnect" href="https://api.themoviedb.org">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700;900&family=Noto+Sans+Hebrew:wght@300;400;500;700;900&display=swap">
+  <link rel="stylesheet" href="css/android-player.css">
+  <link rel="stylesheet" href="css/legacy.css">
+  <link rel="stylesheet" href="css/tv.css">
+  <link rel="stylesheet" href="css/details.css">
+  <link rel="stylesheet" href="css/pages.css">
+</head>
+<body>
+  <div id="tv"><div id="screens"></div><div id="toast"></div></div>
+
+  <!-- Data layer shared with the website, Windows and the player -->
+  <script src="js/tv/core.js"></script>
+  <script src="js/utils/constants.js"></script>
+  <script src="js/utils/helpers.js"></script>
+  <script src="js/core/storage.js"></script>
+  <script src="js/core/i18n.js"></script>
+  <script src="js/api/tmdb.js"></script>
+  <script src="js/api/alldebrid.js"></script>
+  <script src="js/api/torrentio.js"></script>
+  <script src="js/api/subtitles.js"></script>
+  <script src="js/core/firebase.js"></script>
+  <script src="js/core/sync.js"></script>
+  <script src="js/core/watchProgress.js"></script>
+  <script src="js/core/nativePlayback.js"></script>
+  <script src="js/player/androidPlayer.js"></script>
+  <script src="js/player/tvBackend.js"></script>
+  <script src="js/shared/flexGap.js"></script>
+
+  <!-- The TV app -->
+  <script src="js/tv/home.js"></script>
+  <script src="js/tv/details.js"></script>
+  <script src="js/tv/screens.js"></script>
+  <script src="js/tv/playback.js"></script>
+  <script src="js/tv/app.js"></script>
+</body>
+</html>

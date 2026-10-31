@@ -1,23 +1,27 @@
 # LuminaStreams for LG webOS
 
-The LG TV app (webOS 6 and newer: 2021 LG TVs onwards, including webOS 22–25). It is the shared web app
-(`web/public/app`) packaged as a webOS app; on the TV it switches to TV mode
-(`js/tv/tvMode.js`):
+The LG TV app (webOS 6 and newer: 2021 LG TVs onwards). It is its **own app, built for
+the TV** (`webos/app`), not the website: every screen is rebuilt from the Android TV
+Compose code and laid out in the same units (960×540 dp, two pixels per dp on a 1080p
+TV; Details at Android's 0.85 density).
 
-- **Look and controls of the Android TV app** — remote D-pad navigation with the
-  Android TV focus ring, OK selects, **Back** closes a sheet → goes back a screen →
-  leaves the app from Home.
-- **The Android TV player** (`js/player/androidPlayer.js`, the same module the Windows
-  app uses) drawn over the TV's own `<video>` (`js/player/tvBackend.js`). The stream
-  goes straight into the TV's media pipeline, so the TV itself decodes Dolby Vision,
-  HDR10/HDR10+, HEVC/AV1 and Dolby Atmos / DTS / TrueHD — and shows its own native
-  **Dolby Vision / Dolby Atmos** pop-ups. The app draws no format badges of its own.
-- Sources are ranked like the Android app (lossless/Atmos audio is not penalised, as
-  it is in a desktop browser).
-- Same account, favourites and watch progress as every other platform.
-- Older TVs (webOS 6 / 2021, Chromium 79): `build.js` lowers the JavaScript to ES2019
-  with TypeScript, expands the CSS `inset` shorthand, adds `legacy.css` fallbacks and
-  allows `file:` in the page's security policy; `js/tv/flexGap.js` restores flex `gap`.
+- `app/js/core.js` — dp scaling, screen stack (screens stay alive underneath, like
+  Android's back stack), remote keys (LG Back 461, media keys), Magic Remote pointer,
+  transform-only row scrolling, TMDB queries identical to Android's.
+- `app/js/home.js` — top bar with the Home / Movies / Series / Fuzer tabs, hero,
+  category list + one row at a time (Android's ConsoleRowCycler), studio ribbon/filter.
+- `app/js/details.js` — Details, the sources dialog (filters, DetailedSourceRow) and
+  the season popup.
+- `app/js/screens.js` — Search (LG on-screen keyboard), My List, Settings, Sign-in.
+- `app/js/playback.js` — the shared Android player (`web/.../js/player/androidPlayer.js`,
+  same as Windows) over the TV's own `<video>` (`tvBackend.js`): the TV decodes
+  Dolby Vision / HDR / Atmos itself and shows its own native pop-ups.
+- Shared with the website and Windows (copied in at build time): TMDB/Torrentio/
+  AllDebrid/subtitles clients, Firebase sign-in + sync, watch progress, the player.
+
+Built for the TV's engine (Chromium 79 on 2021 models): animations on transform and
+opacity only, no backdrop blur, nothing animating off-screen, the rows beside the
+current one pre-drawn, the 4K backdrop decoded before it is shown.
 
 ## Install (Developer Mode)
 
@@ -55,6 +59,7 @@ runs out, or the TV removes developer apps and you reinstall with the script.
 
 ## Testing on a PC
 
-Open the web app with `?tv=1` (e.g. `http://localhost:5000/app/?tv=1`) to get TV mode
-in a browser: arrow keys = D-pad, Enter = OK, Escape = Back. A desktop browser can't
+`node webos/build.js --no-package` stages the app in `webos/build`; serve that folder
+(e.g. `python -m http.server 5100 --directory webos/build`) and open it at 1280×720 or
+1920×1080: arrow keys = D-pad, Enter = OK, Escape = Back. A desktop browser can't
 decode most release formats; real playback needs the TV.

@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 /**
- * Builds the LG webOS app (.ipk) from the shared web app.
+ * Builds the LG webOS app (.ipk): the TV app in webos/app (its own screens, built for
+ * the TV) plus the data layer and player it shares with the website and Windows app.
  *
  *   node webos/build.js            → webos/dist/com.luminastreams.tv_<version>_all.ipk
  *   node webos/build.js --install  → also installs it on the default TV (ares-setup-device)
  *   node webos/build.js --launch   → install and start it
  *   ... --device LuminaTV --device LuminaTV2   → those TVs instead of the default one
  *   ... --all-tvs                              → every TV registered with ares-setup-device
+ *   ... --no-package                           → only stage webos/build (for a browser preview)
  *
  * Needs the LG webOS CLI: npm install -g @webos-tools/cli
  */
@@ -17,12 +19,17 @@ const { execSync } = require('child_process');
 
 const root = __dirname;
 const webApp = path.join(root, '..', 'web', 'public', 'app');
+const tvApp = path.join(root, 'app');
 const stage = path.join(root, 'build');
 const dist = path.join(root, 'dist');
 const appinfo = JSON.parse(fs.readFileSync(path.join(root, 'appinfo.json'), 'utf8'));
+const argv = process.argv.slice(2);
 
-// Windows-only pieces of the web app that the TV never loads.
-const SKIP = new Set(['player-overlay.html', 'manifest.json']);
+// What the TV app takes from the shared web code: [from (in web/public/app), to (in the package)].
+const SHARED = [
+  ['js/utils', 'js/utils'], ['js/core', 'js/core'], ['js/api', 'js/api'], ['js/player', 'js/player'],
+  ['js/tv/flexGap.js', 'js/shared/flexGap.js'], ['css/android-player.css', 'css/android-player.css'],
+];
 
 function ares(cmd, args) {
   // The CLI is a .cmd shim on Windows, which needs a shell: quote every argument.
@@ -31,7 +38,7 @@ function ares(cmd, args) {
   execSync([cmd, ...args.map(a => JSON.stringify(a))].join(' '), { stdio: 'inherit', env });
 }
 
-/** TypeScript (any installed copy) transpiles the app's JS for older TV engines. */
+/** TypeScript (any installed copy) transpiles the JS for older TV engines. */
 function loadTypeScript() {
   try { return require('typescript'); } catch {}
   const globalRoot = execSync('npm root -g', { encoding: 'utf8' }).trim();
@@ -52,10 +59,7 @@ function loadTypeScript() {
   throw new Error('TypeScript not found: run "npm install -g typescript" once.');
 }
 
-/**
- * 2021 TVs (webOS 6) run Chromium 79: lower the JS to ES2019 (no ?. / ??),
- * expand the `inset` shorthand, and add legacy.css fallbacks.
- */
+/** 2021 TVs (webOS 6) run Chromium 79: lower the JS to ES2019 and expand the CSS `inset` shorthand. */
 function makeLegacyCompatible(dir) {
   const ts = loadTypeScript();
   const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e => {
@@ -68,8 +72,7 @@ function makeLegacyCompatible(dir) {
   };
   for (const file of walk(dir)) {
     if (file.endsWith('.js')) {
-      const src = fs.readFileSync(file, 'utf8');
-      const out = ts.transpileModule(src, {
+      const out = ts.transpileModule(fs.readFileSync(file, 'utf8'), {
         compilerOptions: { target: ts.ScriptTarget.ES2019, module: ts.ModuleKind.None, allowJs: true, removeComments: false },
         reportDiagnostics: false,
       }).outputText;
@@ -85,33 +88,33 @@ function makeLegacyCompatible(dir) {
       fs.writeFileSync(file, css);
     }
   }
-  fs.copyFileSync(path.join(root, 'legacy.css'), path.join(dir, 'css', 'legacy.css'));
-  const index = path.join(dir, 'index.html');
-  const html = fs.readFileSync(index, 'utf8')
-    // The app runs from file:// on the TV, which older engines don't count as 'self'.
-    .replace(/'self'/g, "'self' file:")
-    .replace('</head>', '  <link rel="stylesheet" href="css/legacy.css">\n</head>');
-  fs.writeFileSync(index, html);
 }
 
 fs.rmSync(stage, { recursive: true, force: true });
 fs.mkdirSync(stage, { recursive: true });
-for (const entry of fs.readdirSync(webApp)) {
-  if (SKIP.has(entry)) continue;
-  fs.cpSync(path.join(webApp, entry), path.join(stage, entry), { recursive: true });
+for (const [from, to] of SHARED) {
+  fs.mkdirSync(path.dirname(path.join(stage, to)), { recursive: true });
+  fs.cpSync(path.join(webApp, from), path.join(stage, to), { recursive: true });
 }
+// The website's router is not part of the TV app (it has its own screen stack).
+fs.rmSync(path.join(stage, 'js', 'core', 'router.js'), { force: true });
+fs.copyFileSync(path.join(tvApp, 'index.html'), path.join(stage, 'index.html'));
+fs.cpSync(path.join(tvApp, 'css'), path.join(stage, 'css'), { recursive: true });
+fs.cpSync(path.join(tvApp, 'js'), path.join(stage, 'js', 'tv'), { recursive: true });
+fs.copyFileSync(path.join(root, 'legacy.css'), path.join(stage, 'css', 'legacy.css'));
 fs.copyFileSync(path.join(root, 'appinfo.json'), path.join(stage, 'appinfo.json'));
-makeLegacyCompatible(stage);
 for (const f of ['icon.png', 'largeIcon.png', 'splash.png']) {
   fs.copyFileSync(path.join(root, 'assets', f), path.join(stage, f));
 }
+makeLegacyCompatible(stage);
+
+if (argv.includes('--no-package')) { console.log(`Staged ${stage}`); process.exit(0); }
 
 fs.mkdirSync(dist, { recursive: true });
 ares('ares-package', [stage, '-o', dist, '--no-minify']);
 const ipk = path.join(dist, `${appinfo.id}_${appinfo.version}_all.ipk`);
 console.log(`\nBuilt ${ipk}`);
 
-const argv = process.argv.slice(2);
 let devices = argv.flatMap((a, i) => (a === '--device' && argv[i + 1] ? [argv[i + 1]] : []));
 if (argv.includes('--all-tvs')) {
   const compat = `--require ${JSON.stringify(path.join(root, 'node-compat.js'))}`;
