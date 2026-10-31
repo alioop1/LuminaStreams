@@ -11,8 +11,8 @@
   // HomeConstants.kt (dp)
   const LAND_W = 280, LAND_H = 158, PORT_W = 148, PORT_H = 222;
   const LAND_GAP = 20, PORT_GAP = 16, BRAND_W = 180, BRAND_GAP = 16, ROW_PAD = 32;
-  const CONTENT_W = 960 - 260 - 2;
-  const SIDE_ITEM_H = 44;
+  const CONTENT_W = TV.W - 260 - 2;
+  const SIDE_ITEM_H = 48; // 12 dp padding ×2 + 17 sp text + 2 dp margins ×2
 
   const BRANDS = {
     HBO: { label: ['HBO Max Exclusives', 'בלעדי ל-HBO'], movie: { with_watch_providers: '1899|384', watch_region: 'US' }, tv: { with_networks: '49|3186' }, logo: '/tuomPhY2UtuPTqqFnKMVHvSb724.png', bg: ['#1A0A2E', '#2D1B4E'] },
@@ -175,7 +175,7 @@
             runtime: d.runtime || (d.episode_run_time && d.episode_run_time[0]) || 0,
             genre: d.genres && d.genres[0] ? d.genres[0].name : '',
             overview: d.overview || '',
-            cast: ((d.credits && d.credits.cast) || []).slice(0, 3).map(c => ({ name: c.name, photo: c.profile_path ? img(c.profile_path, 'w185') : '' })),
+            cast: ((d.credits && d.credits.cast) || []).slice(0, 4).map(c => ({ name: c.name, photo: c.profile_path ? img(c.profile_path, 'w185') : '' })),
           };
           enrichCache.set(m.key, x);
           if (x.logo) await TV.decode(x.logo);
@@ -427,7 +427,6 @@
         setZone('rows');
         return;
       }
-      if (id === 'iptv' || id === 'debrid') { TV.toast(tr('Coming to the TV app soon.', 'יגיע בקרוב לאפליקציית הטלוויזיה.')); return; }
       TV.open(id);
     }
     navBtns.forEach((b, i) => TV.pointer(b, () => { s.nav = i; setZone('nav'); }, () => { s.nav = i; navAction(b.dataset.nav); }));

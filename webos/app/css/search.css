@@ -1,0 +1,201 @@
+/* LuminaStreams TV — Search, in Android dp (1 CSS px = 1 dp): SearchScreen.kt, SearchResultsGrid.kt,
+   SearchCards.kt, SearchFilterSidebar.kt. Chromium 79: no gap/inset/aspect-ratio; transform/opacity animations only.
+   tv-material3 Surfaces without an explicit scale grow 1.1× when focused (ClickableSurfaceDefaults.scale). */
+
+.sx { background: #040408; }
+
+/* ── Focused-result backdrop: alpha 0.3 + vertical gradient (0x66 → 0xCC → 0xFF #040408) ── */
+.sx-bd { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; transition: opacity 0.4s; }
+.sx-bd.on { opacity: 1; transition: opacity 0.6s; }
+.sx-bd img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.3; }
+.sx-bd i { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(to bottom, rgba(4,4,8,0.4), rgba(4,4,8,0.8), #040408); }
+
+.sx-col { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; flex-direction: column; }
+
+/* ── Nav bar: padding start/end 48, top 28, bottom 16; row 38 (field 42) ── */
+.sx-nav { flex: 0 0 auto; padding: 28px 48px 16px; }
+.sx-navin { display: flex; align-items: center; height: 38px; }
+.sx-navin.open { height: 42px; }
+@keyframes sx-fade { from { opacity: 0; } to { opacity: 1; } }
+.sx-fade { animation: sx-fade 0.2s ease-out; }
+.sx-grow { flex: 1 1 auto; }
+
+.sx-pill, .sx-tab, .sx-rb, .sx-chip, .sx-rtab, .sx-rbtn, .sx-pre, .sx-fc { transition: transform 0.15s; }
+
+/* Categories / back pill: RED 25% → RED, 38 high, padding 16, icon 18 + 8 + 14sp bold. */
+.sx-pill { flex: 0 0 auto; height: 38px; padding: 0 16px; margin-inline-end: 16px; border-radius: 999px; display: flex; align-items: center;
+  background: rgba(229,9,20,0.25); color: #fff; font-size: 14px; font-weight: 700; white-space: nowrap; }
+.sx-pill .ic { margin-inline-end: 8px; }
+[dir="rtl"] .sx-pill .mir { transform: scaleX(-1); }
+.sx-pill.f { background: #E50914; transform: scale(1.1); }
+
+/* Source tabs: spacing 8, 38 high, padding 18, 14sp (bold when selected). */
+.sx-tabs { display: flex; flex: 0 0 auto; }
+.sx-tab { height: 38px; padding: 0 18px; margin-inline-end: 8px; border-radius: 999px; display: flex; align-items: center;
+  font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.5); white-space: nowrap; }
+.sx-tab:last-child { margin-inline-end: 0; }
+.sx-tab.sel { background: rgba(255,255,255,0.12); color: #fff; font-weight: 700; }
+.sx-tab.f { background: #fff; color: #000; transform: scale(1.1); }
+.sx-gem { font-size: 12px; margin-inline-end: 6px; }
+
+/* Round buttons (search, filter, close): 38 circle, White 6%; icons keep their own tint when focused. */
+.sx-rb { flex: 0 0 38px; width: 38px; height: 38px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); }
+.sx-rb.sx-search { margin-inline-end: 12px; }
+.sx-rb.act { background: rgba(229,9,20,0.2); color: #E50914; }
+.sx-rb.f { background: #fff; transform: scale(1.1); }
+
+/* Expanded field: 42 high, radius 12, White 8%, padding 16; search icon 20 RED, 10, text 17sp medium. */
+.sx-inbox { flex: 1 1 auto; min-width: 0; height: 42px; margin-inline-end: 12px; padding: 0 16px; border-radius: 12px;
+  display: flex; align-items: center; background: rgba(255,255,255,0.08); }
+.sx-inic { flex: 0 0 auto; color: #E50914; margin-inline-end: 10px; }
+.sx-field { position: relative; flex: 1 1 auto; min-width: 0; height: 42px; }
+.sx-input { position: absolute; top: 0; left: 0; width: 100%; height: 42px; margin: 0; padding: 0; border: 0; outline: 0; background: transparent;
+  color: #fff; caret-color: #E50914; font: 500 17px 'Roboto', 'Noto Sans Hebrew', Arial, sans-serif; }
+.sx-input::placeholder { color: rgba(255,255,255,0.25); }
+.sx-caret { display: none; position: absolute; top: 10px; left: 0; width: 2px; height: 22px; background: #E50914; }
+.sx-meas { position: absolute; top: 0; left: 0; visibility: hidden; white-space: pre; font: 500 17px 'Roboto', 'Noto Sans Hebrew', Arial, sans-serif; }
+
+/* ── History chips: LazyRow padding 48, spacing 10; chip 36 high, padding 16, History 14 + 8 + 13sp; then 16 ── */
+.sx-chipwrap { flex: 0 0 56px; height: 56px; margin-top: -4px; padding-top: 4px; overflow: hidden; }
+.sx-chips { position: relative; display: flex; height: 36px; padding: 0 48px; transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1); }
+.sx-chip { flex: 0 0 auto; height: 36px; padding: 0 16px; margin-inline-end: 10px; border-radius: 999px; display: flex; align-items: center;
+  background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.7); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.sx-chip .ic { margin-inline-end: 8px; }
+.sx-chip.f { background: #fff; color: #000; transform: scale(1.1); }
+
+/* ── Content area ── */
+.sx-content { position: relative; flex: 1 1 auto; min-height: 0; overflow: hidden; }
+.sx-sc { position: absolute; top: 0; left: 0; width: 100%; transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1); }
+.sx-static { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+.sx-center { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; }
+
+/* PremiumCategoryCard: 16:9, radius 16, #0A0A0F, image alpha 0.7 → 1. The card's clip comes before the
+   Surface's 1.02 scale in Android, so the picture grows inside a fixed rounded frame and the glow is clipped. */
+.sx-cat { position: absolute; overflow: hidden; border-radius: 16px; background: #0A0A0F; }
+.sx-cat-in { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transition: transform 0.15s; }
+.sx-cat.f .sx-cat-in { transform: scale(1.02); }
+.sx-cat-in img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.7; transition: opacity 0.3s; }
+.sx-cat.f .sx-cat-in img { opacity: 1; }
+.sx-cat-g { position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+  background: linear-gradient(to bottom, transparent 0%, transparent 40%, rgba(0,0,0,0.5) 75%, rgba(0,0,0,0.9) 100%); }
+.sx-cat-t { position: absolute; left: 0; right: 0; bottom: 0; padding: 14px; font-size: 16px; font-weight: 700; color: #fff;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: left; }
+[dir="rtl"] .sx-cat-t { text-align: right; }
+
+/* MediaSearchCard: 2:3, radius 14, #0A0A0F, focus scale 1.03 + glow White 15% 10 dp, poster alpha 0.85 → 1. */
+.sx-card { position: absolute; overflow: hidden; border-radius: 14px; background: #0A0A0F; transition: transform 0.15s; }
+.sx-card.f { transform: scale(1.03); box-shadow: 0 0 10px 0 rgba(255,255,255,0.15); }
+.sx-card img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0.85; transition: opacity 0.25s; }
+.sx-card.f img { opacity: 1; }
+.sx-cg { position: absolute; left: 0; right: 0; bottom: 0; height: 55%; background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.75)); }
+.sx-card.f .sx-cg { background: linear-gradient(to bottom, transparent, rgba(0,0,0,0.92)); }
+.sx-tb, .sx-te { position: absolute; top: 8px; display: flex; }
+.sx-tb { left: 8px; }
+.sx-te { right: 8px; }
+[dir="rtl"] .sx-tb { left: auto; right: 8px; }
+[dir="rtl"] .sx-te { right: auto; left: 8px; }
+.sx-badge { padding: 2px 6px; border-radius: 4px; font-size: 9px; line-height: 11px; font-weight: 900; color: #fff; white-space: nowrap; }
+.sx-ci { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px; }
+.sx-ct { margin-bottom: 3px; font-size: 13px; line-height: 16px; font-weight: 700; color: #fff;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.sx-cm { display: flex; align-items: center; white-space: nowrap; }
+.sx-cr { margin-inline-end: 6px; font-size: 11px; font-weight: 700; color: #FFCC00; }
+.sx-cy { font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.6); }
+
+/* ShimmerGrid (static on the TV). */
+.sx-sh { position: absolute; border-radius: 14px; background: linear-gradient(115deg, #0F0F14 0%, #1A1A24 50%, #0F0F14 100%); }
+
+/* YearGroupedResults header: bar 5×32 r3, 12, emoji 24sp, title 24sp Black, count pill (12/4, 13sp bold); 4; line 2. */
+.sx-yh { position: absolute; left: 48px; right: 48px; height: 38px; }
+.sx-yhr { display: flex; align-items: center; height: 32px; white-space: nowrap; }
+.sx-ybar { flex: 0 0 5px; width: 5px; height: 32px; border-radius: 3px; margin-inline-end: 12px; }
+.sx-yemo { font-size: 24px; margin-inline-end: 12px; }
+.sx-ytt { font-size: 24px; font-weight: 900; margin-inline-end: 12px; }
+.sx-ycnt { padding: 4px 12px; border-radius: 999px; background: rgba(255,255,255,0.08); color: rgba(255,255,255,0.5); font-size: 13px; line-height: 15px; font-weight: 700; }
+.sx-ycnt.gold { background: rgba(255,204,0,0.15); color: #FFCC00; }
+.sx-yline { display: block; margin-top: 4px; height: 2px; }
+.sx-yr { position: absolute; left: 0; width: 100%; }
+.sx-yt { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1); }
+
+/* EmptyStateMessage: SearchOff 64 (White 30%), 16, 20sp medium White 60%. */
+.sx-empty { display: flex; flex-direction: column; align-items: center; color: rgba(255,255,255,0.3); }
+.sx-empty-t { margin-top: 16px; font-size: 20px; font-weight: 500; color: rgba(255,255,255,0.6); }
+
+/* FuzerError: 72 circle (pink 8%, 1 dp pink 30%), CloudOff 32; 14; 22sp bold; 14; 12sp White 60% (max 440). */
+.sx-fe { display: flex; flex-direction: column; align-items: center; padding: 40px; }
+.sx-fe-ic { width: 72px; height: 72px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(255,45,120,0.08); border: 1px solid rgba(255,45,120,0.3); color: rgba(255,45,120,0.7); }
+.sx-fe-t { margin-top: 14px; font-size: 22px; font-weight: 700; color: #fff; }
+.sx-fe-m { margin-top: 14px; max-width: 440px; font-size: 12px; line-height: 17px; color: rgba(255,255,255,0.6); }
+html[dir] .sx-fe-m[dir="auto"] { text-align: center; }
+
+/* ═══ Filter overlay (#040408 at 98%, fade in 300 / out 250) ═══ */
+.sx-ov { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 200; display: flex; background: rgba(4,4,8,0.98);
+  opacity: 0; visibility: hidden; pointer-events: none; transition: opacity 0.25s, visibility 0s linear 0.25s; }
+.sx-ov.on { opacity: 1; visibility: visible; pointer-events: auto; transition: opacity 0.3s; }
+
+/* Rail: 200 wide, #0C0C10 → #08080C, padding top 20 bottom 16. */
+.sx-rail { flex: 0 0 200px; width: 200px; height: 100%; padding: 20px 0 16px; display: flex; flex-direction: column; align-items: center;
+  background: linear-gradient(to bottom, #0C0C10, #08080C); }
+.sx-rh { font-size: 18px; font-weight: 700; color: #fff; }
+.sx-ra { margin-top: 2px; font-size: 11px; font-weight: 700; color: #E50914; }
+.sx-rtabs { flex: 1 1 auto; align-self: stretch; min-height: 0; margin-top: 16px; margin-bottom: 8px; padding: 0 8px; }
+.sx-rtab { height: 42px; margin-bottom: 4px; padding: 0 12px; border-radius: 12px; display: flex; align-items: center; color: rgba(255,255,255,0.4); }
+.sx-rtab.sel { background: #16161C; color: #fff; }
+.sx-rtab.f { background: #fff; color: #000; transform: scale(1.1); }
+.sx-acc { display: none; flex: 0 0 3px; width: 3px; height: 20px; border-radius: 2px; background: #E50914; margin-inline-end: 9px; }
+.sx-rtab.sel .sx-acc { display: block; }
+.sx-rtab.f .sx-acc, .sx-rtab.f .sx-rbadge { display: none; }
+.sx-rtab .ic { flex: 0 0 16px; margin-inline-end: 10px; }
+.sx-rtt { flex: 1 1 auto; min-width: 0; font-size: 13px; font-weight: 500; white-space: nowrap; overflow: hidden; }
+.sx-rtab.sel .sx-rtt { font-weight: 700; }
+.sx-rbadge { flex: 0 0 18px; width: 18px; height: 18px; border-radius: 50%; background: #E50914; color: #fff;
+  display: flex; align-items: center; justify-content: center; font-size: 9px; font-weight: 700; }
+.sx-rbtn { align-self: stretch; flex: 0 0 36px; height: 36px; margin: 0 16px; border-radius: 999px; display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 700; white-space: nowrap; }
+.sx-rbtn .ic { margin-inline-end: 6px; }
+.sx-rbtn.clr { margin-bottom: 6px; background: rgba(229,9,20,0.15); color: #E50914; }
+.sx-rbtn.clr.f { background: #E50914; color: #fff; transform: scale(1.1); }
+.sx-rbtn.cls { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.6); }
+.sx-rbtn.cls.f { background: #fff; color: #000; transform: scale(1.1); }
+
+/* Chip panel: #0A0A0E → #060608 (left to right, as Compose draws it), padding start 24 end 48 top 20 bottom 16. */
+.sx-panel { flex: 1 1 auto; min-width: 0; height: 100%; padding-top: 20px; padding-bottom: 16px; padding-inline-start: 24px; padding-inline-end: 48px;
+  display: flex; flex-direction: column; background: linear-gradient(to right, #0A0A0E, #060608); }
+.sx-ph { display: flex; align-items: center; padding-bottom: 4px; }
+.sx-red { flex: 0 0 22px; color: #E50914; margin-inline-end: 10px; }
+.sx-pht { flex: 1 1 auto; min-width: 0; }
+.sx-ptt { font-size: 22px; font-weight: 700; color: #fff; }
+.sx-phint { font-size: 11px; color: rgba(255,255,255,0.3); }
+.sx-pcnt { padding: 4px 10px; border-radius: 999px; background: rgba(229,9,20,0.15); color: #E50914; font-size: 11px; font-weight: 700; white-space: nowrap; }
+.sx-pdiv { display: block; flex: 0 0 1px; height: 1px; margin-bottom: 14px;
+  background: linear-gradient(to right, rgba(229,9,20,0.3), rgba(255,255,255,0.04), transparent); }
+.sx-plbl { margin-bottom: 8px; font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.4); }
+.sx-pres { display: flex; margin-bottom: 16px; }
+.sx-pre { flex: 0 0 auto; height: 32px; padding: 0 12px; margin-inline-end: 8px; border-radius: 999px; display: flex; align-items: center;
+  background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.7); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.sx-pre .ic { margin-inline-end: 5px; }
+.sx-pre.f { background: #E50914; color: #fff; transform: scale(1.06); }
+
+/* FlowRow, spacing 10 × 10; SingleChip 42 high, radius 12, padding 16, icon 16 + 8 + 13sp (+ 8 + check 14), focus 1.05. */
+.sx-flow { display: flex; flex-wrap: wrap; margin-inline-end: -10px; margin-bottom: -10px; }
+.sx-fc { flex: 0 0 auto; height: 42px; padding: 0 16px; margin-inline-end: 10px; margin-bottom: 10px; border-radius: 12px; display: flex; align-items: center;
+  background: #16161C; color: rgba(255,255,255,0.6); font-size: 13px; font-weight: 500; white-space: nowrap; }
+.sx-fci { color: rgba(255,255,255,0.35); margin-inline-end: 8px; }
+.sx-fck { color: #E50914; margin-inline-start: 8px; }
+.sx-fc.sel { background: rgba(229,9,20,0.18); color: #fff; font-weight: 700; }
+.sx-fc.sel .sx-fci { color: #E50914; }
+.sx-fc.f { background: #fff; color: #000; transform: scale(1.05); }
+.sx-fc.f .sx-fci { color: #000; }
+.sx-fc.f .sx-fck { display: none; }
+.sx-fzl { display: block; height: 1px; margin-top: 24px; background: rgba(255,255,255,0.04); }
+.sx-fzt { margin-top: 16px; margin-bottom: 8px; font-size: 12px; font-weight: 700; color: rgba(255,255,255,0.5); }
+.sx-fzc { display: flex; }
+.sx-fzc .sx-fc { margin: 0; }
+
+/* Active-filters summary pinned to the bottom (Spacer(weight 1)). */
+.sx-sum { margin-top: auto; padding: 12px; border-radius: 12px; background: #16161C; display: flex; align-items: center; }
+.sx-sum .ic { flex: 0 0 16px; color: rgba(255,255,255,0.4); margin-inline-end: 8px; }
+.sx-sum span { min-width: 0; font-size: 11px; color: rgba(255,255,255,0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

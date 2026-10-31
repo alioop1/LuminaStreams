@@ -2,8 +2,9 @@
 
 The LG TV app (webOS 6 and newer: 2021 LG TVs onwards). It is its **own app, built for
 the TV** (`webos/app`), not the website: every screen is rebuilt from the Android TV
-Compose code and laid out in the same units (960×540 dp, two pixels per dp on a 1080p
-TV; Details at Android's 0.85 density).
+Compose code in the same units. The Android app forces 180 dpi (`MainActivity`), so a
+1080p screen is 1706.67 × 960 dp; 1 CSS px here = 1 dp (Details at Android's 0.85
+density).
 
 - `app/js/core.js` — dp scaling, screen stack (screens stay alive underneath, like
   Android's back stack), remote keys (LG Back 461, media keys), Magic Remote pointer,
@@ -12,7 +13,13 @@ TV; Details at Android's 0.85 density).
   category list + one row at a time (Android's ConsoleRowCycler), studio ribbon/filter.
 - `app/js/details.js` — Details, the sources dialog (filters, DetailedSourceRow) and
   the season popup.
-- `app/js/screens.js` — Search (LG on-screen keyboard), My List, Settings, Sign-in.
+- `app/js/search.js` — Search: source tabs, category grid, year-grouped rows, results
+  grid, history, filter overlay (LG on-screen keyboard for typing).
+- `app/js/watchlist.js`, `settings.js`, `auth.js` — My List, Settings (AllDebrid PIN,
+  server status, cloud sync, playback/subtitle/system options), Sign-in (+ device link).
+- `app/js/iptv.js` — IPTV: M3U/XMLTV (incl. .gz), categories, recent, guide, live
+  player with channel zapping and catch-up.
+- `app/js/debrid.js` — Debrid Cloud: the AllDebrid library, files, playback.
 - `app/js/playback.js` — the shared Android player (`web/.../js/player/androidPlayer.js`,
   same as Windows) over the TV's own `<video>` (`tvBackend.js`): the TV decodes
   Dolby Vision / HDR / Atmos itself and shows its own native pop-ups.

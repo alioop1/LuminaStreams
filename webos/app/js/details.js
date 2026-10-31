@@ -1,6 +1,6 @@
 /**
  * LuminaStreams TV — Details (1:1 with the Android TV DetailsScreen, which runs at
- * 0.85 density: laid out on a 1129×635 dp canvas scaled to the screen).
+ * 0.85 density: laid out on a 2007.84×1129.41 dp canvas scaled to the screen).
  * Includes the sources dialog (filters + DetailedSourceRow) and the season popup.
  */
 (() => {
@@ -34,6 +34,75 @@
       size: s.sizeBytes ? (s.sizeBytes >= 1073741824 ? `${(s.sizeBytes / 1073741824).toFixed(1)} GB` : `${Math.round(s.sizeBytes / 1048576)} MB`) : (s.size || ''),
       seeders, leechers,
     };
+  }
+
+  const EXTRA_ICONS = {
+    schedule: 'M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zM12 20c-4.42 0-8-3.58-8-8s3.58-8 8-8 8 3.58 8 8-3.58 8-8 8zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z',
+    bell: 'M7.58 4.08L6.15 2.65C3.75 4.48 2.17 7.3 2.03 10.5h2c.15-2.65 1.51-4.97 3.55-6.42zm12.39 6.42h2c-.15-3.2-1.73-6.02-4.12-7.85l-1.42 1.43c2.02 1.45 3.39 3.77 3.54 6.42zM18 11c0-3.07-1.64-5.64-4.5-6.32V4c0-.83-.67-1.5-1.5-1.5s-1.5.67-1.5 1.5v.68C7.63 5.36 6 7.92 6 11v5l-2 2v1h16v-1l-2-2v-5zm-6 11c.14 0 .27-.01.4-.04.65-.14 1.18-.58 1.44-1.18.1-.24.15-.5.15-.78h-4c.01 1.1.9 2 2.01 2z',
+    verified: 'M23 12l-2.44-2.79.34-3.69-3.61-.82-1.89-3.2L12 2.96 8.6 1.5 6.71 4.69 3.1 5.5l.34 3.7L1 12l2.44 2.79-.34 3.7 3.61.82L8.6 22.5l3.4-1.47 3.4 1.46 1.89-3.19 3.61-.82-.34-3.69L23 12zm-12.91 4.72l-3.8-3.81 1.48-1.48 2.32 2.33 5.85-5.87 1.48 1.48-7.33 7.35z',
+    checkCircle: 'M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z',
+  };
+  const xicon = (name, size) => `<svg class="ic" width="${size}" height="${size}" viewBox="0 0 24 24"><path d="${EXTRA_ICONS[name]}"/></svg>`;
+
+  /* ── Series release state (SeriesReleaseInfo.kt + NextEpisodeStatusCard.kt) ── */
+  const DAY = 86400000;
+  const today0 = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+  const parseDay = iso => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || ''); return m ? new Date(+m[1], +m[2] - 1, +m[3]).getTime() : null; };
+  function countdownHeadline(days, he) {
+    if (days == null) return he ? 'בקרוב' : 'SOON';
+    if (days <= 0) return he ? 'עכשיו' : 'NOW';
+    if (days === 1) return he ? 'מחר' : 'TOMORROW';
+    if (days < 7) return he ? `בעוד ${days} ימים` : `IN ${days} DAYS`;
+    if (days < 14) return he ? 'בעוד שבוע' : 'IN 1 WEEK';
+    if (days < 31) return he ? `בעוד ${Math.floor(days / 7)} שבועות` : `IN ${Math.floor(days / 7)} WEEKS`;
+    if (days < 365) { const m = Math.max(1, Math.floor(days / 30)); return he ? `בעוד ${m} חודשים` : `IN ${m} MONTHS`; }
+    return he ? 'בעוד שנה+' : 'IN 1+ YEAR';
+  }
+  function airDateLine(ms, he) {
+    if (ms == null) return '';
+    const d = new Date(ms);
+    const loc = he ? 'he' : 'en';
+    return `${d.toLocaleDateString(loc, { weekday: 'short' })} · ${d.toLocaleDateString(loc, { month: 'short' })} ${d.getDate()}`;
+  }
+  /** "AIRS Mar 14" pill for an episode that hasn't aired (airsPillText). */
+  function airsPillText(iso, he) {
+    const ms = parseDay(iso);
+    if (ms == null) return he ? 'טרם שודר' : 'NOT AIRED';
+    const d = new Date(ms);
+    return `${he ? 'משודר' : 'AIRS'} ${d.toLocaleDateString(he ? 'he' : 'en', { month: 'short' })} ${d.getDate()}`;
+  }
+  function releaseStrip(d) {
+    const he = TV.rtl();
+    const next = d.next_episode_to_air;
+    const nextMs = next ? parseDay(next.air_date) : null;
+    const days = nextMs != null ? Math.round((nextMs - today0()) / DAY) : null;
+    const lastMs = d.last_episode_to_air ? parseDay(d.last_episode_to_air.air_date) : null;
+    const lastAgo = lastMs != null ? Math.round((today0() - lastMs) / DAY) : null;
+    const seasons = d.number_of_seasons || 0;
+    let st;
+    if (next) st = days == null ? 'RETURNING' : days > 0 ? 'SOON' : days >= -3 ? 'NOW' : 'RETURNING';
+    else if (lastAgo != null && lastAgo >= 0 && lastAgo <= 3) st = 'NOW';
+    else {
+      const t = String(d.status || '').trim().toLowerCase();
+      st = t === 'ended' ? 'ENDED' : (t === 'canceled' || t === 'cancelled') ? 'CANCELED'
+        : ['returning series', 'in production', 'planned', 'pilot'].includes(t) ? 'RETURNING' : 'UNKNOWN';
+    }
+    if (st === 'UNKNOWN') return '';
+    const label = next ? `S${next.season_number} · E${next.episode_number}` : '';
+    const V = {
+      SOON: ['#E2B258', he ? 'פרק חדש' : 'NEXT EPISODE', countdownHeadline(days, he), [label, airDateLine(nextMs, he)].filter(Boolean).join('   ·   '), 'schedule', true],
+      NOW: ['#32D74B', he ? 'פרק חדש זמין' : 'NEW EPISODE OUT', he ? 'עכשיו' : 'AVAILABLE NOW', next ? `${label}   ·   ${next.name || ''}` : '', 'bell', true],
+      RETURNING: ['#3B82F6', he ? 'מתחדש' : 'RENEWED', he ? 'טרם נקבע תאריך' : 'DATE TBA', he ? 'העונה הבאה בהפקה' : 'Next season in production', 'verified', false],
+      ENDED: ['#8A8A93', he ? 'הסתיים' : 'SERIES COMPLETE', he ? 'כל הפרקים שודרו' : 'ALL EPISODES AIRED', seasons ? (he ? `${seasons} עונות` : `${seasons} seasons`) : '', 'checkCircle', false],
+      CANCELED: ['#E5484D', he ? 'בוטלה' : 'CANCELED', seasons ? (he ? `הסתיים אחרי ${seasons} עונות` : `ENDED AFTER ${seasons} SEASONS`) : (he ? 'לא תחודש' : 'WILL NOT RETURN'), '', 'checkCircle', false],
+    }[st];
+    const [accent, lbl, headline, sub, ic, pulse] = V;
+    const still = st === 'SOON' && next && next.still_path ? img(next.still_path, 'w300') : '';
+    return `<div class="d-rel" style="--a:${accent}">
+      <i class="d-rel-spine"></i><i class="d-rel-dot${pulse ? ' pulse' : ''}"></i>
+      <div class="d-rel-tx"><div class="d-rel-l1">${xicon(ic, 16)}<b>${esc(lbl)}</b><span>${esc(headline)}</span></div>${sub ? `<div class="d-rel-sub" dir="auto">${esc(sub)}</div>` : ''}</div>
+      ${still ? `<div class="d-rel-still"><img src="${still}" alt=""><span>${tr('SOON', 'בקרוב')}</span></div>` : ''}
+    </div>`;
   }
 
   function launchTrailer(key, title) {
@@ -162,6 +231,7 @@
           <div class="d-btn" data-a="fav">${icon(fav ? 'check' : 'add', 24)}<span>${fav ? tr('MY LIST', 'הרשימה שלי') : tr('ADD', 'הוסף')}</span></div>
         </div>
         ${overview ? `<p class="d-syn" dir="auto">${esc(overview)}</p>` : ''}
+        ${isSeries ? releaseStrip(d) : ''}
         ${seasons.length ? `<div class="d-seasons"><div class="d-strack">${seasons.map(x => `
           <div class="d-season" data-s="${x.season_number}"><span>${tr('Season', 'עונה')}</span><b>${x.season_number}</b></div>`).join('')}</div></div>` : ''}`;
       posterEl.innerHTML = d.poster_path ? `<img src="${img(d.poster_path, 'w780')}" alt="">` : '';
@@ -176,6 +246,7 @@
       wirePointer();
       paintFocus();
       fitSynopsis();
+      requestAnimationFrame(() => { posterEl.style.width = `${Math.round(posterEl.offsetHeight * 2 / 3)}px`; });
     }
     /** Show only the synopsis lines that fit (28 dp each), like Compose's maxLines in the space left. */
     function fitSynopsis() {
@@ -203,11 +274,11 @@
       ['back', 'actions', 'seasons', 'cast'].forEach(z => items(z).forEach((it, i) => it.classList.toggle('f', s.zone === z && (z === 'back' || i === s.idx[z]))));
       if (s.zone === 'seasons') {
         const tr0 = TV.$(infoEl, '.d-strack');
-        if (tr0) TV.scrollRow(tr0, s.idx.seasons, 96, 16, 535, 8, s.seasonScroll);
+        if (tr0) TV.reveal(tr0.parentElement, tr0, items('seasons')[s.idx.seasons], 8);
       }
       if (s.zone === 'cast') {
         const t = TV.$(castEl, '.d-ctrack');
-        TV.scrollRow(t, s.idx.cast, 90, 24, 985, 8, s.castScroll);
+        TV.reveal(t.parentElement, t, items('cast')[s.idx.cast], 8);
         const name = TV.$(castEl, '.d-cast-name');
         if (name && s.cast[s.idx.cast]) name.textContent = s.cast[s.idx.cast].name;
       }
@@ -233,6 +304,8 @@
         } else if (a === 'fav') toggleFav();
       } else if (s.zone === 'seasons') {
         openSeason(s.seasons[s.idx.seasons].season_number);
+      } else if (s.zone === 'cast') {
+        openActor(s.cast[s.idx.cast]);
       }
     }
     function toggleFav() {
@@ -388,29 +461,13 @@
         if (st.zone === 'filters') {
           const chip = filtersEl.querySelector('.chip.f');
           const row = chip && chip.closest('.src-frow');
-          if (row) {
-            const track = row.firstElementChild;
-            const shift = Number(track.dataset.x || 0);
-            const r = row.getBoundingClientRect();
-            const c = chip.getBoundingClientRect();
-            const z = r.width / row.offsetWidth || 1; // screen px per dp
-            let x = shift;
-            if (c.left < r.left + 8 * z) x += (r.left + 8 * z - c.left) / z;
-            if (c.right > r.right - 8 * z) x -= (c.right - (r.right - 8 * z)) / z;
-            if (x !== shift) { track.dataset.x = String(x); track.style.transform = `translateX(${x}px)`; }
-          }
+          if (row) TV.reveal(row, row.firstElementChild, chip, 8);
         }
         const rows = [...bodyEl.querySelectorAll('.srow')];
         rows.forEach((r, i) => r.classList.toggle('f', st.zone === 'list' && i === st.idx));
         const list = TV.$(bodyEl, '.src-list');
-        if (list) {
-          // Keep the focused row in view (rows 100 dp + 16 spacing, padding 24).
-          const viewH = bodyEl.clientHeight || 300;
-          const top = 24 + st.idx * 116;
-          if (top + 100 > st.scroll + viewH - 24) st.scroll = top + 100 - viewH + 24;
-          if (top < st.scroll + 24) st.scroll = Math.max(0, top - 24);
-          list.style.transform = `translateY(${-st.scroll}px)`;
-        }
+        // Keep the focused row in view (LazyColumn contentPadding 24).
+        if (list && rows[st.idx]) TV.reveal(bodyEl, list, rows[st.idx], 24, 'y');
       }
       async function scan(force) {
         const token = ++st.token;
@@ -421,7 +478,9 @@
           const T = window.Torrentio;
           const list = season != null ? await T.getEpisodeStreams(s.imdbId, season, episode) : await T.getStreams('movie', s.imdbId);
           if (token !== st.token) return;
-          st.streams = (list || []).map(x => ({ s: x, d: describe(x) }));
+          // Max resolution / file size from Settings (Android DetailsViewModel filter).
+          st.streams = (list || []).map(x => ({ s: x, d: describe(x) }))
+            .filter(x => !TV.prefs || TV.prefs.allowsStream(x.d.quality, x.s.sizeBytes || 0));
           renderFilters();
           renderList();
           st.zone = st.shown.length ? 'list' : 'filters';
@@ -496,6 +555,77 @@
       scan(false);
     }
 
+    /* ── Actor popup (ActorDetailsPopup) ── */
+    async function openActor(actor) {
+      if (!actor) return;
+      const box = el('<div class="ac-scrim"><div class="src-loading"><i class="spin"></i></div></div>');
+      const st = { idx: 0, items: [], credits: [] };
+      const l = {
+        el: box,
+        onKey(key) {
+          if (key === 'back') { closeLayer(); return true; }
+          if (!st.items.length) return true;
+          if (key === 'down') { st.idx = Math.min(st.items.length - 1, st.idx + 1); paint(); return true; }
+          if (key === 'up') { st.idx = Math.max(0, st.idx - 1); paint(); return true; }
+          if (key === 'ok') {
+            const c = st.credits[st.idx];
+            closeLayer();
+            TV.open('details', { id: c.id, type: c.isSeries ? 'tv' : 'movie' });
+            return true;
+          }
+          return true;
+        },
+      };
+      function paint() {
+        st.items.forEach((it, i) => it.classList.toggle('f', i === st.idx));
+        const list = TV.$(box, '.ac-list');
+        if (list && st.items[st.idx]) TV.reveal(list.parentElement, list, st.items[st.idx], 8, 'y');
+      }
+      showLayer(l);
+      try {
+        let p = await TV.tmdb(`/person/${actor.id}`, { append_to_response: 'combined_credits' });
+        if (!p.biography && TV.rtl()) {
+          const en = await TV.tmdb(`/person/${actor.id}`, { language: 'en-US' }).catch(() => null);
+          if (en && en.biography) p = Object.assign({}, p, { biography: en.biography });
+        }
+        const seen = new Set();
+        st.credits = ((p.combined_credits && p.combined_credits.cast) || []).map(c => {
+          const title = c.title || c.name;
+          if (!title) return null;
+          const date = c.release_date || c.first_air_date || '';
+          return { year: Number(date.slice(0, 4)) || 0, title, isSeries: c.media_type === 'tv' || !!c.first_air_date, id: c.id };
+        }).filter(Boolean).sort((a, b) => b.year - a.year).filter(c => (seen.has(c.title) ? false : seen.add(c.title)));
+        let lastYear = null;
+        const rows = st.credits.map(c => {
+          const head = c.year !== lastYear ? `<div class="ac-year">${c.year ? c.year : tr('Upcoming', 'בקרוב')}</div>` : '';
+          lastYear = c.year;
+          return `${head}<div class="ac-item"><i class="ac-dot${c.isSeries ? ' s' : ''}"></i><span class="ac-t" dir="auto">${esc(c.title)}</span><span class="ac-k${c.isSeries ? ' s' : ''}">${c.isSeries ? tr('Series', 'סדרה') : tr('Movie', 'סרט')}</span></div>`;
+        }).join('');
+        const badges = [p.birthday, p.place_of_birth].filter(Boolean).map(b => `<span class="ac-badge" dir="auto">${esc(b)}</span>`).join('')
+          + (p.deathday ? `<span class="ac-badge death">Died: ${esc(p.deathday)}</span>` : '');
+        box.innerHTML = `
+          <div class="ac-modal">
+            ${p.profile_path ? `<img class="ac-glow" src="${img(p.profile_path, 'w45')}" alt="">` : ''}
+            <div class="ac-row">
+              <div class="ac-portrait">${p.profile_path ? `<img src="${img(p.profile_path, 'original')}" alt="">` : `<span class="ph">${icon('person', 64)}</span>`}</div>
+              <div class="ac-info">
+                <div class="ac-name" dir="auto">${esc(p.name || actor.name)}</div>
+                ${badges ? `<div class="ac-badges">${badges}</div>` : ''}
+                ${p.biography ? `<p class="ac-bio" dir="auto">${esc(p.biography)}</p>` : ''}
+                ${st.credits.length ? `<div class="ac-fh">${tr('Filmography', 'פילמוגרפיה')}</div><div class="ac-view"><div class="ac-list">${rows}</div></div>` : ''}
+              </div>
+            </div>
+          </div>`;
+        const portrait = TV.$(box, '.ac-portrait');
+        portrait.style.width = `${Math.round(portrait.offsetHeight * 2 / 3)}px`;
+        st.items = [...box.querySelectorAll('.ac-item')];
+        st.items.forEach((it, i) => TV.pointer(it, () => { st.idx = i; paint(); }, () => { st.idx = i; l.onKey('ok'); }));
+        paint();
+      } catch (e) {
+        box.innerHTML = `<div class="src-msg">${tr('Could not load this actor', 'לא ניתן לטעון את השחקן')}</div>`;
+      }
+    }
+
     /* ── Season popup (SeasonEpisodesPopup) ── */
     async function openSeason(num) {
       const box = el(`
@@ -529,7 +659,7 @@
         // without a full-screen blur filter.
         bgEl.src = ep && ep.still_path ? img(ep.still_path, 'w92') : img(s.data.backdrop_path, 'w300');
         prevEl.innerHTML = ep ? `
-          <div class="ep-still">${still ? `<img src="${still}" alt="">` : ''}${ep.progress > 0 ? `<span class="ep-pbar"><i style="width:${Math.round(ep.progress * 100)}%"></i></span>` : ''}</div>
+          <div class="ep-still" style="height:${Math.round(prevEl.clientWidth * 9 / 16)}px">${still ? `<img src="${still}" alt="">` : ''}${ep.progress > 0 ? `<span class="ep-pbar"><i style="width:${Math.round(ep.progress * 100)}%"></i></span>` : ''}</div>
           <div class="ep-no"><b>${tr('EPISODE', 'פרק')} ${ep.episode_number}</b>${ep.watched ? `<span class="ep-w">${tr('WATCHED', 'נצפה')}</span>` : ''}</div>
           <div class="ep-t" dir="auto">${esc(ep.name || '')}</div>
           ${ep.overview ? `<div class="ep-o" dir="auto">${esc(ep.overview)}</div>` : ''}` : '';
@@ -537,11 +667,7 @@
       function paint() {
         const rows = [...listEl.querySelectorAll('.ep-row')];
         rows.forEach((r, i) => r.classList.toggle('f', i === st.idx));
-        const viewH = 563 - 64 - 46;
-        const top = st.idx * 122;
-        if (top + 122 > st.scroll + viewH) st.scroll = top + 122 - viewH;
-        if (top < st.scroll) st.scroll = top;
-        listEl.style.transform = `translateY(${-st.scroll}px)`;
+        if (rows[st.idx]) TV.reveal(listEl.parentElement, listEl, rows[st.idx], 10, 'y');
         preview(st.eps[st.idx]);
       }
       function playEp() {
@@ -563,7 +689,7 @@
               ${ep.progress > 0 && !up ? `<span class="ep-pr${ep.watched ? ' done' : ''}"><i style="width:${Math.round(ep.progress * 100)}%"></i></span>` : ''}
               <span class="ep-ov">${up ? '🗓' : `<span class="pl">${icon('play', 36)}</span>${ep.watched ? `<span class="ck">${icon('check', 28)}</span>` : ''}`}</span></div>
             <div class="ep-info"><div class="ep-rt" dir="auto">${ep.episode_number}. ${esc(ep.name || '')}</div>
-              ${up ? `<span class="ep-air">🗓  ${esc(ep.air_date)}</span>` : (ep.overview ? `<div class="ep-ro" dir="auto">${esc(ep.overview)}</div>` : '')}</div>
+              ${up ? `<span class="ep-air">🗓  ${esc(airsPillText(ep.air_date, TV.rtl()).toUpperCase())}</span>` : (ep.overview ? `<div class="ep-ro" dir="auto">${esc(ep.overview)}</div>` : '')}</div>
           </div>`;
         }).join('');
         [...listEl.querySelectorAll('.ep-row')].forEach((r, i) => TV.pointer(r, () => { st.idx = i; paint(); }, () => { st.idx = i; paint(); playEp(); }));

@@ -2,7 +2,7 @@
  * LuminaStreams TV — playback: the shared Android player (androidPlayer.js, the
  * same one the Windows app uses) over the TV's native <video> (tvBackend.js), so
  * webOS decodes Dolby Vision / Atmos itself and shows its own pop-ups.
- * Laid out in Android dp like the rest of the app (960 dp across the screen).
+ * Laid out in Android dp like the rest of the app (1706.67 dp across the screen).
  */
 (() => {
   'use strict';

@@ -5,10 +5,10 @@
   document.documentElement.setAttribute('lang', lang);
   document.documentElement.setAttribute('dir', lang === 'he' ? 'rtl' : 'ltr');
 
-  // Screens are drawn in dp; the player too (960 dp across, like Android TV).
+  // Screens are drawn in dp; the player too (Android's 180 dpi: 1706.67 dp across).
   const fit = () => {
     TV.fit();
-    document.documentElement.style.setProperty('--pz', String(window.innerWidth / 960));
+    document.documentElement.style.setProperty('--pz', String(window.innerWidth / TV.W));
   };
   fit();
   window.addEventListener('resize', fit);

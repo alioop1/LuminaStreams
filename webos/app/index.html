@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: 'unsafe-inline' https:; script-src 'self' file: 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: https://fonts.gstatic.com data:; img-src 'self' file: https: data: blob:; media-src * blob: data:; connect-src *;">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' file: 'unsafe-inline' https:; script-src 'self' file: 'unsafe-inline' 'unsafe-eval' https://www.gstatic.com; style-src 'self' file: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' file: https://fonts.gstatic.com data:; img-src 'self' file: https: http: data: blob:; media-src * blob: data:; connect-src *;">
   <title>LuminaStreams</title>
   <link rel="preconnect" href="https://image.tmdb.org">
   <link rel="preconnect" href="https://api.themoviedb.org">
@@ -12,7 +12,12 @@
   <link rel="stylesheet" href="css/legacy.css">
   <link rel="stylesheet" href="css/tv.css">
   <link rel="stylesheet" href="css/details.css">
-  <link rel="stylesheet" href="css/pages.css">
+  <link rel="stylesheet" href="css/debrid.css">
+  <link rel="stylesheet" href="css/settings.css">
+  <link rel="stylesheet" href="css/auth.css">
+  <link rel="stylesheet" href="css/watchlist.css">
+  <link rel="stylesheet" href="css/search.css">
+  <link rel="stylesheet" href="css/iptv.css">
 </head>
 <body>
   <div id="tv"><div id="screens"></div><div id="toast"></div></div>
@@ -38,7 +43,12 @@
   <!-- The TV app -->
   <script src="js/tv/home.js"></script>
   <script src="js/tv/details.js"></script>
-  <script src="js/tv/screens.js"></script>
+  <script src="js/tv/search.js"></script>
+  <script src="js/tv/debrid.js"></script>
+  <script src="js/tv/settings.js"></script>
+  <script src="js/tv/auth.js"></script>
+  <script src="js/tv/watchlist.js"></script>
+  <script src="js/tv/iptv.js"></script>
   <script src="js/tv/playback.js"></script>
   <script src="js/tv/app.js"></script>
 </body>

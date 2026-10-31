@@ -1,0 +1,66 @@
+/* LuminaStreams TV — My Watchlist (WatchlistScreen.kt + Home's PosterCard). 1 CSS px = 1 dp/sp.
+   Text defaults to the TV Material bodyLarge (16 sp, tracking 0.5 sp); single lines keep their natural height.
+   Chromium 79: no gap/inset/aspect-ratio; only transform/opacity animate. */
+.wl { background: #070707; color: #fff; font-size: 16px; letter-spacing: 0.5px; }
+
+/* ── Backdrop: image fillMaxWidth × 80 % height (crop, top centre), crossfade 400 ms, then three shadows ── */
+.wl-bd { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #070707; }
+.wl-bimgs { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+.wl-bi { position: absolute; top: 0; left: 0; width: 100%; height: 80%; object-fit: cover; object-position: top center; opacity: 0; transition: opacity 0.4s; }
+.wl-bi.on { opacity: 1; }
+.wl-g1, .wl-g2, .wl-g3 { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+.wl-g1 { background: linear-gradient(to bottom, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0) 20%); }
+/* Brush.horizontalGradient is absolute (left → right): Hebrew darkens the left 60 %, English the right side. */
+.wl-g2 { background: linear-gradient(to right, rgba(0, 0, 0, 0) 40%, rgba(0, 0, 0, 0.867) 100%); }
+[dir="rtl"] .wl-g2 { background: linear-gradient(to right, rgba(0, 0, 0, 0.867) 0%, rgba(0, 0, 0, 0) 60%); }
+.wl-g3 { background: linear-gradient(to bottom, rgba(7, 7, 7, 0) 40%, #070707 80%, #070707 100%); }
+
+/* ── Header: padding 48 / 40 / 48 / 16, IconButton 48 dp (focus scale 1.1), spacer 32, 28 sp black ── */
+.wl-head { position: absolute; top: 40px; left: 48px; right: 48px; height: 48px; display: flex; align-items: center; }
+.wl-back { flex: 0 0 48px; width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(255, 255, 255, 0.1); color: #fff; transition: transform 0.15s; }
+.wl-back.f { background: #fff; color: #000; transform: scale(1.1); }
+[dir="rtl"] .wl-back .ic { transform: scaleX(-1); }
+.wl-title { margin-inline-start: 32px; font-size: 28px; font-weight: 900; white-space: nowrap; }
+
+/* ── WatchlistHeroInfo: bottom-start of the hero box (padding 48 / 16), items 12 dp apart, fade 300 ms ── */
+.wl-herobox { position: absolute; left: 0; right: 0; }
+.wl-hi { position: absolute; bottom: 16px; left: 48px; right: 48px; opacity: 0; transition: opacity 0.3s; }
+.wl-hi.on { opacity: 1; }
+.wl-ht { font-weight: 900; letter-spacing: -0.5px; color: #fff; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.wl-meta { margin-top: 12px; display: flex; align-items: center; white-space: nowrap; font-size: 15px; color: rgba(255, 255, 255, 0.8); }
+.wl-dot { font-size: 14px; color: rgba(255, 255, 255, 0.333); white-space: pre; }
+.wl-imdb { display: flex; align-items: center; padding: 4px 8px; border-radius: 6px; background: #F5C518; color: #141414; }
+.wl-imdb b { margin-inline-end: 4px; font-size: 12px; font-weight: 800; }
+.wl-imdb i { font-style: normal; font-size: 14px; font-weight: 900; }
+.wl-ov { margin-top: 12px; max-width: 700px; font-size: 15px; line-height: 24px; color: rgba(255, 255, 255, 0.6);
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; unicode-bidi: plaintext; }
+
+/* ── Poster grid: Adaptive(138 dp) cells, spacing 16 / 24, padding 48 / 8 / 48 / 48 (positions set by watchlist.js) ── */
+.wl-grid { position: absolute; left: 0; right: 0; overflow: hidden; }
+.wl-gin { position: relative; transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1); }
+
+/* PosterCard: 148×222 (clamped to the cell), #1C1C1C, radius 10; focused: 3 dp white border, scale 1.05 (150 ms). */
+.wl-card { position: absolute; }
+.wl-surf { position: relative; height: 222px; border-radius: 10px; overflow: hidden; background: #1C1C1C; transition: transform 0.15s; }
+.wl-surf::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 3px solid #fff; border-radius: 10px; opacity: 0; }
+.wl-card.f .wl-surf { transform: scale(1.05); }
+.wl-card.f .wl-surf::after { opacity: 1; }
+.wl-surf > img { width: 100%; height: 100%; object-fit: cover; }
+.wl-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; padding: 8px; background: linear-gradient(to bottom, #2A2A2A, #1C1C1C); }
+.wl-ph span { font-size: 10px; color: rgba(255, 255, 255, 0.55); text-align: center; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.wl-rt { position: absolute; top: 5px; right: 5px; padding: 2px 5px; border-radius: 4px; background: rgba(0, 0, 0, 0.733); color: #FFD700; font-size: 9px; font-weight: 700; }
+[dir="rtl"] .wl-rt { right: auto; left: 5px; }
+.wl-fz { position: absolute; top: 5px; left: 5px; padding: 2px 5px; border-radius: 4px; background: #00B0FF; color: #fff; font-size: 8px; font-weight: 900; }
+.wl-fz.dub { background: #E91E63; }
+[dir="rtl"] .wl-fz { left: auto; right: 5px; }
+.wl-t { margin-top: 6px; font-size: 11px; line-height: 12.89px; font-weight: 500; color: #fff; opacity: 0.7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wl-s { font-size: 10px; line-height: 11.72px; color: #fff; opacity: 0.4; white-space: nowrap; }
+.wl-card.f .wl-t { opacity: 1; }
+.wl-card.f .wl-s { opacity: 0.6; }
+
+/* ── Empty state: top-centre of the grid area, padding top 40 ── */
+.wl-empty { position: absolute; left: 0; right: 0; padding-top: 40px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.wl-e1 { font-size: 64px; line-height: 1.172; letter-spacing: 0; }
+.wl-e2 { margin-top: 16px; font-size: 24px; font-weight: 700; }
+.wl-e3 { margin-top: 8px; font-size: 16px; color: #888888; }

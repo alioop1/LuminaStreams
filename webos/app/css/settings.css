@@ -1,0 +1,154 @@
+/* LuminaStreams TV — Settings (SettingsScreen.kt). 1 CSS px = 1 dp/sp.
+   Text defaults to the TV Material bodyLarge (16 sp, tracking 0.5 sp). Its 24 sp line height is trimmed
+   on single lines (LineHeightStyle.Default, no font padding), which is what CSS line-height: normal gives.
+   Chromium 79: no gap/inset/aspect-ratio; only transform/opacity animate. */
+.se { display: flex; background: #0F0F0F; color: #fff; font-size: 16px; letter-spacing: 0.5px; }
+.se .ic { flex: 0 0 auto; }
+
+/* ── Sidebar: 280 dp, #171717, padding top 48 / bottom 32 ── */
+.se-side { flex: 0 0 280px; width: 280px; height: 960px; padding: 48px 0 32px; background: #171717; }
+.se-head { display: flex; align-items: center; padding: 0 24px 40px; }
+.se-back { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  color: #6E6E73; transition: transform 0.15s; }
+.se-back.f { background: #fff; color: #000; transform: scale(1.1); }
+[dir="rtl"] .se-back .ic { transform: scaleX(-1); }
+.se-title { margin-inline-start: 12px; font-size: 26px; font-weight: 700; white-space: nowrap; }
+.se-sep { height: 1px; background: #2C2C2E; opacity: 0.56; margin-bottom: 16px; }
+.se-cats { display: flex; flex-direction: column; } /* flex: the 3 dp paddings add up (6 dp) instead of collapsing */
+.se-cat { height: 48px; margin: 3px 12px; padding: 0 14px; border-radius: 10px; display: flex; align-items: center;
+  font-size: 17px; font-weight: 400; color: #6E6E73; white-space: nowrap; transition: transform 0.15s; }
+.se-cat.sel { color: #fff; font-weight: 600; }
+.se-cat.f { background: #fff; color: #000; transform: scale(1.02); }
+.se-ind { flex: 0 0 3px; width: 3px; height: 20px; border-radius: 2px; margin-inline-end: 14px; }
+.se-cat.sel .se-ind { background: #E2B258; }
+
+/* ── Content: LazyColumn, padding 48 / 16 / 48 / 64, items 8 dp apart ── */
+.se-main { position: relative; flex: 1 1 auto; min-width: 0; height: 960px; overflow: hidden; }
+.se-list { position: relative; padding: 16px 48px 64px; transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1); }
+.se-list.se-out { opacity: 0; }
+.se-list.se-in { opacity: 1; transition: opacity 0.22s, transform 0.25s cubic-bezier(0.2, 0, 0, 1); }
+.se-list > * { margin-bottom: 8px; }
+.se-h { padding: 0 0 10px; padding-inline-start: 4px; font-size: 12px; font-weight: 600; letter-spacing: 1.5px; color: #6E6E73; white-space: nowrap; }
+
+/* SettingsCard + rows (ToggleRow / CycleRow / ActionRow) */
+.se-card { border-radius: 14px; background: #1C1C1E; overflow: hidden; }
+.se-div { height: 1px; margin-inline-start: 68px; background: #2C2C2E; opacity: 0.56; }
+.se-row { display: flex; align-items: center; padding: 16px 20px; font-size: 17px; color: #fff; }
+.se-row.f { background: #fff; color: #000; }
+.se-ib { flex: 0 0 32px; width: 32px; height: 32px; margin-inline-end: 16px; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+  background: #2C2C2E; color: #6E6E73; }
+.se-row.f .se-ib { background: rgba(0, 0, 0, 0.08); color: #000; }
+.se-rt { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.se-end { flex: 0 0 auto; display: flex; align-items: center; margin-inline-start: 16px; }
+.se-val { margin-inline-end: 6px; font-size: 17px; color: #6E6E73; white-space: nowrap; }
+.se-chev { color: #3A3A3C; }
+.se-desc { font-size: 15px; color: #6E6E73; white-space: nowrap; }
+.se-row.f .se-val, .se-row.f .se-chev, .se-row.f .se-desc { color: #555; }
+/* Switch: 40×24 pill, 18 dp knob at start padding 3 (off) / 18 (on). */
+.se-sw { position: relative; display: block; width: 40px; height: 24px; border-radius: 12px; background: #3A3A3C; }
+.se-sw i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform 0.25s; }
+[dir="rtl"] .se-sw i { left: auto; right: 3px; }
+.se-sw.on { background: #E2B258; }
+.se-sw.on i { transform: translateX(15px); }
+[dir="rtl"] .se-sw.on i { transform: translateX(-15px); }
+.se-row.f .se-sw.on { background: #000; }
+.se-row.f .se-sw.on i { background: #E2B258; }
+
+/* Big cards: Surface radius 24, #2E3135 → #383C41 focused */
+.se-big { position: relative; display: flex; align-items: center; border-radius: 24px; background: #2E3135; transition: transform 0.15s; }
+.se-big.f { background: #383C41; }
+/* TV Material Button (pill, padding 16/10, min height 40, labelLarge 14 sp) */
+.se-btn { flex: 0 0 auto; display: flex; align-items: center; min-height: 40px; padding: 10px 16px; border-radius: 20px;
+  background: rgba(255, 255, 255, 0.1); font-size: 14px; font-weight: 500; line-height: 20px; letter-spacing: 0.1px; color: #fff; white-space: nowrap; }
+.se-pill { flex: 0 0 auto; padding: 12px 24px; border-radius: 999px; background: rgba(59, 130, 246, 0.15); color: #3B82F6; font-weight: 800; white-space: nowrap; }
+.se-big.f .se-pill { background: #fff; color: #161622; }
+.se-dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; margin-inline-end: 6px; vertical-align: -1px; }
+.se-dot.g { background: #2ECC40; }
+.se-dot.r { background: #E53935; }
+
+/* AllDebrid active banner: radius 20, gradient #451A03 → #1E1B4B, padding 24; focused: scale 1.02,
+   2 dp gradient border (#F59E0B → #8B5CF6) and an amber glow. Brush.horizontalGradient runs left → right. */
+.se-rd-on { position: relative; display: flex; align-items: center; justify-content: space-between; padding: 24px; border-radius: 20px;
+  background: linear-gradient(to right, #451A03, #1E1B4B); transition: transform 0.15s; }
+.se-rd-on::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 20px; border: 1px solid rgba(245, 158, 11, 0.3); pointer-events: none; }
+.se-rd-on.f { transform: scale(1.02); box-shadow: 0 0 24px rgba(217, 119, 6, 0.5); }
+.se-rd-on.f::after { border: 2px solid transparent; background: linear-gradient(135deg, #F59E0B, #8B5CF6) border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; }
+.se-rd-l { min-width: 0; }
+.se-rd-tag { display: flex; align-items: center; color: #F59E0B; }
+.se-rd-tag .ic { margin-inline-end: 8px; }
+.se-rd-tag span { font-size: 14px; font-weight: 900; letter-spacing: 1px; white-space: nowrap; }
+.se-rd-tok { margin-top: 8px; font-size: 14px; font-family: 'Roboto Mono', 'DejaVu Sans Mono', monospace; color: rgba(255, 255, 255, 0.6); white-space: nowrap; }
+.se-rd-r { flex: 0 0 auto; display: flex; align-items: center; margin-inline-start: 16px; }
+.se-rd-res { padding-inline-end: 24px; font-size: 14px; color: #fff; white-space: nowrap; }
+.se-rd-gap { width: 16px; }
+.se-rd-dis { font-weight: 700; color: rgba(255, 255, 255, 0.4); white-space: nowrap; }
+.se-rd-on.f .se-rd-dis { color: #EF4444; }
+
+/* Idle (connect) banner: radius 24, padding 24 */
+.se-rd-idle { padding: 24px; }
+.se-rd-key { flex: 0 0 56px; width: 56px; height: 56px; margin-inline-end: 24px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(245, 158, 11, 0.15); color: #F59E0B; }
+.se-rd-it { flex: 1 1 auto; min-width: 0; }
+.se-rd-t { font-size: 20px; font-weight: 700; }
+.se-rd-s { font-size: 14px; color: rgba(255, 255, 255, 0.6); }
+
+/* Loading: 120 dp, radius 16, #161622, CircularProgressIndicator (40 dp, stroke 4) */
+.se-rd-load { height: 120px; border-radius: 16px; background: #161622; display: flex; align-items: center; justify-content: center; }
+.se-spin { display: block; width: 40px; height: 40px; border-radius: 50%; border: 4px solid transparent; border-top-color: #F59E0B; border-right-color: #F59E0B;
+  animation: se-rot 1s linear infinite; }
+@keyframes se-rot { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+/* Waiting for the PIN: two halves, radius 20, gradient #161622 → #1E1E2E */
+.se-rd-wait { display: flex; align-items: stretch; border-radius: 20px; overflow: hidden; background: linear-gradient(to right, #161622, #1E1E2E); }
+.se-rd-wl { flex: 1 1 0; min-width: 0; padding: 28px; display: flex; flex-direction: column; justify-content: center; background: rgba(59, 130, 246, 0.05); }
+.se-rd-wic { width: 52px; height: 52px; margin-bottom: 16px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(59, 130, 246, 0.15); color: #3B82F6; }
+.se-rd-wt { margin-bottom: 8px; font-size: 22px; font-weight: 800; }
+.se-rd-wd { font-size: 14px; line-height: 20px; color: rgba(255, 255, 255, 0.55); }
+.se-rd-wdiv { flex: 0 0 1px; width: 1px; background: rgba(255, 255, 255, 0.08); }
+.se-rd-wr { flex: 1 1 0; min-width: 0; padding: 28px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
+.se-rd-step { font-size: 12px; font-weight: 800; letter-spacing: 2px; color: rgba(255, 255, 255, 0.4); }
+.se-rd-url { margin-top: 6px; font-size: 18px; font-weight: 600; word-break: break-all; }
+.se-rd-step2 { margin-top: 24px; }
+.se-rd-code { position: relative; margin-top: 8px; padding: 14px 28px; border-radius: 14px; background: #0D0D15; }
+.se-rd-code::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border-radius: 14px; border: 1.5px solid transparent; pointer-events: none;
+  background: linear-gradient(135deg, #F59E0B, #EF4444, #F59E0B) border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor; }
+.se-rd-code span { font-size: 36px; font-weight: 900; font-family: 'Roboto Mono', 'DejaVu Sans Mono', monospace; letter-spacing: 8px; color: #F59E0B; white-space: nowrap; }
+
+/* Service status: padding 32 / 24, two columns split by a 2×40 divider, Refresh button */
+.se-srv { padding: 24px 32px; }
+.se-srv-c { flex: 1 1 0; min-width: 0; }
+.se-srv-c2 { padding-inline-start: 32px; }
+.se-srv-l { margin-bottom: 4px; font-size: 13px; color: rgba(255, 255, 255, 0.5); }
+.se-srv-v { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.se-srv-div { flex: 0 0 2px; width: 2px; height: 40px; background: rgba(255, 255, 255, 0.1); }
+.se-srv-btn { margin-inline-start: 16px; background: rgba(255, 255, 255, 0.15); }
+
+/* Cloud sync: padding 24, 56 dp blue circle, scale 1.02 + blue glow when focused */
+.se-cl { padding: 24px; }
+.se-cl.f { transform: scale(1.02); box-shadow: 0 0 24px rgba(77, 144, 254, 0.4); }
+.se-cl-ic { flex: 0 0 56px; width: 56px; height: 56px; margin-inline-end: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
+  background: rgba(77, 144, 254, 0.15); color: #4D90FE; }
+.se-cl.f .se-cl-ic { color: #fff; }
+.se-cl.f.busy .se-cl-ic { color: #4D90FE; }
+.se-cl-tx { flex: 1 1 auto; min-width: 0; }
+.se-cl-t { font-size: 18px; font-weight: 700; }
+.se-cl-s { font-size: 13px; color: rgba(255, 255, 255, 0.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[dir="rtl"] .se-cl-s[dir="ltr"] { text-align: right; }
+.se-cl-st { flex: 0 0 auto; padding-inline-end: 8px; font-size: 14px; font-weight: 700; color: #4D90FE; white-space: nowrap; }
+.se-cl-st.ok { color: #43A047; }
+.se-cl-st.bad { color: #EF4444; }
+.se-cl-pill { background: rgba(77, 144, 254, 0.15); color: #4D90FE; }
+.se-cl.f .se-cl-pill { background: #fff; color: #161622; }
+
+/* About: three equal columns, padding 24 */
+.se-inf { align-items: flex-start; padding: 24px; }
+.se-in-c { flex: 1 1 0; min-width: 0; }
+.se-in-l { font-size: 12px; color: rgba(255, 255, 255, 0.5); }
+.se-in-v { font-size: 16px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[dir="rtl"] .se-in-v { text-align: right; }
+
+/* Lite UI Mode (Android DeviceProfile.forceLowTier): no focus scaling, glows or transitions, app-wide. */
+html.lite-ui *, html.lite-ui *::before, html.lite-ui *::after { transition: none !important; }
+html.lite-ui .se-cat.f, html.lite-ui .se-rd-on.f, html.lite-ui .se-cl.f { transform: none; box-shadow: none; }

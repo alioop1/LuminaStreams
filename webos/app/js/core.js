@@ -1,7 +1,7 @@
 /**
  * LuminaStreams TV — core.
  * The LG app is built for the TV alone (not the website): it lays out in the
- * Android TV app's units (960×540 dp, every dp two pixels on a 1080p TV), moves
+ * Android TV app's units (1706.67×960 dp: the app forces 180 dpi), moves
  * focus with its own Compose-style engine, and animates only transform/opacity.
  */
 (() => {
@@ -13,8 +13,13 @@
   window.TvMode = Object.freeze({ isTv: true, isWebOS: !!window.PalmSystem || /Web0S|webOS/i.test(navigator.userAgent) });
 
   /* ── Scale: 1 CSS px = 1 dp ─────────────────────────────────────── */
-  const W = 960;
-  const H = 540;
+  // The Android app forces 180 dpi (MainActivity FORCED_DENSITY_DPI): 1 dp = 1.125 px,
+  // so a 1080p screen is 1706.67 × 960 dp.
+  const DP_PER_PX = 160 / 180;
+  const W = 1920 * DP_PER_PX;
+  const H = 1080 * DP_PER_PX;
+  TV.W = W;
+  TV.H = H;
   function fit() {
     const root = document.getElementById('tv');
     const z = Math.min(window.innerWidth / W, window.innerHeight / H);
@@ -240,6 +245,28 @@
       state.x = x;
       track.style.transform = `translateX(${TV.rtl() ? x : -x}px)`;
     }
+  };
+
+  /**
+   * Keep `item` inside `viewport` by translating `track` (measured, so it works for
+   * items of any width, in either direction and at any zoom). axis: 'x' | 'y'.
+   */
+  TV.reveal = (viewport, track, item, pad = 8, axis = 'x') => {
+    if (!viewport || !track || !item) return;
+    // Layout offsets (not on-screen rects), so a slide still in progress doesn't skew it.
+    if (getComputedStyle(viewport).position === 'static') viewport.style.position = 'relative';
+    if (getComputedStyle(track).position === 'static') track.style.position = 'relative';
+    const x = axis === 'x';
+    let shift = Number(track.dataset.shift || 0);
+    const start = (x ? track.offsetLeft + item.offsetLeft : track.offsetTop + item.offsetTop) + shift;
+    const end = start + (x ? item.offsetWidth : item.offsetHeight);
+    const size = x ? viewport.clientWidth : viewport.clientHeight;
+    if (start < pad) shift += pad - start;
+    else if (end > size - pad) shift -= end - (size - pad);
+    else return;
+    if (!x) shift = Math.min(0, shift); // lists never scroll above their top padding
+    track.dataset.shift = String(shift);
+    track.style.transform = x ? `translateX(${shift}px)` : `translateY(${shift}px)`;
   };
 
   /* ── Clock ────────────────────────────────────────────────────────── */
