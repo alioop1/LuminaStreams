@@ -1315,6 +1315,13 @@
     params = { ...(p || {}) };
     if (params.type === 'tv') params.type = 'series';
 
+    // LG webOS: the Android player over the TV's own pipeline (Dolby Vision/Atmos natively).
+    if (window.TvMode && window.TvMode.isTv && window.TvPlayback && !params.forceBuiltin) {
+      usingNative = 'tv';
+      window.TvPlayback.start(container, params);
+      return;
+    }
+
     // Desktop app: hand the stream to mpv/VLC (plays every format) instead of <video>.
     if (window.NativePlayback && await window.NativePlayback.shouldUse(params)) {
       usingNative = true;
@@ -1402,8 +1409,9 @@
   function destroy() {
     destroyed = true;
     if (usingNative) {
+      if (usingNative === 'tv') window.TvPlayback.cleanup();
+      else window.NativePlayback.cleanup();
       usingNative = false;
-      window.NativePlayback.cleanup();
       params = {};
       return;
     }

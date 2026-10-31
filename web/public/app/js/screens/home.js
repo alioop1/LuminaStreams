@@ -447,6 +447,20 @@
 
   /* ── Keyboard / Remote DPAD Navigation ────────────────────────────── */
   function _handleKeyDown(e) {
+    // Focus in the top bar or on the hero buttons: the global remote/keyboard
+    // navigation (tv/tvMode.js) moves between those, not the card rows.
+    const focused = document.activeElement;
+    // Down from the hero's buttons goes to the selected card of the row (Android TV).
+    if (e.key === 'ArrowDown' && focused && focused.closest('.ps5-hero-actions, #hero-btn-play, #hero-btn-info')) {
+      const card = document.querySelector('.ps5-landscape-card.active') || document.querySelector('.ps5-landscape-card[data-idx]');
+      if (card) {
+        e.preventDefault();
+        card.focus();
+        card.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+      return;
+    }
+    if (focused && focused !== document.body && !focused.closest('.ps5-landscape-card')) return;
     const isRtl = document.documentElement.getAttribute('dir') === 'rtl';
     const activeCard = document.querySelector('.ps5-landscape-card.active');
     const cards = Array.from(document.querySelectorAll('.ps5-landscape-card[data-idx]'));
@@ -475,13 +489,17 @@
         selectCategory(currentCategoryIndex + 1);
       }
     } else if (e.key === 'ArrowUp') {
-      // Up arrow -> prev category or top bar
+      // Up arrow -> prev category, or from the first row to the hero's Play button
       e.preventDefault();
       if (currentCategoryIndex > 0) {
         selectCategory(currentCategoryIndex - 1);
+      } else {
+        const play = document.getElementById('hero-btn-play');
+        if (play) play.focus();
       }
     } else if (e.key === 'Enter') {
       if (activeCard) {
+        e.preventDefault();
         activeCard.click();
       }
     }

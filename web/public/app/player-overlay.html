@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <!-- Windows app only: the Android player controls, drawn in a transparent
+       window over mpv. window.player is the bridge from desktop/src/overlay/preload.js. -->
+  <title>LuminaStreams Player</title>
+  <link rel="stylesheet" href="css/android-player.css?v=1">
+  <style>html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }</style>
+</head>
+<body>
+  <div id="player-root"></div>
+  <script src="js/player/androidPlayer.js?v=1"></script>
+  <script>
+    window.AndroidPlayer.mount(document.getElementById('player-root'), window.player, { tv: false });
+  </script>
+</body>
+</html>

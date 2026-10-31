@@ -127,6 +127,8 @@
     return overlay;
   };
 
+  window.closeModal = () => _closeModal();
+
   function _closeModal() {
     const overlay = document.getElementById('modal-overlay');
     if (overlay) {
@@ -293,8 +295,10 @@
         window.Router.navigate('search');
       }
 
-      // Escape → go back (handled by Router, but also close modals)
+      // Escape → close an open sheet (handled; the TV Back layer must not also go back)
       if (e.key === 'Escape') {
+        const overlay = document.getElementById('modal-overlay');
+        if (overlay && !overlay.classList.contains('hidden')) e.preventDefault();
         _closeModal();
       }
     });

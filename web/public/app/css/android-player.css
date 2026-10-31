@@ -1,0 +1,195 @@
+/* LuminaStreams player — 1:1 with the Android TV PlayerScreen.kt
+   (colours, sizes and layout taken from the Compose code; 1dp = 1px).
+   Shared by the Windows app (over mpv) and the LG webOS app (over the TV's
+   native <video>). Everything is scoped to .ap-root with ap- prefixes. */
+.ap-root {
+  --ap-red: #E50914;
+  --ap-white: #FFFFFF;
+  --ap-dim: rgba(255, 255, 255, 0.667);      /* 0xAAFFFFFF */
+  --ap-dv-blue: #00B4FF;
+  --ap-atmos-purple: #7B2FBE;
+  --ap-res-gray: #424242;
+  --ap-popup-bg: rgba(20, 20, 20, 0.902);    /* 0xE6141414 */
+  --ap-gold: #E2B258;
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  overflow: hidden;
+  color: var(--ap-white);
+  font-family: 'Segoe UI', 'LG Smart UI', system-ui, -apple-system, Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.ap-root *, .ap-root *::before, .ap-root *::after { box-sizing: border-box; }
+.ap-root.ap-hide-cursor, .ap-root.ap-hide-cursor * { cursor: none !important; }
+.ap-root [hidden] { display: none !important; }
+.ap-root svg { width: 24px; height: 24px; fill: currentColor; display: block; }
+
+.ap-video { position: absolute; inset: 0; width: 100%; height: 100%; background: #000; object-fit: contain; }
+.ap-root.ap-aspect-zoom .ap-video { object-fit: cover; }
+.ap-root.ap-aspect-stretch .ap-video { object-fit: fill; }
+.ap-surface { position: absolute; inset: 0; }
+
+/* Subtitles drawn over the native video (Android look: yellow/white, bold, shadow). */
+.ap-subtitle {
+  position: absolute; left: 6%; right: 6%; bottom: 7%; z-index: 40; text-align: center;
+  font-weight: 700; line-height: 1.3; white-space: pre-line; pointer-events: none;
+  text-shadow: 0 0 4px #000, 0 0 4px #000, 2px 2px 3px #000;
+  unicode-bidi: plaintext; transition: bottom 0.2s;
+}
+.ap-root.ap-controls-on .ap-subtitle { bottom: 270px; }
+
+/* ── Info badges (top-end, 3.5 s) ─────────────────────────────────── */
+.ap-badges { position: absolute; top: 32px; inset-inline-end: 32px; z-index: 50; display: flex; gap: 8px; transition: opacity 0.6s; }
+.ap-badges.ap-fade { opacity: 0; }
+.ap-badge { border-radius: 6px; padding: 5px 10px; font-size: 11px; font-weight: 800; letter-spacing: 0.8px; }
+.ap-aspect-badge {
+  position: absolute; top: 28px; inset-inline-start: 28px; z-index: 50;
+  border-radius: 6px; background: rgba(0, 0, 0, 0.7); padding: 5px 10px; font-size: 11px; font-weight: 800;
+}
+
+/* ── Paused indicator ─────────────────────────────────────────────── */
+.ap-center-play {
+  position: absolute; top: 50%; left: 50%; width: 80px; height: 80px; margin: -40px 0 0 -40px;
+  border-radius: 50%; background: rgba(0, 0, 0, 0.6); border: 2px solid rgba(255, 255, 255, 0.7);
+  display: flex; align-items: center; justify-content: center; z-index: 60; pointer-events: none;
+  animation: ap-pop 0.12s ease-out;
+}
+.ap-center-play svg { width: 44px; height: 44px; }
+@keyframes ap-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+/* ── Smart seeking overlay ────────────────────────────────────────── */
+.ap-seek-overlay {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 70;
+  background: rgba(0, 0, 0, 0.6); border-radius: 16px; padding: 24px; text-align: center;
+  pointer-events: none; min-width: 180px;
+}
+.ap-seek-diff { font-size: 48px; font-weight: 900; line-height: 1.1; direction: ltr; }
+.ap-seek-time { font-size: 20px; font-weight: 700; color: #CCCCCC; direction: ltr; }
+
+/* ── Controls ─────────────────────────────────────────────────────── */
+.ap-controls { position: absolute; inset: 0; z-index: 80; pointer-events: none; opacity: 0; transition: opacity 0.35s; }
+.ap-controls.ap-visible { opacity: 1; transition-duration: 0.2s; }
+.ap-controls.ap-visible .ap-bottom, .ap-controls.ap-visible .ap-popup { pointer-events: auto; }
+.ap-gradient { position: absolute; left: 0; right: 0; bottom: 0; height: 260px; background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.902)); }
+.ap-bottom { position: absolute; left: 0; right: 0; bottom: 0; padding: 28px 48px; }
+
+.ap-progress-row { display: flex; align-items: center; }
+.ap-time { width: 70px; font-size: 14px; font-weight: 600; text-align: start; direction: ltr; unicode-bidi: plaintext; }
+.ap-time.ap-dim { color: var(--ap-dim); text-align: end; }
+.ap-bar { position: relative; flex: 1; height: 32px; margin: 0 12px; cursor: pointer; display: flex; align-items: center; outline: none; }
+.ap-bar-track, .ap-bar-fill { position: absolute; inset-inline-start: 0; height: 5px; border-radius: 999px; transition: height 0.15s; }
+.ap-bar-track { width: 100%; background: rgba(255, 255, 255, 0.25); }
+.ap-bar-fill { width: 0; background: rgba(229, 9, 20, 0.8); }
+.ap-bar-thumb {
+  position: absolute; inset-inline-start: 0; width: 0; height: 0; border-radius: 50%;
+  background: var(--ap-white); box-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  transform: translateX(-50%); transition: width 0.15s, height 0.15s;
+}
+.ap-root[dir="rtl"] .ap-bar-thumb { transform: translateX(50%); }
+.ap-bar:hover .ap-bar-track, .ap-bar.ap-active .ap-bar-track, .ap-bar:focus .ap-bar-track { height: 10px; background: rgba(255, 255, 255, 0.35); }
+.ap-bar:hover .ap-bar-fill, .ap-bar.ap-active .ap-bar-fill, .ap-bar:focus .ap-bar-fill { height: 10px; background: var(--ap-red); }
+.ap-bar:hover .ap-bar-thumb, .ap-bar.ap-active .ap-bar-thumb, .ap-bar:focus .ap-bar-thumb { width: 20px; height: 20px; }
+
+.ap-buttons-row { display: flex; justify-content: space-between; align-items: center; margin-top: 16px; }
+.ap-group { display: flex; gap: 16px; }
+.ap-icon-btn {
+  width: 44px; height: 44px; border-radius: 50%; border: none; padding: 0;
+  background: transparent; color: var(--ap-white); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: transform 0.12s, background 0.12s, color 0.12s; outline: none;
+}
+.ap-icon-btn:hover, .ap-icon-btn:focus { background: var(--ap-white); color: #000; transform: scale(1.15); }
+.ap-icon-btn.ap-on { background: var(--ap-red); color: var(--ap-white); }
+.ap-icon-btn.ap-on:hover, .ap-icon-btn.ap-on:focus { transform: scale(1.15); }
+
+/* ── Popup menus (bottom-end, 320 × ≤350) ─────────────────────────── */
+.ap-popup {
+  position: absolute; bottom: 120px; inset-inline-end: 48px; width: 320px; max-height: 350px;
+  background: var(--ap-popup-bg); border: 1px solid #2A2A2A; border-radius: 12px;
+  padding: 16px 12px; display: flex; flex-direction: column; z-index: 100; animation: ap-slide-up 0.2s ease-out;
+}
+@keyframes ap-slide-up { from { transform: translateY(30px); opacity: 0; } to { transform: none; opacity: 1; } }
+.ap-popup-title { font-size: 18px; font-weight: 700; padding: 0 8px 12px; }
+.ap-popup-offset { font-size: 13px; padding: 0 8px 10px; margin-top: -8px; color: rgba(255, 255, 255, 0.5); direction: ltr; text-align: start; }
+.ap-popup-offset.ap-set { color: var(--ap-gold); }
+.ap-popup-list { overflow-y: auto; display: flex; flex-direction: column; gap: 4px; scrollbar-width: thin; scrollbar-color: rgba(255, 255, 255, 0.25) transparent; }
+.ap-popup-empty { padding: 24px 0; text-align: center; color: var(--ap-dim); font-size: 14px; }
+.ap-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-shrink: 0;
+  min-height: 48px; padding: 0 12px; border-radius: 8px; border: none;
+  background: transparent; color: var(--ap-white); text-align: start; font: inherit; cursor: pointer; width: 100%;
+}
+.ap-item:hover, .ap-item:focus { background: var(--ap-red); outline: none; }
+.ap-item-text { min-width: 0; flex: 1; display: flex; flex-direction: column; }
+.ap-item-title, .ap-item-sub { text-align: match-parent; }
+.ap-item-title { font-size: 15px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-item.ap-selected .ap-item-title { font-weight: 700; }
+.ap-item-sub { font-size: 11px; color: rgba(255, 255, 255, 0.7); }
+.ap-item-check svg { width: 20px; height: 20px; }
+
+/* ── Up next card ─────────────────────────────────────────────────── */
+.ap-upnext {
+  position: absolute; bottom: 135px; inset-inline-end: 48px; width: 400px; z-index: 150;
+  background: rgba(8, 8, 16, 0.91); border-radius: 24px; padding: 24px; animation: ap-fade-in 0.3s;
+}
+.ap-root[dir="rtl"] .ap-upnext { inset-inline-end: auto; inset-inline-start: 48px; }
+.ap-upnext-logo { max-height: 56px; max-width: 70%; object-fit: contain; display: block; margin-bottom: 12px; }
+.ap-upnext-title { font-size: 18px; font-weight: 900; margin-bottom: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ap-upnext-label { color: var(--ap-red); font-size: 11px; font-weight: 900; letter-spacing: 3px; }
+.ap-upnext-ep { font-size: 22px; font-weight: 900; margin-top: 6px; }
+.ap-upnext-bar { height: 4px; border-radius: 999px; background: rgba(255, 255, 255, 0.12); margin: 16px 0 18px; overflow: hidden; }
+.ap-upnext-fill { height: 100%; width: 0; background: var(--ap-red); transition: width 1s linear; }
+.ap-upnext-actions { display: flex; gap: 12px; }
+
+/* ── Pill buttons (resume / error / up next) ──────────────────────── */
+.ap-pill {
+  height: 52px; border-radius: 999px; border: none; padding: 0 32px; font: inherit;
+  font-size: 15px; font-weight: 700; color: var(--ap-white); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+  transition: transform 0.12s, background 0.12s, color 0.12s, box-shadow 0.12s; outline: none;
+}
+.ap-pill svg { width: 18px; height: 18px; }
+.ap-pill:hover, .ap-pill:focus { background: var(--ap-white) !important; color: #000 !important; transform: scale(1.05); }
+.ap-pill.ap-red { background: var(--ap-red); }
+.ap-pill.ap-red:hover, .ap-pill.ap-red:focus { box-shadow: 0 0 12px rgba(229, 9, 20, 0.4); }
+.ap-pill.ap-dark { background: #2A2A38; }
+.ap-pill.ap-blue { background: #2563EB; }
+.ap-pill.ap-ghost { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.7); padding: 0 20px; font-weight: 600; font-size: 14px; }
+.ap-upnext .ap-pill { height: 48px; }
+.ap-upnext .ap-pill.ap-red { flex: 1; padding: 0 16px; }
+
+/* ── Resume dialog / error ────────────────────────────────────────── */
+.ap-modal { position: absolute; inset: 0; z-index: 300; background: rgba(0, 0, 0, 0.75); display: flex; align-items: center; justify-content: center; animation: ap-fade-in 0.2s; }
+.ap-resume-card { width: 480px; background: #1A1A24; border-radius: 24px; padding: 36px; display: flex; flex-direction: column; align-items: center; gap: 16px; text-align: center; }
+.ap-resume-card > svg { width: 48px; height: 48px; color: var(--ap-red); }
+.ap-resume-title { font-size: 22px; font-weight: 900; }
+.ap-resume-sub { font-size: 15px; color: var(--ap-dim); }
+.ap-resume-actions { display: flex; gap: 16px; width: 100%; margin-top: 8px; }
+.ap-resume-actions .ap-pill { flex: 1; padding: 0; }
+.ap-modal.ap-error { background: rgba(0, 0, 0, 0.88); z-index: 200; }
+.ap-error-box { display: flex; flex-direction: column; align-items: center; gap: 20px; padding: 48px; text-align: center; }
+.ap-error-icon { width: 80px; height: 80px; border-radius: 50%; background: rgba(229, 9, 20, 0.15); color: var(--ap-red); display: flex; align-items: center; justify-content: center; }
+.ap-error-icon svg { width: 40px; height: 40px; }
+.ap-error-title { font-size: 28px; font-weight: 900; }
+.ap-error-msg { font-size: 16px; color: var(--ap-dim); max-width: 560px; }
+.ap-error-actions { display: flex; gap: 16px; margin-top: 8px; }
+
+/* ── Loading (PremiumLoadingOverlay) ──────────────────────────────── */
+.ap-loading { position: absolute; inset: 0; z-index: 400; background: #000; transition: opacity 0.8s; }
+.ap-loading.ap-done { opacity: 0; pointer-events: none; }
+.ap-loading-backdrop { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: 0.35; }
+.ap-loading-fade { position: absolute; inset: 0; background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.95)); }
+.ap-loading-center { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); padding: 32px; display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ap-loading-logo { max-width: 340px; max-height: 140px; object-fit: contain; }
+.ap-loading-name { font-size: 28px; font-weight: 700; max-width: 80vw; }
+.ap-spinner { width: 54px; height: 54px; margin: 32px 0 24px; border-radius: 50%; border: 4px solid rgba(255, 255, 255, 0.15); border-top-color: var(--ap-red); animation: ap-spin 0.9s linear infinite; }
+@keyframes ap-spin { to { transform: rotate(360deg); } }
+.ap-loading-status { font-size: 17px; font-weight: 700; color: rgba(255, 255, 255, 0.8); }
+
+/* ── Small OSDs ───────────────────────────────────────────────────── */
+.ap-osd {
+  position: absolute; top: 32px; left: 50%; transform: translateX(-50%); z-index: 90;
+  background: rgba(0, 0, 0, 0.7); border-radius: 999px; padding: 8px 18px; font-size: 14px; font-weight: 700;
+}
+@keyframes ap-fade-in { from { opacity: 0; } to { opacity: 1; } }

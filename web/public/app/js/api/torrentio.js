@@ -215,7 +215,8 @@
    */
   function qualityScore(parsed) {
     let score = 0;
-    const isWeb = !window.electronAPI;
+    // The desktop app (mpv) and the LG TV decode AC3/EAC3/DTS/TrueHD/Atmos natively.
+    const isWeb = !window.electronAPI && !(window.TvMode && window.TvMode.isTv);
 
     // Base quality
     if (parsed.quality) {

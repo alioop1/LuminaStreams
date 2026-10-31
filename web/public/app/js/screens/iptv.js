@@ -171,6 +171,12 @@
     addToRecent(channel.id);
     renderChannelList(); // Update active state
 
+    // LG TV: full-screen in the TV's own player.
+    if (window.TvMode && window.TvMode.isTv && window.TvPlayback) {
+      window.TvPlayback.playLive(channel.url, channel.name || 'IPTV');
+      return;
+    }
+
     // Desktop app: mpv plays raw MPEG-TS and plain-http streams the browser can't.
     if (window.NativePlayback && await window.NativePlayback.shouldUse()) {
       if (await window.NativePlayback.playLive(channel.url, channel.name || 'IPTV')) {

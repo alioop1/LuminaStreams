@@ -23,6 +23,7 @@ const player = new NativePlayer({
 });
 
 let mainWindow = null;
+let serverPort = null;
 const playerWindow = new PlayerWindow();
 let overlayInit = null; // title/artwork/subtitles for the player controls
 let overlayWebSubs = null; // last web-subtitle list, resent if the controls reload
@@ -139,7 +140,7 @@ function registerIpc() {
       overlayInit = { ...(opts.overlay || {}), title: opts.title || '' };
       overlayWebSubs = null;
       const resume = overlayInit.resumeSeconds > 30 && !opts.live;
-      const wid = await playerWindow.open(mainWindow);
+      const wid = await playerWindow.open(mainWindow, `http://127.0.0.1:${serverPort}/player-overlay.html`);
       return player.play({ ...opts, wid, startPaused: resume, startSeconds: resume ? overlayInit.resumeSeconds : opts.startSeconds });
     }
     return player.play(opts);
@@ -247,6 +248,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     const { port } = await startServer(WEB_DIR);
+    serverPort = port;
     registerIpc();
     mainWindow = createWindow(port);
   });

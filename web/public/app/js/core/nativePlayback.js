@@ -257,5 +257,9 @@
     }
   }
 
-  window.NativePlayback = Object.freeze({ shouldUse, start, cleanup, playLive, takePendingNext });
+  window.NativePlayback = Object.freeze({
+    shouldUse, start, cleanup, playLive, takePendingNext,
+    // Shared with the LG webOS player (tvPlayback.js).
+    helpers: Object.freeze({ webSubtitles, nextEpisodeOf, PENDING_NEXT_KEY }),
+  });
 })();

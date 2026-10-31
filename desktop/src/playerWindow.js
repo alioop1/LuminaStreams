@@ -6,8 +6,8 @@
  * player uses two windows:
  *  - videoWin: an opaque, black, fullscreen window that mpv draws into (--wid);
  *  - overlayWin: a transparent window owned by videoWin, kept exactly on top
- *    of it, that renders the Android player UI (overlay/player.html) and takes
- *    all mouse and keyboard input.
+ *    of it, that renders the Android player UI (the shared web app's
+ *    player-overlay.html + js/player/androidPlayer.js) and takes all input.
  */
 const { BrowserWindow, screen } = require('electron');
 const path = require('path');
@@ -25,9 +25,10 @@ class PlayerWindow {
 
   /**
    * Opens both windows on the display that holds `nearWindow`.
+   * @param {string} overlayUrl  the controls page (served by the app's local server)
    * @returns {Promise<string>} the video window handle for mpv's --wid
    */
-  async open(nearWindow) {
+  async open(nearWindow, overlayUrl) {
     this.close();
     const display = nearWindow
       ? screen.getDisplayMatching(nearWindow.getBounds())
@@ -80,7 +81,7 @@ class PlayerWindow {
     this.videoWin = video;
     this.overlayWin = overlay;
 
-    await overlay.loadFile(path.join(__dirname, 'overlay', 'player.html'));
+    await overlay.loadURL(overlayUrl);
     video.show();
     sync();
     overlay.show();

@@ -252,7 +252,12 @@
   function init(defaultScreen = 'home') {
     // Set up keyboard shortcut for back navigation
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && currentScreen !== 'home' && currentScreen !== 'player') {
+      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // An open sheet takes Escape first (app.js closes it).
+      const sheet = document.getElementById('modal-overlay');
+      if (sheet && !sheet.classList.contains('hidden')) return;
+      if (currentScreen !== 'home' && currentScreen !== 'player') {
+        e.preventDefault();
         back();
       }
     });
