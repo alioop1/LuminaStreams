@@ -979,6 +979,8 @@ body[data-screen="player"] #mobile-bottom-nav {
   max-height: 60vh;
   padding-right: 4px;
 }
+/* Rows keep their height and the list scrolls (older engines squeezed them). */
+.ps5-sources-list > *, .ps5-episodes-list > * { flex-shrink: 0; }
 .ps5-sources-loading {
   display: flex;
   align-items: center;
@@ -5431,6 +5433,12 @@ ul, ol {
   margin-right: 2px;
 }
 
+/* RTL: the knob rests on the right and slides left when on (it used to start on
+   the left and slide out of the track). */
+[dir="rtl"] .toggle::after {
+  left: auto;
+  right: 3px;
+}
 [dir="rtl"] .toggle.active::after {
   transform: translateX(-20px);
 }
@@ -5968,3 +5976,42 @@ html.is-tv #modal-overlay input:focus { transform: none; }
 /* The TV player covers the app. */
 html.is-tv .ap-tv { background: #000; }
 html.tv-playing body > :not(.ap-tv) { visibility: hidden; }
+
+/* TV performance — same look, less work for the TV's GPU/CPU:
+   no live backdrop blur (the Android TV app has none; sheets get its plain dim scrim),
+   the full-screen backdrop on its own layer so focus changes don't repaint it,
+   and focus animations limited to transform (the glow appears without a fade). */
+html.is-tv *, html.is-tv *::before, html.is-tv *::after {
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+html.is-tv #modal-overlay { background: rgba(0, 0, 0, 0.8) !important; }
+html.is-tv .ps5-backdrop-layer { will-change: transform; }
+html.is-tv .card-portrait,
+html.is-tv .ps5-landscape-card,
+html.is-tv .ps5-episode-card,
+html.is-tv .ps5-source-card { transition-property: transform, border-color; }
+/* Loading placeholders stay still on the TV: each moving shimmer is a GPU layer and
+   pushes everything drawn after it onto layers too (240+ layers on Movies). The play
+   button's glow loop runs on an invisible element (it shows on mouse hover only). */
+html.is-tv .card-skeleton::after,
+html.is-tv .skeleton::after { animation: none; display: none; }
+html.is-tv .btn-play::before { animation: none; }
+/* Android TV proportions (see js/tv/tvMode.js): the app's layers are zoomed so the
+   layout is 1280 units wide on any TV; the player (.ap-tv) is not. */
+html.is-tv #ps5-top-bar,
+html.is-tv #app,
+html.is-tv #modal-overlay,
+html.is-tv #toast-container,
+html.is-tv #splash-loader { zoom: var(--tv-zoom, 1); }
+/* Room around the selected card for its grow + glow (the row clips its overflow). */
+html.is-tv .ps5-cycler-cards-track { padding: 16px 20px 18px; }
+/* No window title bar on a TV: full-height pages (IPTV, sign-in) reach the bottom edge. */
+html.is-tv { --titlebar-h: 0px; }
+/* Wide list rows grow only slightly when focused, inside room the list leaves for it. */
+html.is-tv .ps5-sources-list, html.is-tv .ps5-episodes-list { padding: 8px 14px; }
+html.is-tv #modal-overlay .ps5-source-card:focus,
+html.is-tv #modal-overlay .ps5-episode-card:focus { transform: scale(1.02); }
+/* The player at Android TV size: the Android app's dp are 2 px each on a 1080p TV,
+   and the shared player is drawn in dp (1 dp = 1 CSS px, as on the Windows app). */
+html.is-tv .ap-tv { zoom: var(--tv-player-zoom, 1); }

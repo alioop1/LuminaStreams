@@ -159,6 +159,11 @@
     `;
   }
 
+  // On the TV, heavy hero work (4K backdrop, details request) waits for the
+  // remote to rest on a card this long.
+  const IS_TV = !!(window.TvMode && window.TvMode.isTv);
+  const SETTLE_MS = 220;
+
   /* ── Render 16:9 Landscape Card ──────────────────────────────────── */
   function renderLandscapeCard(movie, index, isActive = false) {
     const title = escapeHtml(movie.title || movie.name || '');
@@ -220,9 +225,13 @@
       const showBackdrop = (url, isRetry) => {
         const preloader = new Image();
         preloader.onload = () => {
-          if (currentActiveMovieId === movie.id && bgImgEl) {
-            bgImgEl.style.backgroundImage = `url("${url}")`;
-          }
+          // Decode off the main thread first, so the swap never stalls a frame.
+          const decoded = preloader.decode ? preloader.decode().catch(() => {}) : Promise.resolve();
+          decoded.then(() => {
+            if (currentActiveMovieId === movie.id && bgImgEl) {
+              bgImgEl.style.backgroundImage = `url("${url}")`;
+            }
+          });
         };
         preloader.onerror = () => {
           if (!isRetry && url.includes('image.tmdb.org')) {
@@ -232,7 +241,9 @@
         };
         preloader.src = url;
       };
-      showBackdrop(window.CONST.heroUrl(bgPath), false);
+      // TV: only for the card the remote stops on, not every card it passes.
+      if (IS_TV) setTimeout(() => { if (currentActiveMovieId === movie.id) showBackdrop(window.CONST.heroUrl(bgPath), false); }, SETTLE_MS);
+      else showBackdrop(window.CONST.heroUrl(bgPath), false);
     }
 
     // 2. Fast update: Title fallback
@@ -270,6 +281,10 @@
     }
 
     // 5. Async enrichment: fetch full details for Hebrew logo, exact runtime, and cast
+    if (IS_TV) {
+      await new Promise(r => setTimeout(r, SETTLE_MS));
+      if (signal.aborted || currentActiveMovieId !== movie.id) return;
+    }
     try {
       const details = mediaType === 'tv'
         ? await window.TMDB.getTvDetails(movie.id)
@@ -365,14 +380,19 @@
       }
     });
 
+    // Remote focus stays on the row while it reloads (skeleton, then the first card).
+    const keepFocus = !!(document.activeElement && document.activeElement.closest &&
+      document.activeElement.closest('.ps5-landscape-card'));
+
     // Show skeletons in carousel track
     const track = document.getElementById('ps5-cycler-cards-track');
     if (track) {
-      track.innerHTML = Array.from({ length: 6 }, () => `
-        <div class="ps5-landscape-card skeleton">
+      track.innerHTML = Array.from({ length: 6 }, (_, i) => `
+        <div class="ps5-landscape-card skeleton${i === 0 ? ' active' : ''}"${i === 0 ? ' tabindex="-1"' : ''}>
           <div class="ps5-card-media"></div>
         </div>
       `).join('');
+      if (keepFocus) track.firstElementChild.focus({ preventScroll: true });
     }
 
     // Fetch items
@@ -393,14 +413,19 @@
     currentActiveMovieId = null;
     updateHero(movies[0]);
 
-    // Scroll track back to start
-    const viewport = document.getElementById('ps5-cycler-cards-viewport');
-    if (viewport) {
-      viewport.scrollTo({ left: 0, behavior: 'smooth' });
-    }
+    // Scroll track back to start (via the first card: in RTL, older engines such as
+    // webOS 6's put scrollLeft 0 at the far end of the row)
+    const firstCard = track.querySelector('.ps5-landscape-card[data-idx]');
+    if (firstCard) firstCard.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
 
     // Attach card event listeners
     _setupCardListeners();
+    // (Replacing the skeleton dropped focus to <body> — unless the user moved on meanwhile.)
+    const lost = !document.activeElement || document.activeElement === document.body || document.activeElement.classList.contains('skeleton');
+    if (keepFocus && lost) {
+      const first = track.querySelector('.ps5-landscape-card[data-idx]');
+      if (first) first.focus({ preventScroll: true });
+    }
   }
 
   /* ── Setup Card Listeners ─────────────────────────────────────────── */
@@ -417,7 +442,8 @@
         updateHero(movie);
       };
 
-      // Hover / Focus / Click
+      // Hover / Focus / Click (the remote handler calls it directly too)
+      card._activate = activateCard;
       card.addEventListener('mouseenter', activateCard);
       card.addEventListener('focus', activateCard);
 
@@ -470,17 +496,19 @@
       e.preventDefault();
       const targetIdx = isRtl ? currentIdx - 1 : currentIdx + 1;
       if (targetIdx >= 0 && targetIdx < cards.length) {
-        cards[targetIdx].focus();
-        cards[targetIdx].click();
-        cards[targetIdx].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        // Select and focus the card; a click would open it.
+        if (cards[targetIdx]._activate) cards[targetIdx]._activate();
+        cards[targetIdx].focus({ preventScroll: true });
+        cards[targetIdx].scrollIntoView({ behavior: e.repeat ? 'auto' : 'smooth', inline: 'center', block: 'nearest' });
       }
     } else if (e.key === 'ArrowLeft') {
       e.preventDefault();
       const targetIdx = isRtl ? currentIdx + 1 : currentIdx - 1;
       if (targetIdx >= 0 && targetIdx < cards.length) {
-        cards[targetIdx].focus();
-        cards[targetIdx].click();
-        cards[targetIdx].scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+        // Select and focus the card; a click would open it.
+        if (cards[targetIdx]._activate) cards[targetIdx]._activate();
+        cards[targetIdx].focus({ preventScroll: true });
+        cards[targetIdx].scrollIntoView({ behavior: e.repeat ? 'auto' : 'smooth', inline: 'center', block: 'nearest' });
       }
     } else if (e.key === 'ArrowDown') {
       // Down arrow -> next category

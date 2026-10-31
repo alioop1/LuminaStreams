@@ -5,7 +5,10 @@
 /* aspect-ratio (Chromium 88+): fixed heights for the TV layout's card sizes. */
 @supports not (aspect-ratio: 1 / 1) {
   .ps5-landscape-card { height: 146px; }        /* 260px × 9/16 */
-  .ps5-details-poster-wrap { height: 405px; }   /* 270px × 3/2 */
+  /* 2:3 box from its width (which differs per layout); the poster fills it. */
+  .ps5-details-poster-wrap { position: relative; height: auto; }
+  .ps5-details-poster-wrap::before { content: ''; display: block; padding-top: 150%; }
+  .ps5-details-poster-img { position: absolute; top: 0; left: 0; }
 }
 
 /* inset-inline-start / -end (Chromium 87+) in the player. */

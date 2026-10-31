@@ -75,7 +75,9 @@
     const SIZE_PX = { small: 34, medium: 42, large: 52, xlarge: 62 };
     const style = opts.subStyle || {};
     subtitleEl.style.color = style.yellow ? '#FFE600' : '#FFFFFF';
-    subtitleEl.style.fontSize = `${SIZE_PX[style.size] || SIZE_PX.medium}px`;
+    // Sizes are screen pixels on a 1080p TV; the player is zoomed (Android dp), so divide.
+    const zoom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--tv-player-zoom')) || 1;
+    subtitleEl.style.fontSize = `${(SIZE_PX[style.size] || SIZE_PX.medium) / zoom}px`;
 
     function tracks() {
       const list = [];
@@ -185,8 +187,9 @@
       const m = /^(\d+):(\d+)$/.exec(mode);
       if (m) {
         const ratio = Number(m[1]) / Number(m[2]);
-        const W = window.innerWidth;
-        const H = window.innerHeight;
+        // The player's own box (it is zoomed on the TV, so not the window size).
+        const W = video.parentElement.clientWidth;
+        const H = video.parentElement.clientHeight;
         const w = Math.min(W, H * ratio);
         const h = w / ratio;
         Object.assign(video.style, { width: `${w}px`, height: `${h}px`, left: `${(W - w) / 2}px`, top: `${(H - h) / 2}px` });
