@@ -188,7 +188,11 @@
       const pos = pendingSeek != null ? pendingSeek : st.position;
       const pct = dur > 0 ? Math.min(100, Math.max(0, (pos / dur) * 100)) : 0;
       $('fill').style.width = `${pct}%`;
-      $('thumb').style.insetInlineStart = `${pct}%`;
+      // left/right rather than inset-inline-start: older TV engines (webOS 6) lack it.
+      const thumb = $('thumb');
+      const rtl = root.getAttribute('dir') === 'rtl';
+      thumb.style.left = rtl ? 'auto' : `${pct}%`;
+      thumb.style.right = rtl ? `${pct}%` : 'auto';
       $('elapsed').textContent = fmt(pos);
       $('remaining').textContent = dur > 0 ? fmt(dur - pos) : '';
     }

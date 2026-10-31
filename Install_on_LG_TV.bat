@@ -24,22 +24,23 @@ if errorlevel 1 (
 
 call ares-setup-device -l
 echo.
-echo If the TV is not listed above, or its IP address changed, run:
-echo     ares-setup-device -m LuminaTV -i "host=TV_IP_ADDRESS"
-echo     ares-novacom --device LuminaTV --getkey
-echo (the passphrase is shown in the TV's Developer Mode app)
+echo Installing on every TV listed above (LuminaTV, LuminaTV2, ...).
+echo If a TV is missing, or its IP address changed, run:
+echo     ares-setup-device -a NAME -i "host=TV_IP_ADDRESS" -i "port=9922" -i "username=prisoner"
+echo     ares-novacom --device NAME --getkey
+echo (the passphrase is shown in that TV's Developer Mode app)
 echo.
 
-node webos\build.js --launch
+node webos\build.js --launch --all-tvs
 if errorlevel 1 (
     echo.
-    echo Install failed - check that the TV is on and Developer Mode is running.
+    echo Some TVs failed - check that they are on and Developer Mode is running.
     pause
     exit /b 1
 )
 
 echo.
-echo Done. LuminaStreams is in the TV's app list.
+echo Done. LuminaStreams is in each TV's app list.
 echo Developer Mode expires after 50 hours unless you press "Extend" in the
 echo Developer Mode app (installed apps are removed when it expires).
 pause

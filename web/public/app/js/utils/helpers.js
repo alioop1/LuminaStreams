@@ -218,7 +218,7 @@
    * @returns {*}
    */
   function deepClone(obj) {
-    return structuredClone ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
+    return typeof structuredClone === 'function' ? structuredClone(obj) : JSON.parse(JSON.stringify(obj));
   }
 
   /* ── Export ────────────────────────────────────────────────────────── */

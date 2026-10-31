@@ -5948,20 +5948,23 @@ body.is-electron::before {
    ──────────────────────────────────────────────────────────── */
 html.is-tv, html.is-tv body { cursor: none; }
 html.is-tv ::-webkit-scrollbar { display: none; }
-html.is-tv :focus-visible, html.is-tv :focus { outline: none; }
-html.is-tv :not(.ap-root *):focus {
+/* (separate rules: older TV engines drop a whole list containing :focus-visible) */
+html.is-tv :focus { outline: none; }
+html.is-tv :focus-visible { outline: none; }
+html.is-tv #app :focus, html.is-tv #modal-overlay :focus {
   box-shadow: 0 0 0 3px #FFFFFF, 0 0 22px rgba(255, 255, 255, 0.55);
   transform: scale(1.05);
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   position: relative;
   z-index: 5;
 }
-html.is-tv .ps5-landscape-card:focus {
+html.is-tv #app .ps5-landscape-card:focus {
   border-color: #FFFFFF;
   box-shadow: 0 0 22px rgba(255, 255, 255, 0.7), 0 8px 24px rgba(0, 0, 0, 0.85);
   transform: scale(1.06);
 }
-html.is-tv input:focus, html.is-tv textarea:focus, html.is-tv select:focus { transform: none; }
+html.is-tv #app input:focus, html.is-tv #app textarea:focus, html.is-tv #app select:focus,
+html.is-tv #modal-overlay input:focus { transform: none; }
 /* The TV player covers the app. */
 html.is-tv .ap-tv { background: #000; }
 html.tv-playing body > :not(.ap-tv) { visibility: hidden; }

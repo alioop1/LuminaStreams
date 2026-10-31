@@ -1,6 +1,6 @@
 # LuminaStreams for LG webOS
 
-The LG TV app (webOS 23 / 24 / 25, LG OLED 2023+). It is the shared web app
+The LG TV app (webOS 6 and newer: 2021 LG TVs onwards, including webOS 22–25). It is the shared web app
 (`web/public/app`) packaged as a webOS app; on the TV it switches to TV mode
 (`js/tv/tvMode.js`):
 
@@ -15,6 +15,9 @@ The LG TV app (webOS 23 / 24 / 25, LG OLED 2023+). It is the shared web app
 - Sources are ranked like the Android app (lossless/Atmos audio is not penalised, as
   it is in a desktop browser).
 - Same account, favourites and watch progress as every other platform.
+- Older TVs (webOS 6 / 2021, Chromium 79): `build.js` lowers the JavaScript to ES2019
+  with TypeScript, expands the CSS `inset` shorthand, adds `legacy.css` fallbacks and
+  allows `file:` in the page's security policy; `js/tv/flexGap.js` restores flex `gap`.
 
 ## Install (Developer Mode)
 
@@ -39,7 +42,13 @@ Then double-click **`Install_on_LG_TV.bat`** in the repo root, or:
 node webos/build.js --launch
 ```
 
+The script installs on **every** TV registered with `ares-setup-device` (`--all-tvs`);
+for one TV: `node webos/build.js --launch --device LuminaTV2`.
 `node webos/build.js` alone only builds `webos/dist/com.luminastreams.tv_<version>_all.ipk`.
+
+The LG CLI calls Node helpers that Node 23+ removed; `build.js` preloads
+`node-compat.js` into it. When running `ares-*` commands yourself on Node 23+, set
+`NODE_OPTIONS=--require <repo>/webos/node-compat.js` first.
 
 Developer Mode lasts 50 hours; press **Extend** in the Developer Mode app before it
 runs out, or the TV removes developer apps and you reinstall with the script.

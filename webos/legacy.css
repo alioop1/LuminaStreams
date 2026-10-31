@@ -1,0 +1,22 @@
+/* LuminaStreams on older LG TVs (webOS 6 / 2021, Chromium 79).
+   Added to the webOS package only, after the app's own CSS. Each block applies
+   only where the engine lacks the feature, so newer TVs never see it. */
+
+/* aspect-ratio (Chromium 88+): fixed heights for the TV layout's card sizes. */
+@supports not (aspect-ratio: 1 / 1) {
+  .ps5-landscape-card { height: 146px; }        /* 260px × 9/16 */
+  .ps5-details-poster-wrap { height: 405px; }   /* 270px × 3/2 */
+}
+
+/* inset-inline-start / -end (Chromium 87+) in the player. */
+@supports not (inset-inline-start: 0) {
+  .ap-badges { right: 32px; }
+  .ap-root[dir="rtl"] .ap-badges { right: auto; left: 32px; }
+  .ap-aspect-badge { left: 28px; }
+  .ap-root[dir="rtl"] .ap-aspect-badge { left: auto; right: 28px; }
+  .ap-bar-track, .ap-bar-fill { left: 0; }
+  .ap-root[dir="rtl"] .ap-bar-track, .ap-root[dir="rtl"] .ap-bar-fill { left: auto; right: 0; }
+  .ap-popup { right: 48px; }
+  .ap-root[dir="rtl"] .ap-popup { right: auto; left: 48px; }
+  .ap-upnext, .ap-root[dir="rtl"] .ap-upnext { right: 48px; left: auto; }
+}
