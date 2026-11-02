@@ -24,20 +24,15 @@ final class TorrentioService {
             queryId = imdbId
         }
 
-        let urlStr = "https://torrentio.strem.fun/alldebrid=\(token)/stream/\(type)/\(queryId).json"
-        guard let url = URL(string: urlStr) else {
-            throw URLError(.badURL)
-        }
-
-        let (data, response) = try await session.data(from: url)
-        if let httpResp = response as? HTTPURLResponse, !(200...299).contains(httpResp.statusCode) {
-            throw NSError(domain: "Torrentio", code: httpResp.statusCode, userInfo: [NSLocalizedDescriptionKey: "שגיאת שרת Torrentio (\(httpResp.statusCode))"])
-        }
-
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let streamsArr = json["streams"] as? [[String: Any]] else {
-            return []
-        }
+        // AllDebrid refuses Torrentio's servers, so the keyed list often holds a single
+        // "AD error" entry. The plain list gives magnet hashes we resolve ourselves, so it
+        // is fetched alongside and used whenever the keyed one has nothing playable; the
+        // keyed one still wins when it works (AD+ hints).
+        let path = "stream/\(type)/\(queryId).json"
+        async let keyed = try? loadStreams("https://torrentio.strem.fun/alldebrid=\(token)/\(path)")
+        async let plain = loadStreams("https://torrentio.strem.fun/\(path)")
+        var streamsArr = await keyed ?? []
+        if streamsArr.isEmpty { streamsArr = try await plain }
 
         var parsed: [AdvancedStreamSource] = []
         for (idx, item) in streamsArr.enumerated() {
@@ -60,6 +55,22 @@ final class TorrentioService {
     }
 
     // ── Exact port of TorrentioStreamParser.kt ──────────────────────────────
+    /// Streams from one Torrentio URL, minus the fake "AD error" entries Torrentio uses to report debrid failures.
+    private func loadStreams(_ urlStr: String) async throws -> [[String: Any]] {
+        guard let url = URL(string: urlStr) else { throw URLError(.badURL) }
+        let (data, response) = try await session.data(from: url)
+        if let httpResp = response as? HTTPURLResponse, !(200...299).contains(httpResp.statusCode) {
+            throw NSError(domain: "Torrentio", code: httpResp.statusCode, userInfo: [NSLocalizedDescriptionKey: "שגיאת שרת Torrentio (\(httpResp.statusCode))"])
+        }
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let streams = json["streams"] as? [[String: Any]] else { return [] }
+        return streams.filter { item in
+            let name = item["name"] as? String ?? ""
+            let url = item["url"] as? String ?? ""
+            return name.range(of: " error", options: .caseInsensitive) == nil && !url.contains("/videos/failed_")
+        }
+    }
+
     static func parseStream(index: Int, name: String?, title: String?, url: String?, infoHash: String?) -> AdvancedStreamSource? {
         guard let titleSafe = title, !titleSafe.isEmpty else { return nil }
         let nameSafe = name ?? "Torrentio"

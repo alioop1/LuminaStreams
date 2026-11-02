@@ -271,18 +271,28 @@
     if (!imdbId) return [];
 
     const adToken = (window.AllDebrid && window.AllDebrid.getToken()) || 'GkRRCMwdGBSvjzWqnNP8';
-    const url = `${TORRENTIO_BASE}/alldebrid=${adToken}/stream/${type}/${imdbId}.json`;
+    const path = `stream/${type}/${imdbId}.json`;
 
-    try {
+    // AllDebrid refuses Torrentio's servers, so the keyed list often holds a single
+    // "AD error" entry. The plain list gives magnet hashes that AllDebrid.resolveStream
+    // uploads itself, so it is fetched alongside and used whenever the keyed one has
+    // nothing playable; the keyed one still wins when it works (AD+ hints).
+    const isError = (s) => / error/i.test(s.name || '') || /\/videos\/failed_/.test(s.url || '');
+    const load = async (url) => {
       const res = await fetch(url);
-
       if (!res.ok) {
         if (res.status === 404) return [];
         throw new Error(`Torrentio ${res.status}: ${res.statusText}`);
       }
-
       const data = await res.json();
-      const rawStreams = data.streams || [];
+      return (data.streams || []).filter(s => !isError(s));
+    };
+
+    try {
+      const plain = load(`${TORRENTIO_BASE}/${path}`);
+      plain.catch(() => {});
+      let rawStreams = await load(`${TORRENTIO_BASE}/alldebrid=${adToken}/${path}`).catch(() => []);
+      if (rawStreams.length === 0) rawStreams = await plain;
 
       if (rawStreams.length === 0) return [];
 

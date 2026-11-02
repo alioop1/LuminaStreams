@@ -11,6 +11,7 @@ import com.luminastreams.tv.domain.model.Movie
 import com.luminastreams.tv.domain.repository.MediaRepository
 import com.luminastreams.tv.domain.usecase.AllDebridManager
 import com.luminastreams.tv.data.remote.FuzerEngine
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -662,20 +663,28 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
             }
 
             try {
-                val url = "https://torrentio.strem.fun/alldebrid=$token/stream/$queryType/$queryId.json"
-                Log.d("ScrapeDebug", "🌐 Calling Torrentio: stream/$queryType/$queryId.json")
-                val response = dynamicTorrentio.getStreamsDynamic(url)
-                val responseBody = response.body()
-                Log.d("ScrapeDebug", "📡 Response: code=${response.code()}, streams=${responseBody?.streams?.size ?: "null"}")
+                // AllDebrid refuses Torrentio's servers, so the keyed list often holds a single
+                // "AD error" entry. The plain list gives magnet hashes we resolve ourselves
+                // (processDebridLink), so it is fetched alongside and used whenever the keyed
+                // one has nothing playable; the keyed one still wins when it works (AD+ hints).
+                val path = "stream/$queryType/$queryId.json"
+                Log.d("ScrapeDebug", "🌐 Calling Torrentio: $path")
+                val keyedCall = async { runCatching { dynamicTorrentio.getStreamsDynamic("https://torrentio.strem.fun/alldebrid=$token/$path") }.getOrNull() }
+                val plainCall = async { runCatching { dynamicTorrentio.getStreamsDynamic("https://torrentio.strem.fun/$path") }.getOrNull() }
+                fun usable(r: retrofit2.Response<TorrentioResponse>?) =
+                    r?.takeIf { it.isSuccessful }?.body()?.streams.orEmpty().filterNot { TorrentioStreamParser.isErrorEntry(it.name, it.url) }
+                val keyed = usable(keyedCall.await())
+                val streams = keyed.ifEmpty { usable(plainCall.await()) }
+                if (keyed.isNotEmpty()) plainCall.cancel()
+                Log.d("ScrapeDebug", "📡 Response: keyed=${keyed.size}, used=${streams.size}")
 
-                if (!response.isSuccessful || responseBody?.streams.isNullOrEmpty()) {
-                    Log.e("ScrapeDebug", "❌ No sources found! code=${response.code()}, body=${response.errorBody()?.string()?.take(200)}")
+                if (streams.isEmpty()) {
                     _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות עבור תוכן זה." else "No sources found for this content.")) }
                     return@launch
                 }
                 // Entries with neither a magnet hash nor a direct URL are dropped by the
                 // parser — Torrentio still lists them but nothing can resolve them.
-                val mapped = responseBody.streams.orEmpty().mapIndexedNotNull { idx, s ->
+                val mapped = streams.mapIndexedNotNull { idx, s ->
                     TorrentioStreamParser.parse(idx, s.name, s.title, s.url, s.infoHash)
                 }.sortedWith(AdvancedStreamSource.defaultComparator)
                     .let { list ->
@@ -762,6 +771,9 @@ class DetailsViewModel(private val repository: MediaRepository, context: Context
                             if (filteredStreams.size != mapped.size) {
                                 streamCache[cacheKey] = CachedStreams(filteredStreams, System.currentTimeMillis())
                                 _state.update { it.copy(availableStreams = filteredStreams) }
+                                if (filteredStreams.isEmpty()) {
+                                    _state.update { it.copy(scrapingStatus = ScrapingStatus.Error(if (isHebrew) "לא נמצאו מקורות עבור תוכן זה." else "No sources found for this content.")) }
+                                }
                             }
                         } catch (e: Exception) {
                             if (e is CancellationException) throw e

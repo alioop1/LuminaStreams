@@ -33,12 +33,17 @@ object TorrentioStreamParser {
      * @return null when the entry is unplayable — it has neither a magnet hash nor a
      * direct URL, so nothing (not AllDebrid, not ExoPlayer) can resolve it.
      */
+    fun isErrorEntry(name: String?, url: String?): Boolean =
+        name?.contains(" error", ignoreCase = true) == true || url?.contains("/videos/failed_") == true
+
     fun parse(index: Int, name: String?, title: String?, url: String?, infoHash: String?): AdvancedStreamSource? {
         val titleSafe = title ?: return null
         val nameSafe = name ?: "Unknown"
         val hasInfoHash = !infoHash.isNullOrBlank()
         val hasDirectUrl = !url.isNullOrBlank()
         if (!hasInfoHash && !hasDirectUrl) return null
+        // Torrentio reports debrid failures as a fake stream ("AD error" → failed_*.mp4).
+        if (isErrorEntry(name, url)) return null
 
         val upper = titleSafe.uppercase()
         return AdvancedStreamSource(
