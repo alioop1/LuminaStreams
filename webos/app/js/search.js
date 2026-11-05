@@ -311,7 +311,22 @@
     const meas = TV.$(field, '.sx-meas');
 
     const St = window.Storage;
-    const loadHistory = () => { try { return ((St && St.getSearchHistory()) || []).filter(t => t && String(t).trim()).slice(0, 8); } catch { return []; } };
+    // Older builds saved every debounced keystroke ("de", "det", "dete"…): a term that only
+    // starts a later, longer one is dropped from the chips.
+    const loadHistory = () => {
+      try {
+        const all = ((St && St.getSearchHistory()) || []).map(t => String(t || '').trim()).filter(Boolean);
+        const low = all.map(t => t.toLowerCase());
+        return all.filter((t, i) => !low.some((o, j) => j !== i && o.length > low[i].length && o.startsWith(low[i]))).slice(0, 8);
+      } catch { return []; }
+    };
+    /** A search counts once it's finished: Enter on the keyboard, or opening one of its results. */
+    function commitHistory() {
+      const q = s.query.trim();
+      if (!q) return;
+      try { if (St && (!TV.prefs || TV.prefs.saveSearchHistory())) St.addSearchHistory(q); } catch {}
+      s.history = loadHistory();
+    }
 
     const s = {
       query: '', source: 'all', filters: F({}), showFilters: false,
@@ -397,8 +412,6 @@
       searchTimer = later(() => runSearch(q, t), 300);
     }
     async function runSearch(q, t) {
-      try { if (St && (!TV.prefs || TV.prefs.saveSearchHistory())) St.addSearchHistory(q); } catch {}
-      s.history = loadHistory();
       s.tmdbLoading = true;
       render();
       const he = HEB.test(q);
@@ -615,6 +628,7 @@
       if (id === 'input') {
         if (document.activeElement === input) {
           // The LG keyboard's Enter: done typing → the results, as soon as they are there.
+          commitHistory();
           input.blur();
           s.pendingFirst = true;
           applyPending();
@@ -772,7 +786,7 @@
         + `${r.rating > 0 ? `<span class="sx-cr">★ ${r.rating.toFixed(1)}</span>` : ''}<span class="sx-cy">${r.type === 'tv' ? 'TV Show' : 'Movie'}</span></div></div>`;
       return c;
     }
-    const openResult = r => { leaveInput(); TV.open('details', { id: r.id, type: r.type, movie: r }); };
+    const openResult = r => { commitHistory(); leaveInput(); TV.open('details', { id: r.id, type: r.type, movie: r }); };
     const focusResult = r => setBackdrop(r.backdrop);
 
     /** A uniform lazy grid (CategoryGrid / SearchResultsGrid), windowed. */
@@ -1296,7 +1310,9 @@
         return contentKey(key);
       },
       onShow(first) {
-        if (first) return;
+        // Search opens ready to type (the search box open and focused, so the LG keyboard comes
+        // up); Back or Down still reaches the categories below.
+        if (first) { navActivate('search'); return; }
         // Back from a title: Android recomposes the screen — the search bar closes, the
         // backdrop clears and the first result takes focus (LaunchedEffect(Unit)).
         leaveInput();

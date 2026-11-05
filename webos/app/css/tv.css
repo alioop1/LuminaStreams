@@ -25,15 +25,21 @@ img { display: block; }
 
 /* ═══ Home ═══════════════════════════════════════════════════════════ */
 .home .bd { position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: #070707; }
-.bd-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; opacity: 0; transition: opacity 0.5s; }
+/* Both backdrop images stay layers: a 4K image promoted only for its crossfade is re-rastered
+   (and re-decoded) on every change, which a 2021 TV's GPU can't keep up with. */
+.bd-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; opacity: 0; will-change: opacity; transition: opacity 0.5s; }
 .bd-img.on { opacity: 1; }
-/* Horizontal shadow behind the text (start side), bottom vignette, top-bar vignette. */
-.bd-h { position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(to right, rgba(6,6,8,0.96) 0%, rgba(6,6,8,0.8) 25%, rgba(6,6,8,0.2) 50%, transparent 75%); }
-[dir="rtl"] .bd-h { background: linear-gradient(to left, rgba(6,6,8,0.96) 0%, rgba(6,6,8,0.8) 25%, rgba(6,6,8,0.2) 50%, transparent 75%); }
-.bd-v { position: absolute; top: 0; left: 0; right: 0; bottom: 0;
-  background: linear-gradient(to bottom, transparent 35%, rgba(0,0,0,0.35) 56%, rgba(0,0,0,0.85) 78%, #060608 100%); }
-.bd-top { position: absolute; top: 0; left: 0; right: 0; height: 110px; background: linear-gradient(to bottom, rgba(0,0,0,0.75), transparent); }
+/* Top-bar vignette, bottom vignette, horizontal shadow behind the text (start side), in one
+   layer: three full-screen 4K layers over the backdrop cost the TV three times the fill. */
+.bd-shade { position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+  background:
+    linear-gradient(to bottom, rgba(0,0,0,0.75), transparent 110px),
+    linear-gradient(to bottom, transparent 35%, rgba(0,0,0,0.35) 56%, rgba(0,0,0,0.85) 78%, #060608 100%),
+    linear-gradient(to right, rgba(6,6,8,0.96) 0%, rgba(6,6,8,0.8) 25%, rgba(6,6,8,0.2) 50%, transparent 75%); }
+[dir="rtl"] .bd-shade { background:
+    linear-gradient(to bottom, rgba(0,0,0,0.75), transparent 110px),
+    linear-gradient(to bottom, transparent 35%, rgba(0,0,0,0.35) 56%, rgba(0,0,0,0.85) 78%, #060608 100%),
+    linear-gradient(to left, rgba(6,6,8,0.96) 0%, rgba(6,6,8,0.8) 25%, rgba(6,6,8,0.2) 50%, transparent 75%); }
 
 /* Top nav (Ps5TopNav): 100 dp tall, padding top 24, sides 52. */
 .topnav { position: absolute; top: 0; left: 0; right: 0; height: 100px; padding: 24px 52px 0; z-index: 10; }
@@ -86,7 +92,7 @@ img { display: block; }
 /* Console row cycler: sidebar 260 dp, divider, content. Height 240 − 16 bottom padding. */
 .cycler { position: absolute; left: 0; right: 0; top: 490.9px; height: 453.1px; display: flex; align-items: center; }
 .side { flex: 0 0 260px; width: 260px; height: 453.1px; overflow: hidden; }
-.side-list { padding-top: 40px; transition: transform 0.3s; }
+.side-list { padding-top: 40px; will-change: transform; transition: transform 0.3s; }
 .side-item { height: 44px; margin: 2px 16px 2px 32px; padding: 0 20px; border-radius: 8px; display: flex; align-items: center;
   font-size: 15px; font-weight: 500; color: rgba(255,255,255,0.4); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 [dir="rtl"] .side-item { margin: 2px 32px 2px 16px; }
@@ -101,12 +107,16 @@ img { display: block; }
 .row.land { height: 194px; margin-top: -97px; }
 .row.port { height: 260px; margin-top: -130px; }
 .row.ribbon { height: 110px; margin-top: -55px; }
-.track { display: flex; align-items: center; height: 100%; padding: 8px 32px; transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1); }
+/* A permanent layer, so sliding the row only moves pixels instead of re-rastering every card twice. */
+.track { display: flex; align-items: center; height: 100%; padding: 8px 32px; will-change: transform; transition: transform 0.25s cubic-bezier(0.2, 0, 0, 1); }
 
 /* Cards: CARD_BG #1C1C1C, radius 10, focused 3 dp white border, focus scale 1.05 (150 ms). */
 .surf { position: relative; overflow: hidden; border-radius: 10px; background: #1C1C1C; transition: transform 0.15s; }
 .surf::after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 3px solid #fff; border-radius: 10px; opacity: 0; }
 .f > .surf { transform: scale(1.05); }
+/* Lite TVs: an animated scale makes each card its own layer for 150 ms, re-rastering it and
+   then its whole row on every press; an instant scale only repaints the two cards. */
+.lite .surf { transition: none; }
 .f > .surf::after { opacity: 1; }
 .surf > img { width: 100%; height: 100%; object-fit: cover; }
 .lcard { flex: 0 0 280px; width: 280px; margin-inline-end: 20px; }

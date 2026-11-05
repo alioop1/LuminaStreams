@@ -27,6 +27,13 @@
   }
   TV.fit = fit;
 
+  /* ── Lite TVs ─────────────────────────────────────────────────────── */
+  // webOS 6 and older (Chromium < 90, e.g. the 2021 C1): a weak GPU behind a 1080p surface.
+  // There the app skips work the screen can't show; newer TVs keep every animation as-is.
+  const chrome = /Chrome\/(\d+)/.exec(navigator.userAgent);
+  TV.lite = !!chrome && +chrome[1] < 90;
+  if (TV.lite) document.documentElement.classList.add('lite');
+
   /* ── Language ─────────────────────────────────────────────────────── */
   TV.lang = () => (window.I18n && window.I18n.getLanguage ? window.I18n.getLanguage() : 'he');
   TV.rtl = () => TV.lang() === 'he';
@@ -78,7 +85,9 @@
     if (decoded.has(url)) return decoded.get(url);
     const p = new Promise(resolve => {
       const im = new Image();
-      im.onload = () => (im.decode ? im.decode().catch(() => {}) : Promise.resolve()).then(() => resolve(url));
+      // decode() works at full size: ~0.5 s for a 4K backdrop on a lite TV, which then decodes
+      // it again (scaled to its 1080p surface) to draw it. There, waiting for the load is enough.
+      im.onload = () => (im.decode && !TV.lite ? im.decode().catch(() => {}) : Promise.resolve()).then(() => resolve(url));
       im.onerror = () => resolve('');
       im.src = url;
     });

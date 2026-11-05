@@ -62,7 +62,7 @@
   function home() {
     const root = el(`
       <div class="screen home">
-        <div class="bd"><img class="bd-img" alt=""><img class="bd-img" alt=""><div class="bd-h"></div><div class="bd-v"></div><div class="bd-top"></div></div>
+        <div class="bd"><img class="bd-img" alt="" decoding="async"><img class="bd-img" alt="" decoding="async"><div class="bd-shade"></div></div>
         <div class="topnav">
           <div class="logo" dir="ltr"><b>LUMINA&nbsp;</b><span>STREAMS</span></div>
           <div class="clock"></div>

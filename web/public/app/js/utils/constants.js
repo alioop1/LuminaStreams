@@ -226,19 +226,36 @@
     try { return Date.now() < Number(localStorage.getItem(TMDB_BLOCK_KEY) || 0); } catch { return false; }
   }
 
+  // Only a direct TMDB URL is ever proxied. A proxied one still contains "image.tmdb.org"
+  // (in its query), and re-proxying it on failure grew URLs without end (HTTP 414 storms).
+  const isTmdb = url => typeof url === 'string' && url.startsWith('https://image.tmdb.org/');
+
   function proxiedImage(url) {
     return `https://wsrv.nl/?url=${encodeURIComponent(url)}`;
   }
 
   /** The URL to actually load for an image (proxied when TMDB is blocked). */
   function img(url) {
-    return url && url.includes('image.tmdb.org') && tmdbBlocked() ? proxiedImage(url) : url;
+    return isTmdb(url) && tmdbBlocked() ? proxiedImage(url) : url;
   }
 
   function markTmdbBlocked() {
     try { localStorage.setItem(TMDB_BLOCK_KEY, String(Date.now() + 6 * 3600 * 1000)); } catch {}
-    document.querySelectorAll('img[src*="image.tmdb.org"]').forEach(el => { el.src = proxiedImage(el.src); });
+    document.querySelectorAll('img[src^="https://image.tmdb.org/"]').forEach(el => { el.src = proxiedImage(el.src); });
   }
+
+  // One broken image (a bad path, a cancelled load) says nothing about the network, so
+  // TMDB counts as blocked only when a tiny known image can't be fetched either.
+  let probe = null;
+  function tmdbReachable() {
+    probe = probe || fetch('https://image.tmdb.org/t/p/w45/wwemzKWzjKYJFfCeiB57q3r4Bcm.png', { mode: 'no-cors', cache: 'no-store' })
+      .then(() => true, () => false)
+      .finally(() => setTimeout(() => { probe = null; }, 60000));
+    return probe;
+  }
+
+  // A stale "blocked" mark (e.g. set by a single failed image) is dropped once TMDB answers.
+  if (tmdbBlocked()) tmdbReachable().then(ok => { if (ok) try { localStorage.removeItem(TMDB_BLOCK_KEY); } catch {} });
 
   /** Full-screen backdrop: w1280 unless the display really needs more pixels. */
   function heroUrl(path) {
@@ -250,10 +267,13 @@
   // Failed TMDB <img> → switch to the proxy (capture phase: error events don't bubble).
   document.addEventListener('error', e => {
     const el = e.target;
-    if (el && el.tagName === 'IMG' && el.src.includes('image.tmdb.org')) {
+    if (!el || el.tagName !== 'IMG' || !isTmdb(el.src)) return;
+    const failed = el.src;
+    tmdbReachable().then(ok => {
+      if (ok || tmdbBlocked()) return;
       markTmdbBlocked();
-      el.src = proxiedImage(el.src);
-    }
+      if (el.src === failed) el.src = proxiedImage(failed);
+    });
   }, true);
 
   // While blocked, rewrite TMDB images as screens render them.
@@ -262,8 +282,8 @@
     for (const m of mutations) {
       m.addedNodes.forEach(node => {
         if (node.nodeType !== 1) return;
-        const imgs = node.tagName === 'IMG' ? [node] : node.querySelectorAll('img[src*="image.tmdb.org"]');
-        imgs.forEach(el => { if (el.src.includes('image.tmdb.org')) el.src = proxiedImage(el.src); });
+        const imgs = node.tagName === 'IMG' ? [node] : node.querySelectorAll('img[src^="https://image.tmdb.org/"]');
+        imgs.forEach(el => { if (isTmdb(el.src)) el.src = proxiedImage(el.src); });
       });
     }
   }).observe(document.documentElement, { childList: true, subtree: true });
