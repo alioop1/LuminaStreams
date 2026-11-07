@@ -499,6 +499,13 @@
         if (row) row.classList.add('busy');
         try {
           let url = x.s.url;
+          // When Torrentio's own AllDebrid call fails, its link redirects to an error video
+          // (/videos/failed_*.mp4) that would play as if it were the film. Follow it first;
+          // anything but a real file falls back to resolving the magnet here.
+          if (url && url.indexOf('torrentio.strem.fun/resolve/') >= 0) {
+            const r = await fetch(url, { method: 'HEAD' }).catch(() => null);
+            url = r && r.ok && r.url.indexOf('/videos/failed_') < 0 ? r.url : '';
+          }
           if (!url && x.s.infoHash && window.AllDebrid) url = await window.AllDebrid.resolveStream(x.s.infoHash, () => {}, season, episode);
           if (!url) throw new Error('no url');
           closeLayer();
@@ -516,8 +523,11 @@
             onNext: next => openSources(next.season, next.episode),
             onEnd: () => { render(); },
           });
-        } catch {
-          TV.toast(tr('Failed to launch stream', 'שגיאה בהפעלת המקור'));
+        } catch (e) {
+          TV.toast(e && e.code === 'AD_MAGNET_DOWN'
+            ? tr("AllDebrid's torrent service is down right now (on their side). Titles already in your Debrid Cloud still play.",
+              'שירות הטורנטים של AllDebrid לא עובד כרגע (תקלה אצלם). תכנים שכבר נמצאים ב-Debrid Cloud שלך עדיין מתנגנים.')
+            : tr('Failed to launch stream', 'שגיאה בהפעלת המקור'));
         }
         st.busy = false;
         if (row) row.classList.remove('busy');

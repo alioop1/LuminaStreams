@@ -262,8 +262,39 @@
     }
 
     report('מעלה ל-AllDebrid…');
-    const torrentId = await uploadMagnet(magnet);
+    let torrentId;
+    try {
+      torrentId = await uploadMagnet(magnet);
+    } catch (e) {
+      // When AllDebrid's magnet service is down (HTTP 500 "database error"), links still unlock:
+      // a torrent already in the account plays from there.
+      const hash = (/btih:([a-f0-9]{40})/i.exec(magnet) || [])[1];
+      torrentId = hash && await findMagnetInAccount(hash).catch(() => null);
+      if (!torrentId) {
+        if (/HTTP 5\d\d/.test(e.message)) {
+          const down = new Error('AllDebrid magnet service is down');
+          down.code = 'AD_MAGNET_DOWN';
+          throw down;
+        }
+        throw e;
+      }
+    }
     return waitAndUnlock(torrentId, report, season, episode, 60);
+  }
+
+  /** The id of a torrent with this hash already in the account, or null. */
+  let accountMagnets = null;
+  async function findMagnetInAccount(hash) {
+    if (!accountMagnets || Date.now() - accountMagnets.at > 60000) {
+      const res = await fetch(`${AD_BASE_V41}/magnet/status?agent=LuminaStreams`, {
+        headers: { 'Authorization': `Bearer ${getToken()}` },
+      });
+      const json = await res.json();
+      const m = json.data?.magnets || [];
+      accountMagnets = { at: Date.now(), list: Array.isArray(m) ? m : Object.values(m) };
+    }
+    const hit = accountMagnets.list.find(m => String(m.hash || '').toLowerCase() === hash.toLowerCase());
+    return hit ? hit.id : null;
   }
 
   /**

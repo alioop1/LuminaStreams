@@ -191,7 +191,7 @@
     t.textContent = text;
     t.classList.add('on');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => t.classList.remove('on'), 2600);
+    toastTimer = setTimeout(() => t.classList.remove('on'), Math.max(2600, text.length * 70));
   };
 
   /* ── Input ────────────────────────────────────────────────────────── */
